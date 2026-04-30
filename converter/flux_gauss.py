@@ -184,7 +184,7 @@ def parse_table_ddl(sql_file: str) -> dict:
 
     schema = {}
     table_pattern = re.compile(
-        r'create\s+table\s+(?:\w+\.)?(\w+)\s*\((.*?)\)\s*;',
+        r'create\s+table\s+(?:if\s+not\s+exists\s+)?(?:\w+\.)?(\w+)\s*\((.*?)\)\s*;',
         re.IGNORECASE | re.DOTALL
     )
 
@@ -275,6 +275,7 @@ SQL_TO_JAVA = {
     "jsonb": "String",
     "uuid": "String",
     "record": "Map<String, Object>",
+    "exception": "String",
 }
 
 
@@ -381,7 +382,7 @@ def _infer_type_from_column_name(column_name: str) -> str:
         if "num" in col and "varchar" not in col:
             return "integer"
         return "bigint"
-    if any(s in col for s in ("amount", "balance", "price", "qty", "quantity", "total")):
+    if any(s in col for s in ("amount", "balance", "price", "qty", "quantity", "total", "salary")):
         return "numeric"
     if any(s in col for s in ("date", "time", "stamp")):
         return "timestamp"
@@ -429,7 +430,12 @@ def sql_type_to_java(sql_type) -> str:
 
     normalized = sql_type.lower().strip()
     normalized = re.sub(r"\(.*\)", "", normalized).strip()
-    return SQL_TO_JAVA.get(normalized, "Object")
+    result = SQL_TO_JAVA.get(normalized)
+    if result:
+        return result
+    # Unknown type name — likely a user-defined composite type (CREATE TYPE ... AS (...))
+    # Map to Map<String, Object> so field access via .get() compiles
+    return "Map<String, Object>"
 
 
 def is_simple_java_type(java_type: str) -> bool:
@@ -769,6 +775,23 @@ def extract_parameters(params_list: list) -> list:
     for p in params_list:
         name = p.get("name", "")
         sql_type = p.get("data_type", "varchar")
+        mode = p.get("mode")
+
+        # Workaround: ogsql parser misparses "OUT result INT" as
+        # name="out", data_type="result int", mode=null.
+        # Detect and correct: name starts with "out" and data_type contains a real type name.
+        if isinstance(sql_type, str) and name.lower() in ("out", "in", "inout"):
+            parts = sql_type.strip().split()
+            if len(parts) >= 2:
+                # First part is the real param name, rest is the type
+                potential_name = parts[0]
+                potential_type = " ".join(parts[1:])
+                known_modes = {"out", "in", "inout", "in out"}
+                if name.lower() in known_modes and potential_name.lower() not in known_modes:
+                    name = potential_name
+                    sql_type = potential_type
+                    mode = p.get("name", "").lower()  # original name was the mode
+
         # Handle data_type that could be a dict (e.g., PercentType, RefCursor)
         if isinstance(sql_type, dict):
             if "RefCursor" in sql_type or "Cursor" in sql_type:
@@ -779,7 +802,6 @@ def extract_parameters(params_list: list) -> list:
                 sql_type = sql_type["TypeName"]
             else:
                 sql_type = "varchar"
-        mode = p.get("mode")
         java_type = sql_type_to_java(sql_type)
         result.append(Parameter(
             name=name,
@@ -1155,6 +1177,10 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
                 # Handle dict types (PercentType, Record, etc.)
                 java_type = sql_type_to_java(raw_type)
                 proc.local_vars[var_name] = java_type
+            elif decl_type == "Record":
+                var_name = decl_data.get("name", "")
+                if var_name:
+                    proc.local_vars[var_name] = "Map<String, Object>"
             elif decl_type == "Pragma":
                 pragma_name = decl_data.get("name", "")
                 if pragma_name == "AUTONOMOUS_TRANSACTION":
@@ -1444,8 +1470,38 @@ def _dml_method_name(dml_type: str, proc_name: str, counter: dict) -> str:
 
 
 def _strip_into_clause(sql: str) -> str:
-    """Remove PL/pgSQL INTO clause from SELECT for MyBatis compatibility."""
-    return re.sub(r'\s+into\s+\w+(\s*,\s*\w+)*\s+(?=from\b)', ' ', sql, flags=re.IGNORECASE)
+    stripped = re.sub(r'\s+into\s+.*?(?=\s+from\b)', ' ', sql, flags=re.IGNORECASE | re.DOTALL)
+    if stripped == sql:
+        stripped = re.sub(r'\s+into\s+\w+(\s*,\s*\w+)*\s+(?=from\b)', ' ', sql, flags=re.IGNORECASE)
+    return stripped
+
+
+def _rewrite_select_for_into(sql: str, into_targets: list) -> str:
+    if not into_targets:
+        return _strip_into_clause(sql)
+    into_fields = _extract_all_into_targets(into_targets)
+    if not into_fields:
+        return _strip_into_clause(sql)
+    field_names = [fn for fn, _ in into_fields]
+    stripped = re.sub(r'\s+into\s+.*?(?=\s+from\b)', ' ', sql, flags=re.IGNORECASE | re.DOTALL)
+    if stripped == sql:
+        stripped = re.sub(r'\s+into\s+\w+(\s*,\s*\w+)*\s+(?=from\b)', ' ', sql, flags=re.IGNORECASE)
+    m = re.match(r'(select\s+)(.*?)(\s+from\b)', stripped, re.IGNORECASE | re.DOTALL)
+    if not m:
+        return stripped
+    col_clause = m.group(2).strip()
+    cols = [c.strip() for c in re.split(r',\s*', col_clause)]
+    if len(cols) != len(field_names):
+        return stripped
+    new_cols = []
+    for col, alias in zip(cols, field_names):
+        col_lower = col.lower().strip()
+        alias_lower = alias.lower().strip()
+        if col_lower == alias_lower:
+            new_cols.append(col)
+        else:
+            new_cols.append(f"{col} AS {alias}")
+    return f"{m.group(1)}{', '.join(new_cols)}{m.group(3)}" + stripped[m.end():]
 
 
 def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: dict):
@@ -1477,17 +1533,36 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                         proc.java_logic_lines.append(
                             f'Map<String, Object> _row = mapper.{mapper_method}({_build_param_args(proc.parameters)});'
                         )
-                        for vn in var_names:
-                            var_type = proc.local_vars.get(vn, "Object")
-                            vn_java = snake_to_camel(vn)
-                            _emit_assignment(proc, vn_java, f'({var_type}) _row.get("{vn}")')
+                        into_targets_full = _extract_all_into_targets(into_targets)
+                        for field_name, full_parts in into_targets_full:
+                            if len(full_parts) >= 2:
+                                map_var = snake_to_camel(full_parts[0])
+                                vn_java = snake_to_camel(field_name)
+                                var_type = _java_type_from_field_name(field_name) if _java_type_from_field_name(field_name) != "Object" else "Object"
+                                cast = f"({var_type}) " if var_type != "Object" else ""
+                                _emit_assignment(proc, f'__MAP_PUT__{map_var}__{field_name}', f'{cast}_row.get("{field_name}")')
+                            else:
+                                var_type = proc.local_vars.get(field_name, "Object")
+                                vn_java = snake_to_camel(field_name)
+                                _emit_assignment(proc, vn_java, f'({var_type}) _row.get("{field_name}")')
                     else:
-                        _emit_assignment(proc, var_java, f'mapper.{mapper_method}({_build_param_args(proc.parameters)})')
+                        into_targets_full = _extract_all_into_targets(into_targets)
+                        if into_targets_full and len(into_targets_full[0][1]) >= 2:
+                            full_parts = into_targets_full[0][1]
+                            map_var = snake_to_camel(full_parts[0])
+                            result_type = "Map<String, Object>"
+                            col_name = _extract_select_column(sql_text, 0)
+                            proc.java_logic_lines.append(
+                                f'Map<String, Object> _row = mapper.{mapper_method}({_build_param_args(proc.parameters)});'
+                            )
+                            _emit_assignment(proc, f'__MAP_PUT__{map_var}__{first_var}', f'_row.get("{first_var}")')
+                        else:
+                            _emit_assignment(proc, var_java, f'mapper.{mapper_method}({_build_param_args(proc.parameters)})')
 
                     proc.dml_statements.append(DmlStatement(
                         sql_type="select",
                         method_id=mapper_method,
-                        sql_text=_strip_into_clause(sql_text),
+                        sql_text=_rewrite_select_for_into(sql_text, into_targets),
                         result_type=result_type,
                     ))
             else:
@@ -1597,7 +1672,15 @@ def _is_string_expr(expr: str) -> bool:
 def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
     out_param_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out}
     out_string_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out and p.java_type == "String"}
-    if target in out_param_names:
+    # Handle composite type field write: target is __MAP_PUT__var__key
+    if target.startswith("__MAP_PUT__"):
+        _, rest = target.split("__MAP_PUT__", 1)
+        var_java, field_key = rest.split("__", 1)
+        if target in out_param_names or f"({var_java})" in expr:
+            proc.java_logic_lines.append(f"{var_java}.put(\"{field_key}\", {expr});")
+        else:
+            proc.java_logic_lines.append(f"{var_java}.put(\"{field_key}\", {expr});")
+    elif target in out_param_names:
         if target in out_string_names and not _is_string_expr(expr):
             expr = f"String.valueOf({expr})"
         proc.java_logic_lines.append(f"{target}.set({expr});")
@@ -1634,6 +1717,21 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
                                 ptype = target_proc.parameters[i].java_type
                                 if "BigDecimal" in ptype and _is_numeric_literal(a):
                                     a_java = f"java.math.BigDecimal.valueOf({a_java})"
+                                elif ".get(" in a_java and ptype not in ("Object", "Map<String, Object>"):
+                                    if ptype == "long":
+                                        a_java = f"((Number) {a_java}).longValue()"
+                                    elif ptype == "Long":
+                                        a_java = f"((Number) {a_java}).longValue()"
+                                    elif ptype == "int":
+                                        a_java = f"((Number) {a_java}).intValue()"
+                                    elif ptype == "Integer":
+                                        a_java = f"((Number) {a_java}).intValue()"
+                                    elif "BigDecimal" in ptype:
+                                        a_java = f"((java.math.BigDecimal) {a_java})"
+                                    elif ptype == "String":
+                                        a_java = f"(String) {a_java}"
+                                    else:
+                                        a_java = f"({ptype}) {a_java}"
                             args_java.append(a_java)
                         args = ", ".join(args_java)
                         if matched_pkg.lower() == proc.package.lower():
@@ -1662,6 +1760,15 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
             java_expr = f"String.valueOf({java_expr})"
         elif expr_type in ("Integer", "int", "Long", "long", "Double", "double"):
             java_expr = f"String.valueOf({java_expr})"
+
+    # Cast Map.get() results when assigning to typed variables
+    if ".get(" in java_expr and target_type not in ("Object", "Map<String, Object>", ""):
+        if target_type == "String":
+            java_expr = f"(String) {java_expr}"
+        elif "BigDecimal" in target_type:
+            java_expr = f"({target_type}) {java_expr}"
+        elif target_type in ("Long", "Integer"):
+            java_expr = f"({target_type}) {java_expr}"
 
     target_out = None
     for p in proc.parameters:
@@ -2212,12 +2319,30 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                         proc.java_logic_lines.append(
                             f'Map<String, Object> _row = mapper.{mapper_method}({_build_param_args(proc.parameters)});'
                         )
-                        for vn in var_names:
-                            var_type = proc.local_vars.get(vn, "Object")
-                            vn_java = snake_to_camel(vn)
-                            _emit_assignment(proc, vn_java, f'({var_type}) _row.get("{vn}")')
+                        into_targets_full = _extract_all_into_targets(into_targets)
+                        for field_name, full_parts in into_targets_full:
+                            if len(full_parts) >= 2:
+                                map_var = snake_to_camel(full_parts[0])
+                                vn_java = snake_to_camel(field_name)
+                                var_type = _java_type_from_field_name(field_name) if _java_type_from_field_name(field_name) != "Object" else "Object"
+                                cast = f"({var_type}) " if var_type != "Object" else ""
+                                _emit_assignment(proc, f'__MAP_PUT__{map_var}__{field_name}', f'{cast}_row.get("{field_name}")')
+                            else:
+                                var_type = proc.local_vars.get(field_name, "Object")
+                                vn_java = snake_to_camel(field_name)
+                                _emit_assignment(proc, vn_java, f'({var_type}) _row.get("{field_name}")')
                     else:
-                        _emit_assignment(proc, var_java, f'mapper.{mapper_method}({_build_param_args(proc.parameters)})')
+                        into_targets_full = _extract_all_into_targets(into_targets)
+                        if into_targets_full and len(into_targets_full[0][1]) >= 2:
+                            full_parts = into_targets_full[0][1]
+                            map_var = snake_to_camel(full_parts[0])
+                            result_type = "Map<String, Object>"
+                            proc.java_logic_lines.append(
+                                f'Map<String, Object> _row = mapper.{mapper_method}({_build_param_args(proc.parameters)});'
+                            )
+                            _emit_assignment(proc, f'__MAP_PUT__{map_var}__{first_var}', f'_row.get("{first_var}")')
+                        else:
+                            _emit_assignment(proc, var_java, f'mapper.{mapper_method}({_build_param_args(proc.parameters)})')
                     proc.dml_statements.append(DmlStatement(
                         sql_type=sql_type,
                         method_id=mapper_method,
@@ -2263,12 +2388,29 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                 proc.java_logic_lines.append(
                     f'Map<String, Object> _row = mapper.{mapper_method}({_build_param_args(proc.parameters)});'
                 )
-                for vn in var_names:
-                    var_type = proc.local_vars.get(vn, "Object")
-                    vn_java = snake_to_camel(vn)
-                    _emit_assignment(proc, vn_java, f'({var_type}) _row.get("{vn}")')
+                into_targets_full = _extract_all_into_targets(into_targets)
+                for field_name, full_parts in into_targets_full:
+                    if len(full_parts) >= 2:
+                        map_var = snake_to_camel(full_parts[0])
+                        var_type = _java_type_from_field_name(field_name) if _java_type_from_field_name(field_name) != "Object" else "Object"
+                        cast = f"({var_type}) " if var_type != "Object" else ""
+                        _emit_assignment(proc, f'__MAP_PUT__{map_var}__{field_name}', f'{cast}_row.get("{field_name}")')
+                    else:
+                        var_type = proc.local_vars.get(field_name, "Object")
+                        vn_java = snake_to_camel(field_name)
+                        _emit_assignment(proc, vn_java, f'({var_type}) _row.get("{field_name}")')
             else:
-                _emit_assignment(proc, var_java, f'mapper.{mapper_method}({_build_param_args(proc.parameters)})')
+                into_targets_full = _extract_all_into_targets(into_targets)
+                if into_targets_full and len(into_targets_full[0][1]) >= 2:
+                    full_parts = into_targets_full[0][1]
+                    map_var = snake_to_camel(full_parts[0])
+                    result_type = "Map<String, Object>"
+                    proc.java_logic_lines.append(
+                        f'Map<String, Object> _row = mapper.{mapper_method}({_build_param_args(proc.parameters)});'
+                    )
+                    _emit_assignment(proc, f'__MAP_PUT__{map_var}__{first_var}', f'_row.get("{first_var}")')
+                else:
+                    _emit_assignment(proc, var_java, f'mapper.{mapper_method}({_build_param_args(proc.parameters)})')
             proc.dml_statements.append(DmlStatement(
                 sql_type=sql_type,
                 method_id=mapper_method,
@@ -2722,6 +2864,22 @@ _STRING_FUNC_RETURN = {
 }
 
 
+def _java_type_from_field_name(field_name: str) -> str:
+    """Infer Java type from a composite type field name (heuristic)."""
+    col = field_name.lower()
+    if any(s in col for s in ("name", "txt", "text", "info", "desc", "msg", "remark", "comment", "label", "status", "code", "type", "flag")):
+        return "String"
+    if any(s in col for s in ("id", "no", "seq")):
+        return "Long"
+    if any(s in col for s in ("amount", "balance", "price", "qty", "quantity", "total", "salary")):
+        return "java.math.BigDecimal"
+    if any(s in col for s in ("count", "cnt", "num")):
+        return "Integer"
+    if any(s in col for s in ("date", "time", "stamp")):
+        return "java.sql.Timestamp"
+    return "Object"
+
+
 def _infer_expr_type(expr, proc: ProcedureInfo) -> str:
     """Infer the Java type of an AST expression."""
     if expr is None:
@@ -2739,6 +2897,16 @@ def _infer_expr_type(expr, proc: ProcedureInfo) -> str:
         if key in ("PlVariable", "ColumnRef"):
             parts = val if isinstance(val, list) else [val]
             name = parts[-1] if parts else ""
+            # Multi-part: composite/ROWTYPE/RECORD field access
+            if len(parts) >= 2:
+                var_name_raw = parts[0]
+                field_name = parts[-1]
+                if var_name_raw in proc.local_vars:
+                    var_type = proc.local_vars[var_name_raw]
+                    if var_type == "Map<String, Object>":
+                        return _java_type_from_field_name(field_name)
+                # RECORD loop variable or undeclared Map — infer from field name
+                return _java_type_from_field_name(field_name)
             if name in proc.local_vars:
                 return proc.local_vars[name]
             for p in proc.parameters:
@@ -2911,6 +3079,18 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                         return f'/* NEXTVAL: use sequence query for {seq_name} */ null'
                     else:
                         return f'/* CURRVAL: use sequence query for {seq_name} */ null'
+            # Multi-part ColumnRef: composite/ROWTYPE/RECORD field access
+            # e.g. ["v_emp", "status"] → vEmp.get("status")
+            if len(parts) >= 2 and proc is not None:
+                var_name_raw = parts[0]
+                field_name = parts[-1]
+                var_java = snake_to_camel(var_name_raw)
+                var_type = proc.local_vars.get(var_name_raw, "")
+                if var_type in ("Map<String, Object>", "Object") or var_name_raw not in proc.local_vars:
+                    field_key = field_name.lower()
+                    if not as_read:
+                        return f'__MAP_PUT__{var_java}__{field_key}'
+                    return f'{var_java}.get("{field_key}")'
             java_name = snake_to_camel(name)
             if as_read and proc is not None:
                 for p in proc.parameters:
@@ -2958,6 +3138,16 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     right = f"Long.valueOf({right})"
                     right_type = "Long"
 
+                # Cast .get() field access results for typed comparisons
+                if ".get(" in left and "BigDecimal" in left_type:
+                    left = f"((java.math.BigDecimal) {left})"
+                elif ".get(" in left and left_type == "Integer":
+                    left = f"((Integer) {left})"
+                if ".get(" in right and "BigDecimal" in right_type:
+                    right = f"((java.math.BigDecimal) {right})"
+                elif ".get(" in right and right_type == "Integer":
+                    right = f"((Integer) {right})"
+
                 is_bd = "BigDecimal" in left_type or "BigDecimal" in right_type
                 is_str = left_type == "String" or right_type == "String"
 
@@ -2983,6 +3173,8 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     arith_map = {"+": "add", "-": "subtract", "*": "multiply", "/": "divide"}
                     method = arith_map[op]
                     if _is_numeric_literal(val.get("right")):
+                        right = f"java.math.BigDecimal.valueOf({right})"
+                    elif "BigDecimal" not in right_type:
                         right = f"java.math.BigDecimal.valueOf({right})"
                     return f"{left}.{method}({right})"
 
@@ -3017,6 +3209,11 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
 
             if func_name_lower in SQL_FUNCTION_MAP:
                 mapped = SQL_FUNCTION_MAP[func_name_lower]
+                if func_name_lower == "coalesce" and len(args_java) >= 2:
+                    first_type = _infer_expr_type(val.get("args", [{}])[0], proc) if val.get("args") else "Object"
+                    if "BigDecimal" in first_type:
+                        args_java = [(a if a != "0" else "java.math.BigDecimal.ZERO") for a in args_java]
+                        args_str = ", ".join(args_java)
                 tpl_args = {
                     "args": args_str,
                     "args0": args_java[0] if len(args_java) > 0 else "",
@@ -3041,19 +3238,82 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 else:
                     return f"{mapped}({args_str})"
             else:
+                # Determine if this is a self-call (same package) for param-type-aware wrapping
+                self_call_pkg = None
+                self_call_func = func_name
                 if proc and len(name_parts) == 1:
-                    target_proc = _find_target_proc(proc.package, func_name, all_packages) if proc.package else None
+                    self_call_pkg = proc.package
+                elif proc and len(name_parts) >= 2:
+                    candidate_pkg = name_parts[-2]
+                    matched = _find_registered_pkg(candidate_pkg, all_packages)
+                    if matched and matched.lower() == proc.package.lower():
+                        self_call_pkg = proc.package
+                        self_call_func = name_parts[-1]
+                    else:
+                        # Cross-package call - also check target proc params for .get() args
+                        if matched:
+                            target_proc = _find_target_proc(matched, name_parts[-1], all_packages)
+                            if target_proc:
+                                method = java_method_name(name_parts[-1])
+                                wrapped_args = []
+                                for i, a_java in enumerate(args_java):
+                                    if i < len(target_proc.parameters):
+                                        target_type = target_proc.parameters[i].java_type
+                                        if ".get(" in a_java and target_type not in ("Object", "Map<String, Object>"):
+                                            if target_type == "long":
+                                                wrapped_args.append(f"((Number) {a_java}).longValue()")
+                                            elif target_type == "Long":
+                                                wrapped_args.append(f"((Number) {a_java}).longValue()")
+                                            elif target_type == "int":
+                                                wrapped_args.append(f"((Number) {a_java}).intValue()")
+                                            elif target_type == "Integer":
+                                                wrapped_args.append(f"((Number) {a_java}).intValue()")
+                                            elif "BigDecimal" in target_type:
+                                                wrapped_args.append(f"((java.math.BigDecimal) {a_java})")
+                                            elif target_type == "String":
+                                                wrapped_args.append(f"(String) {a_java}")
+                                            else:
+                                                wrapped_args.append(f"({target_type}) {a_java}")
+                                        else:
+                                            wrapped_args.append(a_java)
+                                    else:
+                                        wrapped_args.append(a_java)
+                                svc_name = f"{package_to_classname(matched).lower()}Service"
+                                proc.service_calls.append(ServiceCall(svc_name, method, [], package_name=matched))
+                                return f"{svc_name}.{method}({', '.join(wrapped_args)})"
+                if self_call_pkg:
+                    target_proc = _find_target_proc(self_call_pkg, self_call_func, all_packages)
                     if target_proc:
-                        method = java_method_name(func_name)
+                        method = java_method_name(self_call_func)
                         wrapped_args = []
                         for i, a_java in enumerate(args_java):
-                            if i < len(target_proc.parameters) and "BigDecimal" in target_proc.parameters[i].java_type and _is_numeric_literal_expr(a_java):
-                                wrapped_args.append(f"java.math.BigDecimal.valueOf({a_java})")
+                            if i < len(target_proc.parameters):
+                                target_type = target_proc.parameters[i].java_type
+                                if "BigDecimal" in target_type and _is_numeric_literal_expr(a_java):
+                                    wrapped_args.append(f"java.math.BigDecimal.valueOf({a_java})")
+                                elif ".get(" in a_java and target_type not in ("Object", "Map<String, Object>"):
+                                    # RECORD field access returns Object; cast to target param type
+                                    if target_type == "long":
+                                        wrapped_args.append(f"((Number) {a_java}).longValue()")
+                                    elif target_type == "Long":
+                                        wrapped_args.append(f"((Number) {a_java}).longValue()")
+                                    elif target_type == "int":
+                                        wrapped_args.append(f"((Number) {a_java}).intValue()")
+                                    elif target_type == "Integer":
+                                        wrapped_args.append(f"((Number) {a_java}).intValue()")
+                                    elif "BigDecimal" in target_type:
+                                        wrapped_args.append(f"((java.math.BigDecimal) {a_java})")
+                                    elif target_type == "String":
+                                        wrapped_args.append(f"(String) {a_java}")
+                                    else:
+                                        wrapped_args.append(f"({target_type}) {a_java}")
+                                else:
+                                    wrapped_args.append(a_java)
                             else:
                                 wrapped_args.append(a_java)
                         return f"this.{method}({', '.join(wrapped_args)})"
                 _record_unsupported(func_name, proc)
-                return f"/* UNSUPPORTED: {func_name}({args_str}) */ {snake_to_camel(func_name)}({args_str})"
+                return f"/* TODO: implement {func_name}({args_str}) */ ({snake_to_camel(func_name)}(/* {args_str} */))"
         elif key == "SpecialFunction":
             func_name = val.get("name", "").lower()
             handler = SPECIAL_FUNCTION_MAP.get(func_name)
@@ -3062,6 +3322,12 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             _record_unsupported(func_name, proc, is_special=True)
             args_java = [_expr_to_java(a, proc) for a in val.get("args", [])]
             return f"/* UNSUPPORTED: {func_name} — special syntax, no Java mapping */"
+        elif key == "IsNull":
+            inner = _expr_to_java(val.get("expr", {}), proc)
+            negated = val.get("negated", False)
+            if negated:
+                return f"{inner} != null"
+            return f"{inner} == null"
         elif key == "Parenthesized":
             return f"({_expr_to_java(val, proc)})"
         elif key == "Expr":
@@ -3184,6 +3450,22 @@ def _extract_all_into_variables(into_targets: list) -> list:
                             if ik in ("PlVariable", "ColumnRef"):
                                 name = iv[-1] if isinstance(iv, list) else iv
                                 result.append(name)
+    return result
+
+
+def _extract_all_into_targets(into_targets: list) -> list:
+    result = []
+    for target in into_targets:
+        for k, v in target.items():
+            if k == "Expr" and isinstance(v, list):
+                for item in v:
+                    if isinstance(item, dict):
+                        for ik, iv in item.items():
+                            if ik in ("PlVariable", "ColumnRef"):
+                                if isinstance(iv, list) and len(iv) >= 2:
+                                    result.append((iv[-1], list(iv)))
+                                elif isinstance(iv, str):
+                                    result.append((iv, [iv]))
     return result
 
 
@@ -3652,6 +3934,8 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
     all_body_text = ""
     for proc in pkg.procedures:
         all_body_text += " ".join(proc.java_logic_lines) + " "
+        for vn, vt in proc.local_vars.items():
+            all_body_text += vt + " "
         if proc.body and proc.body.get("exception_block"):
             for handler in (proc.body.get("exception_block") or {}).get("handlers", []):
                 for s in _iter_statements(handler.get("statements", [])):
@@ -3662,6 +3946,9 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
         all_imports.add("import java.util.List;")
     if "Map<String" in all_body_text:
         all_imports.add("import java.util.Map;")
+    if any("Map<String" in vt for proc in pkg.procedures for vn, vt in proc.local_vars.items()):
+        all_imports.add("import java.util.Map;")
+        all_imports.add("import java.util.HashMap;")
     if "AtomicReference<" in all_body_text or any(p.is_out for proc in pkg.procedures for p in proc.parameters):
         all_imports.add("import java.util.concurrent.atomic.AtomicReference;")
     if "Arrays.asList" in all_body_text:
@@ -3770,6 +4057,8 @@ def _default_for_type(java_type: str) -> str:
         return "0.0f"
     if "boolean" in t:
         return "false"
+    if t.startswith("map<"):
+        return "new HashMap<>()"
     return "null"
 
 
@@ -4009,6 +4298,14 @@ def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureI
             for m in matches:
                 if m not in declared_result_vars and m not in known_names:
                     issues += 1
+
+    # UNSUPPORTED function calls generate non-compilable placeholder code
+    if re.search(r'/\*\s*(UNSUPPORTED|TODO: implement)\b', all_text):
+        issues += 1
+
+    # GOTO conversions leave unreachable code after while(true) { continue; } with no break
+    if re.search(r'while\s*\(\s*true\s*\)', all_text) and 'continue;' in all_text and 'break;' not in all_text:
+        issues += 1
 
     return issues > 0
 
@@ -4250,14 +4547,85 @@ def _collect_all_dmls(pkg: PackageInfo) -> dict:
         in_param_count = sum(1 for param in p.parameters if not param.is_out)
         for dml in p.dml_statements:
             if dml.method_id not in all_dmls:
-                all_dmls[dml.method_id] = (dml.method_id, dml.sql_type, dml.result_type, dml.returns_list, in_param_count)
+                all_dmls[dml.method_id] = (dml.method_id, dml.sql_type, dml.result_type, dml.returns_list, in_param_count, dml.sql_text)
     return all_dmls
 
 
-def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bool, mapper_name: str, dml_method_id: str, method_any: str) -> str:
+def _extract_mock_fields_from_sql(sql_text: str) -> dict:
+    if not sql_text:
+        return {}
+    stripped = re.sub(r'--.*$', '', sql_text, flags=re.MULTILINE)
+    stripped = re.sub(r'/\*.*?\*/', '', stripped, flags=re.DOTALL)
+    m = re.match(r'select\s+(.*?)\s+from\b', stripped, re.IGNORECASE | re.DOTALL)
+    if not m:
+        return {}
+    col_clause = m.group(1).strip()
+    if col_clause == '*':
+        return {}
+    columns = []
+    for part in re.split(r',\s*', col_clause):
+        part = part.strip()
+        if not part:
+            continue
+        alias_match = re.match(r'.+\s+[Aa][Ss]\s+(\w+)\s*$', part)
+        if alias_match:
+            columns.append(alias_match.group(1).lower())
+            continue
+        if '.' in part:
+            continue
+        if '(' in part:
+            continue
+        if part.strip() == '*':
+            continue
+        columns.append(part.lower().strip())
+    fields = {}
+    for col in columns:
+        fields[col] = _mock_value_for_column(col)
+    return fields if fields else {}
+
+
+def _mock_value_for_column(col_name: str) -> str:
+    n = col_name.lower()
+    if "id" in n:
+        return "1L"
+    if any(k in n for k in ("salary", "amount", "price", "total", "balance", "cost")):
+        return "java.math.BigDecimal.TEN"
+    if any(k in n for k in ("name", "dept", "title", "label", "status", "desc")):
+        return "\"test\""
+    if any(k in n for k in ("count", "qty", "quantity", "num", "head_count")):
+        return "5"
+    if any(k in n for k in ("date", "time", "created", "updated")):
+        return "\"2025-01-01\""
+    return "1"
+
+
+def _extract_select_column(sql_text: str, index: int) -> str:
+    if not sql_text:
+        return "col"
+    stripped = re.sub(r'--.*$', '', sql_text, flags=re.MULTILINE)
+    stripped = re.sub(r'/\*.*?\*/', '', stripped, flags=re.DOTALL)
+    stripped = re.sub(r'\s+into\s+.*?(?=\s+from\b)', ' ', stripped, flags=re.IGNORECASE | re.DOTALL)
+    m = re.match(r'select\s+(.*?)\s+from\b', stripped, re.IGNORECASE | re.DOTALL)
+    if not m:
+        return "col"
+    cols = [c.strip() for c in re.split(r',\s*', m.group(1))]
+    if index >= len(cols):
+        return "col"
+    col = cols[index].strip()
+    alias_match = re.match(r'.+\s+[Aa][Ss]\s+(\w+)\s*$', col)
+    if alias_match:
+        return alias_match.group(1)
+    return col
+
+
+def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bool, mapper_name: str, dml_method_id: str, method_any: str, dml_sql_text: str = "") -> str:
     if dml_sql_type != "select":
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(1);"
     if dml_returns_list:
+        mock_fields = _extract_mock_fields_from_sql(dml_sql_text)
+        if mock_fields:
+            puts = " ".join(f'm.put("{k}", {v});' for k, v in mock_fields.items())
+            return f"        {{ var m = new java.util.HashMap<String,Object>(); {puts} when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of(m)); }}"
         return f"        {{ var m = new java.util.HashMap<String,Object>(); m.put(\"id\", 1L); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of(m)); }}"
     if dml_result_type == "Integer":
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(999);"
@@ -4269,13 +4637,17 @@ def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bo
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(true);"
     if dml_result_type and dml_result_type not in ("Map<String, Object>", "java.util.Map"):
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(null);"
+    mock_fields = _extract_mock_fields_from_sql(dml_sql_text)
+    if mock_fields:
+        puts = " ".join(f'm.put("{k}", {v});' for k, v in mock_fields.items())
+        return f"        {{ var m = new java.util.HashMap<String,Object>(); {puts} when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m); }}"
     return f"        {{ var m = new java.util.HashMap<String,Object>(); m.put(\"id\", 1L); m.put(\"product_id\", 1L); m.put(\"v_product_id\", 1L); m.put(\"v_qty\", 10); m.put(\"total\", 100); m.put(\"v_total\", 100); m.put(\"stock_qty\", 999); m.put(\"name\", \"test\"); m.put(\"status\", \"ACTIVE\"); m.put(\"v_status\", \"PENDING\"); m.put(\"v_amount\", java.math.BigDecimal.TEN); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m); }}"
 
 
 def _mock_all_mapper_methods(mapper_name: str, pkg: PackageInfo, lines: list, error_mode: bool = False):
     all_dmls = _collect_all_dmls(pkg)
     for dml_key, dml_info in all_dmls.items():
-        dml_method_id, dml_sql_type, dml_result_type, dml_returns_list, dml_param_count = dml_info
+        dml_method_id, dml_sql_type, dml_result_type, dml_returns_list, dml_param_count, dml_sql_text = dml_info
         method_any = ", ".join(["any()"] * dml_param_count) if dml_param_count > 0 else ""
         if error_mode and dml_sql_type == "select":
             if dml_returns_list:
@@ -4289,7 +4661,7 @@ def _mock_all_mapper_methods(mapper_name: str, pkg: PackageInfo, lines: list, er
             else:
                 lines.append(f"        {{ var m = new java.util.HashMap<String,Object>(); m.put(\"id\", 1L); m.put(\"product_id\", 1L); m.put(\"v_product_id\", 1L); m.put(\"v_qty\", 10); m.put(\"total\", 0); m.put(\"v_total\", 0); m.put(\"stock_qty\", 0); m.put(\"name\", \"\"); m.put(\"status\", \"REJECTED\"); m.put(\"v_status\", \"REJECTED\"); m.put(\"v_amount\", java.math.BigDecimal.ZERO); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m); }}")
         else:
-            lines.append(_mock_select_return(dml_sql_type, dml_result_type, dml_returns_list, mapper_name, dml_method_id, method_any))
+            lines.append(_mock_select_return(dml_sql_type, dml_result_type, dml_returns_list, mapper_name, dml_method_id, method_any, dml_sql_text))
 
 
 def _build_any_matchers(proc: ProcedureInfo) -> str:

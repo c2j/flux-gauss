@@ -22,6 +22,8 @@ sources:
   - demo-project/sql/pkg_builtin_funcs_test.sql
   - demo-project/sql/pkg_custom_funcs_test.sql
   - demo-project/sql/pkg_employee_comments.sql
+  - demo-project/sql/pkg_type_test.sql
+  - demo-project/sql/proc_GOto.sql
 
 java_packages:
   - package: com.demo.deposit
