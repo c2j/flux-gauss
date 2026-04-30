@@ -1,0 +1,29 @@
+output_dir: ./dest
+base_package: com.example.demo
+
+# Optional: database connection (used to generate application.yml)
+# database:
+#   url: jdbc:postgresql://localhost:5432/demo
+#   username: postgres
+#   password: postgres
+#   driver: org.postgresql.Driver
+
+sources:
+  - demo-project/sql/DB_LOG.sql
+  - demo-project/sql/PACK_LOG.sql
+  - demo-project/sql/pkg_common.sql
+  - demo-project/sql/pkg_order.sql
+  - demo-project/sql/pkg_inventory.sql
+  - demo-project/sql/pkg_product.sql
+  - demo-project/sql/pkg_payment.sql
+  - demo-project/sql/pkg_report.sql
+  - demo-project/sql/pkg_cursor_patterns.sql
+  - demo-project/sql/pkg_test_patterns.sql
+  - demo-project/sql/pkg_builtin_funcs_test.sql
+  - demo-project/sql/pkg_custom_funcs_test.sql
+
+java_packages:
+  - package: com.demo.deposit
+    sources:
+      - demo-project/sql/PKG_DEPOSIT_ACNT_INFO_INQUIRY.sql
+      - demo-project/sql/PKG_RPT_BATCH_DOWNLOAD.sql
