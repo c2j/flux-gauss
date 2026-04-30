@@ -289,6 +289,7 @@ TYPE_OVERRIDES = {
 UNRESOLVED_CALLS = []
 STUB_PROCEDURES = []
 UNSUPPORTED_FUNCTIONS = []
+TODO_SUMMARY = []  # Collects (category, proc_id, source_file, detail) for diagnostic
 _LOG_FH = None
 
 
@@ -331,6 +332,31 @@ def _close_log(output_dir: str):
         _LOG_FH = None
 
 
+_PROGRESS_TERMINAL_WIDTH = 72
+
+
+def _progress_bar(phase: str, current: int, total: int, status: str = ""):
+    if not sys.stdout.isatty():
+        return
+    pct = current / total if total > 0 else 0
+    filled = int(_PROGRESS_TERMINAL_WIDTH * pct)
+    bar = "█" * filled + "░" * (_PROGRESS_TERMINAL_WIDTH - filled)
+    line = f"\r  {phase} [{bar}] {current}/{total} {pct:5.1%}"
+    if status:
+        status = status[:40] + "…" if len(status) > 41 else status
+        line += f"  {status}"
+    sys.stdout.write(line)
+    sys.stdout.flush()
+
+
+def _progress_done(phase: str, total: int):
+    if not sys.stdout.isatty():
+        return
+    bar = "█" * _PROGRESS_TERMINAL_WIDTH
+    sys.stdout.write(f"\r  {phase} [{bar}] {total}/{total} 100.0%  ✓\n")
+    sys.stdout.flush()
+
+
 def _record_unsupported(func_name, proc, is_special=False):
     tag = "SpecialFunction" if is_special else "FunctionCall"
     proc_id = f"{proc.package}.{proc.proc_name}" if proc else "unknown"
@@ -338,6 +364,12 @@ def _record_unsupported(func_name, proc, is_special=False):
     entry = f"{proc_id} | {tag} | {func_name.lower()} | {src}"
     if entry not in UNSUPPORTED_FUNCTIONS:
         UNSUPPORTED_FUNCTIONS.append(entry)
+
+
+def _record_todo(category: str, proc, detail: str = ""):
+    proc_id = f"{proc.package}.{proc.proc_name}" if proc else "unknown"
+    src = proc.source_file if proc else ""
+    TODO_SUMMARY.append((category, proc_id, src, detail))
 
 
 def _infer_type_from_column_name(column_name: str) -> str:
@@ -475,6 +507,16 @@ class Parameter:
 
 
 @dataclass
+class CommentInfo:
+    """A single SQL comment with source position."""
+    text: str          # Original comment text, preserving -- or /* */ delimiters
+    line: int          # Start line (1-based)
+    end_line: int      # End line
+    column: int        # Column
+    comment_type: str  # "line" or "block"
+
+
+@dataclass
 class DmlStatement:
     sql_type: str
     method_id: str
@@ -520,9 +562,12 @@ class ProcedureInfo:
     open_cursors: dict = field(default_factory=dict)   # cursor_name -> {"result_var": str, "index_var": str}
     refcursor_out_params: set = field(default_factory=set)  # param names that are REFCURSOR OUT
     cursor_decls: dict = field(default_factory=dict)   # cursor_name -> parsed_query (from DECLARE section)
-    source_file: str = ""          # Original SQL file name (e.g., PKG_ORDER.sql)
+    source_file: str = ""          # Original SQL file name for display (e.g., PKG_ORDER.sql)
+    _source_path: str = ""         # Full path for file access (set by pipeline)
     source_start_line: int = 0     # Procedure start line in original file
     source_end_line: int = 0       # Procedure end line in original file
+    leading_comments: list = field(default_factory=list)   # List[CommentInfo] — comments before procedure declaration
+    inline_comments: list = field(default_factory=list)    # List[CommentInfo] — comments inside procedure body
 
 
 @dataclass
@@ -533,6 +578,7 @@ class PackageInfo:
     table_refs: set = field(default_factory=set)    # Tables referenced
     package_vars: dict = field(default_factory=dict)  # name -> {"java_type": ..., "default": ...}
     source_file: str = ""  # Original SQL file name
+    comments: list = field(default_factory=list)  # List[CommentInfo] — package-level comments not in any procedure
     java_package: str = ""  # Custom Java package override (empty = use BASE_PACKAGE)
 
 
@@ -582,11 +628,15 @@ class ConversionReport:
 # ── AST Parser ─────────────────────────────────────────────────
 
 def _split_sql_statements(sql_text: str) -> list:
+    """Split SQL text into individual statements. Returns list of (sql_text, start_line) tuples."""
     statements = []
     current = []
+    chunk_start_line = 1
+    current_line = 0
     in_dollar_quote = False
     dollar_tag = ""
     for line in sql_text.split('\n'):
+        current_line += 1
         if not in_dollar_quote:
             for tag_match in re.finditer(r'\$([A-Za-z_0-9]*)\$', line):
                 if not in_dollar_quote:
@@ -601,12 +651,23 @@ def _split_sql_statements(sql_text: str) -> list:
         if not in_dollar_quote and re.search(r'\$\$\s*LANGUAGE\s+PLPGSQL\s*;?\s*$', line, re.IGNORECASE):
             combined = '\n'.join(current).strip()
             if combined:
-                statements.append(combined)
+                first_content = chunk_start_line
+                for cl in current:
+                    if cl.strip():
+                        break
+                    first_content += 1
+                statements.append((combined, first_content))
             current = []
+            chunk_start_line = current_line + 1
     if current:
         combined = '\n'.join(current).strip()
         if combined:
-            statements.append(combined)
+            first_content = chunk_start_line
+            for cl in current:
+                if cl.strip():
+                    break
+                first_content += 1
+            statements.append((combined, first_content))
     return statements
 
 
@@ -619,26 +680,39 @@ def parse_sql_file(sql_path: str) -> dict:
 
     if len(stmts) <= 1:
         result = subprocess.run(
-            [OGSQL_BIN, "-f", sql_path, "parse", "-j"],
+            [OGSQL_BIN, "--comments", "-f", sql_path, "parse", "-j"],
             capture_output=True, text=True
         )
-        if result.returncode != 0:
+        if result.returncode != 0 or not result.stdout.strip().startswith("{"):
             _log(f"  [WARN] ogsql-parser returned {result.returncode}: {result.stderr}")
-        return json.loads(result.stdout)
+            result = subprocess.run(
+                [OGSQL_BIN, "-f", sql_path, "parse", "-j"],
+                capture_output=True, text=True
+            )
+        ast = json.loads(result.stdout)
+        ast["comments"] = _extract_comments_from_text(sql_text)
+        return ast
 
-    combined_ast = {"statements": [], "errors": []}
-    for i, stmt_sql in enumerate(stmts):
+    combined_ast = {"statements": [], "errors": [], "comments": []}
+    for i, (stmt_sql, start_line) in enumerate(stmts):
+        line_offset = start_line - 1
         tmp_path = os.path.join(tempfile.gettempdir(), f"fluxgauss_{os.getpid()}_{i}.sql")
         try:
             with open(tmp_path, 'w') as tf:
                 tf.write(stmt_sql)
             result = subprocess.run(
-                [OGSQL_BIN, "-f", tmp_path, "parse", "-j"],
+                [OGSQL_BIN, "--comments", "-f", tmp_path, "parse", "-j"],
                 capture_output=True, text=True, timeout=10,
             )
+            if result.returncode != 0 or not result.stdout.strip().startswith("{"):
+                result = subprocess.run(
+                    [OGSQL_BIN, "-f", tmp_path, "parse", "-j"],
+                    capture_output=True, text=True, timeout=10,
+                )
             if result.stdout.strip():
                 try:
                     stmt_ast = json.loads(result.stdout)
+                    _offset_lines_in_ast(stmt_ast, line_offset)
                     combined_ast["statements"].extend(stmt_ast.get("statements", []))
                     combined_ast["errors"].extend(stmt_ast.get("errors", []))
                 except json.JSONDecodeError:
@@ -649,7 +723,44 @@ def parse_sql_file(sql_path: str) -> dict:
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
 
+    combined_ast["comments"] = _extract_comments_from_text(sql_text)
     return combined_ast
+
+
+def _offset_lines_in_ast(ast: dict, offset: int):
+    """Shift all line numbers in an AST fragment by a fixed offset (for multi-statement merge)."""
+    if offset == 0:
+        return
+    for stmt in ast.get("statements", []):
+        for _key, val in stmt.items():
+            if isinstance(val, dict):
+                _offset_dict_lines(val, offset)
+        if "start_line" in stmt:
+            stmt["start_line"] += offset
+        if "end_line" in stmt:
+            stmt["end_line"] += offset
+    for c in ast.get("comments", []):
+        if "line" in c:
+            c["line"] += offset
+        if "end_line" in c:
+            c["end_line"] += offset
+
+
+def _offset_dict_lines(d: dict, offset: int):
+    """Recursively shift 'line' fields in a nested dict."""
+    if not isinstance(d, dict):
+        return
+    for key, val in d.items():
+        if key in ("line", "start_line", "end_line") and isinstance(val, int):
+            d[key] = val + offset
+        elif key == "span" and isinstance(val, dict):
+            _offset_dict_lines(val, offset)
+        elif isinstance(val, dict):
+            _offset_dict_lines(val, offset)
+        elif isinstance(val, list):
+            for item in val:
+                if isinstance(item, dict):
+                    _offset_dict_lines(item, offset)
 
 
 def extract_parameters(params_list: list) -> list:
@@ -769,6 +880,93 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
                         )
                         procedures.append(proc)
     return procedures, package_vars
+
+
+def _extract_comments_from_text(sql_text: str) -> list:
+    """Extract comments directly from SQL source text with accurate line numbers.
+
+    ogsql reports wrong line numbers for comments inside ``$$...$$`` bodies
+    (they are offset by the body length).  This function bypasses the problem
+    by scanning the raw SQL text with a regex, producing perfectly accurate
+    1-based line numbers for both ``--`` and ``/* */`` comments.
+    """
+    comments = []
+    for m in re.finditer(r'(--[^\n]*|/\*[\s\S]*?\*/)', sql_text):
+        start_pos = m.start()
+        end_pos = m.end()
+        start_line = sql_text[:start_pos].count('\n') + 1
+        end_line = sql_text[:end_pos].count('\n') + 1
+        raw = m.group(0)
+        comment_type = "block" if raw.startswith('/*') else "line"
+        # Strip leading whitespace (indentation) so text starts with -- or /*
+        text = raw.lstrip()
+        comments.append({
+            "text": text,
+            "line": start_line,
+            "end_line": end_line,
+            "type": comment_type,
+        })
+    return comments
+
+
+def extract_comments(ast: dict) -> list:
+    """Extract CommentInfo list from AST JSON comments array."""
+    comments = []
+    for c in ast.get("comments", []):
+        comments.append(CommentInfo(
+            text=c.get("text", ""),
+            line=c.get("line", 0),
+            end_line=c.get("end_line", 0),
+            column=c.get("column", 0),
+            comment_type=c.get("type", "line"),
+        ))
+    return comments
+
+
+def _map_comments_to_procedures(comments: list, procedures: list, source_file: str = ""):
+    """Assign comments to procedures based on line number proximity.
+
+    Rules:
+    - Comments between prev_proc end and current proc start → leading_comments
+    - Comments between proc start_line and end_line → inline_comments
+    - Comments not inside any procedure → returned as package-level comments
+    """
+    if not comments or not procedures:
+        return comments  # all become package-level
+
+    # Sort procedures by start line
+    sorted_procs = sorted(procedures, key=lambda p: p.source_start_line)
+
+    package_level = []
+
+    for comment in comments:
+        # Check if comment is inside any procedure body
+        target_proc = None
+        for proc in sorted_procs:
+            if proc.source_start_line <= comment.line <= proc.source_end_line:
+                target_proc = proc
+                break
+
+        if target_proc:
+            target_proc.inline_comments.append(comment)
+            continue
+
+        # Check if comment is a leading comment (before a procedure)
+        assigned = False
+        for idx, proc in enumerate(sorted_procs):
+            prev_end = 0
+            if idx > 0:
+                prev_end = sorted_procs[idx - 1].source_end_line
+
+            if prev_end < comment.line < proc.source_start_line:
+                proc.leading_comments.append(comment)
+                assigned = True
+                break
+
+        if not assigned:
+            package_level.append(comment)
+
+    return package_level
 
 
 _PROCEDURE_TYPES = {"CreateFunction", "CreateProcedure", "CreatePackageBody"}
@@ -972,14 +1170,182 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
     # Process body statements
     body_stmts = block.get("body", [])
     dml_counter = {}
+    stmt_checkpoints = []  # [(java_line_start_idx, java_line_end_idx), ...]
     for i, stmt in enumerate(_iter_statements(body_stmts)):
+        pre_idx = len(proc.java_logic_lines)
         try:
             _process_statement(stmt, proc, all_packages, dml_counter)
         except Exception as e:
             stmt_preview = str(stmt)[:120] if stmt else "<empty>"
             proc.java_logic_lines.append(f"// ERROR: 处理语句失败 - {str(e).replace('*/', '').replace(chr(10), ' ')}")
             _log(f"      ⚠ Statement error in {proc.name}: {e}\n        stmt: {stmt_preview}")
-            traceback.print_exc()
+            _log(traceback.format_exc(), to_stdout=False)
+        post_idx = len(proc.java_logic_lines)
+        if post_idx > pre_idx:
+            stmt_checkpoints.append((pre_idx, post_idx))
+
+    # Inject inline comments into method body at proportional positions
+    if proc.inline_comments and stmt_checkpoints:
+        _inject_inline_comments(proc, stmt_checkpoints)
+
+
+def _inject_inline_comments(proc: ProcedureInfo, checkpoints: list):
+    """Insert inline comments into java_logic_lines at the correct positions.
+
+    Strategy: read the original SQL file, find actual body statement boundaries
+    by scanning for semicolons between BEGIN and END, then map each comment to
+    the first statement whose SQL line is > comment line.
+    Falls back to proportional mapping when the source file is unavailable.
+    """
+    stmt_lines = _find_body_stmt_lines(proc)
+    sorted_comments = sorted(proc.inline_comments, key=lambda c: c.line)
+
+    groups = []
+    batch = [sorted_comments[0]]
+    for c in sorted_comments[1:]:
+        if c.line - batch[-1].end_line <= 2:
+            batch.append(c)
+        else:
+            groups.append(batch)
+            batch = [c]
+    groups.append(batch)
+
+    n_cp = len(checkpoints)
+    insertions = []
+    for group in groups:
+        last_comment_line = max(c.end_line for c in group)
+        cp_idx = _map_comment_to_checkpoint(
+            last_comment_line, stmt_lines, checkpoints, proc
+        )
+        java_lines = [_format_comment_for_java(c) for c in group]
+        java_lines = [l for l in java_lines if l]
+        if java_lines:
+            insertions.append((checkpoints[cp_idx][0], java_lines))
+
+    for insert_at, lines in sorted(insertions, key=lambda x: x[0], reverse=True):
+        for i, line in enumerate(lines):
+            proc.java_logic_lines.insert(insert_at + i, line)
+
+
+def _find_body_stmt_lines(proc: ProcedureInfo) -> list:
+    """Scan the original SQL file to find the starting line of each top-level body statement.
+
+    Returns a list of 1-based line numbers (one per body statement between
+    BEGIN and END), or an empty list on failure.  Block depth tracking ensures
+    semicolons inside IF/FOR/WHILE/LOOP sub-blocks are not counted.
+    """
+    path = proc._source_path or proc.source_file
+    if not path or not os.path.exists(path):
+        return []
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            lines = f.readlines()
+    except OSError:
+        return []
+
+    start = (proc.source_start_line or 1) - 1
+    end = proc.source_end_line or len(lines)
+
+    body_start = None
+    body_end = None
+    depth = 0
+    for i in range(start, min(end, len(lines))):
+        stripped = lines[i].strip().upper()
+        if stripped == 'BEGIN':
+            if body_start is None:
+                body_start = i + 1
+            depth += 1
+        elif stripped.startswith('END') and stripped.rstrip(';').strip() == 'END':
+            depth -= 1
+            if depth == 0:
+                body_end = i + 1
+                break
+
+    if body_start is None or body_end is None:
+        return []
+
+    stmt_lines = []
+    blk_depth = 0
+    for i in range(body_start, body_end):
+        stripped = lines[i].strip()
+        up = stripped.upper()
+
+        if re.match(r'END\s+IF\b', up) or re.match(r'END\s+LOOP\b', up):
+            blk_depth = max(0, blk_depth - 1)
+            continue
+        if up in ('END;', 'END'):
+            if blk_depth > 0:
+                blk_depth -= 1
+            continue
+
+        is_blk = False
+        if re.match(r'IF\s+', up) and 'THEN' in up:
+            is_blk = True
+        elif (re.match(r'FOR\s+', up) or re.match(r'WHILE\s+', up)) and 'LOOP' in up:
+            is_blk = True
+        elif up == 'LOOP':
+            is_blk = True
+
+        if is_blk:
+            if blk_depth == 0:
+                stmt_lines.append(i + 1)
+            blk_depth += 1
+            continue
+
+        if blk_depth > 0:
+            continue
+
+        in_str = False
+        in_bc = False
+        col = 0
+        found = False
+        while col < len(lines[i]):
+            ch = lines[i][col]
+            if in_bc:
+                if ch == '*' and col + 1 < len(lines[i]) and lines[i][col + 1] == '/':
+                    in_bc = False
+                    col += 1
+            elif in_str:
+                if ch == "'":
+                    in_str = False
+            elif ch == "'":
+                in_str = True
+            elif ch == '-' and col + 1 < len(lines[i]) and lines[i][col + 1] == '-':
+                break
+            elif ch == '/' and col + 1 < len(lines[i]) and lines[i][col + 1] == '*':
+                in_bc = True
+                col += 1
+            elif ch == ';':
+                found = True
+            col += 1
+        if found:
+            stmt_lines.append(i + 1)
+
+    return stmt_lines
+
+
+def _map_comment_to_checkpoint(comment_line: int, stmt_lines: list,
+                               checkpoints: list, proc: ProcedureInfo) -> int:
+    """Map a comment's SQL line to the index of the checkpoint it should precede."""
+    n_cp = len(checkpoints)
+    if n_cp == 0:
+        return 0
+
+    if stmt_lines:
+        for i, sl in enumerate(stmt_lines):
+            if sl > comment_line:
+                return min(i, n_cp - 1)
+        return n_cp - 1
+
+    span = proc.source_end_line - proc.source_start_line
+    if span <= 0:
+        return 0
+    rel = (comment_line - proc.source_start_line) / span
+    total = len(proc.java_logic_lines)
+    for i, (start, _) in enumerate(checkpoints):
+        if (start / total if total else 0) >= rel:
+            return i
+    return n_cp - 1
 
 
 def _iter_statements(stmts):
@@ -1041,8 +1407,34 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
             sql = stmt_data
             if isinstance(sql, str) and "call " in sql.lower():
                 _process_call_text(sql, proc, all_packages)
+        elif stmt_type == "Continue":
+            cond = stmt_data.get("condition")
+            if cond:
+                java_cond = _expr_to_java(cond, proc)
+                proc.java_logic_lines.append(f"if ({java_cond}) {{")
+                proc.java_logic_lines.append("    continue;")
+                proc.java_logic_lines.append("}")
+            else:
+                proc.java_logic_lines.append("continue;")
+        elif stmt_type == "Goto":
+            label = stmt_data.get("label", "unknown")
+            proc.java_logic_lines.append(f"// GOTO {label} — Java has no goto, manual refactor required")
+            _record_todo("GOTO", proc, f"label={label}")
+        elif stmt_type == "Case":
+            _process_case_stmt(stmt_data, proc, all_packages, dml_counter)
+        elif stmt_type == "Savepoint":
+            sp_name = stmt_data.get("name", "sp")
+            sp_java = snake_to_camel(sp_name)
+            proc.java_logic_lines.append(f"Savepoint {sp_java} = connection.setSavepoint(\"{sp_name}\");")
+            proc.imports.add("import java.sql.Savepoint;")
+        elif stmt_type == "ReturnQuery":
+            _process_return_query(stmt_data, proc, all_packages, dml_counter)
+        elif stmt_type == "ForAll":
+            proc.java_logic_lines.append(f"// TODO: FORALL — bulk operation requires manual implementation")
+            _record_todo("FORALL", proc, "bulk DML")
         else:
             proc.java_logic_lines.append(f"// TODO: unhandled PL/pgSQL statement type: {stmt_type}")
+            _record_todo("UNHANDLED_STMT", proc, str(stmt_type))
 
 
 def _dml_method_name(dml_type: str, proc_name: str, counter: dict) -> str:
@@ -1367,8 +1759,57 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
                 proc.java_logic_lines.append("}")
                 return
         proc.java_logic_lines.append(f"// TODO: FOR IN SELECT loop — query reconstruction failed")
+        _record_todo("FOR_QUERY_FAILED", proc, "parsed_query or sql reconstruction failed")
+    elif "Cursor" in kind:
+        cursor_info = kind["Cursor"]
+        cursor_expr = cursor_info.get("cursor_name", {})
+        cursor_name = _extract_name_from_expr(cursor_expr)
+
+        cursor_meta = (proc.open_cursors.get(cursor_name)
+                       or proc.open_cursors.get(cursor_name.lower()))
+
+        if cursor_meta:
+            result_var = cursor_meta["result_var"]
+            index_var = cursor_meta["index_var"]
+            proc.java_logic_lines.append(f"for (int {index_var} = 0; {index_var} < {result_var}.size(); {index_var}++) {{")
+            proc.java_logic_lines.append(f"    found = {index_var} < {result_var}.size();")
+            proc.java_logic_lines.append(f"    Map<String, Object> {var_java} = {result_var}.get({index_var});")
+            for s in _iter_statements(body_stmts):
+                _process_statement(s, proc, all_packages, dml_counter)
+            _indent_last_lines(proc, 1)
+            proc.java_logic_lines.append("}")
+        else:
+            cursor_decl = (proc.cursor_decls.get(cursor_name)
+                           or proc.cursor_decls.get(cursor_name.lower()))
+            if cursor_decl:
+                sql_text = _reconstruct_sql_from_ast(cursor_decl)
+                if sql_text:
+                    sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
+                    mapper_method = _dml_method_name("select", proc.proc_name, dml_counter)
+                    proc.dml_statements.append(DmlStatement(
+                        sql_type="select",
+                        method_id=mapper_method,
+                        sql_text=sql_text,
+                        result_type="Map<String, Object>",
+                        returns_list=True,
+                    ))
+                    proc.java_logic_lines.append(
+                        f"List<Map<String, Object>> {var_java}List = mapper.{mapper_method}({_build_param_args(proc.parameters)});"
+                    )
+                    proc.java_logic_lines.append(f"for (Map<String, Object> {var_java} : {var_java}List) {{")
+                    for s in _iter_statements(body_stmts):
+                        _process_statement(s, proc, all_packages, dml_counter)
+                    _indent_last_lines(proc, 1)
+                    proc.java_logic_lines.append("}")
+                else:
+                    proc.java_logic_lines.append(f"// TODO: FOR IN cursor '{cursor_name}' — query reconstruction failed")
+                    _record_todo("FOR_CURSOR_QUERY_FAILED", proc, cursor_name)
+            else:
+                proc.java_logic_lines.append(f"// TODO: FOR IN cursor '{cursor_name}' — cursor not tracked")
+                _record_todo("FOR_CURSOR_UNTRACKED", proc, cursor_name)
     else:
         proc.java_logic_lines.append(f"// TODO: FOR loop with unsupported kind: {list(kind.keys())}")
+        _record_todo("FOR_UNSUPPORTED_KIND", proc, str(list(kind.keys())))
 
 
 def _process_while(while_data: dict, proc: ProcedureInfo, all_packages: dict, dml_counter: dict):
@@ -1555,6 +1996,8 @@ def _find_registered_pkg(pkg: str, all_packages: dict):
 
 def _find_target_proc(pkg_name: str, proc_name: str, all_packages: dict):
     """Find a ProcedureInfo by package and procedure name for parameter type lookup."""
+    if not all_packages:
+        return None
     pkg = all_packages.get(pkg_name)
     if not pkg:
         return None
@@ -1665,6 +2108,65 @@ def _process_exit(exit_data: dict, proc: ProcedureInfo):
         proc.java_logic_lines.append("break;")
 
 
+def _process_case_stmt(case_data: dict, proc: ProcedureInfo, all_packages: dict, dml_counter: dict):
+    operand = _expr_to_java(case_data.get("expression", {}), proc)
+    whens = case_data.get("whens", [])
+    else_stmts = case_data.get("else_stmts", [])
+
+    first = True
+    for when in whens:
+        cond = _expr_to_java(when.get("condition", {}), proc)
+        keyword = "if" if first else "} else if"
+        proc.java_logic_lines.append(f"{keyword} ({operand}.equals({cond})) {{")
+        first = False
+        for s in _iter_statements(when.get("stmts", [])):
+            _process_statement(s, proc, all_packages, dml_counter)
+        _indent_last_lines(proc, 1)
+
+    if else_stmts:
+        proc.java_logic_lines.append("} else {")
+        for s in _iter_statements(else_stmts):
+            _process_statement(s, proc, all_packages, dml_counter)
+        _indent_last_lines(proc, 1)
+
+    if whens or else_stmts:
+        proc.java_logic_lines.append("}")
+
+
+def _process_return_query(rq_data: dict, proc: ProcedureInfo, all_packages: dict, dml_counter: dict):
+    if not proc.is_function:
+        proc.java_logic_lines.append("// TODO: RETURN QUERY in non-function context")
+        _record_todo("RETURN_QUERY_NON_FUNC", proc, "")
+        return
+
+    is_dynamic = rq_data.get("is_dynamic", False)
+    if not is_dynamic:
+        query = rq_data.get("query", "")
+        if query:
+            sql_text = _convert_placeholders_to_mybatis(query)
+            sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
+            sql_type = _detect_sql_type(sql_text)
+            mapper_method = _dml_method_name(sql_type, proc.proc_name, dml_counter)
+            ret_type = sql_type_to_java(proc.return_type) if proc.return_type else "Object"
+
+            proc.dml_statements.append(DmlStatement(
+                sql_type=sql_type,
+                method_id=mapper_method,
+                sql_text=sql_text,
+                result_type=f"List<{ret_type}>",
+                returns_list=True,
+            ))
+            proc.java_logic_lines.append(f"return mapper.{mapper_method}({_build_param_args(proc.parameters)});")
+        else:
+            proc.java_logic_lines.append("// TODO: RETURN QUERY — empty query")
+            _record_todo("RETURN_QUERY_EMPTY", proc, "")
+    else:
+        dynamic_expr = rq_data.get("dynamic_expr", {})
+        var_name = _extract_var_name_from_expr(dynamic_expr)
+        proc.java_logic_lines.append(f"// TODO: RETURN QUERY EXECUTE — dynamic SQL: {var_name}")
+        _record_todo("RETURN_QUERY_DYNAMIC", proc, f"var={var_name}")
+
+
 def _extract_var_name_from_expr(expr: dict) -> str:
     if not isinstance(expr, dict):
         return ""
@@ -1743,6 +2245,7 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
 
     if not sql_text:
         proc.java_logic_lines.append(f"// TODO: EXECUTE {var_name} — could not resolve SQL string")
+        _record_todo("EXECUTE_UNRESOLVED", proc, f"var={var_name}")
         return
 
     sql_text = _convert_placeholders_to_mybatis(sql_text)
@@ -2017,7 +2520,7 @@ def _sf_substr(val, proc, _expr_to_java_fn):
     if len(args_java) >= 3:
         start = args_java[1]
         length = args_java[2]
-        return f"String.valueOf({s}).substring(Math.max(0, ({start}) - 1), Math.max(0, ({start}) - 1) + ({length}))"
+        return f"String.valueOf({s}).substring(Math.max(0, ({start}) - 1), Math.min(String.valueOf({s}).length(), Math.max(0, ({start}) - 1) + ({length})))"
     elif len(args_java) == 2:
         start = args_java[1]
         return f"String.valueOf({s}).substring(Math.max(0, ({start}) - 1))"
@@ -2690,12 +3193,10 @@ def _build_param_args(params: list) -> str:
 
 # ── Code Generation ────────────────────────────────────────────
 
-def generate_project(output_dir: str, packages: list, changed_packages: set = None, config: dict = None):
-    """Generate complete Spring Boot project.
-
-    If changed_packages is provided (set of package names), only regenerate those packages.
-    Project skeleton files are written only if they don't already exist.
-    """
+def generate_project(output_dir: str, packages: list, changed_packages: set = None,
+                     config: dict = None, progress_cb=None):
+    if changed_packages is not None and not changed_packages:
+        return
     base_path = Path(output_dir)
     base_path.mkdir(parents=True, exist_ok=True)
 
@@ -2715,9 +3216,12 @@ def generate_project(output_dir: str, packages: list, changed_packages: set = No
             out_count = sum(1 for param in proc.parameters if param.is_out)
             svc_method_param_counts[(svc_var, mname)] = (in_count + out_count, proc.is_function)
 
-    for pkg in packages:
-        if changed_packages is not None and pkg.package_name not in changed_packages:
-            continue
+    active_pkgs = [pkg for pkg in packages
+                   if changed_packages is None or pkg.package_name in changed_packages]
+    n_gen = len(active_pkgs)
+    for idx, pkg in enumerate(active_pkgs, 1):
+        if progress_cb:
+            progress_cb("pkg", idx, n_gen, pkg.package_name)
         service_injections = _collect_service_injections(pkg)
 
         _write_mapper_interface(base_path, pkg)
@@ -2964,7 +3468,12 @@ def _build_mapper_method(proc: ProcedureInfo, dml: DmlStatement, imports: set) -
         ret = "void"
 
     source_info = f"// {proc.source_file}:{proc.source_start_line} — {proc.name}" if proc.source_file else ""
-    prefix = f"    {source_info}\n    " if source_info else "    "
+    comment_lines = ""
+    for c in proc.leading_comments:
+        formatted = _format_comment_for_java(c)
+        if formatted:
+            comment_lines += f"    {formatted}\n"
+    prefix = f"    {source_info}\n{comment_lines}    " if source_info else f"{comment_lines}    "
     return f"{prefix}{ret} {method_name}({params_str});"
 
 
@@ -3070,6 +3579,10 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
     xml_parts = []
     source_info = f"Source: {proc.source_file}:{proc.source_start_line}-{proc.source_end_line} — {proc.name}.{dml.method_id}" if proc.source_file else f"Source: {proc.name}.{dml.method_id}"
     xml_parts.append(f"<!-- {source_info} -->")
+    for c in proc.leading_comments:
+        formatted = _format_comment_for_java(c)
+        if formatted:
+            xml_parts.append(f"<!-- {formatted.lstrip('/ ').strip()} -->")
     if filter_line:
         xml_parts.append(filter_line)
     xml_parts.append(f'<{tag} id="{dml.method_id}"{params_attrs}{result_type_attr}>')
@@ -3184,6 +3697,10 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
     lines.append("@Service")
     if pkg.source_file:
         lines.append(f"// Source: {pkg.source_file}")
+    for c in pkg.comments:
+        formatted = _format_comment_for_java(c)
+        if formatted:
+            lines.append(formatted)
     lines.append(f"public class {class_name} {{")
     logger_cfg = _get_logger_config()
     lines.append(f"    {logger_cfg['declaration'].format(class_name=class_name)}")
@@ -3254,6 +3771,17 @@ def _default_for_type(java_type: str) -> str:
     if "boolean" in t:
         return "false"
     return "null"
+
+
+def _format_comment_for_java(comment) -> str:
+    """Format a SQL CommentInfo as a Java comment line."""
+    text = comment.text
+    if text.startswith('--'):
+        text = text[2:].strip()
+    elif text.startswith('/*') and text.endswith('*/'):
+        text = text[2:-2].strip()
+        text = ' '.join(line.strip() for line in text.split('\n') if line.strip())
+    return f"// {text}" if text else ""
 
 
 def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: dict = None) -> str:
@@ -3423,8 +3951,13 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
     method_lines = []
     source_info = f"{proc.source_file}:{proc.source_start_line}-{proc.source_end_line}" if proc.source_file else ""
     method_lines.append(f"    // Source: {proc.name} ({'FUNCTION' if proc.is_function else 'PROCEDURE'}) — {source_info}")
+    for c in proc.leading_comments:
+        formatted = _format_comment_for_java(c)
+        if formatted:
+            method_lines.append(f"    {formatted}")
     if has_complex_issues:
         method_lines.append("    // TODO: Complex PL/pgSQL pattern requires manual review")
+        _record_todo("COMPLEX_REVIEW", proc, "generated code failed compilation checks → stub")
     if proc.is_autonomous:
         method_lines.append("    @Transactional(propagation = Propagation.REQUIRES_NEW)")
     elif has_dml:
@@ -3481,6 +4014,7 @@ def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureI
 
 
 def _generate_stub_body(proc: ProcedureInfo, out_params: list) -> list:
+    _record_todo("AUTO_STUB", proc, "complex PL/pgSQL pattern → stub body")
     lines = ["// TODO: Auto-generated stub — complex PL/pgSQL pattern requires manual implementation"]
     for p in out_params:
         lines.append(f"{p.java_name}.set(null);")
@@ -3576,6 +4110,10 @@ def _write_service_test(base_path: Path, pkg: PackageInfo, service_injections: d
     lines.append("@MockitoSettings(strictness = Strictness.LENIENT)")
     if pkg.source_file:
         lines.append(f"// Source: {pkg.source_file}")
+    for c in pkg.comments:
+        formatted = _format_comment_for_java(c)
+        if formatted:
+            lines.append(formatted)
     lines.append(f"class {test_class_name} {{")
     lines.append("")
     lines.append(f"    @Mock")
@@ -4035,6 +4573,8 @@ def _render_report_markdown(report: ConversionReport) -> str:
     lines.append(f"| ❌ 解析错误 | {len(report.parse_errors)} |")
     if report.unresolved_calls:
         lines.append(f"| ⚠️ 未解析的跨包调用 | {len(report.unresolved_calls)} |")
+    if TODO_SUMMARY:
+        lines.append(f"| 🔍 TODO 待处理 | {len(TODO_SUMMARY)} |")
     lines.append("")
 
     if report.procedure_mappings:
@@ -4168,6 +4708,78 @@ def _render_report_markdown(report: ConversionReport) -> str:
             fn = parts[2] if len(parts) > 2 else ""
             src = parts[3] if len(parts) > 3 else ""
             lines.append(f"| `{proc_id}` | {tag} | `{fn}` | {src} |")
+        lines.append("")
+
+    if TODO_SUMMARY:
+        lines.append("---")
+        lines.append("")
+        lines.append("## 🔍 TODO 诊断摘要")
+        lines.append("")
+
+        from collections import Counter as _Counter
+        cat_counts = _Counter(cat for cat, _, _, _ in TODO_SUMMARY)
+        cat_detail_counts = _Counter((cat, detail) for cat, _, _, detail in TODO_SUMMARY)
+
+        CATEGORY_META = {
+            "UNHANDLED_STMT": ("未处理的语句类型", "PL/pgSQL 语句类型在转换器中无对应处理器"),
+            "FOR_UNSUPPORTED_KIND": ("FOR 循环未知类型", "FOR 循环的 kind 不在 Range/Query 之中"),
+            "FOR_QUERY_FAILED": ("FOR 查询重建失败", "FOR IN SELECT 的 SQL 无法从 AST 还原"),
+            "EXECUTE_UNRESOLVED": ("EXECUTE 动态 SQL 未解析", "动态 SQL 变量无法追踪到完整 SQL 字符串"),
+            "AUTO_STUB": ("自动 Stub", "生成代码未通过编译检查，方法体被替换为 Stub"),
+            "COMPLEX_REVIEW": ("复杂模式需审查", "同 AUTO_STUB，为方法级注释标记"),
+        }
+
+        lines.append("### 按类别统计")
+        lines.append("")
+        lines.append("| 类别 | 说明 | 数量 |")
+        lines.append("|------|------|------|")
+        for cat, count in cat_counts.most_common():
+            meta = CATEGORY_META.get(cat, (cat, ""))
+            lines.append(f"| `{cat}` | {meta[1] if isinstance(meta, tuple) else meta} | {count} |")
+        lines.append("")
+
+        unhandled_details = {d: c for (cat, d), c in cat_detail_counts.items() if cat == "UNHANDLED_STMT"}
+        if unhandled_details:
+            lines.append("### UNHANDLED_STMT 详细分布（缺失的语句类型）")
+            lines.append("")
+            lines.append("| 语句类型 | 出现次数 |")
+            lines.append("|----------|----------|")
+            for detail, count in sorted(unhandled_details.items(), key=lambda x: -x[1]):
+                lines.append(f"| `{detail}` | {count} |")
+            lines.append("")
+
+        for_kind_details = {d: c for (cat, d), c in cat_detail_counts.items() if cat in ("FOR_UNSUPPORTED_KIND", "FOR_QUERY_FAILED")}
+        if for_kind_details:
+            lines.append("### FOR 循环问题详细分布")
+            lines.append("")
+            lines.append("| Kind 类型 | 出现次数 |")
+            lines.append("|-----------|----------|")
+            for detail, count in sorted(for_kind_details.items(), key=lambda x: -x[1]):
+                lines.append(f"| `{detail}` | {count} |")
+            lines.append("")
+
+        execute_details = {d: c for (cat, d), c in cat_detail_counts.items() if cat == "EXECUTE_UNRESOLVED"}
+        if execute_details:
+            lines.append("### EXECUTE 动态 SQL 问题分布")
+            lines.append("")
+            lines.append("| 变量 | 出现次数 |")
+            lines.append("|------|----------|")
+            for detail, count in sorted(execute_details.items(), key=lambda x: -x[1]):
+                lines.append(f"| `{detail}` | {count} |")
+            lines.append("")
+
+        lines.append("### 按存储过程分布")
+        lines.append("")
+        proc_counts = _Counter(proc_id for _, proc_id, _, _ in TODO_SUMMARY)
+        lines.append("| 存储过程 | TODO 数量 | 源文件 |")
+        lines.append("|----------|-----------|--------|")
+        proc_src = {}
+        for _, proc_id, src, _ in TODO_SUMMARY:
+            proc_src[proc_id] = src
+        for proc_id, count in proc_counts.most_common(50):
+            lines.append(f"| `{proc_id}` | {count} | `{proc_src.get(proc_id, '')}` |")
+        if len(proc_counts) > 50:
+            lines.append(f"| ... | ... | （共 {len(proc_counts)} 个过程，仅显示前 50） |")
         lines.append("")
 
     lines.append("---")
@@ -4349,9 +4961,14 @@ def main():
                     if src not in sql_files:
                         sql_files.append(src)
 
-    for f in sql_files:
-        if not os.path.exists(f):
-            print(f"Error: source file not found: {f}")
+    missing_files = [f for f in sql_files if not os.path.exists(f)]
+    if missing_files:
+        for f in missing_files:
+            _log(f"  ⚠ Source file not found, skipping: {f}")
+            parse_errors_map[f] = [{"parse_error": f"file not found: {f}"}]
+        sql_files = [f for f in sql_files if os.path.exists(f)]
+        if not sql_files:
+            _log(f"  ❌ No valid source files. Exiting.")
             sys.exit(1)
 
     # ── Incremental: hash comparison ──
@@ -4394,64 +5011,77 @@ def main():
     sql_file_to_pkg = {}
     all_skipped = []
     parse_errors_map = {}
+    n_sql = len(sql_files)
 
-    for sql_file in sql_files:
+    for idx, sql_file in enumerate(sql_files, 1):
+        basename = os.path.basename(sql_file)
         try:
             if sql_file not in changed_files and not full_regen:
                 cached_ast = _load_cached_ast(output_dir, sql_file)
                 if cached_ast:
                     ast = cached_ast
-                    _log(f"  Cached: {os.path.basename(sql_file)}")
+                    _progress_bar("Parse", idx, n_sql, f"Cached {basename}")
+                    _log(f"  Cached: {basename}", to_stdout=False)
                 else:
                     changed_files.add(sql_file)
                     full_regen = len(changed_files) == len(sql_files)
 
             if sql_file in changed_files or full_regen:
-                _log(f"  Parsing: {os.path.basename(sql_file)}")
+                _progress_bar("Parse", idx, n_sql, f"Parsing {basename}")
+                _log(f"  Parsing: {basename}", to_stdout=False)
                 ast = parse_sql_file(sql_file)
                 _save_cached_ast(output_dir, sql_file, ast)
 
             errors = ast.get("errors", [])
             if errors:
-                _log(f"    ⚠ {len(errors)} parse error(s)")
-                parse_errors_map[os.path.basename(sql_file)] = errors
+                _log(f"    ⚠ {len(errors)} parse error(s)", to_stdout=False)
+                parse_errors_map[basename] = errors
 
-            skipped = extract_non_procedure_statements(ast, source_file=os.path.basename(sql_file))
+            skipped = extract_non_procedure_statements(ast, source_file=basename)
             if skipped:
                 all_skipped.extend(skipped)
 
-            procedures, pkg_vars = extract_procedures(ast, source_file=os.path.basename(sql_file))
+            procedures, pkg_vars = extract_procedures(ast, source_file=basename)
+            for p in procedures:
+                p._source_path = sql_file
+            comments = extract_comments(ast)
+            pkg_level_comments = _map_comments_to_procedures(comments, procedures, source_file=basename)
             if not procedures:
-                _log(f"    (no procedures found)")
+                _log(f"    (no procedures found)", to_stdout=False)
                 continue
 
             pkg_name = procedures[0].package if procedures[0].package else Path(sql_file).stem
-            pkg = PackageInfo(package_name=pkg_name, procedures=procedures, package_vars=pkg_vars, source_file=os.path.basename(sql_file), java_package=sql_file_to_java_package.get(sql_file, ""))
+            pkg = PackageInfo(package_name=pkg_name, procedures=procedures, package_vars=pkg_vars, source_file=basename, java_package=sql_file_to_java_package.get(sql_file, ""), comments=pkg_level_comments)
             packages.append(pkg)
             all_package_names[pkg_name] = pkg
             sql_file_to_pkg[sql_file] = pkg_name
 
             for proc in procedures:
-                _log(f"    ✅ {'FUNCTION' if proc.is_function else 'PROCEDURE'}: {proc.name} ({len(proc.parameters)} params)")
+                _log(f"    ✅ {'FUNCTION' if proc.is_function else 'PROCEDURE'}: {proc.name} ({len(proc.parameters)} params)", to_stdout=False)
             if pkg.java_package:
-                _log(f"    📦 Java package: {pkg.java_package}")
+                _log(f"    📦 Java package: {pkg.java_package}", to_stdout=False)
         except Exception as e:
-            _log(f"  ❌ Error processing {os.path.basename(sql_file)}: {e}")
-            traceback.print_exc()
-            parse_errors_map[os.path.basename(sql_file)] = [{"parse_error": str(e)}]
+            _log(f"  ❌ Error processing {basename}: {e}", to_stdout=False)
+            _log(traceback.format_exc(), to_stdout=False)
+            parse_errors_map[basename] = [{"parse_error": str(e)}]
             continue
 
+    _progress_done("Parse", n_sql)
+
     # ── Phase 2: Analyze all procedures ──
-    _log(f"\n  Analyzing cross-package dependencies...")
-    for pkg in packages:
-        for proc in pkg.procedures:
-            try:
-                analyze_procedure(proc, all_package_names)
-            except Exception as e:
-                _log(f"    ❌ Error analyzing {proc.name}: {e}")
-                traceback.print_exc()
-                proc.java_logic_lines.append(f"// ERROR: 转换失败 - {e}")
-                STUB_PROCEDURES.add(proc.name)
+    all_procs = [(pkg, proc) for pkg in packages for proc in pkg.procedures]
+    n_analyze = len(all_procs)
+    _log(f"\n  Analyzing cross-package dependencies...", to_stdout=False)
+    for idx, (pkg, proc) in enumerate(all_procs, 1):
+        _progress_bar("Analyze", idx, n_analyze, proc.name)
+        try:
+            analyze_procedure(proc, all_package_names)
+        except Exception as e:
+            _log(f"    ❌ Error analyzing {proc.name}: {e}", to_stdout=False)
+            _log(traceback.format_exc(), to_stdout=False)
+            proc.java_logic_lines.append(f"// ERROR: 转换失败 - {e}")
+            STUB_PROCEDURES.append(proc.name)
+    _progress_done("Analyze", n_analyze)
 
     # ── Determine affected packages (changed + transitive dependents) ──
     if full_regen or not is_incremental:
@@ -4462,12 +5092,17 @@ def main():
         _log(f"\n  Incremental: regenerating {len(changed_pkg_names)}/{len(packages)} packages")
 
     # ── Phase 3: Generate ──
-    _log(f"\n  Generating Spring Boot project...")
+    _log(f"\n  Generating Spring Boot project...", to_stdout=False)
     try:
-        generate_project(output_dir, packages, changed_packages=changed_pkg_names, config=config)
+        generate_project(output_dir, packages, changed_packages=changed_pkg_names, config=config,
+                         progress_cb=lambda phase, i, n, s: (
+                             _progress_bar("Generate", i, n, s) if phase == "pkg" else None
+                         ))
+        _progress_done("Generate", len([p for p in packages
+                                        if changed_pkg_names is None or p.package_name in changed_pkg_names]))
     except Exception as e:
-        _log(f"  ❌ Error generating project: {e}")
-        traceback.print_exc()
+        _log(f"  ❌ Error generating project: {e}", to_stdout=False)
+        _log(traceback.format_exc(), to_stdout=False)
 
     _clean_stale_packages(output_dir, manifest, packages)
 
@@ -4490,6 +5125,7 @@ def main():
     report_paths = write_conversion_report(report, output_dir,
                                             report_file=args.report)
     UNSUPPORTED_FUNCTIONS.clear()
+    TODO_SUMMARY.clear()
 
     # ── Summary ──
     total_procs = sum(len(pkg.procedures) for pkg in packages)
@@ -4503,6 +5139,10 @@ def main():
     _log(f"    Cross-calls: {total_calls}")
     _log(f"    Test files:  {len(packages)} (generated unit tests)")
     _log(f"    Skipped:     {len(all_skipped)} (non-procedure SQL)")
+    if TODO_SUMMARY:
+        _log(f"    TODOs:       {len(TODO_SUMMARY)} (详见转换报告)")
+    _log(f"")
+    _log(f"    详细处理日志: {_cache_base(output_dir) / 'logs' / 'conversion-latest.log'}")
 
     if report_paths:
         _log(f"\n  📄 转换报告:")

@@ -5,3 +5,4 @@ demo-project/sql/PKG_DEPOSIT_ACNT_INFO_INQUIRY.sql
 demo-project/sql/DB_LOG.sql
 demo-project/sql/PKG_RPT_BATCH_DOWNLOAD.sql
 ogsql
+ogsql.broken

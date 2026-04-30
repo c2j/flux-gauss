@@ -21,6 +21,7 @@ sources:
   - demo-project/sql/pkg_test_patterns.sql
   - demo-project/sql/pkg_builtin_funcs_test.sql
   - demo-project/sql/pkg_custom_funcs_test.sql
+  - demo-project/sql/pkg_employee_comments.sql
 
 java_packages:
   - package: com.demo.deposit
