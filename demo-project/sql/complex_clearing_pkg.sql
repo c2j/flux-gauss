@@ -118,7 +118,7 @@ CREATE OR REPLACE PACKAGE BODY complex_clearing_pkg AS
     -- ============================================================
     -- 核心新增：递归验证（触发器内可能调用，形成调用链）
     -- ============================================================
-    FUNCTION recursive_validate(p_trade_id IN BIGINT, p_depth IN INT DEFAULT 0) RETURN VARCHAR(200) IS
+    FUNCTION recursive_validate(p_trade_id IN BIGINT, p_depth IN INT DEFAULT 0) RETURN VARCHAR IS
         v_parent_id BIGINT;
         v_chain TEXT := '';
         v_result VARCHAR(200);
