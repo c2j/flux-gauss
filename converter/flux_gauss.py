@@ -396,11 +396,12 @@ def _progress_bar(phase: str, current: int, total: int, status: str = ""):
     pct = current / total if total > 0 else 0
     filled = int(_PROGRESS_TERMINAL_WIDTH * pct)
     bar = "█" * filled + "░" * (_PROGRESS_TERMINAL_WIDTH - filled)
-    line = f"\r  {phase} [{bar}] {current}/{total} {pct:5.1%}"
+    label = f"{phase:<8}"
+    line = f"\r  {label} [{bar}] {current}/{total} {pct:5.1%}"
     if status:
         status = status[:40] + "…" if len(status) > 41 else status
-        line += f"  {status}"
-    sys.stdout.write(line)
+        line += f"  {status:<42}"
+    sys.stdout.write(f"\r{line:<120}")
     sys.stdout.flush()
 
 
@@ -408,7 +409,8 @@ def _progress_done(phase: str, total: int):
     if not sys.stdout.isatty():
         return
     bar = "█" * _PROGRESS_TERMINAL_WIDTH
-    sys.stdout.write(f"\r  {phase} [{bar}] {total}/{total} 100.0%  ✓\n")
+    label = f"{phase:<8}"
+    sys.stdout.write(f"\r  {label} [{bar}] {total}/{total} 100.0%  ✓\n")
     sys.stdout.flush()
 
 
@@ -838,7 +840,7 @@ def _read_sql_file(path: str) -> tuple[str, str]:
     with open(path, 'rb') as f:
         raw = f.read()
 
-    text = raw.decode('utf-8')
+    text = raw.decode('utf-8', errors='replace')
     if '\ufffd' not in text:
         return text, 'utf-8'
 
@@ -846,13 +848,13 @@ def _read_sql_file(path: str) -> tuple[str, str]:
         try:
             candidate = raw.decode(enc)
             if '\ufffd' not in candidate:
-                _log(f"  [INFO] Decoded {os.path.basename(path)} as {enc}")
+                _log(f"  [INFO] Decoded {os.path.basename(path)} as {enc}", to_stdout=False)
                 return candidate, enc
         except (UnicodeDecodeError, LookupError):
             pass
 
     ffds = text.count('\ufffd')
-    _log(f"  [WARN] {os.path.basename(path)}: {ffds} unrecoverable chars (encoding damaged in source)")
+    _log(f"  [WARN] {os.path.basename(path)}: {ffds} unrecoverable chars (encoding damaged in source)", to_stdout=False)
     return text, 'utf-8-damaged'
 
 
@@ -1473,6 +1475,155 @@ def _extract_dml_target_simple(stmt_data: dict) -> str:
 
 # ── DML / Logic Analyzer ──────────────────────────────────────
 
+def _promote_out_local_vars(proc: ProcedureInfo, all_packages: dict):
+    """Promote local var types to AtomicReference when used as OUT arg holders."""
+    if not proc.body:
+        return
+    local_var_names = {vn.lower(): vn for vn in proc.local_vars}
+    promotions = {}
+    body_stmts = proc.body.get("body", [])
+    _walk_stmts_for_out_promotions(body_stmts, proc, all_packages, local_var_names, promotions)
+    exc = proc.body.get("exception_block")
+    if isinstance(exc, dict):
+        for handler in exc.get("handlers", []):
+            if isinstance(handler, dict):
+                h_stmts = handler.get("body", [])
+                if isinstance(h_stmts, list):
+                    _walk_stmts_for_out_promotions(h_stmts, proc, all_packages, local_var_names, promotions)
+    for var_lower, new_type in promotions.items():
+        orig_name = local_var_names[var_lower]
+        old_type = proc.local_vars[orig_name]
+        if old_type != new_type:
+            proc.local_vars[orig_name] = new_type
+            proc.local_var_defaults.pop(orig_name, None)
+            var_java = snake_to_camel(orig_name)
+            patched = []
+            for line in proc.java_logic_lines:
+                patched.append(_patch_promoted_var_reads(line, var_java))
+            proc.java_logic_lines = patched
+
+
+def _patch_promoted_var_reads(line: str, var_java: str) -> str:
+    import re
+    # Don't patch: method arguments (OUT passing), .set(, declarations, assignments
+    # Patch: null checks, comparisons, string concatenation, general reads
+    patterns_to_skip = [
+        rf'\b{re.escape(var_java)}\s*=',          # assignment target
+        rf'\b{re.escape(var_java)}\.set\s*\(',    # .set() call
+        rf'{re.escape(var_java)}\s*;',             # declaration
+        rf'\bthis\.\w+\([^)]*\b{re.escape(var_java)}\b',  # OUT arg passing
+    ]
+    for pat in patterns_to_skip:
+        if re.search(pat, line):
+            return line
+    line = re.sub(
+        rf'(?<!\.)(?<!\w){re.escape(var_java)}\b(?!\s*=)(?!\s*\.set)(?!\s*\()',
+        f'{var_java}.get()',
+        line,
+    )
+    return line
+
+
+def _extract_var_name(expr) -> str:
+    if not isinstance(expr, dict):
+        return ""
+    for key in ("PlVariable", "ColumnRef"):
+        if key in expr:
+            val = expr[key]
+            parts = val if isinstance(val, list) else [val]
+            return parts[-1] if parts else ""
+    return ""
+
+
+def _walk_stmts_for_out_promotions(stmts, proc, all_packages, local_var_names, promotions):
+    if not isinstance(stmts, list):
+        return
+    for stmt in stmts:
+        if not isinstance(stmt, dict):
+            continue
+        for stmt_type, stmt_data in stmt.items():
+            if stmt_type == "ProcedureCall":
+                _check_call_out_promotions(stmt_data, proc, all_packages, local_var_names, promotions)
+            elif stmt_type == "Perform":
+                if isinstance(stmt_data, dict):
+                    for qk, qv in stmt_data.items():
+                        if qk in ("FunctionCall", "ProcedureCall"):
+                            _check_call_out_promotions(
+                                {"name": qv.get("name", []), "arguments": qv.get("arguments", [])},
+                                proc, all_packages, local_var_names, promotions,
+                            )
+            _recurse_stmt_for_out_promotions(stmt_data, proc, all_packages, local_var_names, promotions)
+
+
+def _recurse_stmt_for_out_promotions(data, proc, all_packages, local_var_names, promotions):
+    if not isinstance(data, dict):
+        return
+    for key in ("then_block", "else_block", "body", "loop_body", "block"):
+        child = data.get(key)
+        if isinstance(child, dict):
+            child_stmts = child.get("body", [])
+            if isinstance(child_stmts, list):
+                _walk_stmts_for_out_promotions(child_stmts, proc, all_packages, local_var_names, promotions)
+        elif isinstance(child, list):
+            _walk_stmts_for_out_promotions(child, proc, all_packages, local_var_names, promotions)
+    for branch in data.get("branches", []):
+        if isinstance(branch, dict):
+            br_body = branch.get("body", [])
+            if isinstance(br_body, list):
+                _walk_stmts_for_out_promotions(br_body, proc, all_packages, local_var_names, promotions)
+            br_block = branch.get("block", {})
+            if isinstance(br_block, dict):
+                br_stmts = br_block.get("body", [])
+                if isinstance(br_stmts, list):
+                    _walk_stmts_for_out_promotions(br_stmts, proc, all_packages, local_var_names, promotions)
+    for child_stmts_key in ("statements", "stmts"):
+        child_stmts = data.get(child_stmts_key)
+        if isinstance(child_stmts, list):
+            _walk_stmts_for_out_promotions(child_stmts, proc, all_packages, local_var_names, promotions)
+    exc = data.get("exception_block")
+    if isinstance(exc, dict):
+        for handler in exc.get("handlers", []):
+            if isinstance(handler, dict):
+                h_body = handler.get("body", [])
+                if isinstance(h_body, list):
+                    _walk_stmts_for_out_promotions(h_body, proc, all_packages, local_var_names, promotions)
+                h_block = handler.get("block", {})
+                if isinstance(h_block, dict):
+                    h_stmts = h_block.get("body", [])
+                    if isinstance(h_stmts, list):
+                        _walk_stmts_for_out_promotions(h_stmts, proc, all_packages, local_var_names, promotions)
+
+
+def _check_call_out_promotions(call_data, proc, all_packages, local_var_names, promotions):
+    func_name_parts = call_data.get("name", [])
+    args = call_data.get("arguments", [])
+    if not func_name_parts or not args:
+        return
+    if len(func_name_parts) >= 3:
+        pkg = func_name_parts[-2]
+        func = func_name_parts[-1]
+    elif len(func_name_parts) == 2:
+        pkg = func_name_parts[0]
+        func = func_name_parts[1]
+    elif len(func_name_parts) == 1 and proc.package:
+        pkg = proc.package
+        func = func_name_parts[0]
+    else:
+        return
+    matched_pkg = _find_registered_pkg(pkg, all_packages)
+    if not matched_pkg:
+        return
+    target_proc_info = _find_target_proc(matched_pkg, func, all_packages, arg_count=len(args))
+    if not target_proc_info:
+        return
+    for i, a in enumerate(args):
+        if i < len(target_proc_info.parameters) and target_proc_info.parameters[i].is_out:
+            var_name = _extract_var_name(a).lower()
+            if var_name and var_name in local_var_names:
+                base_type = target_proc_info.parameters[i].java_type
+                promotions[var_name] = f"AtomicReference<{base_type}>"
+
+
 def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
     """Analyze a procedure's body to extract DML, service calls, and Java logic."""
     block = proc.body
@@ -1990,9 +2141,31 @@ def _is_string_expr(expr: str) -> bool:
     return False
 
 
+def _is_long_expr(expr: str) -> bool:
+    s = expr.strip()
+    if re.match(r'^-?\d+[Ll]$', s):
+        return True
+    if s.startswith("Long.valueOf(") or s.startswith("Long.parseLong("):
+        return True
+    if s.startswith("String.valueOf("):
+        return False
+    if re.match(r'^-?\d+$', s):
+        return True
+    return False
+
+
+def _is_bare_int_literal(expr: str) -> bool:
+    return bool(re.match(r'^-?\d+$', expr.strip()))
+
+
+def _is_bare_long_literal(expr: str) -> bool:
+    return bool(re.match(r'^-?\d+[Ll]$', expr.strip()))
+
+
 def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
     out_param_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out}
     out_string_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out and p.java_type == "String"}
+    out_long_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out and p.java_type == "Long"}
 
     # BigDecimal context: wrap double literals from CASE/ternary into BigDecimal.valueOf()
     target_var_type = None
@@ -2033,8 +2206,16 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
     elif target in out_param_names:
         if target in out_string_names and not _is_string_expr(expr):
             expr = f"String.valueOf({expr})"
+        elif target in out_long_names and _is_string_expr(expr) and not _is_long_expr(expr):
+            expr = f"Long.valueOf({expr})"
+        elif target in out_long_names and _is_bare_int_literal(expr):
+            expr = f"Long.valueOf({expr})"
         proc.java_logic_lines.append(f"{target}.set({expr});")
     else:
+        if target_var_type == "Long" and _is_bare_int_literal(expr):
+            expr = f"Long.valueOf({expr})"
+        elif target_var_type == "Integer" and _is_bare_long_literal(expr):
+            expr = f"Integer.valueOf({expr})"
         proc.java_logic_lines.append(f"{target} = {expr};")
 
 
@@ -2147,6 +2328,11 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
     _emit_assignment(proc, target, java_expr)
 
 
+def _comment_perform(query: str) -> str:
+    lines = query.replace('\r\n', '\n').split('\n')
+    return '\n'.join(f"// {l}" if l.strip() else "//" for l in lines)
+
+
 def _process_perform(perform_data: dict, proc: ProcedureInfo, all_packages: dict):
     """Convert PERFORM to cross-service call."""
     parsed = perform_data.get("parsed_expr")
@@ -2166,23 +2352,47 @@ def _process_perform(perform_data: dict, proc: ProcedureInfo, all_packages: dict
                     pkg = proc.package
                     func = func_name_parts[0]
                 else:
-                    proc.java_logic_lines.append(f"// PERFORM {query}")
+                    proc.java_logic_lines.append(_comment_perform(f"PERFORM {query}"))
                     return
                 matched_pkg = _find_registered_pkg(pkg, all_packages)
                 if matched_pkg:
                     svc_name = f"{package_to_classname(matched_pkg).lower()}Service"
                     method = java_method_name(func)
-                    args = ", ".join(_expr_to_java(a, proc) for a in v.get("args", []))
+                    raw_args = v.get("args", [])
+                    target_proc_info = _find_target_proc(matched_pkg, func, all_packages, arg_count=len(raw_args))
+                    out_param_java_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out}
+                    target_out_indices = set()
+                    if target_proc_info:
+                        target_out_indices = {i for i, p in enumerate(target_proc_info.parameters) if p.is_out}
+                    resolved_perform_args = []
+                    for i, a in enumerate(raw_args):
+                        if target_proc_info and i in target_out_indices:
+                            raw_java = _expr_to_java(a, proc, as_read=False)
+                            if raw_java in out_param_java_names:
+                                resolved_perform_args.append(raw_java)
+                            else:
+                                resolved_perform_args.append(_expr_to_java(a, proc, as_read=True))
+                        else:
+                            resolved_perform_args.append(_expr_to_java(a, proc, as_read=True))
+                    args = ", ".join(resolved_perform_args)
                     if matched_pkg.lower() == proc.package.lower():
+                        pkg_info = all_packages.get(matched_pkg)
+                        proc_exists = pkg_info and any(
+                            p.proc_name.lower() == func.lower() for p in pkg_info.procedures
+                        ) if pkg_info else False
+                        if not proc_exists:
+                            UNRESOLVED_CALLS.append(f"{proc.package}.{proc.proc_name} -> PERFORM {query}")
+                            proc.java_logic_lines.append(_comment_perform(f"PERFORM {query}"))
+                            return
                         proc.java_logic_lines.append(f"this.{method}({args});")
                     else:
                         proc.service_calls.append(ServiceCall(svc_name, method, [], package_name=matched_pkg))
                         proc.java_logic_lines.append(f"{svc_name}.{method}({args});")
                 else:
                     UNRESOLVED_CALLS.append(f"{proc.package}.{proc.proc_name} -> PERFORM {query}")
-                    proc.java_logic_lines.append(f"// PERFORM {query}")
+                    proc.java_logic_lines.append(_comment_perform(f"PERFORM {query}"))
     else:
-        proc.java_logic_lines.append(f"// PERFORM {query}")
+        proc.java_logic_lines.append(_comment_perform(f"PERFORM {query}"))
 
 
 def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_counter: dict):
@@ -2506,13 +2716,56 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
         proc.java_logic_lines.append(f"// CALL {'.'.join(func_name_parts)}(...)")
         return
 
+    func_lower = func.lower() if func else ""
+    _BUILTIN_PROC_MAP = {
+        "pg_sleep": lambda a: f"try {{ Thread.sleep({a} * 1000L); }} catch (InterruptedException _ignored) {{ Thread.currentThread().interrupt(); }}",
+    }
+    if func_lower in _BUILTIN_PROC_MAP and len(args) == 1:
+        arg_java = _expr_to_java(args[0], proc, as_read=True)
+        proc.java_logic_lines.append(_BUILTIN_PROC_MAP[func_lower](arg_java))
+        return
+
     matched_pkg = _find_registered_pkg(pkg, all_packages)
 
     if matched_pkg:
         svc_name = f"{package_to_classname(matched_pkg).lower()}Service"
         method = java_method_name(func)
-        args_java = ", ".join(_expr_to_java(a, proc, as_read=False) for a in args)
+        target_proc_info = _find_target_proc(matched_pkg, func, all_packages, arg_count=len(args))
+        out_param_java_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out}
+        target_out_indices = set()
+        if target_proc_info:
+            target_out_indices = {i for i, p in enumerate(target_proc_info.parameters) if p.is_out}
+        resolved_args = []
+        for i, a in enumerate(args):
+            if target_proc_info and i in target_out_indices:
+                raw_java = _expr_to_java(a, proc, as_read=False)
+                if raw_java in out_param_java_names:
+                    resolved_args.append(raw_java)
+                else:
+                    resolved_args.append(_expr_to_java(a, proc, as_read=True))
+            else:
+                a_java = _expr_to_java(a, proc, as_read=True)
+                if target_proc_info and i < len(target_proc_info.parameters):
+                    tptype = target_proc_info.parameters[i].java_type
+                    if ".get(" in a_java and tptype == "String":
+                        a_java = f"(String) {a_java}"
+                    elif tptype == "String" and not a_java.startswith('"'):
+                        a_java_type = _infer_expr_type(a, proc)
+                        if a_java_type in ("long", "Long", "int", "Integer"):
+                            a_java = f"String.valueOf({a_java})"
+                resolved_args.append(a_java)
+        args_java = ", ".join(resolved_args)
         is_self_call = (matched_pkg.lower() == proc.package.lower())
+        if is_self_call:
+            pkg_info = all_packages.get(matched_pkg)
+            proc_exists = pkg_info and any(
+                p.proc_name.lower() == func.lower() for p in pkg_info.procedures
+            ) if pkg_info else False
+            if not proc_exists:
+                full_name = ".".join(func_name_parts)
+                UNRESOLVED_CALLS.append(f"{proc.package}.{proc.proc_name} -> {full_name}")
+                proc.java_logic_lines.append(f"// CALL {full_name}({args_java})")
+                return
         if not is_self_call:
             proc.service_calls.append(ServiceCall(svc_name, method, [], package_name=matched_pkg))
         call_target = f"this.{method}" if is_self_call else f"{svc_name}.{method}"
@@ -2526,6 +2779,7 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
 def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_packages: dict = None) -> list:
     out_java_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out}
     out_string_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out and p.java_type == "String"}
+    out_long_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out and p.java_type == "Long"}
     result = ["try {"]
     result.extend(f"    {line}" for line in body_lines)
 
@@ -2541,9 +2795,14 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
                     expr_raw = sv.get("expression", {})
                     expr = _expr_to_java(expr_raw, proc)
                     expr = re.sub(r'\bsqlerrm\b', 'e.getMessage()', expr, flags=re.IGNORECASE)
+                    expr = re.sub(r'\bsqlcode\b', 'String.valueOf(-1)', expr, flags=re.IGNORECASE)
                     if target in out_java_names:
                         if target in out_string_names and not _is_string_expr(expr):
                             expr = f"String.valueOf({expr})"
+                        elif target in out_long_names and _is_string_expr(expr) and not _is_long_expr(expr):
+                            expr = f"Long.valueOf({expr})"
+                        elif target in out_long_names and _is_bare_int_literal(expr):
+                            expr = f"Long.valueOf({expr})"
                         result.append(f"    {target}.set({expr});")
                     else:
                         result.append(f"    {target} = {expr};")
@@ -2571,7 +2830,22 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
                         if matched:
                             svc_name = f"{package_to_classname(matched).lower()}Service"
                             method = java_method_name(func)
-                            args_java = ", ".join(_expr_to_java(a, proc, as_read=True) for a in call_args)
+                            target_proc_info = _find_target_proc(matched, func, all_packages, arg_count=len(call_args))
+                            _out_param_java_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out}
+                            _target_out_indices = set()
+                            if target_proc_info:
+                                _target_out_indices = {i for i, p in enumerate(target_proc_info.parameters) if p.is_out}
+                            _resolved = []
+                            for i, a in enumerate(call_args):
+                                if target_proc_info and i in _target_out_indices:
+                                    raw_java = _expr_to_java(a, proc, as_read=False)
+                                    if raw_java in _out_param_java_names:
+                                        _resolved.append(raw_java)
+                                    else:
+                                        _resolved.append(_expr_to_java(a, proc, as_read=True))
+                                else:
+                                    _resolved.append(_expr_to_java(a, proc, as_read=True))
+                            args_java = ", ".join(_resolved)
                             is_self_call = (matched.lower() == proc.package.lower())
                             if not is_self_call:
                                 proc.service_calls.append(ServiceCall(svc_name, method, [], package_name=matched))
@@ -2588,7 +2862,17 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
                     result.append(f"    // {sk}")
 
     result.append("}")
-    return result
+
+    resolved = []
+    in_catch = False
+    for line in result:
+        if line.strip().startswith("} catch"):
+            in_catch = True
+        if "__SQLERRM__" in line:
+            replacement = "e.getMessage()" if in_catch else '""'
+            line = line.replace("__SQLERRM__", replacement)
+        resolved.append(line)
+    return resolved
 
 
 def _process_exit(exit_data: dict, proc: ProcedureInfo):
@@ -3609,7 +3893,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             if upper == "FOUND":
                 return "found"
             if upper == "SQLERRM":
-                return "e.getMessage()"
+                return "__SQLERRM__"
             if upper in ("CURRENT_TIMESTAMP", "NOW"):
                 return "new java.sql.Timestamp(System.currentTimeMillis())"
             if upper in ("CURRENT_DATE", "SYSDATE"):
@@ -3679,7 +3963,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             name = parts[-1] if parts else ""
             upper = name.upper()
             if upper == "SQLERRM":
-                return "e.getMessage()"
+                return "__SQLERRM__"
             if upper in ("CURRENT_TIMESTAMP", "NOW"):
                 return "new java.sql.Timestamp(System.currentTimeMillis())"
             if upper in ("CURRENT_DATE", "SYSDATE"):
@@ -4880,6 +5164,8 @@ def _default_for_type(java_type: str) -> str:
         return "false"
     if t.startswith("map<"):
         return "new HashMap<>()"
+    if t.startswith("atomicreference"):
+        return "new AtomicReference<>(null)"
     return "null"
 
 
@@ -6493,6 +6779,13 @@ def main():
             if _stub_key not in STUB_PROCEDURES:
                 STUB_PROCEDURES.append(_stub_key)
     _progress_done("Analyze", n_analyze)
+
+    # ── Phase 2.5: Promote local var types for OUT arg holders ──
+    for pkg, proc in all_procs:
+        try:
+            _promote_out_local_vars(proc, all_package_names)
+        except Exception:
+            pass
 
     # ── Determine affected packages (changed + transitive dependents) ──
     if full_regen or not is_incremental:

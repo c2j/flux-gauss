@@ -16,8 +16,8 @@
 CREATE OR REPLACE TYPE order_detail AS (
     customer_id  BIGINT,
     product_id   BIGINT,
-    quantity     INT,
-    unit_price   NUMERIC(18,4)
+    item_count   NUMERIC,
+    unit_price   NUMERIC
 );
 
 
@@ -78,7 +78,7 @@ CREATE OR REPLACE PROCEDURE pkg_mapper_param_test.create_order(
 DECLARE
     v_total NUMERIC(18,4);
 BEGIN
-    v_total := p_quantity * p_unit_price * (1 - COALESCE(p_discount, 0));
+    v_total := p_quantity * p_unit_price;
 
     -- [P0][DTO] 8 个参数全部出现在 INSERT 中
     INSERT INTO t_mapper_order (
@@ -142,10 +142,9 @@ CREATE OR REPLACE PROCEDURE pkg_mapper_param_test.create_from_detail(
 DECLARE
     v_detail order_detail;
 BEGIN
-    -- 先给 TYPE 变量赋值（通过 SELECT INTO 各字段）
     SELECT customer_id, product_id, quantity, unit_price
     INTO v_detail.customer_id, v_detail.product_id,
-         v_detail.quantity, v_detail.unit_price
+         v_detail.item_count, v_detail.unit_price
     FROM t_mapper_order
     WHERE order_id = p_order_id;
 
@@ -156,14 +155,14 @@ BEGIN
         p_order_id,
         p_line_no,
         'detail_item',
-        v_detail.quantity,
+        v_detail.item_count,
         v_detail.unit_price,
-        v_detail.quantity * v_detail.unit_price
+        v_detail.item_count * v_detail.unit_price
     );
 
     -- [P0][DTO][TYPE] UPDATE 用 TYPE 字段做 WHERE
     UPDATE t_mapper_order
-    SET total_amount = v_detail.quantity * v_detail.unit_price
+    SET total_amount = v_detail.item_count * v_detail.unit_price
     WHERE customer_id = v_detail.customer_id
       AND product_id = v_detail.product_id;
 END;

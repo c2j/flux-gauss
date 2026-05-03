@@ -1,8 +1,12 @@
 lib/ogsql-parser
 dest/
+dest_itest/
+dest_itest_remote/
 demo-project/dest
 demo-project/sql/PKG_DEPOSIT_ACNT_INFO_INQUIRY.sql
 demo-project/sql/DB_LOG.sql
 demo-project/sql/PKG_RPT_BATCH_DOWNLOAD.sql
+demo-project/sql/PKG_2008802001_MGT.sql
+demo-project/sql/PKG_AAS_DATACLEAR.sql
 ogsql
 ogsql.broken

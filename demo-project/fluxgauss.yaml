@@ -1,6 +1,13 @@
 output_dir: ./dest
 base_package: com.example.demo
 
+integration_test:
+  enabled: true
+  mode: remote
+  url: jdbc:postgresql://localhost:5432/postgres
+  username: gaussdb
+  password: Enmo@123
+
 # Optional: database connection (used to generate application.yml)
 # database:
 #   url: jdbc:postgresql://localhost:5432/demo
@@ -32,3 +39,6 @@ sources:
   - demo-project/sql/pkg_package_vars_test.sql
   - demo-project/sql/pkg_mapper_param_test_tables.sql
   - demo-project/sql/pkg_mapper_param_test.sql
+  - demo-project/sql/missing_tables.sql
+  - demo-project/sql/PKG_2008802001_MGT.sql
+  - demo-project/sql/PKG_AAS_DATACLEAR.sql

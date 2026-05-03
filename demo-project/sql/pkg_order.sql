@@ -44,7 +44,7 @@ CREATE OR REPLACE PROCEDURE pkg_order.batch_create_orders(
     p_items VARCHAR
 ) AS $$
 BEGIN
-    CALL pkg_order.create_order(p_user_id, 0, 1);
+    CALL pkg_order.create_order(p_user_id, 1, 1);
     PERFORM pkg_common.log_operation('ORDER', 'BATCH_CREATE', p_user_id);
     PERFORM pkg_common.send_notification('EMAIL', 'Batch order created');
 END;

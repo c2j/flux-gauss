@@ -17,6 +17,7 @@
 CREATE TABLE IF NOT EXISTS t_employees (
     id          BIGINT,
     name        VARCHAR(100),
+    email       VARCHAR(200),
     dept_id     BIGINT,
     salary      NUMERIC(18, 2),
     status      VARCHAR(20),

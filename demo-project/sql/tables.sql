@@ -1,6 +1,7 @@
 -- 基础表
 CREATE TABLE IF NOT EXISTS trade_record (
     trade_id BIGSERIAL PRIMARY KEY,
+    parent_trade_id BIGINT,
     account_id BIGINT NOT NULL,
     amount NUMERIC(18,4) NOT NULL,
     fee NUMERIC(18,4) DEFAULT 0,
