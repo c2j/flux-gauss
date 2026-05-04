@@ -6423,9 +6423,11 @@ def _itest_write_infrastructure(base_path: Path, itest_cfg: dict):
             import org.springframework.boot.test.context.SpringBootTest;
             import org.springframework.test.context.ActiveProfiles;
             import org.springframework.test.context.jdbc.Sql;
+            import org.springframework.test.context.jdbc.SqlMergeMode;
 
             @SpringBootTest
             @ActiveProfiles("integration")
+            @SqlMergeMode(SqlMergeMode.MergeMode.MERGE)
             @Sql(scripts = "classpath:itest-schema.sql", executionPhase = Sql.ExecutionPhase.BEFORE_TEST_METHOD)
             public abstract class AbstractIntegrationTest {{
             }}
@@ -6449,6 +6451,31 @@ def _itest_write_infrastructure(base_path: Path, itest_cfg: dict):
 
 def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
     schema_map = _itest_collect_schemas()
+
+    tables_with_explicit_id_insert = set()
+    tables_with_implicit_id_insert = set()
+    for pkg in packages:
+        for proc in pkg.procedures:
+            for dml in proc.dml_statements:
+                raw = getattr(dml, 'raw_sql_for_params', '') or getattr(dml, 'sql_text', '')
+                if not raw:
+                    continue
+                raw_lower = raw.lower().strip()
+                if not raw_lower.startswith("insert"):
+                    continue
+                m = re.match(r'insert\s+into\s+(\w+)\s*\(([^)]+)\)', raw_lower)
+                if not m:
+                    continue
+                tbl = m.group(1)
+                cols_str = m.group(2)
+                insert_cols = [c.strip().strip('"') for c in cols_str.split(',')]
+                if 'id' in insert_cols:
+                    tables_with_explicit_id_insert.add(tbl)
+                else:
+                    tables_with_implicit_id_insert.add(tbl)
+
+    auto_id_tables = tables_with_implicit_id_insert - tables_with_explicit_id_insert
+
     lines = []
     for table in sorted(schema_map.keys()):
         lines.append(f'DROP TABLE IF EXISTS "{table}" CASCADE;')
@@ -6464,7 +6491,10 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
                 continue
             if not re.match(r'^[a-zA-Z_]\w*$', col):
                 continue
-            col_defs.append(f'    "{col}" {sql_stripped}')
+            effective_type = sql_stripped
+            if col_lower == "id" and sql_stripped.upper().strip() == "BIGINT" and table in auto_id_tables:
+                effective_type = "BIGSERIAL"
+            col_defs.append(f'    "{col}" {effective_type}')
         if not col_defs:
             continue
         lines.append(f'CREATE TABLE "{table}" (')
