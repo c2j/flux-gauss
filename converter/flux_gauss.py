@@ -4899,6 +4899,7 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
         sql = sql.replace(f"__PH{i}__", ph)
 
     sql = _convert_params_to_mybatis(sql, proc.parameters, proc.local_vars)
+    sql = sql.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     result_type_attr = ""
     if dml.sql_type == "select":
@@ -4919,7 +4920,8 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
     if proc.parameters:
         param_types = set(p.java_type for p in proc.parameters if not p.is_out)
         if len(param_types) == 1:
-            params_attrs = f' parameterType="{list(param_types)[0].lower()}"'
+            pt = list(param_types)[0]
+            params_attrs = f' parameterType="{pt.lower() if is_simple_java_type(pt) else pt}"'
 
     filter_line = ""
     if dml.optional_filters:
