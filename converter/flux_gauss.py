@@ -7234,12 +7234,18 @@ def main():
     total_calls = sum(len(proc.service_calls) for pkg in packages for proc in pkg.procedures)
     stub_count = len(STUB_PROCEDURES)
 
+    itest_cfg = config.get("integration_test", {}) if config else {}
+    itest_enabled = itest_cfg.get("enabled", False)
+
     _log(f"\n  Done!")
     _log(f"    Packages:    {len(packages)}")
     _log(f"    Procedures:  {total_procs}")
     _log(f"    DML stmts:   {total_dml} (extracted as iBatis mapper methods)")
     _log(f"    Cross-calls: {total_calls}")
     _log(f"    Test files:  {len(packages)} (generated unit tests)")
+    if itest_enabled:
+        itest_mode = itest_cfg.get("mode", "remote")
+        _log(f"    IT files:    {len(packages)} (generated integration tests, {itest_mode} mode)")
     _log(f"    Skipped:     {len(all_skipped)} (non-procedure SQL)")
     if UNRESOLVED_CALLS:
         _log(f"    Unresolved:  {len(UNRESOLVED_CALLS)} (cross-package calls, 详见转换报告)")
