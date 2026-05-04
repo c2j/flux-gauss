@@ -10,3 +10,4 @@ demo-project/sql/PKG_2008802001_MGT.sql
 demo-project/sql/PKG_AAS_DATACLEAR.sql
 ogsql
 ogsql.broken
+.worktrees/

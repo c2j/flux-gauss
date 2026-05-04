@@ -725,6 +725,7 @@ class ProcedureInfo:
     open_cursors: dict = field(default_factory=dict)   # cursor_name -> {"result_var": str, "index_var": str}
     refcursor_out_params: set = field(default_factory=set)  # param names that are REFCURSOR OUT
     cursor_decls: dict = field(default_factory=dict)   # cursor_name -> parsed_query (from DECLARE section)
+    cursor_params: dict = field(default_factory=dict)  # cursor_name -> list of param names
     custom_types: dict = field(default_factory=dict)    # name -> {"kind": "record"/"varray", "fields"/...}
     source_file: str = ""          # Original SQL file name for display (e.g., PKG_ORDER.sql)
     _source_path: str = ""         # Full path for file access (set by pipeline)
@@ -1658,9 +1659,13 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
             elif decl_type == "Cursor":
                 cursor_name = decl_data.get("name", "")
                 parsed_q = decl_data.get("parsed_query")
+                cursor_arg_names = [a.get("name", "") for a in decl_data.get("arguments", []) if a.get("name")]
                 if parsed_q:
                     proc.cursor_decls[cursor_name] = parsed_q
                     proc.cursor_decls[cursor_name.lower()] = parsed_q
+                if cursor_arg_names:
+                    proc.cursor_params[cursor_name] = cursor_arg_names
+                    proc.cursor_params[cursor_name.lower()] = cursor_arg_names
 
     # Process body statements
     body_stmts = block.get("body", [])
@@ -2003,7 +2008,7 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                     if len(var_names) > 1:
                         result_type = "Map<String, Object>"
                         proc.java_logic_lines.append(
-                            f'Map<String, Object> _row = mapper.{mapper_method}({_build_param_args(proc.parameters)});'
+                            f'Map<String, Object> _row = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});'
                         )
                         into_targets_full = _extract_all_into_targets(into_targets)
                         for field_name, full_parts in into_targets_full:
@@ -2025,11 +2030,11 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                             result_type = "Map<String, Object>"
                             col_name = _extract_select_column(sql_text, 0)
                             proc.java_logic_lines.append(
-                                f'Map<String, Object> _row = mapper.{mapper_method}({_build_param_args(proc.parameters)});'
+                                f'Map<String, Object> _row = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});'
                             )
                             _emit_assignment(proc, f'__MAP_PUT__{map_var}__{first_var}', f'_row.get("{first_var}")')
                         else:
-                            _emit_assignment(proc, var_java, f'mapper.{mapper_method}({_build_param_args(proc.parameters)})')
+                            _emit_assignment(proc, var_java, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})')
 
                     proc.dml_statements.append(DmlStatement(
                         sql_type="select",
@@ -2046,7 +2051,7 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                     returns_list=True,
                 ))
                 proc.java_logic_lines.append(
-                    f'List<Map<String, Object>> _result = mapper.{mapper_method}({_build_param_args(proc.parameters)});'
+                    f'List<Map<String, Object>> _result = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});'
                 )
 
         elif sql_type == "Insert":
@@ -2061,7 +2066,7 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                 sql_text=sql_text,
             ))
             proc.java_logic_lines.append(
-                f'mapper.{mapper_method}({_build_param_args(proc.parameters)});'
+                f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});'
             )
 
         elif sql_type == "Update":
@@ -2076,7 +2081,7 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                 sql_text=sql_text,
             ))
             proc.java_logic_lines.append(
-                f'mapper.{mapper_method}({_build_param_args(proc.parameters)});'
+                f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});'
             )
 
         elif sql_type == "Delete":
@@ -2090,7 +2095,7 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                 sql_text=sql_text,
             ))
             proc.java_logic_lines.append(
-                f'mapper.{mapper_method}({_build_param_args(proc.parameters)});'
+                f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});'
             )
 
 
@@ -2261,24 +2266,7 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
                         for i, a in enumerate(raw_args):
                             a_java = _expr_to_java(a, proc)
                             if target_proc and i < len(target_proc.parameters):
-                                ptype = target_proc.parameters[i].java_type
-                                if "BigDecimal" in ptype and _is_numeric_literal(a):
-                                    a_java = f"java.math.BigDecimal.valueOf({a_java})"
-                                elif ".get(" in a_java and ptype not in ("Object", "Map<String, Object>"):
-                                    if ptype == "long":
-                                        a_java = f"((Number) {a_java}).longValue()"
-                                    elif ptype == "Long":
-                                        a_java = f"((Number) {a_java}).longValue()"
-                                    elif ptype == "int":
-                                        a_java = f"((Number) {a_java}).intValue()"
-                                    elif ptype == "Integer":
-                                        a_java = f"((Number) {a_java}).intValue()"
-                                    elif "BigDecimal" in ptype:
-                                        a_java = f"((java.math.BigDecimal) {a_java})"
-                                    elif ptype == "String":
-                                        a_java = f"(String) {a_java}"
-                                    else:
-                                        a_java = f"({ptype}) {a_java}"
+                                a_java = _coerce_java_arg(a_java, target_proc.parameters[i].java_type)
                             args_java.append(a_java)
                         args = ", ".join(args_java)
                         if matched_pkg.lower() == proc.package.lower():
@@ -2425,6 +2413,7 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
         if parsed_query:
             sql_text = _reconstruct_sql_from_ast(parsed_query)
             if sql_text:
+                raw_sql_for_params = sql_text
                 sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
                 mapper_method = _dml_method_name("select", proc.proc_name, dml_counter)
                 proc.dml_statements.append(DmlStatement(
@@ -2435,10 +2424,13 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
                     returns_list=True,
                 ))
                 proc.java_logic_lines.append(
-                    f"List<Map<String, Object>> {var_java}List = mapper.{mapper_method}({_build_param_args(proc.parameters)});"
+                    f"List<Map<String, Object>> {var_java}List = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});"
                 )
                 proc.java_logic_lines.append(f"for (Map<String, Object> {var_java} : {var_java}List) {{")
 
+                proc.local_vars[variable] = "Map<String, Object>"
+                proc._loop_vars = getattr(proc, '_loop_vars', set())
+                proc._loop_vars.add(variable)
                 for s in _iter_statements(body_stmts):
                     _process_statement(s, proc, all_packages, dml_counter)
                 _indent_last_lines(proc, 1)
@@ -2470,6 +2462,7 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
             if cursor_decl:
                 sql_text = _reconstruct_sql_from_ast(cursor_decl)
                 if sql_text:
+                    raw_sql_for_params = sql_text
                     sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
                     mapper_method = _dml_method_name("select", proc.proc_name, dml_counter)
                     proc.dml_statements.append(DmlStatement(
@@ -2480,7 +2473,7 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
                         returns_list=True,
                     ))
                     proc.java_logic_lines.append(
-                        f"List<Map<String, Object>> {var_java}List = mapper.{mapper_method}({_build_param_args(proc.parameters)});"
+                        f"List<Map<String, Object>> {var_java}List = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});"
                     )
                     proc.java_logic_lines.append(f"for (Map<String, Object> {var_java} : {var_java}List) {{")
                     for s in _iter_statements(body_stmts):
@@ -2535,6 +2528,7 @@ def _process_cursor_open(open_data: dict, proc: ProcedureInfo, all_packages: dic
         if parsed_query:
             sql_text = _reconstruct_sql_from_ast(parsed_query)
             if sql_text:
+                raw_sql_for_params = sql_text
                 sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
                 mapper_method = _dml_method_name("select", proc.proc_name, dml_counter)
                 proc.dml_statements.append(DmlStatement(
@@ -2555,24 +2549,37 @@ def _process_cursor_open(open_data: dict, proc: ProcedureInfo, all_packages: dic
                 proc.open_cursors[cursor_name.lower()] = proc.open_cursors[cursor_name]
 
                 if is_out_refcursor:
-                    # For REFCURSOR OUT params, store result for return
                     proc.java_logic_lines.append(
-                        f"List<Map<String, Object>> {result_var} = mapper.{mapper_method}({_build_param_args(proc.parameters)});"
+                        f"List<Map<String, Object>> {result_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});"
                     )
                 else:
                     proc.java_logic_lines.append(
-                        f"List<Map<String, Object>> {result_var} = mapper.{mapper_method}({_build_param_args(proc.parameters)});"
+                        f"List<Map<String, Object>> {result_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});"
                     )
                     proc.java_logic_lines.append(f"int {index_var} = 0;")
                 return
 
     if "Simple" in kind:
-        # OPEN cursor_name(args) — cursor was declared with a query in DECLARE section
         parsed_query = proc.cursor_decls.get(cursor_name) or proc.cursor_decls.get(cursor_name.lower())
         if parsed_query:
             sql_text = _reconstruct_sql_from_ast(parsed_query)
             if sql_text:
+                raw_sql_for_params = sql_text
+                c_params = proc.cursor_params.get(cursor_name) or proc.cursor_params.get(cursor_name.lower()) or []
+                open_args_raw = open_data.get("cursor", {})
+                open_args = []
+                if isinstance(open_args_raw, dict) and "FunctionCall" in open_args_raw:
+                    for arg in open_args_raw["FunctionCall"].get("args", []):
+                        open_args.append(_extract_name_from_expr(arg))
                 sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
+                for i, cp in enumerate(c_params):
+                    if i < len(open_args):
+                        arg_name = open_args[i]
+                        p_match = next((p for p in proc.parameters if p.name.lower() == arg_name.lower()), None)
+                        if p_match:
+                            jdbc = sql_type_to_jdbc(p_match.sql_type)
+                            repl = f'#{{{p_match.java_name}, jdbcType={jdbc}, javaType={p_match.java_type}}}' if jdbc else f'#{{{p_match.java_name}}}'
+                            sql_text = re.sub(rf'\b{re.escape(cp)}\b', repl, sql_text, flags=re.IGNORECASE)
                 mapper_method = _dml_method_name("select", proc.proc_name, dml_counter)
                 proc.dml_statements.append(DmlStatement(
                     sql_type="select",
@@ -2591,7 +2598,7 @@ def _process_cursor_open(open_data: dict, proc: ProcedureInfo, all_packages: dic
                 proc.open_cursors[cursor_name.lower()] = proc.open_cursors[cursor_name]
 
                 proc.java_logic_lines.append(
-                    f"List<Map<String, Object>> {result_var} = mapper.{mapper_method}({_build_param_args(proc.parameters)});"
+                    f"List<Map<String, Object>> {result_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});"
                 )
                 proc.java_logic_lines.append(f"int {index_var} = 0;")
                 return
@@ -2747,12 +2754,15 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
                 a_java = _expr_to_java(a, proc, as_read=True)
                 if target_proc_info and i < len(target_proc_info.parameters):
                     tptype = target_proc_info.parameters[i].java_type
-                    if ".get(" in a_java and tptype == "String":
-                        a_java = f"(String) {a_java}"
-                    elif tptype == "String" and not a_java.startswith('"'):
-                        a_java_type = _infer_expr_type(a, proc)
-                        if a_java_type in ("long", "Long", "int", "Integer"):
-                            a_java = f"String.valueOf({a_java})"
+                    if tptype == "String":
+                        if ".get(" in a_java:
+                            a_java = f"(String) {a_java}"
+                        elif not a_java.startswith('"'):
+                            a_java_type = _infer_expr_type(a, proc)
+                            if a_java_type in ("long", "Long", "int", "Integer"):
+                                a_java = f"String.valueOf({a_java})"
+                    else:
+                        a_java = _coerce_java_arg(a_java, tptype)
                 resolved_args.append(a_java)
         args_java = ", ".join(resolved_args)
         is_self_call = (matched_pkg.lower() == proc.package.lower())
@@ -2923,6 +2933,7 @@ def _process_return_query(rq_data: dict, proc: ProcedureInfo, all_packages: dict
         query = rq_data.get("query", "")
         if query:
             sql_text = _convert_placeholders_to_mybatis(query, proc=proc)
+            raw_sql_for_params = sql_text
             sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
             sql_type = _detect_sql_type(sql_text)
             mapper_method = _dml_method_name(sql_type, proc.proc_name, dml_counter)
@@ -2935,7 +2946,7 @@ def _process_return_query(rq_data: dict, proc: ProcedureInfo, all_packages: dict
                 result_type=f"List<{ret_type}>",
                 returns_list=True,
             ))
-            proc.java_logic_lines.append(f"return mapper.{mapper_method}({_build_param_args(proc.parameters)});")
+            proc.java_logic_lines.append(f"return mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});")
         else:
             proc.java_logic_lines.append("// TODO: RETURN QUERY — empty query")
             _record_todo("RETURN_QUERY_EMPTY", proc, "")
@@ -2962,9 +2973,43 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
     if parsed_query:
         sql_text = _reconstruct_sql_from_ast(parsed_query)
         if sql_text:
+            raw_sql_for_params = sql_text
             sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
-            # Also convert USING args as MyBatis parameters
+            # Convert USING args as MyBatis parameters
             using_args = execute_data.get("using_args", [])
+            # First pass: replace $N positional placeholders with USING args
+            for i, arg in enumerate(using_args):
+                pos = i + 1
+                if isinstance(arg, dict):
+                    argument = arg.get("argument", {})
+                    arg_name = _extract_var_name_from_expr(argument)
+                    if not arg_name:
+                        for k, v in argument.items():
+                            if k == "ColumnRef":
+                                parts = v if isinstance(v, list) else [v]
+                                arg_name = parts[-1] if parts else ""
+                    if arg_name:
+                        java_name = snake_to_camel(arg_name)
+                        jdbc = None
+                        java = None
+                        for p in proc.parameters:
+                            if p.name.lower() == arg_name.lower():
+                                jdbc = sql_type_to_jdbc(p.sql_type)
+                                java = p.java_type
+                                break
+                        if not jdbc and arg_name in proc.local_vars:
+                            java = proc.local_vars[arg_name]
+                            jdbc = java_type_to_jdbc(java)
+                        if jdbc and java:
+                            placeholder = f'#{{{java_name}, jdbcType={jdbc}, javaType={java}}}'
+                        else:
+                            placeholder = f'#{{{java_name}}}'
+                        sql_text = re.sub(
+                            rf'\${pos}(?!\d)',
+                            placeholder,
+                            sql_text
+                        )
+            # Second pass: replace named params that weren't positional ($N)
             for arg in using_args:
                 if isinstance(arg, dict):
                     argument = arg.get("argument", {})
@@ -2991,6 +3036,7 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                             placeholder,
                             sql_text, flags=re.IGNORECASE
                         )
+            raw_sql_for_params = sql_text
 
             sql_type = _detect_sql_type(sql_text)
             mapper_method = _dml_method_name(sql_type, proc.proc_name, dml_counter)
@@ -3005,7 +3051,7 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                     if len(var_names) > 1:
                         result_type = "Map<String, Object>"
                         proc.java_logic_lines.append(
-                            f'Map<String, Object> _row = mapper.{mapper_method}({_build_param_args(proc.parameters)});'
+                            f'Map<String, Object> _row = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});'
                         )
                         into_targets_full = _extract_all_into_targets(into_targets)
                         for field_name, full_parts in into_targets_full:
@@ -3026,11 +3072,11 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                             map_var = snake_to_camel(full_parts[0])
                             result_type = "Map<String, Object>"
                             proc.java_logic_lines.append(
-                                f'Map<String, Object> _row = mapper.{mapper_method}({_build_param_args(proc.parameters)});'
+                                f'Map<String, Object> _row = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});'
                             )
                             _emit_assignment(proc, f'__MAP_PUT__{map_var}__{first_var}', f'_row.get("{first_var}")')
                         else:
-                            _emit_assignment(proc, var_java, f'mapper.{mapper_method}({_build_param_args(proc.parameters)})')
+                            _emit_assignment(proc, var_java, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))})')
                     proc.dml_statements.append(DmlStatement(
                         sql_type=sql_type,
                         method_id=mapper_method,
@@ -3045,7 +3091,7 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                     result_type="Map<String, Object>" if sql_type == "select" else None,
                 ))
                 proc.java_logic_lines.append(
-                    f'mapper.{mapper_method}({_build_param_args(proc.parameters)});'
+                    f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});'
                 )
             return
 
@@ -3074,7 +3120,7 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
             if len(var_names) > 1:
                 result_type = "Map<String, Object>"
                 proc.java_logic_lines.append(
-                    f'Map<String, Object> _row = mapper.{mapper_method}({_build_param_args(proc.parameters)});'
+                    f'Map<String, Object> _row = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});'
                 )
                 into_targets_full = _extract_all_into_targets(into_targets)
                 for field_name, full_parts in into_targets_full:
@@ -3094,11 +3140,11 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                     map_var = snake_to_camel(full_parts[0])
                     result_type = "Map<String, Object>"
                     proc.java_logic_lines.append(
-                        f'Map<String, Object> _row = mapper.{mapper_method}({_build_param_args(proc.parameters)});'
+                        f'Map<String, Object> _row = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});'
                     )
                     _emit_assignment(proc, f'__MAP_PUT__{map_var}__{first_var}', f'_row.get("{first_var}")')
                 else:
-                    _emit_assignment(proc, var_java, f'mapper.{mapper_method}({_build_param_args(proc.parameters)})')
+                    _emit_assignment(proc, var_java, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))})')
             proc.dml_statements.append(DmlStatement(
                 sql_type=sql_type,
                 method_id=mapper_method,
@@ -3113,7 +3159,7 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
             result_type="Map<String, Object>" if sql_type == "select" else None,
         ))
         proc.java_logic_lines.append(
-            f'mapper.{mapper_method}({_build_param_args(proc.parameters)});'
+            f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});'
         )
 
 
@@ -3217,7 +3263,10 @@ def _process_raise(raise_data: dict, proc: ProcedureInfo):
         else:
             proc.java_logic_lines.append(f'log.{log_level}("{log_msg}");')
     else:
-        proc.java_logic_lines.append(f'// RAISE {level} {message}')
+        if message:
+            proc.java_logic_lines.append(f'throw new RuntimeException("{message}");')
+        else:
+            proc.java_logic_lines.append(f'throw new RuntimeException("RAISE {level}");')
 
 
 def _process_call_text(sql: str, proc: ProcedureInfo, all_packages: dict):
@@ -3825,6 +3874,45 @@ def _is_numeric_literal_expr(java_str: str) -> bool:
         return False
 
 
+def _coerce_java_arg(a_java: str, target_type: str) -> str:
+    """Coerce a Java argument expression to match the target parameter type.
+
+    Handles edge cases where PL/pgSQL implicit type coercion needs explicit Java conversion:
+    - Empty string ``\"\"`` passed to numeric parameters → zero value (0L, 0, etc.)
+    - Numeric literal passed to BigDecimal parameter → BigDecimal.valueOf()
+    - Map.get() result to typed parameter → cast expression
+    """
+    # Empty string '' in PL/pgSQL passed to a numeric/boolean parameter
+    if a_java == '""' or a_java == '""':
+        if target_type in ("long", "Long"):
+            return "0L"
+        if target_type in ("int", "Integer"):
+            return "0"
+        if "BigDecimal" in target_type:
+            return "java.math.BigDecimal.ZERO"
+        if target_type in ("double", "Double"):
+            return "0.0d"
+        if target_type in ("float", "Float"):
+            return "0.0f"
+        if target_type in ("boolean", "Boolean"):
+            return "false"
+    # BigDecimal target with numeric literal
+    if "BigDecimal" in target_type and _is_numeric_literal_expr(a_java):
+        return f"java.math.BigDecimal.valueOf({a_java})"
+    # Map.get() result needs casting to target type
+    if ".get(" in a_java and target_type not in ("Object", "Map<String, Object>"):
+        if target_type in ("long", "Long"):
+            return f"((Number) {a_java}).longValue()"
+        if target_type in ("int", "Integer"):
+            return f"((Number) {a_java}).intValue()"
+        if "BigDecimal" in target_type:
+            return f"((java.math.BigDecimal) {a_java})"
+        if target_type == "String":
+            return f"(String) {a_java}"
+        return f"({target_type}) {a_java}"
+    return a_java
+
+
 def _is_integer_literal(expr, value=None) -> bool:
     if not isinstance(expr, dict):
         return False
@@ -4168,24 +4256,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                                 wrapped_args = []
                                 for i, a_java in enumerate(args_java):
                                     if i < len(target_proc.parameters):
-                                        target_type = target_proc.parameters[i].java_type
-                                        if ".get(" in a_java and target_type not in ("Object", "Map<String, Object>"):
-                                            if target_type == "long":
-                                                wrapped_args.append(f"((Number) {a_java}).longValue()")
-                                            elif target_type == "Long":
-                                                wrapped_args.append(f"((Number) {a_java}).longValue()")
-                                            elif target_type == "int":
-                                                wrapped_args.append(f"((Number) {a_java}).intValue()")
-                                            elif target_type == "Integer":
-                                                wrapped_args.append(f"((Number) {a_java}).intValue()")
-                                            elif "BigDecimal" in target_type:
-                                                wrapped_args.append(f"((java.math.BigDecimal) {a_java})")
-                                            elif target_type == "String":
-                                                wrapped_args.append(f"(String) {a_java}")
-                                            else:
-                                                wrapped_args.append(f"({target_type}) {a_java}")
-                                        else:
-                                            wrapped_args.append(a_java)
+                                        wrapped_args.append(_coerce_java_arg(a_java, target_proc.parameters[i].java_type))
                                     else:
                                         wrapped_args.append(a_java)
                                 svc_name = f"{package_to_classname(matched).lower()}Service"
@@ -4198,28 +4269,9 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                         wrapped_args = []
                         for i, a_java in enumerate(args_java):
                             if i < len(target_proc.parameters):
-                                target_type = target_proc.parameters[i].java_type
-                                if "BigDecimal" in target_type and _is_numeric_literal_expr(a_java):
-                                    wrapped_args.append(f"java.math.BigDecimal.valueOf({a_java})")
-                                elif ".get(" in a_java and target_type not in ("Object", "Map<String, Object>"):
-                                    # RECORD field access returns Object; cast to target param type
-                                    if target_type == "long":
-                                        wrapped_args.append(f"((Number) {a_java}).longValue()")
-                                    elif target_type == "Long":
-                                        wrapped_args.append(f"((Number) {a_java}).longValue()")
-                                    elif target_type == "int":
-                                        wrapped_args.append(f"((Number) {a_java}).intValue()")
-                                    elif target_type == "Integer":
-                                        wrapped_args.append(f"((Number) {a_java}).intValue()")
-                                    elif "BigDecimal" in target_type:
-                                        wrapped_args.append(f"((java.math.BigDecimal) {a_java})")
-                                    elif target_type == "String":
-                                        wrapped_args.append(f"(String) {a_java}")
-                                    else:
-                                        wrapped_args.append(f"({target_type}) {a_java}")
-                                else:
-                                    wrapped_args.append(a_java)
+                                wrapped_args.append(_coerce_java_arg(a_java, target_proc.parameters[i].java_type))
                             else:
+                                wrapped_args.append(a_java)
                                 wrapped_args.append(a_java)
                         return f"this.{method}({', '.join(wrapped_args)})"
                 _record_unsupported(func_name, proc)
@@ -4495,8 +4547,44 @@ def _extract_all_into_targets(into_targets: list) -> list:
     return result
 
 
-def _build_param_args(params: list) -> str:
-    return ", ".join(p.java_name for p in params if not p.is_out)
+def _build_param_args(params: list, extra_args: list = None) -> str:
+    parts = []
+    for p in params:
+        if p.mode and p.mode.upper() == "OUT":
+            continue
+        if p.mode and p.mode.upper() == "INOUT":
+            parts.append(f"{p.java_name}.get()")
+        else:
+            parts.append(p.java_name)
+    if extra_args:
+        parts.extend(extra_args)
+    return ", ".join(parts)
+
+
+def _sql_local_var_names(proc: ProcedureInfo, sql_text: str) -> list:
+    if not sql_text:
+        return []
+    scan_sql = sql_text
+    upper = sql_text.lstrip().upper()
+    if upper.startswith("SELECT"):
+        into_match = re.search(r'\bINTO\b', sql_text, re.IGNORECASE)
+        if into_match:
+            scan_sql = sql_text[:into_match.start()]
+    param_names_lower = {p.name.lower() for p in proc.parameters if not p.is_out}
+    mybatis_placeholders = set(re.findall(r'#\{(\w+)', sql_text))
+    result = []
+    for var_name in proc.local_vars:
+        if var_name.lower() in param_names_lower:
+            continue
+        java_name = snake_to_camel(var_name)
+        if java_name in mybatis_placeholders or re.search(rf'\b{re.escape(var_name)}\b', scan_sql, re.IGNORECASE):
+            result.append(java_name)
+    return result
+
+
+def _mapper_call(proc: ProcedureInfo, mapper_method: str, sql_text: str = "") -> str:
+    extra = _sql_local_var_names(proc, sql_text)
+    return f"mapper.{mapper_method}({_build_param_args(proc.parameters, extra)})"
 
 
 # ── Code Generation ────────────────────────────────────────────
@@ -4538,11 +4626,22 @@ def generate_project(output_dir: str, packages: list, changed_packages: set = No
         service_injections = _collect_service_injections(pkg)
         _write_service_test(base_path, pkg, service_injections, svc_method_param_counts, all_packages)
 
+    itest_cfg = (config or {}).get("integration_test", {})
+    if itest_cfg.get("enabled"):
+        schema_map = _itest_collect_schemas()
+        _itest_write_infrastructure(base_path, itest_cfg)
+        _itest_write_schema_sql(base_path, packages, itest_cfg)
+        for pkg in active_pkgs:
+            _itest_write_class(base_path, pkg, itest_cfg, schema_map, all_packages)
+
 
 def _collect_service_injections(pkg: PackageInfo) -> dict:
     services = {}
+    own_svc = f"{package_to_classname(pkg.package_name).lower()}Service"
     for proc in pkg.procedures:
         for call in proc.service_calls:
+            if call.service_name == own_svc:
+                continue
             if call.service_name not in services:
                 services[call.service_name] = call.package_name
     return services
@@ -4597,6 +4696,29 @@ def _write_pom_xml(base_path: Path):
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-starter-test</artifactId>
                     <scope>test</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.testcontainers</groupId>
+                    <artifactId>testcontainers</artifactId>
+                    <version>1.19.8</version>
+                    <scope>test</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.testcontainers</groupId>
+                    <artifactId>postgresql</artifactId>
+                    <version>1.19.8</version>
+                    <scope>test</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.testcontainers</groupId>
+                    <artifactId>junit-jupiter</artifactId>
+                    <version>1.19.8</version>
+                    <scope>test</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-testcontainers</artifactId>
+                    <scope>test</scope>
                 </dependency>""")
 
     build_section = textwrap.dedent("""\
@@ -4621,10 +4743,34 @@ def _write_pom_xml(base_path: Path):
                         <artifactId>maven-surefire-plugin</artifactId>
                         <configuration>
                             <argLine>-Dnet.bytebuddy.experimental=true</argLine>
+                            <excludes>
+                                <exclude>**/itest/**</exclude>
+                            </excludes>
                         </configuration>
                     </plugin>
                 </plugins>
             </build>
+
+            <profiles>
+                <profile>
+                    <id>integration</id>
+                    <build>
+                        <plugins>
+                            <plugin>
+                                <groupId>org.apache.maven.plugins</groupId>
+                                <artifactId>maven-surefire-plugin</artifactId>
+                                <configuration>
+                                    <includes>
+                                        <include>**/itest/*Test.java</include>
+                                        <include>**/*IntegrationTest.java</include>
+                                    </includes>
+                                    <excludes combine.self="override" />
+                                </configuration>
+                            </plugin>
+                        </plugins>
+                    </build>
+                </profile>
+            </profiles>
         </project>
     """)
 
@@ -4738,16 +4884,34 @@ def _write_mapper_interface(base_path: Path, pkg: PackageInfo):
     (java_dir / f"{class_name}.java").write_text(content)
 
 
+def _dml_used_local_vars(proc: ProcedureInfo, dml: DmlStatement) -> list:
+    sql_raw = dml.sql_text or ""
+    mybatis_placeholders = set(re.findall(r'#\{(\w+)', sql_raw))
+    used = []
+    param_names_lower = {p.name.lower() for p in proc.parameters if not p.is_out}
+    param_java_lower = {p.java_name.lower() for p in proc.parameters if not p.is_out}
+    for var_name, var_java_type in proc.local_vars.items():
+        java_name = snake_to_camel(var_name)
+        if var_name.lower() in param_names_lower or java_name.lower() in param_java_lower:
+            continue
+        if java_name in mybatis_placeholders or re.search(rf'\b{re.escape(var_name)}\b', sql_raw, re.IGNORECASE):
+            used.append((java_name, var_java_type))
+    return used
+
+
 def _build_mapper_method(proc: ProcedureInfo, dml: DmlStatement, imports: set) -> str:
-    """Build a single mapper method signature."""
     method_name = dml.method_id
 
-    # Build parameter list
     params = []
     for p in proc.parameters:
-        if p.is_out:
+        if p.mode and p.mode.upper() == "OUT":
             continue
-        params.append(f"@Param(\"{p.java_name}\") {p.java_type} {p.java_name}")
+        params.append(f'@Param("{p.java_name}") {p.java_type} {p.java_name}')
+
+    for java_name, java_type in _dml_used_local_vars(proc, dml):
+        params.append(f'@Param("{java_name}") {java_type} {java_name}')
+        if not is_simple_java_type(java_type):
+            imports.add(f"import {java_type};")
 
     params_str = ", ".join(params) if params else ""
 
@@ -4843,6 +5007,17 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
     if sql.endswith(";"):
         sql = sql[:-1]
 
+    # Replace cross-package function calls with PostgreSQL equivalents
+    _SQL_FUNC_REPLACEMENTS = [
+        (re.compile(r'\b\w+\.get_sys_date\s*\(\)', re.IGNORECASE), 'CURRENT_TIMESTAMP'),
+        (re.compile(r'\b\w+\.sysdate\b', re.IGNORECASE), 'CURRENT_TIMESTAMP'),
+    ]
+    for pat, repl in _SQL_FUNC_REPLACEMENTS:
+        sql = pat.sub(repl, sql)
+
+    sql = re.sub(r'\bDATE\s*\(([^)]+)\)', r'CAST(\1 AS DATE)', sql, flags=re.IGNORECASE)
+    sql = re.sub(r'\bTIMESTAMP\s*\(([^)]+)\)', r'CAST(\1 AS TIMESTAMP)', sql, flags=re.IGNORECASE)
+
     param_placeholders = []
     def _protect(m):
         param_placeholders.append(m.group(0))
@@ -4855,6 +5030,14 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
         sql = sql.replace(f"__PH{i}__", ph)
 
     sql = _convert_params_to_mybatis(sql, proc.parameters, proc.local_vars)
+
+    sql = re.sub(r'([(,])\s*(date|user|order|performance|type)\s*([,)])', r'\1 "\2" \3', sql, flags=re.IGNORECASE)
+
+    if dml.sql_type == "select" and not dml.returns_list:
+        if not re.search(r'\bLIMIT\b', sql, re.IGNORECASE):
+            sql = sql.rstrip() + "\n        LIMIT 1"
+
+    sql = sql.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     result_type_attr = ""
     if dml.sql_type == "select":
@@ -4872,10 +5055,12 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
 
     tag = dml.sql_type
     params_attrs = ""
-    if proc.parameters:
-        param_types = set(p.java_type for p in proc.parameters if not p.is_out)
+    has_local_var_params = len(_dml_used_local_vars(proc, dml)) > 0
+    if proc.parameters and not has_local_var_params:
+        param_types = set(p.java_type for p in proc.parameters if not (p.mode and p.mode.upper() == "OUT"))
         if len(param_types) == 1:
-            params_attrs = f' parameterType="{list(param_types)[0].lower()}"'
+            pt = list(param_types)[0]
+            params_attrs = f' parameterType="{pt.lower() if is_simple_java_type(pt) else pt}"'
 
     filter_line = ""
     if dml.optional_filters:
@@ -4906,6 +5091,22 @@ def _convert_params_to_mybatis(sql: str, params: list, local_vars: dict = None) 
     then replaces remaining simple ``param`` references.  This avoids ``#{param}.field`` which
     is invalid MyBatis.
     """
+    all_names = {}
+    for p in params:
+        all_names[p.name] = p.java_name
+    if local_vars:
+        for var_name in local_vars:
+            all_names[var_name] = snake_to_camel(var_name)
+
+    composite_pattern = re.compile(
+        r'\b(' + '|'.join(re.escape(n) for n in all_names) + r')\.(\w+)\b',
+        re.IGNORECASE
+    )
+    def _composite_repl(m):
+        java_name = all_names[m.group(1).lower()] if m.group(1).lower() in {k.lower(): k for k in all_names} else all_names.get(m.group(1), m.group(1))
+        return f'#{{{java_name}.{snake_to_camel(m.group(2))}}}'
+    sql = composite_pattern.sub(_composite_repl, sql)
+
     for p in params:
         jdbc = sql_type_to_jdbc(p.sql_type)
         java = p.java_type
@@ -4933,6 +5134,8 @@ def _convert_params_to_mybatis(sql: str, params: list, local_vars: dict = None) 
                 sql,
                 flags=re.IGNORECASE
             )
+    sql = re.sub(r'(?<!\')\s*::\s*(?:DATE|TIMESTAMP|INTEGER|BIGINT|VARCHAR|TEXT|BOOLEAN|NUMERIC|DECIMAL|FLOAT|DOUBLE|REAL|SMALLINT|BYTEA|JSONB|JSON|UUID)\b', '', sql, flags=re.IGNORECASE)
+    sql = re.sub(r'(#[\w, ={}]+})\s+(?:DATE|TIMESTAMP|INTEGER|BIGINT|VARCHAR|TEXT|BOOLEAN|NUMERIC|DECIMAL|FLOAT|DOUBLE|REAL|SMALLINT|BYTEA|JSONB|JSON|UUID)\b', r'\1', sql, flags=re.IGNORECASE)
     return sql
 
 
@@ -5302,9 +5505,11 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
         out_java_names = {p.java_name for p in out_params}
         top_level_declares = set()
         top_level_insert_idx = 0
+        _loop_vars = getattr(proc, '_loop_vars', set())
+        _pkg_var_names = getattr(proc, '_pkg_var_names', set())
         for var_name, var_type in proc.local_vars.items():
             var_java = snake_to_camel(var_name)
-            if var_java not in out_java_names:
+            if var_java not in out_java_names and var_name not in _loop_vars and var_name not in _pkg_var_names:
                 default_val = proc.local_var_defaults.get(var_name, _default_for_type(var_type))
                 if var_name in proc.local_var_defaults and _is_numeric_default(default_val, var_type):
                     default_val = _wrap_default_for_type(default_val, var_type)
@@ -5859,10 +6064,11 @@ def _build_success_test(proc: ProcedureInfo, mapper_name: str,
 def _collect_all_dmls(pkg: PackageInfo) -> dict:
     all_dmls = {}
     for p in pkg.procedures:
-        in_param_count = sum(1 for param in p.parameters if not param.is_out)
+        in_param_count = sum(1 for param in p.parameters if not (param.mode and param.mode.upper() == "OUT"))
         for dml in p.dml_statements:
             if dml.method_id not in all_dmls:
-                all_dmls[dml.method_id] = (dml.method_id, dml.sql_type, dml.result_type, dml.returns_list, in_param_count, dml.sql_text)
+                local_var_count = len(_dml_used_local_vars(p, dml))
+                all_dmls[dml.method_id] = (dml.method_id, dml.sql_type, dml.result_type, dml.returns_list, in_param_count + local_var_count, dml.sql_text)
     return all_dmls
 
 
@@ -5984,7 +6190,7 @@ def _mock_all_mapper_methods(mapper_name: str, pkg: PackageInfo, lines: list, er
 
 
 def _build_any_matchers(proc: ProcedureInfo) -> str:
-    count = sum(1 for p in proc.parameters if not p.is_out)
+    count = sum(1 for p in proc.parameters if not (p.mode and p.mode.upper() == "OUT"))
     if count == 0:
         return ""
     return ", ".join(["any()"] * count)
@@ -6133,7 +6339,6 @@ def _find_dependent_packages(packages: list, changed_pkg_names: set) -> set:
 def _clean_stale_packages(output_dir: str, old_manifest: dict, current_packages: list):
     """Delete generated files for packages no longer in config."""
     current_pkg_names = {p.package_name for p in current_packages}
-    # Build pkg_name → java_package map from old manifest for path resolution
     old_pkg_jp = {}
     for info in old_manifest.get("files", {}).values():
         pkg = info.get("package")
@@ -6160,7 +6365,467 @@ def _clean_stale_packages(output_dir: str, old_manifest: dict, current_packages:
                 _log(f"    Removed: {f.relative_to(base_path)}")
 
 
-# ── Conversion Report Generation ─────────────────────────────
+
+
+def _itest_collect_schemas() -> dict:
+    schema_map = {}
+    for (table, col), sql_type in TYPE_OVERRIDES.items():
+        if table not in schema_map:
+            schema_map[table] = {}
+        schema_map[table][col] = sql_type
+    return schema_map
+
+
+def _itest_write_infrastructure(base_path: Path, itest_cfg: dict):
+    mode = itest_cfg.get("mode", "remote")
+    jp = BASE_PACKAGE
+    pkg_dir = base_path / "src/test/java" / jp.replace(".", "/") / "itest"
+    pkg_dir.mkdir(parents=True, exist_ok=True)
+    res_dir = base_path / "src/test/resources"
+    res_dir.mkdir(parents=True, exist_ok=True)
+
+    if mode == "testcontainers":
+        content = textwrap.dedent(f"""\
+            package {jp}.itest;
+
+            import org.springframework.boot.test.context.SpringBootTest;
+            import org.springframework.test.context.ActiveProfiles;
+            import org.springframework.test.context.DynamicPropertyRegistry;
+            import org.springframework.test.context.DynamicPropertySource;
+            import org.springframework.test.context.jdbc.Sql;
+            import org.testcontainers.containers.PostgreSQLContainer;
+            import org.testcontainers.junit.jupiter.Container;
+            import org.testcontainers.junit.jupiter.Testcontainers;
+
+            @SpringBootTest
+            @ActiveProfiles("integration")
+            @Testcontainers
+            @Sql(scripts = "classpath:itest-schema.sql", executionPhase = Sql.ExecutionPhase.BEFORE_TEST_METHOD)
+            public abstract class AbstractIntegrationTest {{
+                @Container
+                static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine")
+                        .withDatabaseName("test")
+                        .withUsername("test")
+                        .withPassword("test");
+
+                @DynamicPropertySource
+                static void configureProperties(DynamicPropertyRegistry registry) {{
+                    registry.add("spring.datasource.url", postgres::getJdbcUrl);
+                    registry.add("spring.datasource.username", postgres::getUsername);
+                    registry.add("spring.datasource.password", postgres::getPassword);
+                }}
+            }}
+        """)
+    else:
+        content = textwrap.dedent(f"""\
+            package {jp}.itest;
+
+            import org.springframework.boot.test.context.SpringBootTest;
+            import org.springframework.test.context.ActiveProfiles;
+            import org.springframework.test.context.jdbc.Sql;
+            import org.springframework.test.context.jdbc.SqlMergeMode;
+
+            @SpringBootTest
+            @ActiveProfiles("integration")
+            @SqlMergeMode(SqlMergeMode.MergeMode.MERGE)
+            @Sql(scripts = "classpath:itest-schema.sql", executionPhase = Sql.ExecutionPhase.BEFORE_TEST_METHOD)
+            public abstract class AbstractIntegrationTest {{
+            }}
+        """)
+    (pkg_dir / "AbstractIntegrationTest.java").write_text(content)
+
+    db = itest_cfg if mode == "remote" else {}
+    url = db.get("url", "jdbc:postgresql://localhost:5432/postgres")
+    username = db.get("username", "postgres")
+    password = db.get("password", "postgres")
+    yml_content = textwrap.dedent(f"""\
+        spring:
+          datasource:
+            url: {url}
+            username: {username}
+            password: {password}
+            driver-class-name: org.postgresql.Driver
+    """)
+    (res_dir / "application-integration.yml").write_text(yml_content)
+
+
+def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
+    schema_map = _itest_collect_schemas()
+
+    tables_with_explicit_id_insert = set()
+    tables_with_implicit_id_insert = set()
+    for pkg in packages:
+        for proc in pkg.procedures:
+            for dml in proc.dml_statements:
+                raw = getattr(dml, 'raw_sql_for_params', '') or getattr(dml, 'sql_text', '')
+                if not raw:
+                    continue
+                raw_lower = raw.lower().strip()
+                if not raw_lower.startswith("insert"):
+                    continue
+                m = re.match(r'insert\s+into\s+(\w+)\s*\(([^)]+)\)', raw_lower)
+                if not m:
+                    continue
+                tbl = m.group(1)
+                cols_str = m.group(2)
+                insert_cols = [c.strip().strip('"') for c in cols_str.split(',')]
+                if 'id' in insert_cols:
+                    tables_with_explicit_id_insert.add(tbl)
+                else:
+                    tables_with_implicit_id_insert.add(tbl)
+
+    auto_id_tables = tables_with_implicit_id_insert - tables_with_explicit_id_insert
+
+    lines = []
+    for table in sorted(schema_map.keys()):
+        lines.append(f'DROP TABLE IF EXISTS "{table}" CASCADE;')
+    lines.append("")
+    for table, columns in sorted(schema_map.items()):
+        col_defs = []
+        for col, sql_type in sorted(columns.items()):
+            sql_stripped = sql_type.strip()
+            col_lower = col.lower()
+            if col_lower.startswith("constraint") or col_lower.startswith("check") or col_lower.startswith("primary") or col_lower.startswith("foreign") or col_lower.startswith("unique") or col_lower.startswith("index") or col_lower == "like":
+                continue
+            if "GENERATED ALWAYS" in sql_stripped.upper():
+                continue
+            if not re.match(r'^[a-zA-Z_]\w*$', col):
+                continue
+            effective_type = sql_stripped
+            if col_lower == "id" and sql_stripped.upper().strip() == "BIGINT" and table in auto_id_tables:
+                effective_type = "BIGSERIAL"
+            col_defs.append(f'    "{col}" {effective_type}')
+        if not col_defs:
+            continue
+        lines.append(f'CREATE TABLE "{table}" (')
+        lines.append(",\n".join(col_defs))
+        lines.append(");")
+        lines.append("")
+
+    init_sql = itest_cfg.get("init_sql", [])
+    if isinstance(init_sql, str):
+        init_sql = [init_sql]
+    for script in init_sql:
+        if os.path.isfile(script):
+            with open(script, 'r', encoding='utf-8', errors='replace') as f:
+                lines.append(f.read())
+        else:
+            lines.append(f"-- init_sql not found: {script}")
+
+    content = "\n".join(lines)
+    res_dir = base_path / "src/test/resources"
+    res_dir.mkdir(parents=True, exist_ok=True)
+    (res_dir / "itest-schema.sql").write_text(content)
+
+
+def _itest_extract_table_from_select(sql: str) -> str:
+    m = re.search(r'\bfrom\s+(?:\w+\.)?(\w+)', sql, re.IGNORECASE)
+    return m.group(1).lower() if m else ""
+
+
+def _itest_extract_table_from_insert(sql: str) -> str:
+    m = re.search(r'\binto\s+(?:\w+\.)?(\w+)', sql, re.IGNORECASE)
+    return m.group(1).lower() if m else ""
+
+
+def _itest_extract_table_from_update_delete(sql: str) -> str:
+    m = re.search(r'\b(?:update|delete\s+from?)\s+(?:\w+\.)?(\w+)', sql, re.IGNORECASE)
+    return m.group(1).lower() if m else ""
+
+
+def _itest_generate_test_value(col_name: str, sql_type: str) -> str:
+    lower_type = (sql_type or "").lower()
+    lower_col = col_name.lower()
+    if any(t in lower_type for t in ("int", "serial", "bigserial")):
+        if lower_col.startswith("parent_"):
+            return "NULL"
+        if "id" in lower_col or "no" in lower_col:
+            return "1"
+        return "10"
+    if any(t in lower_type for t in ("numeric", "decimal", "real", "float", "double")):
+        return "99.99"
+    if "timestamp" in lower_type:
+        return "'2024-01-01 00:00:00'"
+    if "date" in lower_type:
+        return "'2024-01-01'"
+    if "boolean" in lower_type or "bool" in lower_type:
+        return "true"
+    if "bytea" in lower_type:
+        return "'\\x00'"
+    if any(t in lower_type for t in ("varchar", "char", "text", "json", "jsonb", "uuid")):
+        if "id" in lower_col or "code" in lower_col or "type" in lower_col or "status" in lower_col:
+            return f"'test_{lower_col}'"
+        return f"'test {lower_col}'"
+    return "'test'"
+
+
+def _itest_infer_test_data(proc: ProcedureInfo, pkg: PackageInfo, schema_map: dict, all_packages: dict = None) -> dict:
+    handled = set()
+    needed = {}
+    for dml in proc.dml_statements:
+        sql = dml.sql_text or ""
+        if dml.sql_type == "insert":
+            tbl = _itest_extract_table_from_insert(sql)
+            if tbl:
+                handled.add(tbl)
+        elif dml.sql_type == "select":
+            tbl = _itest_extract_table_from_select(sql)
+            if tbl and tbl not in handled:
+                needed[tbl] = schema_map.get(tbl, {})
+        elif dml.sql_type in ("update", "delete"):
+            tbl = _itest_extract_table_from_update_delete(sql)
+            if tbl and tbl not in handled:
+                needed[tbl] = schema_map.get(tbl, {})
+    if all_packages is None:
+        return needed
+    _itest_add_transitive_tables(proc, pkg, schema_map, handled, needed, all_packages)
+    return needed
+
+
+def _itest_add_transitive_tables(proc, pkg, schema_map, handled, needed, all_packages, depth=0):
+    if depth > 2:
+        return
+    _camel_re = re.compile(r'([a-z0-9])([A-Z])')
+
+    def _camel_to_snake(name):
+        return _camel_re.sub(r'\1_\2', name).lower()
+
+    # Build service-var → package lookup
+    _svc_to_pkg = {}
+    if all_packages:
+        for p in all_packages.values():
+            cls = package_to_classname(p.package_name)
+            var = cls[0].lower() + cls[1:] + "Service"
+            _svc_to_pkg[var] = p
+
+    visited = set()
+
+    def _add_proc_tables(target_proc):
+        pname = target_proc.proc_name
+        if pname in visited:
+            return
+        visited.add(pname)
+        for dml in target_proc.dml_statements:
+            sql = dml.sql_text or ""
+            if dml.sql_type == "insert":
+                tbl = _itest_extract_table_from_insert(sql)
+                if tbl:
+                    handled.add(tbl)
+            elif dml.sql_type == "select":
+                tbl = _itest_extract_table_from_select(sql)
+                if tbl and tbl not in handled:
+                    needed[tbl] = schema_map.get(tbl, {})
+            elif dml.sql_type in ("update", "delete"):
+                tbl = _itest_extract_table_from_update_delete(sql)
+                if tbl and tbl not in handled:
+                    needed[tbl] = schema_map.get(tbl, {})
+
+    for line in proc.java_logic_lines:
+        # Same-package: this.methodName(
+        for m in re.finditer(r'\bthis\.(\w+)\s*\(', line):
+            method_java = m.group(1)
+            proc_name = _camel_to_snake(method_java)
+            for tp in pkg.procedures:
+                if tp.proc_name == proc_name:
+                    _add_proc_tables(tp)
+                    _itest_add_transitive_tables(tp, pkg, schema_map, handled, needed, all_packages, depth + 1)
+                    break
+
+        # Cross-package: xxxService.methodName(
+        for m in re.finditer(r'\b(\w+Service)\.(\w+)\s*\(', line):
+            svc_var = m.group(1)
+            method_java = m.group(2)
+            target_pkg = _svc_to_pkg.get(svc_var)
+            if target_pkg:
+                proc_name = _camel_to_snake(method_java)
+                for tp in target_pkg.procedures:
+                    if tp.proc_name == proc_name:
+                        _add_proc_tables(tp)
+                        _itest_add_transitive_tables(tp, target_pkg, schema_map, handled, needed, all_packages, depth + 1)
+                        break
+
+
+def _itest_write_fixtures(base_path: Path, proc: ProcedureInfo, pkg: PackageInfo, test_data: dict) -> str:
+    if not test_data:
+        return ""
+    lines = []
+    _skip_prefixes = ("constraint", "check", "primary", "foreign", "unique", "index", "like")
+    for table, columns in sorted(test_data.items()):
+        if not columns:
+            continue
+        col_names = []
+        values = []
+        for col, sql_type in sorted(columns.items()):
+            col_lower = col.lower()
+            if any(col_lower.startswith(p) or col_lower == p for p in _skip_prefixes):
+                continue
+            if not re.match(r'^[a-zA-Z_]\w*$', col):
+                continue
+            col_names.append(col)
+            values.append(_itest_generate_test_value(col, sql_type))
+        cols_str = ", ".join(col_names)
+        vals_str = ", ".join(values)
+        lines.append(f"INSERT INTO {table} ({cols_str}) VALUES ({vals_str});")
+    if not lines:
+        return ""
+    content = "\n".join(lines)
+    fixtures_dir = base_path / "src/test/resources" / "itest-fixtures"
+    fixtures_dir.mkdir(parents=True, exist_ok=True)
+    fname = f"{pkg.package_name}_{proc.proc_name}.sql"
+    (fixtures_dir / fname).write_text(content)
+    return f"classpath:itest-fixtures/{fname}"
+
+
+def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schema_map: dict, all_packages: dict):
+    jp = _pkg_java_package(pkg)
+    itest_dir = base_path / "src/test/java" / jp.replace(".", "/") / "itest"
+    itest_dir.mkdir(parents=True, exist_ok=True)
+    class_name = f"{package_to_classname(pkg.package_name)}ServiceIntegrationTest"
+    svc_class = f"{package_to_classname(pkg.package_name)}Service"
+    mapper_class = f"{package_to_classname(pkg.package_name)}Mapper"
+    mapper_var = f"{mapper_class[0].lower()}{mapper_class[1:]}"
+    svc_var = f"{svc_class[0].lower()}{svc_class[1:]}"
+
+    imports = set()
+    imports.add("import org.junit.jupiter.api.Test;")
+    imports.add("import org.junit.jupiter.api.Timeout;")
+    imports.add("import org.springframework.beans.factory.annotation.Autowired;")
+    imports.add(f"import {jp}.service.{svc_class};")
+    imports.add(f"import {jp}.mapper.{mapper_class};")
+    imports.add(f"import {BASE_PACKAGE}.itest.AbstractIntegrationTest;")
+    imports.add("import static org.junit.jupiter.api.Assertions.*;")
+    imports.add("import java.util.concurrent.TimeUnit;")
+
+    needs_map = any("Map<String, Object>" in p.java_type for proc in pkg.procedures for p in proc.parameters)
+    if needs_map:
+        imports.add("import java.util.Map;")
+        imports.add("import java.util.HashMap;")
+    needs_list = any(p.java_type.startswith("List<") for proc in pkg.procedures for p in proc.parameters)
+    if needs_list:
+        imports.add("import java.util.List;")
+        imports.add("import java.util.ArrayList;")
+    needs_atomic_ref = any(p.is_out for proc in pkg.procedures for p in proc.parameters)
+    if needs_atomic_ref:
+        imports.add("import java.util.concurrent.atomic.AtomicReference;")
+
+    _all_pkgs = all_packages or {}
+    service_injections = _collect_service_injections(pkg)
+    for svc_var_inj, pkg_name in service_injections.items():
+        if pkg_name:
+            svc_class_inj = f"{package_to_classname(pkg_name)}Service"
+        else:
+            svc_class_part = svc_var_inj.replace("Service", "")
+            svc_class_inj = f"{package_to_classname(svc_class_part)}Service"
+            pkg_name = svc_class_part
+        target_jp = _pkg_java_package(_all_pkgs[pkg_name]) if pkg_name in _all_pkgs else BASE_PACKAGE
+        imports.add(f"import {target_jp}.service.{svc_class_inj};")
+
+    test_methods = []
+    seen_method_names: dict = {}
+    for proc in pkg.procedures:
+        method_name = java_method_name(proc.proc_name)
+        in_params = [p for p in proc.parameters if not p.is_out]
+        out_params = [p for p in proc.parameters if p.is_out]
+
+        param_values = []
+        param_args = []
+        for p in in_params:
+            val = _default_test_value(p.java_type, p.java_name, pkg=pkg)
+            decl_type = p.java_type
+            if pkg and hasattr(pkg, 'custom_types'):
+                for tn, ti in pkg.custom_types.items():
+                    if ti.get("kind") == "record" and _custom_type_classname(tn) == decl_type:
+                        decl_type = f"{svc_class}.{decl_type}"
+                        break
+            param_values.append(f"{decl_type} {p.java_name} = {val};")
+            param_args.append(p.java_name)
+
+        out_decls = []
+        out_args = []
+        for p in out_params:
+            if p.is_refcursor:
+                continue
+            holder = f"AtomicReference<{p.java_type}>"
+            out_decls.append(f"{holder} {p.java_name} = new AtomicReference<>(null);")
+            out_args.append(p.java_name)
+
+        all_args = param_args + out_args
+        args_str = ", ".join(all_args)
+
+        test_data = _itest_infer_test_data(proc, pkg, schema_map, all_packages)
+        sql_script = _itest_write_fixtures(base_path, proc, pkg, test_data)
+
+        base_test_name = f"test_{method_name}_integration"
+        count = seen_method_names.get(base_test_name, 0)
+        seen_method_names[base_test_name] = count + 1
+        test_name = f"{base_test_name}_{count}" if count > 0 else base_test_name
+
+        lines = []
+        if sql_script:
+            lines.append(f"    @org.springframework.test.context.jdbc.Sql(scripts = \"{sql_script}\")")
+        lines.append("    @Test")
+        lines.append("    @Timeout(value = 10, unit = TimeUnit.SECONDS)")
+        lines.append(f"    void {test_name}() {{")
+        for pv in param_values:
+            lines.append(f"        {pv}")
+        for od in out_decls:
+            lines.append(f"        {od}")
+        if proc.is_function:
+            lines.append(f"        var result = {svc_var}.{method_name}({args_str});")
+            lines.append("        assertNotNull(result);")
+            lines.append("        // TODO: Add domain-specific assertions")
+        else:
+            lines.append(f"        {svc_var}.{method_name}({args_str});")
+            lines.append("        // TODO: Add domain-specific assertions")
+        lines.append("    }")
+        test_methods.append("\n".join(lines))
+
+    if not test_methods:
+        test_methods.append(
+            "    @Test\n"
+            "    @Timeout(value = 10, unit = TimeUnit.SECONDS)\n"
+            "    void testServiceExists() {\n"
+            "        assertNotNull(service);\n"
+            "    }"
+        )
+
+    lines = []
+    lines.append(f"package {jp}.itest;")
+    lines.append("")
+    for imp in sorted(imports):
+        lines.append(imp)
+    lines.append("")
+    if pkg.source_file:
+        lines.append(f"// Source: {pkg.source_file}")
+    lines.append(f"class {class_name} extends AbstractIntegrationTest {{")
+    lines.append("")
+    lines.append(f"    @Autowired")
+    lines.append(f"    private {mapper_class} {mapper_var};")
+    lines.append("")
+    lines.append(f"    @Autowired")
+    lines.append(f"    private {svc_class} {svc_var};")
+
+    for svc_var_inj, pkg_name in service_injections.items():
+        if pkg_name:
+            svc_class_inj = f"{package_to_classname(pkg_name)}Service"
+        else:
+            svc_class_part = svc_var_inj.replace("Service", "")
+            svc_class_inj = f"{package_to_classname(svc_class_part)}Service"
+        lines.append("")
+        lines.append(f"    @Autowired")
+        lines.append(f"    private {svc_class_inj} {svc_var_inj};")
+
+    for tm in test_methods:
+        lines.append("")
+        lines.append(tm)
+
+    lines.append("}")
+    lines.append("")
+    content = "\n".join(lines)
+    (itest_dir / f"{class_name}.java").write_text(content)
+
+
+
 
 def build_conversion_report(
     output_dir: str, packages: list, all_skipped: list, parse_errors_map: dict,
@@ -6652,6 +7317,7 @@ def main():
                     if src not in sql_files:
                         sql_files.append(src)
 
+    parse_errors_map = {}
     missing_files = [f for f in sql_files if not os.path.exists(f)]
     if missing_files:
         for f in missing_files:
@@ -6701,7 +7367,6 @@ def main():
     all_package_names = {}
     sql_file_to_pkg = {}
     all_skipped = []
-    parse_errors_map = {}
     n_sql = len(sql_files)
 
     for idx, sql_file in enumerate(sql_files, 1):
@@ -6770,6 +7435,13 @@ def main():
     for idx, (pkg, proc) in enumerate(all_procs, 1):
         _progress_bar("Analyze", idx, n_analyze, proc.name)
         try:
+            if pkg.package_vars:
+                _pkg_var_names = getattr(proc, '_pkg_var_names', set())
+                for vn, vi in pkg.package_vars.items():
+                    if vn not in proc.local_vars:
+                        proc.local_vars[vn] = vi.get("java_type", "Object")
+                        _pkg_var_names.add(vn)
+                setattr(proc, '_pkg_var_names', _pkg_var_names)
             analyze_procedure(proc, all_package_names)
         except Exception as e:
             _log(f"    ❌ Error analyzing {proc.name}: {e}", to_stdout=False)
@@ -6839,12 +7511,18 @@ def main():
     total_calls = sum(len(proc.service_calls) for pkg in packages for proc in pkg.procedures)
     stub_count = len(STUB_PROCEDURES)
 
+    itest_cfg = config.get("integration_test", {}) if config else {}
+    itest_enabled = itest_cfg.get("enabled", False)
+
     _log(f"\n  Done!")
     _log(f"    Packages:    {len(packages)}")
     _log(f"    Procedures:  {total_procs}")
     _log(f"    DML stmts:   {total_dml} (extracted as iBatis mapper methods)")
     _log(f"    Cross-calls: {total_calls}")
     _log(f"    Test files:  {len(packages)} (generated unit tests)")
+    if itest_enabled:
+        itest_mode = itest_cfg.get("mode", "remote")
+        _log(f"    IT files:    {len(packages)} (generated integration tests, {itest_mode} mode)")
     _log(f"    Skipped:     {len(all_skipped)} (non-procedure SQL)")
     if UNRESOLVED_CALLS:
         _log(f"    Unresolved:  {len(UNRESOLVED_CALLS)} (cross-package calls, 详见转换报告)")
