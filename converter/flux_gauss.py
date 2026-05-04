@@ -2261,24 +2261,7 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
                         for i, a in enumerate(raw_args):
                             a_java = _expr_to_java(a, proc)
                             if target_proc and i < len(target_proc.parameters):
-                                ptype = target_proc.parameters[i].java_type
-                                if "BigDecimal" in ptype and _is_numeric_literal(a):
-                                    a_java = f"java.math.BigDecimal.valueOf({a_java})"
-                                elif ".get(" in a_java and ptype not in ("Object", "Map<String, Object>"):
-                                    if ptype == "long":
-                                        a_java = f"((Number) {a_java}).longValue()"
-                                    elif ptype == "Long":
-                                        a_java = f"((Number) {a_java}).longValue()"
-                                    elif ptype == "int":
-                                        a_java = f"((Number) {a_java}).intValue()"
-                                    elif ptype == "Integer":
-                                        a_java = f"((Number) {a_java}).intValue()"
-                                    elif "BigDecimal" in ptype:
-                                        a_java = f"((java.math.BigDecimal) {a_java})"
-                                    elif ptype == "String":
-                                        a_java = f"(String) {a_java}"
-                                    else:
-                                        a_java = f"({ptype}) {a_java}"
+                                a_java = _coerce_java_arg(a_java, target_proc.parameters[i].java_type)
                             args_java.append(a_java)
                         args = ", ".join(args_java)
                         if matched_pkg.lower() == proc.package.lower():
@@ -2747,12 +2730,15 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
                 a_java = _expr_to_java(a, proc, as_read=True)
                 if target_proc_info and i < len(target_proc_info.parameters):
                     tptype = target_proc_info.parameters[i].java_type
-                    if ".get(" in a_java and tptype == "String":
-                        a_java = f"(String) {a_java}"
-                    elif tptype == "String" and not a_java.startswith('"'):
-                        a_java_type = _infer_expr_type(a, proc)
-                        if a_java_type in ("long", "Long", "int", "Integer"):
-                            a_java = f"String.valueOf({a_java})"
+                    if tptype == "String":
+                        if ".get(" in a_java:
+                            a_java = f"(String) {a_java}"
+                        elif not a_java.startswith('"'):
+                            a_java_type = _infer_expr_type(a, proc)
+                            if a_java_type in ("long", "Long", "int", "Integer"):
+                                a_java = f"String.valueOf({a_java})"
+                    else:
+                        a_java = _coerce_java_arg(a_java, tptype)
                 resolved_args.append(a_java)
         args_java = ", ".join(resolved_args)
         is_self_call = (matched_pkg.lower() == proc.package.lower())
@@ -3825,6 +3811,45 @@ def _is_numeric_literal_expr(java_str: str) -> bool:
         return False
 
 
+def _coerce_java_arg(a_java: str, target_type: str) -> str:
+    """Coerce a Java argument expression to match the target parameter type.
+
+    Handles edge cases where PL/pgSQL implicit type coercion needs explicit Java conversion:
+    - Empty string ``\"\"`` passed to numeric parameters → zero value (0L, 0, etc.)
+    - Numeric literal passed to BigDecimal parameter → BigDecimal.valueOf()
+    - Map.get() result to typed parameter → cast expression
+    """
+    # Empty string '' in PL/pgSQL passed to a numeric/boolean parameter
+    if a_java == '""' or a_java == '""':
+        if target_type in ("long", "Long"):
+            return "0L"
+        if target_type in ("int", "Integer"):
+            return "0"
+        if "BigDecimal" in target_type:
+            return "java.math.BigDecimal.ZERO"
+        if target_type in ("double", "Double"):
+            return "0.0d"
+        if target_type in ("float", "Float"):
+            return "0.0f"
+        if target_type in ("boolean", "Boolean"):
+            return "false"
+    # BigDecimal target with numeric literal
+    if "BigDecimal" in target_type and _is_numeric_literal_expr(a_java):
+        return f"java.math.BigDecimal.valueOf({a_java})"
+    # Map.get() result needs casting to target type
+    if ".get(" in a_java and target_type not in ("Object", "Map<String, Object>"):
+        if target_type in ("long", "Long"):
+            return f"((Number) {a_java}).longValue()"
+        if target_type in ("int", "Integer"):
+            return f"((Number) {a_java}).intValue()"
+        if "BigDecimal" in target_type:
+            return f"((java.math.BigDecimal) {a_java})"
+        if target_type == "String":
+            return f"(String) {a_java}"
+        return f"({target_type}) {a_java}"
+    return a_java
+
+
 def _is_integer_literal(expr, value=None) -> bool:
     if not isinstance(expr, dict):
         return False
@@ -4168,24 +4193,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                                 wrapped_args = []
                                 for i, a_java in enumerate(args_java):
                                     if i < len(target_proc.parameters):
-                                        target_type = target_proc.parameters[i].java_type
-                                        if ".get(" in a_java and target_type not in ("Object", "Map<String, Object>"):
-                                            if target_type == "long":
-                                                wrapped_args.append(f"((Number) {a_java}).longValue()")
-                                            elif target_type == "Long":
-                                                wrapped_args.append(f"((Number) {a_java}).longValue()")
-                                            elif target_type == "int":
-                                                wrapped_args.append(f"((Number) {a_java}).intValue()")
-                                            elif target_type == "Integer":
-                                                wrapped_args.append(f"((Number) {a_java}).intValue()")
-                                            elif "BigDecimal" in target_type:
-                                                wrapped_args.append(f"((java.math.BigDecimal) {a_java})")
-                                            elif target_type == "String":
-                                                wrapped_args.append(f"(String) {a_java}")
-                                            else:
-                                                wrapped_args.append(f"({target_type}) {a_java}")
-                                        else:
-                                            wrapped_args.append(a_java)
+                                        wrapped_args.append(_coerce_java_arg(a_java, target_proc.parameters[i].java_type))
                                     else:
                                         wrapped_args.append(a_java)
                                 svc_name = f"{package_to_classname(matched).lower()}Service"
@@ -4198,28 +4206,9 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                         wrapped_args = []
                         for i, a_java in enumerate(args_java):
                             if i < len(target_proc.parameters):
-                                target_type = target_proc.parameters[i].java_type
-                                if "BigDecimal" in target_type and _is_numeric_literal_expr(a_java):
-                                    wrapped_args.append(f"java.math.BigDecimal.valueOf({a_java})")
-                                elif ".get(" in a_java and target_type not in ("Object", "Map<String, Object>"):
-                                    # RECORD field access returns Object; cast to target param type
-                                    if target_type == "long":
-                                        wrapped_args.append(f"((Number) {a_java}).longValue()")
-                                    elif target_type == "Long":
-                                        wrapped_args.append(f"((Number) {a_java}).longValue()")
-                                    elif target_type == "int":
-                                        wrapped_args.append(f"((Number) {a_java}).intValue()")
-                                    elif target_type == "Integer":
-                                        wrapped_args.append(f"((Number) {a_java}).intValue()")
-                                    elif "BigDecimal" in target_type:
-                                        wrapped_args.append(f"((java.math.BigDecimal) {a_java})")
-                                    elif target_type == "String":
-                                        wrapped_args.append(f"(String) {a_java}")
-                                    else:
-                                        wrapped_args.append(f"({target_type}) {a_java}")
-                                else:
-                                    wrapped_args.append(a_java)
+                                wrapped_args.append(_coerce_java_arg(a_java, target_proc.parameters[i].java_type))
                             else:
+                                wrapped_args.append(a_java)
                                 wrapped_args.append(a_java)
                         return f"this.{method}({', '.join(wrapped_args)})"
                 _record_unsupported(func_name, proc)
