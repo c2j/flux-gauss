@@ -4538,8 +4538,11 @@ def generate_project(output_dir: str, packages: list, changed_packages: set = No
 
 def _collect_service_injections(pkg: PackageInfo) -> dict:
     services = {}
+    own_svc = f"{package_to_classname(pkg.package_name).lower()}Service"
     for proc in pkg.procedures:
         for call in proc.service_calls:
+            if call.service_name == own_svc:
+                continue
             if call.service_name not in services:
                 services[call.service_name] = call.package_name
     return services
@@ -6290,11 +6293,14 @@ def _itest_write_infrastructure(base_path: Path, itest_cfg: dict):
 def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
     schema_map = _itest_collect_schemas()
     lines = []
+    for table in sorted(schema_map.keys()):
+        lines.append(f"DROP TABLE IF EXISTS {table} CASCADE;")
+    lines.append("")
     for table, columns in sorted(schema_map.items()):
         col_defs = []
         for col, sql_type in sorted(columns.items()):
             col_defs.append(f"    {col} {sql_type}")
-        lines.append(f"CREATE TABLE IF NOT EXISTS {table} (")
+        lines.append(f"CREATE TABLE {table} (")
         lines.append(",\n".join(col_defs))
         lines.append(");")
         lines.append("")
@@ -6388,7 +6394,7 @@ def _itest_write_fixtures(base_path: Path, proc: ProcedureInfo, pkg: PackageInfo
             values.append(_itest_generate_test_value(col, sql_type))
         cols_str = ", ".join(col_names)
         vals_str = ", ".join(values)
-        lines.append(f"INSERT INTO {table} ({cols_str}) VALUES ({vals_str}) ON CONFLICT DO NOTHING;")
+        lines.append(f"INSERT INTO {table} ({cols_str}) VALUES ({vals_str});")
     content = "\n".join(lines)
     fixtures_dir = base_path / "src/test/resources" / "itest-fixtures"
     fixtures_dir.mkdir(parents=True, exist_ok=True)
