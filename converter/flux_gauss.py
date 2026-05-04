@@ -4538,6 +4538,14 @@ def generate_project(output_dir: str, packages: list, changed_packages: set = No
         service_injections = _collect_service_injections(pkg)
         _write_service_test(base_path, pkg, service_injections, svc_method_param_counts, all_packages)
 
+    itest_cfg = (config or {}).get("integration_test", {})
+    if itest_cfg.get("enabled"):
+        schema_map = _itest_collect_schemas()
+        _itest_write_infrastructure(base_path, itest_cfg)
+        _itest_write_schema_sql(base_path, packages, itest_cfg)
+        for pkg in active_pkgs:
+            _itest_write_class(base_path, pkg, itest_cfg, schema_map, all_packages)
+
 
 def _collect_service_injections(pkg: PackageInfo) -> dict:
     services = {}
@@ -4597,6 +4605,29 @@ def _write_pom_xml(base_path: Path):
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-starter-test</artifactId>
                     <scope>test</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.testcontainers</groupId>
+                    <artifactId>testcontainers</artifactId>
+                    <version>1.19.8</version>
+                    <scope>test</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.testcontainers</groupId>
+                    <artifactId>postgresql</artifactId>
+                    <version>1.19.8</version>
+                    <scope>test</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.testcontainers</groupId>
+                    <artifactId>junit-jupiter</artifactId>
+                    <version>1.19.8</version>
+                    <scope>test</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-testcontainers</artifactId>
+                    <scope>test</scope>
                 </dependency>""")
 
     build_section = textwrap.dedent("""\
@@ -4621,10 +4652,34 @@ def _write_pom_xml(base_path: Path):
                         <artifactId>maven-surefire-plugin</artifactId>
                         <configuration>
                             <argLine>-Dnet.bytebuddy.experimental=true</argLine>
+                            <excludes>
+                                <exclude>**/itest/**</exclude>
+                            </excludes>
                         </configuration>
                     </plugin>
                 </plugins>
             </build>
+
+            <profiles>
+                <profile>
+                    <id>integration</id>
+                    <build>
+                        <plugins>
+                            <plugin>
+                                <groupId>org.apache.maven.plugins</groupId>
+                                <artifactId>maven-surefire-plugin</artifactId>
+                                <configuration>
+                                    <includes>
+                                        <include>**/itest/*Test.java</include>
+                                        <include>**/*IntegrationTest.java</include>
+                                    </includes>
+                                    <excludes combine.self="override" />
+                                </configuration>
+                            </plugin>
+                        </plugins>
+                    </build>
+                </profile>
+            </profiles>
         </project>
     """)
 
@@ -6133,7 +6188,6 @@ def _find_dependent_packages(packages: list, changed_pkg_names: set) -> set:
 def _clean_stale_packages(output_dir: str, old_manifest: dict, current_packages: list):
     """Delete generated files for packages no longer in config."""
     current_pkg_names = {p.package_name for p in current_packages}
-    # Build pkg_name → java_package map from old manifest for path resolution
     old_pkg_jp = {}
     for info in old_manifest.get("files", {}).values():
         pkg = info.get("package")
@@ -6160,7 +6214,348 @@ def _clean_stale_packages(output_dir: str, old_manifest: dict, current_packages:
                 _log(f"    Removed: {f.relative_to(base_path)}")
 
 
-# ── Conversion Report Generation ─────────────────────────────
+
+
+def _itest_collect_schemas() -> dict:
+    schema_map = {}
+    for (table, col), sql_type in TYPE_OVERRIDES.items():
+        if table not in schema_map:
+            schema_map[table] = {}
+        schema_map[table][col] = sql_type
+    return schema_map
+
+
+def _itest_write_infrastructure(base_path: Path, itest_cfg: dict):
+    mode = itest_cfg.get("mode", "remote")
+    jp = BASE_PACKAGE
+    pkg_dir = base_path / "src/test/java" / jp.replace(".", "/") / "itest"
+    pkg_dir.mkdir(parents=True, exist_ok=True)
+    res_dir = base_path / "src/test/resources"
+    res_dir.mkdir(parents=True, exist_ok=True)
+
+    if mode == "testcontainers":
+        content = textwrap.dedent(f"""\
+            package {jp}.itest;
+
+            import org.springframework.boot.test.context.SpringBootTest;
+            import org.springframework.test.context.ActiveProfiles;
+            import org.springframework.test.context.DynamicPropertyRegistry;
+            import org.springframework.test.context.DynamicPropertySource;
+            import org.springframework.test.context.jdbc.Sql;
+            import org.testcontainers.containers.PostgreSQLContainer;
+            import org.testcontainers.junit.jupiter.Container;
+            import org.testcontainers.junit.jupiter.Testcontainers;
+
+            @SpringBootTest
+            @ActiveProfiles("integration")
+            @Testcontainers
+            @Sql(scripts = "classpath:itest-schema.sql", executionPhase = Sql.ExecutionPhase.BEFORE_TEST_METHOD)
+            public abstract class AbstractIntegrationTest {{
+                @Container
+                static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine")
+                        .withDatabaseName("test")
+                        .withUsername("test")
+                        .withPassword("test");
+
+                @DynamicPropertySource
+                static void configureProperties(DynamicPropertyRegistry registry) {{
+                    registry.add("spring.datasource.url", postgres::getJdbcUrl);
+                    registry.add("spring.datasource.username", postgres::getUsername);
+                    registry.add("spring.datasource.password", postgres::getPassword);
+                }}
+            }}
+        """)
+    else:
+        content = textwrap.dedent(f"""\
+            package {jp}.itest;
+
+            import org.springframework.boot.test.context.SpringBootTest;
+            import org.springframework.test.context.ActiveProfiles;
+            import org.springframework.test.context.jdbc.Sql;
+
+            @SpringBootTest
+            @ActiveProfiles("integration")
+            @Sql(scripts = "classpath:itest-schema.sql", executionPhase = Sql.ExecutionPhase.BEFORE_TEST_METHOD)
+            public abstract class AbstractIntegrationTest {{
+            }}
+        """)
+    (pkg_dir / "AbstractIntegrationTest.java").write_text(content)
+
+    db = itest_cfg if mode == "remote" else {}
+    url = db.get("url", "jdbc:postgresql://localhost:5432/postgres")
+    username = db.get("username", "postgres")
+    password = db.get("password", "postgres")
+    yml_content = textwrap.dedent(f"""\
+        spring:
+          datasource:
+            url: {url}
+            username: {username}
+            password: {password}
+            driver-class-name: org.postgresql.Driver
+    """)
+    (res_dir / "application-integration.yml").write_text(yml_content)
+
+
+def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
+    schema_map = _itest_collect_schemas()
+    lines = []
+    for table, columns in sorted(schema_map.items()):
+        col_defs = []
+        for col, sql_type in sorted(columns.items()):
+            col_defs.append(f"    {col} {sql_type}")
+        lines.append(f"CREATE TABLE IF NOT EXISTS {table} (")
+        lines.append(",\n".join(col_defs))
+        lines.append(");")
+        lines.append("")
+
+    init_sql = itest_cfg.get("init_sql", [])
+    if isinstance(init_sql, str):
+        init_sql = [init_sql]
+    for script in init_sql:
+        if os.path.isfile(script):
+            with open(script, 'r', encoding='utf-8', errors='replace') as f:
+                lines.append(f.read())
+        else:
+            lines.append(f"-- init_sql not found: {script}")
+
+    content = "\n".join(lines)
+    res_dir = base_path / "src/test/resources"
+    res_dir.mkdir(parents=True, exist_ok=True)
+    (res_dir / "itest-schema.sql").write_text(content)
+
+
+def _itest_extract_table_from_select(sql: str) -> str:
+    m = re.search(r'\bfrom\s+(?:\w+\.)?(\w+)', sql, re.IGNORECASE)
+    return m.group(1).lower() if m else ""
+
+
+def _itest_extract_table_from_insert(sql: str) -> str:
+    m = re.search(r'\binto\s+(?:\w+\.)?(\w+)', sql, re.IGNORECASE)
+    return m.group(1).lower() if m else ""
+
+
+def _itest_extract_table_from_update_delete(sql: str) -> str:
+    m = re.search(r'\b(?:update|delete\s+from?)\s+(?:\w+\.)?(\w+)', sql, re.IGNORECASE)
+    return m.group(1).lower() if m else ""
+
+
+def _itest_generate_test_value(col_name: str, sql_type: str) -> str:
+    lower_type = (sql_type or "").lower()
+    lower_col = col_name.lower()
+    if any(t in lower_type for t in ("int", "serial", "bigserial")):
+        if "id" in lower_col or "no" in lower_col:
+            return "1"
+        return "10"
+    if any(t in lower_type for t in ("numeric", "decimal", "real", "float", "double")):
+        return "99.99"
+    if "timestamp" in lower_type:
+        return "'2024-01-01 00:00:00'"
+    if "date" in lower_type:
+        return "'2024-01-01'"
+    if "boolean" in lower_type or "bool" in lower_type:
+        return "true"
+    if "bytea" in lower_type:
+        return "'\\x00'"
+    if any(t in lower_type for t in ("varchar", "char", "text", "json", "jsonb", "uuid")):
+        if "id" in lower_col or "code" in lower_col or "type" in lower_col or "status" in lower_col:
+            return f"'test_{lower_col}'"
+        return f"'test {lower_col}'"
+    return "'test'"
+
+
+def _itest_infer_test_data(proc: ProcedureInfo, pkg: PackageInfo, schema_map: dict) -> dict:
+    handled = set()
+    needed = {}
+    for dml in proc.dml_statements:
+        sql = dml.sql_text or ""
+        if dml.sql_type == "insert":
+            tbl = _itest_extract_table_from_insert(sql)
+            if tbl:
+                handled.add(tbl)
+        elif dml.sql_type == "select":
+            tbl = _itest_extract_table_from_select(sql)
+            if tbl and tbl not in handled:
+                needed[tbl] = schema_map.get(tbl, {})
+        elif dml.sql_type in ("update", "delete"):
+            tbl = _itest_extract_table_from_update_delete(sql)
+            if tbl and tbl not in handled:
+                needed[tbl] = schema_map.get(tbl, {})
+    return needed
+
+
+def _itest_write_fixtures(base_path: Path, proc: ProcedureInfo, pkg: PackageInfo, test_data: dict) -> str:
+    if not test_data:
+        return ""
+    lines = []
+    for table, columns in sorted(test_data.items()):
+        if not columns:
+            continue
+        col_names = []
+        values = []
+        for col, sql_type in sorted(columns.items()):
+            col_names.append(col)
+            values.append(_itest_generate_test_value(col, sql_type))
+        cols_str = ", ".join(col_names)
+        vals_str = ", ".join(values)
+        lines.append(f"INSERT INTO {table} ({cols_str}) VALUES ({vals_str}) ON CONFLICT DO NOTHING;")
+    content = "\n".join(lines)
+    fixtures_dir = base_path / "src/test/resources" / "itest-fixtures"
+    fixtures_dir.mkdir(parents=True, exist_ok=True)
+    fname = f"{pkg.package_name}_{proc.proc_name}.sql"
+    (fixtures_dir / fname).write_text(content)
+    return f"classpath:itest-fixtures/{fname}"
+
+
+def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schema_map: dict, all_packages: dict):
+    jp = _pkg_java_package(pkg)
+    itest_dir = base_path / "src/test/java" / jp.replace(".", "/") / "itest"
+    itest_dir.mkdir(parents=True, exist_ok=True)
+    class_name = f"{package_to_classname(pkg.package_name)}ServiceIntegrationTest"
+    svc_class = f"{package_to_classname(pkg.package_name)}Service"
+    mapper_class = f"{package_to_classname(pkg.package_name)}Mapper"
+    mapper_var = f"{mapper_class[0].lower()}{mapper_class[1:]}"
+    svc_var = f"{svc_class[0].lower()}{svc_class[1:]}"
+
+    imports = set()
+    imports.add("import org.junit.jupiter.api.Test;")
+    imports.add("import org.junit.jupiter.api.Timeout;")
+    imports.add("import org.springframework.beans.factory.annotation.Autowired;")
+    imports.add(f"import {jp}.service.{svc_class};")
+    imports.add(f"import {jp}.mapper.{mapper_class};")
+    imports.add(f"import {BASE_PACKAGE}.itest.AbstractIntegrationTest;")
+    imports.add("import static org.junit.jupiter.api.Assertions.*;")
+    imports.add("import java.util.concurrent.TimeUnit;")
+
+    needs_map = any("Map<String, Object>" in p.java_type for proc in pkg.procedures for p in proc.parameters)
+    if needs_map:
+        imports.add("import java.util.Map;")
+        imports.add("import java.util.HashMap;")
+    needs_list = any(p.java_type.startswith("List<") for proc in pkg.procedures for p in proc.parameters)
+    if needs_list:
+        imports.add("import java.util.List;")
+        imports.add("import java.util.ArrayList;")
+    needs_atomic_ref = any(p.is_out for proc in pkg.procedures for p in proc.parameters)
+    if needs_atomic_ref:
+        imports.add("import java.util.concurrent.atomic.AtomicReference;")
+
+    _all_pkgs = all_packages or {}
+    service_injections = _collect_service_injections(pkg)
+    for svc_var_inj, pkg_name in service_injections.items():
+        if pkg_name:
+            svc_class_inj = f"{package_to_classname(pkg_name)}Service"
+        else:
+            svc_class_part = svc_var_inj.replace("Service", "")
+            svc_class_inj = f"{package_to_classname(svc_class_part)}Service"
+            pkg_name = svc_class_part
+        target_jp = _pkg_java_package(_all_pkgs[pkg_name]) if pkg_name in _all_pkgs else BASE_PACKAGE
+        imports.add(f"import {target_jp}.service.{svc_class_inj};")
+
+    test_methods = []
+    seen_method_names: dict = {}
+    for proc in pkg.procedures:
+        method_name = java_method_name(proc.proc_name)
+        in_params = [p for p in proc.parameters if not p.is_out]
+        out_params = [p for p in proc.parameters if p.is_out]
+
+        param_values = []
+        param_args = []
+        for p in in_params:
+            val = _default_test_value(p.java_type, p.java_name, pkg=pkg)
+            decl_type = p.java_type
+            if pkg and hasattr(pkg, 'custom_types'):
+                for tn, ti in pkg.custom_types.items():
+                    if ti.get("kind") == "record" and _custom_type_classname(tn) == decl_type:
+                        decl_type = f"{svc_class}.{decl_type}"
+                        break
+            param_values.append(f"{decl_type} {p.java_name} = {val};")
+            param_args.append(p.java_name)
+
+        out_decls = []
+        out_args = []
+        for p in out_params:
+            if p.is_refcursor:
+                continue
+            holder = f"AtomicReference<{p.java_type}>"
+            out_decls.append(f"{holder} {p.java_name} = new AtomicReference<>(null);")
+            out_args.append(p.java_name)
+
+        all_args = param_args + out_args
+        args_str = ", ".join(all_args)
+
+        test_data = _itest_infer_test_data(proc, pkg, schema_map)
+        sql_script = _itest_write_fixtures(base_path, proc, pkg, test_data)
+
+        base_test_name = f"test_{method_name}_integration"
+        count = seen_method_names.get(base_test_name, 0)
+        seen_method_names[base_test_name] = count + 1
+        test_name = f"{base_test_name}_{count}" if count > 0 else base_test_name
+
+        lines = []
+        if sql_script:
+            lines.append(f"    @org.springframework.test.context.jdbc.Sql(scripts = \"{sql_script}\")")
+        lines.append("    @Test")
+        lines.append("    @Timeout(value = 10, unit = TimeUnit.SECONDS)")
+        lines.append(f"    void {test_name}() {{")
+        for pv in param_values:
+            lines.append(f"        {pv}")
+        for od in out_decls:
+            lines.append(f"        {od}")
+        if proc.is_function:
+            lines.append(f"        var result = {svc_var}.{method_name}({args_str});")
+            lines.append("        assertNotNull(result);")
+            lines.append("        // TODO: Add domain-specific assertions")
+        else:
+            lines.append(f"        {svc_var}.{method_name}({args_str});")
+            lines.append("        // TODO: Add domain-specific assertions")
+        lines.append("    }")
+        test_methods.append("\n".join(lines))
+
+    if not test_methods:
+        test_methods.append(
+            "    @Test\n"
+            "    @Timeout(value = 10, unit = TimeUnit.SECONDS)\n"
+            "    void testServiceExists() {\n"
+            "        assertNotNull(service);\n"
+            "    }"
+        )
+
+    lines = []
+    lines.append(f"package {jp}.itest;")
+    lines.append("")
+    for imp in sorted(imports):
+        lines.append(imp)
+    lines.append("")
+    if pkg.source_file:
+        lines.append(f"// Source: {pkg.source_file}")
+    lines.append(f"class {class_name} extends AbstractIntegrationTest {{")
+    lines.append("")
+    lines.append(f"    @Autowired")
+    lines.append(f"    private {mapper_class} {mapper_var};")
+    lines.append("")
+    lines.append(f"    @Autowired")
+    lines.append(f"    private {svc_class} {svc_var};")
+
+    for svc_var_inj, pkg_name in service_injections.items():
+        if pkg_name:
+            svc_class_inj = f"{package_to_classname(pkg_name)}Service"
+        else:
+            svc_class_part = svc_var_inj.replace("Service", "")
+            svc_class_inj = f"{package_to_classname(svc_class_part)}Service"
+        lines.append("")
+        lines.append(f"    @Autowired")
+        lines.append(f"    private {svc_class_inj} {svc_var_inj};")
+
+    for tm in test_methods:
+        lines.append("")
+        lines.append(tm)
+
+    lines.append("}")
+    lines.append("")
+    content = "\n".join(lines)
+    (itest_dir / f"{class_name}.java").write_text(content)
+
+
+
 
 def build_conversion_report(
     output_dir: str, packages: list, all_skipped: list, parse_errors_map: dict,
@@ -6652,6 +7047,7 @@ def main():
                     if src not in sql_files:
                         sql_files.append(src)
 
+    parse_errors_map = {}
     missing_files = [f for f in sql_files if not os.path.exists(f)]
     if missing_files:
         for f in missing_files:
@@ -6701,7 +7097,6 @@ def main():
     all_package_names = {}
     sql_file_to_pkg = {}
     all_skipped = []
-    parse_errors_map = {}
     n_sql = len(sql_files)
 
     for idx, sql_file in enumerate(sql_files, 1):
