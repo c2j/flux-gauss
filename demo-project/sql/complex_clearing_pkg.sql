@@ -484,137 +484,137 @@ END complex_clearing_pkg;
 -- ============================================================
 
 -- 1. 交易表行级触发器（最复杂：BEFORE + AFTER + 多事件）
-CREATE OR REPLACE FUNCTION trg_trade_row_level() RETURNS TRIGGER AS $$
-DECLARE
-    v_skip_default BOOLEAN := FALSE;
-    v_old_rec trade_record%ROWTYPE;
-    v_new_rec trade_record%ROWTYPE;
-BEGIN
-    IF TG_OP = 'DELETE' THEN
-        v_old_rec := OLD;
-        v_new_rec := NULL;
-    ELSIF TG_OP = 'INSERT' THEN
-        v_old_rec := NULL;
-        v_new_rec := NEW;
-    ELSE
-        v_old_rec := OLD;
-        v_new_rec := NEW;
-    END IF;
+-- CREATE OR REPLACE FUNCTION trg_trade_row_level() RETURNS TRIGGER AS $$
+-- DECLARE
+--     v_skip_default BOOLEAN := FALSE;
+--     v_old_rec trade_record%ROWTYPE;
+--     v_new_rec trade_record%ROWTYPE;
+-- BEGIN
+--     IF TG_OP = 'DELETE' THEN
+--         v_old_rec := OLD;
+--         v_new_rec := NULL;
+--     ELSIF TG_OP = 'INSERT' THEN
+--         v_old_rec := NULL;
+--         v_new_rec := NEW;
+--     ELSE
+--         v_old_rec := OLD;
+--         v_new_rec := NEW;
+--     END IF;
 
-    -- BEFORE 事件：做校验和修改
-    IF TG_WHEN = 'BEFORE' THEN
-        complex_clearing_pkg.handle_trade_change(TG_OP, v_old_rec, v_new_rec, TG_NAME, v_skip_default);
+--     -- BEFORE 事件：做校验和修改
+--     IF TG_WHEN = 'BEFORE' THEN
+--         complex_clearing_pkg.handle_trade_change(TG_OP, v_old_rec, v_new_rec, TG_NAME, v_skip_default);
 
-        IF v_skip_default AND TG_OP = 'DELETE' THEN
-            -- 跳过默认 DELETE，改为逻辑删除已在包内完成
-            RETURN NULL;  -- 阻止原始 DELETE
-        END IF;
+--         IF v_skip_default AND TG_OP = 'DELETE' THEN
+--             -- 跳过默认 DELETE，改为逻辑删除已在包内完成
+--             RETURN NULL;  -- 阻止原始 DELETE
+--         END IF;
 
-        -- 允许修改 NEW（BEFORE 触发器特权）
-        IF TG_OP IN ('INSERT', 'UPDATE') THEN
-            NEW.processed_at := CURRENT_TIMESTAMP;
-            NEW.fee := COALESCE(NEW.fee, complex_clearing_pkg.calc_fee(NEW.amount));
-            RETURN NEW;
-        END IF;
+--         -- 允许修改 NEW（BEFORE 触发器特权）
+--         IF TG_OP IN ('INSERT', 'UPDATE') THEN
+--             NEW.processed_at := CURRENT_TIMESTAMP;
+--             NEW.fee := COALESCE(NEW.fee, complex_clearing_pkg.calc_fee(NEW.amount));
+--             RETURN NEW;
+--         END IF;
 
-        RETURN OLD;
-    END IF;
+--         RETURN OLD;
+--     END IF;
 
-    -- AFTER 事件：级联和审计
-    IF TG_WHEN = 'AFTER' THEN
-        complex_clearing_pkg.handle_trade_change(TG_OP, v_old_rec, v_new_rec, TG_NAME, v_skip_default);
+--     -- AFTER 事件：级联和审计
+--     IF TG_WHEN = 'AFTER' THEN
+--         complex_clearing_pkg.handle_trade_change(TG_OP, v_old_rec, v_new_rec, TG_NAME, v_skip_default);
 
-        -- AFTER 中再做一次一致性检查（双重检查）
-        IF TG_OP IN ('INSERT', 'UPDATE') AND NEW.account_id IS NOT NULL THEN
-            IF NOT complex_clearing_pkg.check_cross_table_consistency(NEW.account_id, 3) THEN
-                RAISE WARNING 'Post-operation consistency check failed for account %', NEW.account_id;
-            END IF;
-        END IF;
+--         -- AFTER 中再做一次一致性检查（双重检查）
+--         IF TG_OP IN ('INSERT', 'UPDATE') AND NEW.account_id IS NOT NULL THEN
+--             IF NOT complex_clearing_pkg.check_cross_table_consistency(NEW.account_id, 3) THEN
+--                 RAISE WARNING 'Post-operation consistency check failed for account %', NEW.account_id;
+--             END IF;
+--         END IF;
 
-        RETURN NULL;  -- AFTER 触发器忽略返回值
-    END IF;
+--         RETURN NULL;  -- AFTER 触发器忽略返回值
+--     END IF;
 
-    RETURN NULL;
-END;
-$$ LANGUAGE plpgsql;
+--     RETURN NULL;
+-- END;
+-- $$ LANGUAGE plpgsql;
 
 -- 绑定多个触发器实例（故意拆分，增加复杂度）
-CREATE TRIGGER trg_trade_before BEFORE INSERT OR UPDATE OR DELETE ON trade_record
-    FOR EACH ROW EXECUTE FUNCTION trg_trade_row_level();
+-- CREATE TRIGGER trg_trade_before BEFORE INSERT OR UPDATE OR DELETE ON trade_record
+--     FOR EACH ROW EXECUTE FUNCTION trg_trade_row_level();
 
-CREATE TRIGGER trg_trade_after AFTER INSERT OR UPDATE OR DELETE ON trade_record
-    FOR EACH ROW EXECUTE FUNCTION trg_trade_row_level();
+-- CREATE TRIGGER trg_trade_after AFTER INSERT OR UPDATE OR DELETE ON trade_record
+--     FOR EACH ROW EXECUTE FUNCTION trg_trade_row_level();
 
 -- 2. 交易表语句级触发器（批量操作审计）
-CREATE OR REPLACE FUNCTION trg_trade_statement() RETURNS TRIGGER AS $$
-DECLARE
-    v_count INT;
-    v_total NUMERIC;
-BEGIN
-    IF TG_OP = 'INSERT' THEN
-        SELECT COUNT(*), COALESCE(SUM(amount), 0) INTO v_count, v_total FROM trade_record WHERE trade_date = CURRENT_DATE;
-        complex_clearing_pkg.log_audit_autonomous('Daily insert summary: count=' || v_count || ' total=' || v_total, 'INFO');
-    END IF;
-    RETURN NULL;
-END;
-$$ LANGUAGE plpgsql;
+-- CREATE OR REPLACE FUNCTION trg_trade_statement() RETURNS TRIGGER AS $$
+-- DECLARE
+--     v_count INT;
+--     v_total NUMERIC;
+-- BEGIN
+--     IF TG_OP = 'INSERT' THEN
+--         SELECT COUNT(*), COALESCE(SUM(amount), 0) INTO v_count, v_total FROM trade_record WHERE trade_date = CURRENT_DATE;
+--         complex_clearing_pkg.log_audit_autonomous('Daily insert summary: count=' || v_count || ' total=' || v_total, 'INFO');
+--     END IF;
+--     RETURN NULL;
+-- END;
+-- $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_trade_stmt_after AFTER INSERT ON trade_record
-    FOR EACH STATEMENT EXECUTE FUNCTION trg_trade_statement();
+-- CREATE TRIGGER trg_trade_stmt_after AFTER INSERT ON trade_record
+--     FOR EACH STATEMENT EXECUTE FUNCTION trg_trade_statement();
 
 -- 3. 账户表触发器（被交易触发器级联调用）
-CREATE OR REPLACE FUNCTION trg_account_change() RETURNS TRIGGER AS $$
-BEGIN
-    IF TG_OP = 'UPDATE' THEN
-        -- 余额变化时，触发交易重算（可能又触发交易触发器！）
-        IF ABS(COALESCE(OLD.balance, 0) - COALESCE(NEW.balance, 0)) > 1.0 THEN
-            UPDATE trade_record
-            SET fee = complex_clearing_pkg.calc_fee(amount)
-            WHERE account_id = NEW.account_id
-              AND status = 'PENDING'
-              AND created_at > CURRENT_TIMESTAMP - INTERVAL '1 day';
-            -- 这行 UPDATE 可能触发 trg_trade_before/after！
-        END IF;
-    END IF;
-    RETURN NULL;
-END;
-$$ LANGUAGE plpgsql;
+-- CREATE OR REPLACE FUNCTION trg_account_change() RETURNS TRIGGER AS $$
+-- BEGIN
+--     IF TG_OP = 'UPDATE' THEN
+--         -- 余额变化时，触发交易重算（可能又触发交易触发器！）
+--         IF ABS(COALESCE(OLD.balance, 0) - COALESCE(NEW.balance, 0)) > 1.0 THEN
+--             UPDATE trade_record
+--             SET fee = complex_clearing_pkg.calc_fee(amount)
+--             WHERE account_id = NEW.account_id
+--               AND status = 'PENDING'
+--               AND created_at > CURRENT_TIMESTAMP - INTERVAL '1 day';
+--             -- 这行 UPDATE 可能触发 trg_trade_before/after！
+--         END IF;
+--     END IF;
+--     RETURN NULL;
+-- END;
+-- $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_account_after AFTER UPDATE OF balance ON account
-    FOR EACH ROW EXECUTE FUNCTION trg_account_change();
+-- CREATE TRIGGER trg_account_after AFTER UPDATE OF balance ON account
+--     FOR EACH ROW EXECUTE FUNCTION trg_account_change();
 
 -- 4. DDL 事件触发器（数据库级）
-CREATE OR REPLACE FUNCTION trg_ddl_intercept() RETURNS EVENT_TRIGGER AS $$
-DECLARE
-    v_obj RECORD;
-BEGIN
-    FOR v_obj IN SELECT * FROM pg_event_trigger_ddl_commands() LOOP
-        complex_clearing_pkg.handle_ddl_event(
-            TG_TAG,
-            v_obj.object_name,
-            v_obj.object_type,
-            v_obj.command_tag
-        );
-    END LOOP;
-EXCEPTION WHEN OTHERS THEN
-    -- DDL 触发器错误不能阻止操作，只能记录
-    INSERT INTO audit_log (severity, message) VALUES ('ERROR', 'DDL trigger failed: ' || SQLERRM);
-END;
-$$ LANGUAGE plpgsql;
+-- CREATE OR REPLACE FUNCTION trg_ddl_intercept() RETURNS EVENT_TRIGGER AS $$
+-- DECLARE
+--     v_obj RECORD;
+-- BEGIN
+--     FOR v_obj IN SELECT * FROM pg_event_trigger_ddl_commands() LOOP
+--         complex_clearing_pkg.handle_ddl_event(
+--             TG_TAG,
+--             v_obj.object_name,
+--             v_obj.object_type,
+--             v_obj.command_tag
+--         );
+--     END LOOP;
+-- EXCEPTION WHEN OTHERS THEN
+--     -- DDL 触发器错误不能阻止操作，只能记录
+--     INSERT INTO audit_log (severity, message) VALUES ('ERROR', 'DDL trigger failed: ' || SQLERRM);
+-- END;
+-- $$ LANGUAGE plpgsql;
 
-CREATE EVENT TRIGGER trg_ddl_audit ON ddl_command_end
-    EXECUTE FUNCTION trg_ddl_intercept();
+-- CREATE EVENT TRIGGER trg_ddl_audit ON ddl_command_end
+--     EXECUTE FUNCTION trg_ddl_intercept();
 
 -- 5. 登录/注销触发器（会话级状态初始化）
-CREATE OR REPLACE FUNCTION trg_session_init() RETURNS EVENT_TRIGGER AS $$
-BEGIN
-    -- 重置包级状态（每个会话）
-    complex_clearing_pkg.g_trigger_depth := 0;
-    complex_clearing_pkg.g_mutating_table_guard := FALSE;
-    complex_clearing_pkg.g_audit_trail := '';
-    complex_clearing_pkg.g_session_counter := 0;
-END;
-$$ LANGUAGE plpgsql;
+-- CREATE OR REPLACE FUNCTION trg_session_init() RETURNS EVENT_TRIGGER AS $$
+-- BEGIN
+--     -- 重置包级状态（每个会话）
+--     complex_clearing_pkg.g_trigger_depth := 0;
+--     complex_clearing_pkg.g_mutating_table_guard := FALSE;
+--     complex_clearing_pkg.g_audit_trail := '';
+--     complex_clearing_pkg.g_session_counter := 0;
+-- END;
+-- $$ LANGUAGE plpgsql;
 
 -- 注意：GaussDB 可能不支持标准登录触发器，用连接池初始化模拟
 -- 实际项目中可能在应用层调用初始化过程

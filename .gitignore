@@ -8,6 +8,9 @@ demo-project/sql/DB_LOG.sql
 demo-project/sql/PKG_RPT_BATCH_DOWNLOAD.sql
 demo-project/sql/PKG_2008802001_MGT.sql
 demo-project/sql/PKG_AAS_DATACLEAR.sql
+demo-project/sql/SWH_ALL_KIND.sql
+demo-project/sql/pkg_aas_lob_dataclear.sql
+demo-project/sql/DAT_DATACLEAR_CONFIG.sql
 ogsql
 ogsql.broken
 .worktrees/
