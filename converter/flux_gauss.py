@@ -560,6 +560,44 @@ def is_simple_java_type(java_type: str) -> bool:
     )
 
 
+# Known Java types that need a fully-qualified import.
+# Key: base class name (without generics), Value: fully qualified path.
+_KNOWN_IMPORTS = {
+    "AtomicReference": "java.util.concurrent.atomic.AtomicReference",
+    "BigDecimal": "java.math.BigDecimal",
+    "BigInteger": "java.math.BigInteger",
+    "List": "java.util.List",
+    "ArrayList": "java.util.ArrayList",
+    "Map": "java.util.Map",
+    "HashMap": "java.util.HashMap",
+    "Arrays": "java.util.Arrays",
+    "Objects": "java.util.Objects",
+}
+
+
+def _resolve_import(java_type: str):
+    """Convert a Java type string to a valid import statement.
+
+    Handles generic types like ``AtomicReference<String>`` by stripping
+    the generic portion before looking up the fully-qualified path.
+    Returns ``None`` when no import is needed (simple / primitive types).
+    """
+    if is_simple_java_type(java_type):
+        return None
+    # Strip generics: AtomicReference<String> -> AtomicReference
+    base = java_type.split("<")[0] if "<" in java_type else java_type
+    fq = _KNOWN_IMPORTS.get(base)
+    if fq:
+        return f"import {fq};"
+    # Already fully-qualified (contains dot and no generics)
+    if "." in base and "<" not in java_type:
+        return f"import {java_type};"
+    if "." in base:
+        return f"import {base};"
+    # Unknown local type — no import needed (same package or inner class)
+    return None
+
+
 # ── Naming Helpers ─────────────────────────────────────────────
 
 def _java_safe_identifier(s: str) -> str:
@@ -773,6 +811,7 @@ class ProcedureMapping:
     is_stub: bool = False
     has_parse_error: bool = False
     notes: str = ""
+    table_refs: set = field(default_factory=set)
 
 
 @dataclass
@@ -882,7 +921,7 @@ def parse_sql_file(sql_path: str) -> dict:
             capture_output=True, text=True
         )
         if result.returncode != 0 or not result.stdout.strip().startswith("{"):
-            _log(f"  [WARN] ogsql-parser returned {result.returncode}: {result.stderr}")
+            _log(f"  [WARN] ogsql-parser returned {result.returncode}: {result.stderr}", to_stdout=False)
             result = subprocess.run(
                 [OGSQL_BIN, "-f", ogsql_input, "parse", "-j"],
                 capture_output=True, text=True
@@ -1678,7 +1717,7 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
         except Exception as e:
             stmt_preview = str(stmt)[:120] if stmt else "<empty>"
             proc.java_logic_lines.append(f"// ERROR: 处理语句失败 - {str(e).replace('*/', '').replace(chr(10), ' ')}")
-            _log(f"      ⚠ Statement error in {proc.name}: {e}\n        stmt: {stmt_preview}")
+            _log(f"      ⚠ Statement error in {proc.name}: {e}\n        stmt: {stmt_preview}", to_stdout=False)
             _log(traceback.format_exc(), to_stdout=False)
         post_idx = len(proc.java_logic_lines)
         if post_idx > pre_idx:
@@ -4590,7 +4629,7 @@ def _mapper_call(proc: ProcedureInfo, mapper_method: str, sql_text: str = "") ->
 # ── Code Generation ────────────────────────────────────────────
 
 def generate_project(output_dir: str, packages: list, changed_packages: set = None,
-                     config: dict = None, progress_cb=None):
+                     config: dict = None, progress_cb=None, resume_skip: set = None):
     if changed_packages is not None and not changed_packages:
         return
     base_path = Path(output_dir)
@@ -4612,21 +4651,38 @@ def generate_project(output_dir: str, packages: list, changed_packages: set = No
             out_count = sum(1 for param in proc.parameters if param.is_out)
             svc_method_param_counts[(svc_var, mname)] = (in_count + out_count, proc.is_function)
 
+    resume_set = resume_skip or set()
     active_pkgs = [pkg for pkg in packages
                    if changed_packages is None or pkg.package_name in changed_packages]
     n_gen = len(active_pkgs)
-    for idx, pkg in enumerate(active_pkgs, 1):
+    gen_checkpoint = set(resume_set)
+    gen_errors = []
+    gen_idx = 0
+    for pkg in active_pkgs:
+        if pkg.package_name in resume_set:
+            gen_idx += 1
+            continue
+        gen_idx += 1
         if progress_cb:
-            progress_cb("pkg", idx, n_gen, pkg.package_name)
-        service_injections = _collect_service_injections(pkg)
+            progress_cb("pkg", gen_idx, n_gen, pkg.package_name)
+        try:
+            service_injections = _collect_service_injections(pkg)
 
-        _write_mapper_interface(base_path, pkg)
-        _write_mapper_xml(base_path, pkg)
-        _write_service_class(base_path, pkg, service_injections, all_packages)
-        service_injections = _collect_service_injections(pkg)
-        _write_service_test(base_path, pkg, service_injections, svc_method_param_counts, all_packages)
+            _write_mapper_interface(base_path, pkg)
+            _write_mapper_xml(base_path, pkg)
+            _write_service_class(base_path, pkg, service_injections, all_packages)
+            service_injections = _collect_service_injections(pkg)
+            _write_service_test(base_path, pkg, service_injections, svc_method_param_counts, all_packages)
+
+            gen_checkpoint.add(pkg.package_name)
+            _save_gen_checkpoint(output_dir, gen_checkpoint)
+        except Exception as e:
+            _log(f"  ❌ Error writing files for {pkg.package_name}: {e}", to_stdout=False)
+            gen_errors.append((pkg.package_name, str(e)))
 
     itest_cfg = (config or {}).get("integration_test", {})
+    if not isinstance(itest_cfg, dict):
+        itest_cfg = {}
     if itest_cfg.get("enabled"):
         schema_map = _itest_collect_schemas()
         _itest_write_infrastructure(base_path, itest_cfg)
@@ -4910,8 +4966,9 @@ def _build_mapper_method(proc: ProcedureInfo, dml: DmlStatement, imports: set) -
 
     for java_name, java_type in _dml_used_local_vars(proc, dml):
         params.append(f'@Param("{java_name}") {java_type} {java_name}')
-        if not is_simple_java_type(java_type):
-            imports.add(f"import {java_type};")
+        _imp = _resolve_import(java_type)
+        if _imp:
+            imports.add(_imp)
 
     params_str = ", ".join(params) if params else ""
 
@@ -4925,8 +4982,9 @@ def _build_mapper_method(proc: ProcedureInfo, dml: DmlStatement, imports: set) -
             ret = "Integer"
         elif dml.result_type and dml.result_type != "Map<String, Object>":
             ret = dml.result_type
-            if not is_simple_java_type(ret):
-                imports.add(f"import {ret};")
+            _imp = _resolve_import(ret)
+            if _imp:
+                imports.add(_imp)
         else:
             ret = "Map<String, Object>"
             imports.add("import java.util.Map;")
@@ -4990,15 +5048,27 @@ def _clean_sql(sql: str) -> str:
 
 
 def _format_sql(sql: str) -> str:
+    # ogsql format drops the length arg in SUBSTRING(x FROM n FOR m),
+    # producing invalid SUBSTRING(x FROM n FOR). Protect these before formatting.
+    _substring_slots = []
+    def _stash_substring(m):
+        _substring_slots.append(m.group(0))
+        return f"__SUBSTR_{len(_substring_slots) - 1}__"
+    sql = re.sub(
+        r'\bSUBSTRING\s*\([^)]*?\bFROM\s+\S+\s+FOR\s+\S+\s*\)',
+        _stash_substring, sql, flags=re.IGNORECASE,
+    )
     try:
         result = subprocess.run(
             [OGSQL_BIN, "format"],
             input=sql, capture_output=True, text=True, timeout=10,
         )
         if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
+            sql = result.stdout.strip()
     except Exception:
         pass
+    for i, original in enumerate(_substring_slots):
+        sql = sql.replace(f"__SUBSTR_{i}__", original)
     return sql
 
 
@@ -5075,7 +5145,8 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
     for c in proc.leading_comments:
         formatted = _format_comment_for_java(c)
         if formatted:
-            xml_parts.append(f"<!-- {formatted.lstrip('/ ').strip()} -->")
+            safe_text = formatted.lstrip('/ ').strip().replace('--', '\u2014\u2014')
+            xml_parts.append(f"<!-- {safe_text} -->")
     if filter_line:
         xml_parts.append(filter_line)
     xml_parts.append(f'<{tag} id="{dml.method_id}"{params_attrs}{result_type_attr}>')
@@ -5171,8 +5242,10 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
             if p.java_type not in _custom_type_classes:
                 if p.java_type.startswith("List<"):
                     _needs_list_import = True
-                elif not is_simple_java_type(p.java_type):
-                    all_imports.add(f"import {p.java_type};")
+                else:
+                    _imp = _resolve_import(p.java_type)
+                    if _imp:
+                        all_imports.add(_imp)
     if _needs_list_import:
         all_imports.add("import java.util.List;")
 
@@ -5479,8 +5552,9 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
 
     if proc.is_function:
         ret_type = sql_type_to_java(proc.return_type) if proc.return_type else "Object"
-        if not is_simple_java_type(ret_type):
-            proc.imports.add(f"import {ret_type};")
+        _imp = _resolve_import(ret_type)
+        if _imp:
+            proc.imports.add(_imp)
     else:
         # Check for REFCURSOR OUT — it becomes the return type
         refcursor_outs = [p for p in proc.parameters if p.is_out and p.is_refcursor]
@@ -6251,26 +6325,73 @@ def _parse_config(config_path: str) -> dict:
     if yaml:
         with open(config_path, 'r') as f:
             return yaml.safe_load(f) or {}
+
+    def _yaml_bool(v):
+        if v.lower() in ('true', 'yes', 'on'):
+            return True
+        if v.lower() in ('false', 'no', 'off'):
+            return False
+        return v.strip('"').strip("'")
+
+    def _yaml_value(v):
+        v = v.strip()
+        if not v or v == '~' or v == 'null':
+            return None
+        b = _yaml_bool(v)
+        if isinstance(b, bool):
+            return b
+        try:
+            return int(v)
+        except ValueError:
+            pass
+        try:
+            return float(v)
+        except ValueError:
+            pass
+        return v.strip('"').strip("'")
+
     config = {}
-    current_list = None
+    stack = [(config, 0)]  # (dict_or_list, indent_level)
+    lines = []
     with open(config_path, 'r') as f:
         for line in f:
-            line = line.rstrip()
-            if not line or line.lstrip().startswith('#'):
-                continue
-            list_match = re.match(r'^\s+-\s+(.+)$', line)
-            if list_match:
-                if isinstance(current_list, list):
-                    current_list.append(list_match.group(1).strip().strip('"').strip("'"))
-                continue
-            kv_match = re.match(r'^(\w[\w_]*)\s*:\s*(.*)$', line)
-            if kv_match:
-                key, value = kv_match.group(1), kv_match.group(2).strip()
+            stripped = line.strip()
+            if stripped and not stripped.startswith('#'):
+                indent = len(line) - len(line.lstrip())
+                lines.append((indent, stripped))
+    for li, (indent, stripped) in enumerate(lines):
+        list_match = re.match(r'^-\s+(.+)$', stripped)
+        if list_match:
+            val = list_match.group(1).strip().strip('"').strip("'")
+            parent, _ = stack[-1]
+            if isinstance(parent, list):
+                parent.append(val)
+            elif isinstance(parent, dict):
+                last_key = next(reversed(parent)) if parent else None
+                if last_key is not None:
+                    entry = parent[last_key]
+                    if isinstance(entry, list):
+                        entry.append(val)
+                    elif isinstance(entry, dict) and not entry:
+                        parent[last_key] = [val]
+            continue
+        kv_match = re.match(r'^(\w[\w_]*)\s*:\s*(.*)$', stripped)
+        if kv_match:
+            key, value = kv_match.group(1), kv_match.group(2).strip()
+            while len(stack) > 1 and stack[-1][1] >= indent:
+                stack.pop()
+            parent, _ = stack[-1]
+            if isinstance(parent, dict):
                 if value:
-                    config[key] = value.strip('"').strip("'")
+                    parent[key] = _yaml_value(value)
                 else:
-                    config[key] = []
-                    current_list = config[key]
+                    next_is_list = (li + 1 < len(lines)
+                                    and lines[li + 1][1].startswith('- '))
+                    if next_is_list:
+                        parent[key] = []
+                    else:
+                        parent[key] = {}
+                    stack.append((parent[key], indent))
     return config
 
 
@@ -6311,6 +6432,34 @@ def _save_cached_ast(output_dir: str, sql_file: str, ast: dict):
     ast_dir.mkdir(parents=True, exist_ok=True)
     with open(_cached_ast_path(output_dir, sql_file), 'w') as f:
         json.dump(ast, f)
+
+
+_GEN_CHECKPOINT_FILE = "generation-checkpoint.json"
+
+
+def _load_gen_checkpoint(output_dir: str) -> set:
+    path = _cache_base(output_dir) / _GEN_CHECKPOINT_FILE
+    if path.exists():
+        try:
+            with open(path, 'r') as f:
+                data = json.load(f)
+            return set(data.get("completed", []))
+        except Exception:
+            pass
+    return set()
+
+
+def _save_gen_checkpoint(output_dir: str, completed: set):
+    base = _cache_base(output_dir)
+    base.mkdir(parents=True, exist_ok=True)
+    with open(base / _GEN_CHECKPOINT_FILE, 'w') as f:
+        json.dump({"completed": sorted(completed), "updated_at": datetime.now().isoformat()}, f, indent=2)
+
+
+def _clear_gen_checkpoint(output_dir: str):
+    path = _cache_base(output_dir) / _GEN_CHECKPOINT_FILE
+    if path.exists():
+        path.unlink()
 
 
 def _find_dependent_packages(packages: list, changed_pkg_names: set) -> set:
@@ -6887,6 +7036,7 @@ def build_conversion_report(
                 is_stub=is_stub,
                 has_parse_error=has_error,
                 notes=notes,
+                table_refs=proc.table_refs,
             ))
 
     for sql_file, errors in parse_errors_map.items():
@@ -7048,6 +7198,31 @@ def _render_report_markdown(report: ConversionReport) -> str:
                 lines.append(f"- `{m.procedure_name}` → `{m.java_service}.{m.java_method}()`")
             lines.append("")
 
+    all_table_refs = {}
+    for m in report.procedure_mappings:
+        if m.table_refs:
+            all_table_refs.setdefault(m.sql_file, {}).setdefault(m.procedure_name, m.table_refs)
+    if all_table_refs:
+        lines.append("---")
+        lines.append("")
+        lines.append("## 📋 数据库对象依赖")
+        lines.append("")
+        lines.append("以下存储过程引用了数据库表/视图，集成测试运行前需确保这些对象已在目标数据库中创建。")
+        lines.append("")
+        for sql_file in sorted(all_table_refs.keys()):
+            procs = all_table_refs[sql_file]
+            all_tables = sorted({t.lower() for refs in procs.values() for t in refs})
+            svc = next((m.java_service for m in report.procedure_mappings if m.sql_file == sql_file), "")
+            lines.append(f"### `{sql_file}` → `{svc}`")
+            lines.append("")
+            lines.append(f"依赖的表/视图: {', '.join(f'`{t}`' for t in all_tables)}")
+            lines.append("")
+            lines.append("| 存储过程 | 引用的表/视图 |")
+            lines.append("|----------|--------------|")
+            for proc_name, refs in sorted(procs.items()):
+                lines.append(f"| `{proc_name}` | {', '.join(f'`{r}`' for r in sorted(refs, key=str.lower))} |")
+            lines.append("")
+
     if UNSUPPORTED_FUNCTIONS:
         lines.append("---")
         lines.append("")
@@ -7198,6 +7373,7 @@ FLUXGAUSS_HELP = f"""\
    fluxgauss -c fluxgauss.yaml             使用配置文件
    fluxgauss -o ./dest -s pkg_order.sql pkg_product.sql
    fluxgauss -c fluxgauss.yaml --full      强制全量重新生成
+   fluxgauss -c fluxgauss.yaml --resume    从断点续做（跳过已生成的包）
    fluxgauss -c fluxgauss.yaml --report ./report.md
 
   配置文件格式 (YAML):
@@ -7248,6 +7424,7 @@ def _build_arg_parser():
     parser.add_argument("-o", "--output", metavar="DIR", help="输出目录")
     parser.add_argument("-s", "--sources", nargs="+", metavar="SQL", help="SQL 源文件列表")
     parser.add_argument("--full", action="store_true", default=False, help="强制全量重新生成（忽略缓存）")
+    parser.add_argument("--resume", action="store_true", default=False, help="从断点续做（跳过已生成的包）")
     parser.add_argument("--report", metavar="FILE", help="指定转换报告输出路径")
     parser.add_argument("-v", "--version", action="store_true", default=False, help="显示版本信息")
     return parser
@@ -7321,11 +7498,11 @@ def main():
     missing_files = [f for f in sql_files if not os.path.exists(f)]
     if missing_files:
         for f in missing_files:
-            _log(f"  ⚠ Source file not found, skipping: {f}")
+            _log(f"  ⚠ Source file not found, skipping: {f}", to_stdout=False)
             parse_errors_map[f] = [{"parse_error": f"file not found: {f}"}]
         sql_files = [f for f in sql_files if os.path.exists(f)]
         if not sql_files:
-            _log(f"  ❌ No valid source files. Exiting.")
+            _log(f"  ❌ No valid source files. Exiting.", to_stdout=False)
             sys.exit(1)
 
     # ── Incremental: hash comparison ──
@@ -7469,16 +7646,26 @@ def main():
 
     # ── Phase 3: Generate ──
     _log(f"\n  Generating Spring Boot project...", to_stdout=False)
+    _resume_skip = _load_gen_checkpoint(output_dir) if args.resume else set()
+    if _resume_skip:
+        _log(f"  ⏩ Resume: skipping {len(_resume_skip)} already-generated packages", to_stdout=True)
+    _gen_ok = False
     try:
         generate_project(output_dir, packages, changed_packages=changed_pkg_names, config=config,
+                         resume_skip=_resume_skip,
                          progress_cb=lambda phase, i, n, s: (
                              _progress_bar("Generate", i, n, s) if phase == "pkg" else None
                          ))
         _progress_done("Generate", len([p for p in packages
                                         if changed_pkg_names is None or p.package_name in changed_pkg_names]))
+        _gen_ok = True
     except Exception as e:
         _log(f"  ❌ Error generating project: {e}", to_stdout=False)
         _log(traceback.format_exc(), to_stdout=False)
+        _log(f"  💡 Use --resume to continue from checkpoint", to_stdout=True)
+
+    if _gen_ok:
+        _clear_gen_checkpoint(output_dir)
 
     _clean_stale_packages(output_dir, manifest, packages)
 
@@ -7512,6 +7699,8 @@ def main():
     stub_count = len(STUB_PROCEDURES)
 
     itest_cfg = config.get("integration_test", {}) if config else {}
+    if not isinstance(itest_cfg, dict):
+        itest_cfg = {}
     itest_enabled = itest_cfg.get("enabled", False)
 
     _log(f"\n  Done!")

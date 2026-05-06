@@ -1,0 +1,23 @@
+{
+  "active_plan": "/Users/c2j/Projects/Desktop_Projects/DB/sp2java/.sisyphus/plans/refactor-dedup.md",
+  "started_at": "2026-05-04T14:34:31.196Z",
+  "session_ids": [
+    "ses_20cbb08daffeLjkAX5Dmijl4KE"
+  ],
+  "session_origins": {
+    "ses_20cbb08daffeLjkAX5Dmijl4KE": "direct"
+  },
+  "plan_name": "refactor-dedup",
+  "agent": "atlas",
+  "task_sessions": {
+    "todo:0": {
+      "task_key": "todo:0",
+      "task_label": "0",
+      "task_title": "Capture Baseline Output Checksums",
+      "session_id": "ses_20c955f4dffeG4XrjbRqyU0FT7",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-05-04T15:05:45.848Z"
+    }
+  }
+}
