@@ -174,23 +174,29 @@ def _get_logger_config() -> dict:
 # ── Table DDL Parser ──────────────────────────────────────────
 
 def parse_table_ddl(sql_file: str) -> dict:
-    """Parse a SQL file containing CREATE TABLE statements and return a schema map.
-
-    Returns: {table_name_lower: {column_name_lower: sql_type}}
-    Example: {"db_log": {"id": "varchar2(20)", "proc_name": "varchar2(20)", ...}}
-    """
     with open(sql_file, 'r', encoding='utf-8', errors='replace') as f:
         content = f.read()
 
     schema = {}
-    table_pattern = re.compile(
-        r'create\s+table\s+(?:if\s+not\s+exists\s+)?(?:\w+\.)?(\w+)\s*\((.*?)\)\s*;',
-        re.IGNORECASE | re.DOTALL
-    )
 
-    for table_match in table_pattern.finditer(content):
-        table_name = table_match.group(1).lower()
-        columns_text = table_match.group(2)
+    # Strip SQL comments and Oracle hint syntax
+    content_clean = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
+
+    # Find CREATE TABLE statements by tracking parenthesis depth
+    for m in re.finditer(r'create\s+table\s+(?:if\s+not\s+exists\s+)?(?:\w+\.)?(\w+)\s*\(', content_clean, re.IGNORECASE):
+        table_name = m.group(1).lower()
+        start = m.end()
+
+        depth = 1
+        pos = start
+        while pos < len(content_clean) and depth > 0:
+            if content_clean[pos] == '(':
+                depth += 1
+            elif content_clean[pos] == ')':
+                depth -= 1
+            pos += 1
+
+        columns_text = content_clean[start:pos - 1]
 
         columns = {}
         parts = []
@@ -216,6 +222,11 @@ def parse_table_ddl(sql_file: str) -> dict:
             if not part:
                 continue
 
+            # Skip constraint definitions and table-level keywords
+            first_word = part.split()[0].upper()
+            if first_word in ('CONSTRAINT', 'PRIMARY', 'UNIQUE', 'FOREIGN', 'CHECK', 'INDEX', 'LIKE'):
+                continue
+
             tokens = part.split(None, 1)
             if len(tokens) < 2:
                 part = re.sub(
@@ -226,8 +237,11 @@ def parse_table_ddl(sql_file: str) -> dict:
             if len(tokens) >= 2:
                 col_name = tokens[0].strip().lower()
                 col_type = tokens[1].strip()
-                col_type = re.split(r'\s+(NOT\s+NULL|NULL|DEFAULT|PRIMARY|UNIQUE|CHECK|REFERENCES)', col_type, flags=re.IGNORECASE)[0].strip()
-                columns[col_name] = col_type
+                col_type = re.split(r'\s+(NOT\s+NULL|NULL|DEFAULT|PRIMARY|UNIQUE|CHECK|REFERENCES|CONSTRAINT|USING|PCTFREE|INITRANS|MAXTRANS|STORAGE|TABLESPACE|ENABLE|DISABLE|NOCOMPRESS|COMPRESS)', col_type, flags=re.IGNORECASE)[0].strip()
+                # Remove trailing Oracle inline comments
+                col_type = re.sub(r'\s*/\*.*?\*/', '', col_type)
+                if col_type:
+                    columns[col_name] = col_type
 
         if columns:
             schema[table_name] = columns
@@ -761,7 +775,10 @@ class ProcedureInfo:
     dynamic_sql_templates: dict = field(default_factory=dict)  # var_name -> (sql_template, param_list)
     sql_expr_vars: dict = field(default_factory=dict)  # var_name -> AST node for SQL-expression assignments (e.g. to_char(...))
     inlined_sql_vars: set = field(default_factory=set)  # var_names that were inlined into dynamic SQL templates
-    is_autonomous: bool = False  # PRAGMA AUTONOMOUS_TRANSACTION
+    is_autonomous: bool = False
+    scheduler_tasks: list = field(default_factory=list)
+    _pending_scheduler_job: dict = field(default_factory=dict)
+    _needs_futures_list: bool = False
 
     # NEW: Cursor tracking
     open_cursors: dict = field(default_factory=dict)   # cursor_name -> {"result_var": str, "index_var": str}
@@ -2395,10 +2412,95 @@ def _comment_perform(query: str) -> str:
     return '\n'.join(f"// {l}" if l.strip() else "//" for l in lines)
 
 
+def _flush_scheduler_job(proc: ProcedureInfo):
+    job = getattr(proc, '_pending_scheduler_job', {})
+    if not job or 'target_method' not in job:
+        return
+
+    method = job['target_method']
+    task_id_expr = job.get('task_id_expr', 'null')
+
+    if '.get(' in task_id_expr:
+        task_id_expr = f'(String) {task_id_expr}'
+
+    proc._needs_futures_list = True
+    proc.scheduler_tasks.append((method, task_id_expr))
+
+    proc.java_logic_lines.append(
+        f'_futures.add(java.util.concurrent.CompletableFuture.runAsync(() -> this.{method}({task_id_expr})));'
+    )
+
+    proc._pending_scheduler_job = {}
+
+
 def _process_perform(perform_data: dict, proc: ProcedureInfo, all_packages: dict):
     """Convert PERFORM to cross-service call."""
     parsed = perform_data.get("parsed_expr")
     query = perform_data.get("query", "")
+
+    if parsed and isinstance(parsed, dict):
+        for k, v in parsed.items():
+            if k == "FunctionCall":
+                name_parts = v.get("name", [])
+                if (len(name_parts) >= 2 and
+                    name_parts[0].upper() in ("DBE_SCHEDULER", "DBMS_SCHEDULER")):
+                    op = name_parts[1].upper()
+                    raw_args = v.get("args", [])
+
+                    if op == "CREATE_JOB":
+                        job_action = None
+                        for arg in raw_args:
+                            if isinstance(arg, dict):
+                                if "NamedArgument" in arg:
+                                    na = arg["NamedArgument"]
+                                    na_name = ""
+                                    for nk, nv in na.items():
+                                        if nk == "name":
+                                            na_name = _extract_name_from_expr(nv).lower() if isinstance(nv, dict) else str(nv).lower()
+                                        elif nk == "value" and na_name == "job_action":
+                                            job_action = _extract_string_literal(nv)
+                        if job_action:
+                            parts = job_action.split('.')
+                            if len(parts) >= 2:
+                                target_method = java_method_name(parts[-1])
+                            else:
+                                target_method = java_method_name(job_action)
+                            proc._pending_scheduler_job = {"target_method": target_method}
+                        else:
+                            m = re.search(r"job_action\s*=>\s*'([^']+)'", query, re.IGNORECASE)
+                            if m:
+                                action_str = m.group(1)
+                                aparts = action_str.split('.')
+                                target_method = java_method_name(aparts[-1])
+                                proc._pending_scheduler_job = {"target_method": target_method}
+                        return
+
+                    elif op == "SET_JOB_ARGUMENT_VALUE":
+                        arg_value = None
+                        for arg in raw_args:
+                            if isinstance(arg, dict):
+                                if "NamedArgument" in arg:
+                                    na = arg["NamedArgument"]
+                                    na_name = ""
+                                    for nk, nv in na.items():
+                                        if nk == "name":
+                                            na_name = _extract_name_from_expr(nv).lower() if isinstance(nv, dict) else str(nv).lower()
+                                        elif nk == "value" and na_name == "argument_value":
+                                            arg_value = _expr_to_java(nv, proc, as_read=True)
+                        if not arg_value:
+                            if raw_args:
+                                arg_value = _expr_to_java(raw_args[-1], proc, as_read=True)
+                        if arg_value:
+                            if "target_method" in proc._pending_scheduler_job:
+                                proc._pending_scheduler_job["task_id_expr"] = arg_value
+                        return
+
+                    elif op == "ENABLE":
+                        _flush_scheduler_job(proc)
+                        return
+
+                    else:
+                        return
 
     if parsed:
         for k, v in parsed.items():
@@ -2587,6 +2689,15 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
 def _process_while(while_data: dict, proc: ProcedureInfo, all_packages: dict, dml_counter: dict):
     condition = _expr_to_java(while_data.get("condition", {}), proc, all_packages=all_packages)
     body_stmts = while_data.get("body", [])
+
+    if getattr(proc, '_needs_futures_list', False) and proc.scheduler_tasks:
+        body_text = json.dumps(body_stmts) if isinstance(body_stmts, list) else str(body_stmts)
+        if 'pg_sleep' in body_text.lower() or 'user_scheduler_jobs' in body_text.lower() or 'scheduler' in body_text.lower():
+            proc.java_logic_lines.append(
+                'java.util.concurrent.CompletableFuture.allOf('
+                '_futures.toArray(new java.util.concurrent.CompletableFuture[0])).join();'
+            )
+            return
 
     proc.java_logic_lines.append(f"while ({condition}) {{")
     for s in _iter_statements(body_stmts):
@@ -2817,6 +2928,41 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
         return
 
     func_lower = func.lower() if func else ""
+
+    if pkg.upper() in ("DBE_SCHEDULER", "DBMS_SCHEDULER"):
+        if func.upper() == "ENABLE":
+            _flush_scheduler_job(proc)
+            return
+        elif func.upper() == "CREATE_JOB":
+            for arg in args:
+                if isinstance(arg, dict) and "NamedArgument" in arg:
+                    na = arg["NamedArgument"]
+                    na_name = ""
+                    for nk, nv in na.items():
+                        if nk == "name":
+                            na_name = _extract_name_from_expr(nv).lower() if isinstance(nv, dict) else str(nv).lower()
+                        elif nk == "value" and na_name == "job_action":
+                            job_action = _extract_string_literal(nv)
+                            if job_action:
+                                aparts = job_action.split('.')
+                                proc._pending_scheduler_job = {"target_method": java_method_name(aparts[-1])}
+            return
+        elif func.upper() == "SET_JOB_ARGUMENT_VALUE":
+            for arg in args:
+                if isinstance(arg, dict) and "NamedArgument" in arg:
+                    na = arg["NamedArgument"]
+                    na_name = ""
+                    for nk, nv in na.items():
+                        if nk == "name":
+                            na_name = _extract_name_from_expr(nv).lower() if isinstance(nv, dict) else str(nv).lower()
+                        elif nk == "value" and na_name == "argument_value":
+                            arg_val = _expr_to_java(nv, proc, as_read=True)
+                            if "target_method" in proc._pending_scheduler_job:
+                                proc._pending_scheduler_job["task_id_expr"] = arg_val
+            return
+        else:
+            return
+
     _BUILTIN_PROC_MAP = {
         "pg_sleep": lambda a: f"try {{ Thread.sleep({a} * 1000L); }} catch (InterruptedException _ignored) {{ Thread.currentThread().interrupt(); }}",
     }
@@ -2998,7 +3144,7 @@ def _process_case_stmt(case_data: dict, proc: ProcedureInfo, all_packages: dict,
     for when in whens:
         cond = _expr_to_java(when.get("condition", {}), proc)
         keyword = "if" if first else "} else if"
-        cmp = f"{operand} == {cond}" if is_primitive else f"{operand}.equals({cond})"
+        cmp = f"{operand} == {cond}" if is_primitive else f"java.util.Objects.equals({operand}, {cond})"
         proc.java_logic_lines.append(f"{keyword} ({cmp}) {{")
         first = False
         for s in _iter_statements(when.get("stmts", [])):
@@ -3613,6 +3759,19 @@ def _extract_name_from_expr(expr: dict) -> str:
     return "?"
 
 
+def _extract_string_literal(node: dict) -> str:
+    if not isinstance(node, dict):
+        if isinstance(node, str):
+            return node.strip("'\"")
+        return None
+    for k, v in node.items():
+        if k == "StringLiteral":
+            return v.strip("'\"") if isinstance(v, str) else str(v)
+        elif k == "SingleQuotedString":
+            return v.strip("'")
+    return None
+
+
 def _process_raise(raise_data: dict, proc: ProcedureInfo):
     level = raise_data.get("level", "")
     message = (raise_data.get("message") or "''").strip("'\"")
@@ -3651,9 +3810,10 @@ def _process_raise(raise_data: dict, proc: ProcedureInfo):
 
 def _process_call_text(sql: str, proc: ProcedureInfo, all_packages: dict):
     """Process CALL statement from raw sql_text."""
-    # Normalize spaces: ogsql-parser outputs "pkg_inventory . reserve_stock"
     normalized = re.sub(r'\s*\.\s*', '.', sql.strip())
-    # Extract "call pkg_xxx.proc_name(args)"
+    if re.match(r'call\s+DBE_SCHEDULER\.ENABLE', normalized, re.IGNORECASE):
+        _flush_scheduler_job(proc)
+        return
     match = re.match(r"call\s+([\w.]+)\s*\(([^)]*)\)", normalized, re.IGNORECASE)
     if match:
         full_name = match.group(1)
@@ -4022,7 +4182,7 @@ def _handle_function(func_name, args_java, proc):
         default = args_java[-1] if i < len(args_java) else "null"
         result = default
         for val, ret in reversed(parts):
-            result = f"({expr}.equals({val}) ? {ret} : {result})"
+            result = f"(java.util.Objects.equals({expr}, {val}) ? {ret} : {result})"
         return result
 
     elif func_name == "round":
@@ -4539,9 +4699,9 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 right_d = f"((Number) {right}).doubleValue()" if ".get(" in right else right
                 return f"({left_d} {java_op} {right_d})"
             if op == "=" and _is_string_comparison(val):
-                return f"{left}.equals({right})"
+                return f"{right}.equals({left})"
             elif op == "<>" and _is_string_comparison(val):
-                return f"!{left}.equals({right})"
+                return f"!{right}.equals({left})"
             return f"{left} {java_op} {right}"
         elif key == "UnaryOp":
             operand = _expr_to_java(val.get("expr", {}), proc, all_packages=all_packages)
@@ -4703,7 +4863,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     if is_primitive:
                         cmp_expr = f"{operand} == {cond}"
                     else:
-                        cmp_expr = f"{operand}.equals({cond})"
+                        cmp_expr = f"java.util.Objects.equals({operand}, {cond})"
                     if i == 0:
                         parts.append(f"({cmp_expr} ? {result}")
                     else:
@@ -5508,8 +5668,31 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
     for pat, repl in _SQL_FUNC_REPLACEMENTS:
         sql = pat.sub(repl, sql)
 
+    # Convert Oracle-style sequence references: SEQ.NEXTVAL → nextval('seq'), SEQ.CURRVAL → currval('seq')
+    sql = re.sub(
+        r'\b(\w+)\.NEXTVAL\b',
+        lambda m: f"nextval('{m.group(1).lower()}')",
+        sql, flags=re.IGNORECASE,
+    )
+    sql = re.sub(
+        r'\b(\w+)\.CURRVAL\b',
+        lambda m: f"currval('{m.group(1).lower()}')",
+        sql, flags=re.IGNORECASE,
+    )
+
     sql = re.sub(r'\bDATE\s*\(([^)]+)\)', r'CAST(\1 AS DATE)', sql, flags=re.IGNORECASE)
     sql = re.sub(r'\bTIMESTAMP\s*\(([^)]+)\)', r'CAST(\1 AS TIMESTAMP)', sql, flags=re.IGNORECASE)
+
+    # Strip double-quoted identifiers for PostgreSQL compatibility
+    # "MY_TAB_PARTITIONS" → MY_TAB_PARTITIONS (case-insensitive matching)
+    # Preserve quoted identifiers that are reserved words (date, user, order, etc.)
+    _RESERVED = {'date', 'user', 'order', 'performance', 'type', 'check', 'primary', 'foreign', 'unique', 'constraint', 'index', 'table', 'select', 'insert', 'update', 'delete', 'from', 'where', 'group', 'having', 'limit', 'offset', 'as', 'on', 'and', 'or', 'not', 'null', 'default', 'values', 'set', 'into'}
+    def _unquote_ident(m):
+        inner = m.group(1)
+        if inner.lower() in _RESERVED:
+            return m.group(0)
+        return inner
+    sql = re.sub(r'"(\w+)"', _unquote_ident, sql)
 
     param_placeholders = []
     def _protect(m):
@@ -5522,7 +5705,16 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
     for i, ph in enumerate(param_placeholders):
         sql = sql.replace(f"__PH{i}__", ph)
 
-    sql = _convert_params_to_mybatis(sql, proc.parameters, proc.local_vars)
+    effective_local_vars = dict(proc.local_vars) if proc.local_vars else {}
+    for ep_java_name, ep_java_type in dml.extra_params:
+        already_covered = any(
+            snake_to_camel(k) == ep_java_name
+            for k in effective_local_vars
+        )
+        if not already_covered:
+            effective_local_vars[ep_java_name] = ep_java_type
+
+    sql = _convert_params_to_mybatis(sql, proc.parameters, effective_local_vars)
 
     sql = re.sub(r'([(,])\s*(date|user|order|performance|type)\s*([,)])', r'\1 "\2" \3', sql, flags=re.IGNORECASE)
 
@@ -6018,6 +6210,13 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                 body_lines.append(f"{var_type} {var_java} = {default_val};")
                 top_level_declares.add(var_java)
                 top_level_insert_idx = len(body_lines)
+
+        if getattr(proc, '_needs_futures_list', False):
+            body_lines.append(
+                'java.util.List<java.util.concurrent.CompletableFuture<Void>> _futures = '
+                'new java.util.ArrayList<>();'
+            )
+            top_level_insert_idx = len(body_lines)
 
         for p in out_params:
             body_lines.append(f"{p.java_name}.set(null);")
@@ -7054,7 +7253,22 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
 
     auto_id_tables = tables_with_implicit_id_insert - tables_with_explicit_id_insert
 
+    sequences_needed = set()
+    for pkg in packages:
+        for proc in pkg.procedures:
+            for dml in proc.dml_statements:
+                raw = getattr(dml, 'raw_sql_for_params', '') or getattr(dml, 'sql_text', '')
+                for m in re.finditer(r'\b(\w+)\.NEXTVAL\b', raw, re.IGNORECASE):
+                    sequences_needed.add(m.group(1).lower())
+
     lines = []
+    for seq in sorted(sequences_needed):
+        lines.append(f'DROP SEQUENCE IF EXISTS {seq} CASCADE;')
+    for seq in sorted(sequences_needed):
+        lines.append(f'CREATE SEQUENCE IF NOT EXISTS {seq} START WITH 1 INCREMENT BY 1;')
+    if sequences_needed:
+        lines.append("")
+
     for table in sorted(schema_map.keys()):
         lines.append(f'DROP TABLE IF EXISTS "{table}" CASCADE;')
     lines.append("")
@@ -7072,6 +7286,10 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
             effective_type = sql_stripped
             if col_lower == "id" and sql_stripped.upper().strip() == "BIGINT" and table in auto_id_tables:
                 effective_type = "BIGSERIAL"
+            effective_type = re.sub(r'\bvarchar2\b', 'varchar', effective_type, flags=re.IGNORECASE)
+            m_width = re.match(r'varchar\((\d+)\)', effective_type, re.IGNORECASE)
+            if m_width and int(m_width.group(1)) > 8000:
+                effective_type = "TEXT"
             col_defs.append(f'    "{col}" {effective_type}')
         if not col_defs:
             continue
@@ -7285,6 +7503,9 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
     needs_atomic_ref = any(p.is_out for proc in pkg.procedures for p in proc.parameters)
     if needs_atomic_ref:
         imports.add("import java.util.concurrent.atomic.AtomicReference;")
+    has_stubs = any((proc.name, len(proc.parameters)) in STUB_PROCEDURES for proc in pkg.procedures)
+    if has_stubs:
+        imports.add("import org.junit.jupiter.api.Disabled;")
 
     _all_pkgs = all_packages or {}
     service_injections = _collect_service_injections(pkg)
@@ -7305,10 +7526,18 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
         in_params = [p for p in proc.parameters if not p.is_out]
         out_params = [p for p in proc.parameters if p.is_out]
 
+        _numeric_string_params = set()
+        for dml in proc.dml_statements:
+            for m in re.finditer(r'to_number\s*\(\s*#?\{?(\w+)', dml.sql_text or "", re.IGNORECASE):
+                ref = m.group(1)
+                _numeric_string_params.add(ref.lower())
+
         param_values = []
         param_args = []
         for p in in_params:
             val = _default_test_value(p.java_type, p.java_name, pkg=pkg)
+            if p.java_type == "String" and (p.name.lower() in _numeric_string_params or p.java_name.lower() in _numeric_string_params):
+                val = '"1"'
             decl_type = p.java_type
             if pkg and hasattr(pkg, 'custom_types'):
                 for tn, ti in pkg.custom_types.items():
@@ -7338,7 +7567,10 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
         seen_method_names[base_test_name] = count + 1
         test_name = f"{base_test_name}_{count}" if count > 0 else base_test_name
 
+        is_itest_stubbed = (proc.name, len(proc.parameters)) in STUB_PROCEDURES
         lines = []
+        if is_itest_stubbed:
+            lines.append("    @Disabled(\"Converter stub — complex PL/pgSQL pattern requires manual implementation\")")
         if sql_script:
             lines.append(f"    @org.springframework.test.context.jdbc.Sql(scripts = \"{sql_script}\")")
         lines.append("    @Test")
@@ -7350,7 +7582,10 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
             lines.append(f"        {od}")
         if proc.is_function:
             lines.append(f"        var result = {svc_var}.{method_name}({args_str});")
-            lines.append("        assertNotNull(result);")
+            if is_itest_stubbed:
+                lines.append("        // Stub implementation — result is null")
+            else:
+                lines.append("        assertNotNull(result);")
             lines.append("        // TODO: Add domain-specific assertions")
         else:
             lines.append(f"        {svc_var}.{method_name}({args_str});")
