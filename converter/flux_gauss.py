@@ -1064,6 +1064,7 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
                 return_type = stmt_data.get("return_type") if is_function else None
 
                 params = extract_parameters(stmt_data.get("parameters", []))
+                params = [p for p in params if p.name.lower() != 'self']
                 # Detect REFCURSOR OUT params
                 refcursor_outs = set()
                 for p in params:
@@ -1169,6 +1170,7 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
                                 elif ct["kind"] == "varray":
                                     return_type = f"List<{ct['elem_type']}>"
                         params = extract_parameters(item_data.get("parameters", []))
+                        params = [p for p in params if p.name.lower() != 'self']
                         for p in params:
                             if p.java_type == "Map<String, Object>" and custom_types:
                                 raw = p.sql_type.lower() if p.sql_type else ""
@@ -3146,6 +3148,7 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
         _record_todo("EXECUTE_UNRESOLVED", proc, f"var={var_name}")
         return
 
+    raw_sql_for_params = sql_text
     sql_text = _convert_placeholders_to_mybatis(sql_text, proc=proc)
     sql_type = _detect_sql_type(sql_text)
     mapper_method = _dml_method_name(sql_type, proc.proc_name, dml_counter)
@@ -4668,16 +4671,33 @@ def generate_project(output_dir: str, packages: list, changed_packages: set = No
         try:
             service_injections = _collect_service_injections(pkg)
 
-            _write_mapper_interface(base_path, pkg)
-            _write_mapper_xml(base_path, pkg)
-            _write_service_class(base_path, pkg, service_injections, all_packages)
+            try:
+                _write_mapper_interface(base_path, pkg)
+            except Exception as e:
+                raise RuntimeError(f"_write_mapper_interface: {e}") from e
+
+            try:
+                _write_mapper_xml(base_path, pkg)
+            except Exception as e:
+                raise RuntimeError(f"_write_mapper_xml: {e}") from e
+
+            try:
+                _write_service_class(base_path, pkg, service_injections, all_packages)
+            except Exception as e:
+                raise RuntimeError(f"_write_service_class: {e}") from e
+
             service_injections = _collect_service_injections(pkg)
-            _write_service_test(base_path, pkg, service_injections, svc_method_param_counts, all_packages)
+
+            try:
+                _write_service_test(base_path, pkg, service_injections, svc_method_param_counts, all_packages)
+            except Exception as e:
+                raise RuntimeError(f"_write_service_test: {e}") from e
 
             gen_checkpoint.add(pkg.package_name)
             _save_gen_checkpoint(output_dir, gen_checkpoint)
         except Exception as e:
             _log(f"  ❌ Error writing files for {pkg.package_name}: {e}", to_stdout=False)
+            _log(traceback.format_exc(), to_stdout=False)
             gen_errors.append((pkg.package_name, str(e)))
 
     itest_cfg = (config or {}).get("integration_test", {})
@@ -5174,7 +5194,12 @@ def _convert_params_to_mybatis(sql: str, params: list, local_vars: dict = None) 
         re.IGNORECASE
     )
     def _composite_repl(m):
-        java_name = all_names[m.group(1).lower()] if m.group(1).lower() in {k.lower(): k for k in all_names} else all_names.get(m.group(1), m.group(1))
+        _lower_map = {k.lower(): k for k in all_names}
+        matched_lower = m.group(1).lower()
+        if matched_lower in _lower_map:
+            java_name = all_names[_lower_map[matched_lower]]
+        else:
+            java_name = all_names.get(m.group(1), m.group(1))
         return f'#{{{java_name}.{snake_to_camel(m.group(2))}}}'
     sql = composite_pattern.sub(_composite_repl, sql)
 
