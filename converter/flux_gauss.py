@@ -355,8 +355,17 @@ TYPE_OVERRIDES = {
 
 UNRESOLVED_CALLS = []
 STUB_PROCEDURES = []
+STUB_REASONS: dict[tuple, list[str]] = {}  # key=(proc.name, param_count) → list of human-readable stub reasons
 UNSUPPORTED_FUNCTIONS = []
 TODO_SUMMARY = []  # Collects (category, proc_id, source_file, detail) for diagnostic
+
+
+def _add_stub_reason(proc, reason: str):
+    """Record a specific reason why a procedure was stubbed."""
+    _stub_key = (proc.name, len(proc.parameters))
+    STUB_REASONS.setdefault(_stub_key, [])
+    if reason not in STUB_REASONS[_stub_key]:
+        STUB_REASONS[_stub_key].append(reason)
 _PACKAGE_CONSTANTS = {}  # module-level: maps snake_case name → java_type for recovered constants
 _PACKAGE_VARIABLES = {}  # module-level: maps snake_case name → {"java_type": str, "default": str, "package": str}
 _LOG_FH = None
@@ -832,6 +841,7 @@ class ProcedureMapping:
     is_stub: bool = False
     has_parse_error: bool = False
     notes: str = ""
+    stub_reasons: list = field(default_factory=list)
     table_refs: set = field(default_factory=set)
 
 
@@ -1997,6 +2007,7 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
             proc.java_logic_lines.append(f"// GOTO {label} — Java has no goto, manual refactor required")
             _record_todo("GOTO", proc, f"label={label}")
             _stub_key = (proc.name, len(proc.parameters))
+            _add_stub_reason(proc, f"GOTO 语句无法转换为 Java (label={label})")
             if _stub_key not in STUB_PROCEDURES:
                 STUB_PROCEDURES.append(_stub_key)
         elif stmt_type == "Case":
@@ -2318,6 +2329,7 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
                     is_pkg_var = raw_name in _PACKAGE_VARIABLES and not is_local
                     if not is_local and not is_param and not is_const and not is_pkg_var:
                         _stub_key = (proc.name, len(proc.parameters))
+                        _add_stub_reason(proc, f"赋值目标 '{raw_name}' 不是局部变量/参数/包变量/常量")
                         if _stub_key not in STUB_PROCEDURES:
                             STUB_PROCEDURES.append(_stub_key)
 
@@ -3120,6 +3132,12 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
         if "__SQLERRM__" in line:
             replacement = "e.getMessage()" if in_catch else '""'
             line = line.replace("__SQLERRM__", replacement)
+        if "__SQLCODE__" in line:
+            replacement = "String.valueOf(-1)" if in_catch else "\"00000\""
+            line = line.replace("__SQLCODE__", replacement)
+        if "__SQLSTATE__" in line:
+            replacement = "\"00000\"" if in_catch else "\"00000\""
+            line = line.replace("__SQLSTATE__", replacement)
         resolved.append(line)
     return resolved
 
@@ -4527,6 +4545,10 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 return "found"
             if upper == "SQLERRM":
                 return "__SQLERRM__"
+            if upper == "SQLCODE":
+                return "__SQLCODE__"
+            if upper == "SQLSTATE":
+                return "__SQLSTATE__"
             if upper in ("CURRENT_TIMESTAMP", "NOW"):
                 return "new java.sql.Timestamp(System.currentTimeMillis())"
             if upper in ("CURRENT_DATE", "SYSDATE"):
@@ -4581,6 +4603,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 _is_pkg_var = name in _PACKAGE_VARIABLES and not _is_local
                 if not _is_local and not _is_param and not _is_const and not _is_pkg_var:
                     _stub_key = (proc.name, len(proc.parameters))
+                    _add_stub_reason(proc, f"表达式引用了未知变量 '{name}' (ColumnRef)")
                     if _stub_key not in STUB_PROCEDURES:
                         STUB_PROCEDURES.append(_stub_key)
                 if _is_pkg_var:
@@ -4597,6 +4620,10 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             upper = name.upper()
             if upper == "SQLERRM":
                 return "__SQLERRM__"
+            if upper == "SQLCODE":
+                return "__SQLCODE__"
+            if upper == "SQLSTATE":
+                return "__SQLSTATE__"
             if upper in ("CURRENT_TIMESTAMP", "NOW"):
                 return "new java.sql.Timestamp(System.currentTimeMillis())"
             if upper in ("CURRENT_DATE", "SYSDATE"):
@@ -4611,6 +4638,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 _is_pkg_var = name in _PACKAGE_VARIABLES and not _is_local
                 if not _is_local and not _is_param and not _is_const and not _is_pkg_var:
                     _stub_key = (proc.name, len(proc.parameters))
+                    _add_stub_reason(proc, f"表达式引用了未知变量 '{name}' (PlVariable)")
                     if _stub_key not in STUB_PROCEDURES:
                         STUB_PROCEDURES.append(_stub_key)
                 if _is_pkg_var:
@@ -4927,6 +4955,18 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             return f"{prefix}{inner}.matches({pattern_java})"
         elif key == "TypeCast":
             return _expr_to_java(val.get("expr", {}), proc, all_packages=all_packages)
+        elif key == "CursorAttribute":
+            cursor_java = _expr_to_java(val.get("cursor", {}), proc)
+            attr = val.get("attribute", "").lower()
+            if attr in ("notfound", "not_found"):
+                return f"!{cursor_java}.next()"
+            elif attr in ("found",):
+                return f"{cursor_java}.next()"
+            elif attr in ("isopen", "is_open"):
+                return f"({cursor_java} != null && !{cursor_java}.isClosed())"
+            elif attr in ("rowcount", "row_count"):
+                return f"_rowCount"  # needs cursor row count tracking
+            return f"/* CursorAttribute:{attr} */ false"
 
     return str(expr)
 
@@ -6332,9 +6372,11 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                     _kept.append(l)
             body_lines = body_lines[:_last_body_return + 1] + _kept
 
-    has_complex_issues = _has_compilation_issues(body_lines, out_params, proc)
+    has_complex_issues, _failed_checks = _has_compilation_issues(body_lines, out_params, proc)
     if has_complex_issues:
         _stub_key = (proc.name, len(proc.parameters))
+        for _reason in _failed_checks:
+            _add_stub_reason(proc, f"编译检查失败: {_reason}")
         if _stub_key not in STUB_PROCEDURES:
             STUB_PROCEDURES.append(_stub_key)
         body_lines = _generate_stub_body(proc, out_params)
@@ -6385,36 +6427,33 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
     return "\n".join(method_lines)
 
 
-def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureInfo = None) -> bool:
+def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureInfo = None) -> tuple:
+    """Return (has_issues: bool, failed_checks: list[str])."""
     all_text = " ".join(body_lines)
-    issues = 0
+    failed = []
+
     if re.search(r'\bv_cursorResult\b', all_text) and "vCursorResult" not in all_text and "v_cursorResult =" not in all_text:
-        issues += 1
+        failed.append("cursor 结果变量 'v_cursorResult' 未正确初始化")
     if re.search(r'AtomicReference.*<=', all_text):
-        issues += 1
+        failed.append("AtomicReference 使用了不支持的比较运算符 (<=)")
 
     out_java_names = {p.java_name for p in out_params}
     for line in body_lines:
         for name in out_java_names:
-            # OUT param used in direct comparison (missing .get())
             if re.search(rf'\b{re.escape(name)}\s*(==|!=|<=|>=|<|>)', line):
-                issues += 1
-            # OUT param used without .get() or .set() accessor (e.g. Long.parseLong(totalNum))
+                failed.append(f"OUT 参数 '{name}' 直接用于比较，缺少 .get() 访问器")
             if re.search(rf'\b{re.escape(name)}\b', line):
                 if not re.search(rf'\b{re.escape(name)}\s*\.\s*(get|set)\s*\(', line):
                     if 'AtomicReference<' not in line:
                         if not re.search(rf'\(\s*[^)]*\b{re.escape(name)}\b', line):
-                            issues += 1
+                            failed.append(f"OUT 参数 '{name}' 未通过 .get()/.set() 访问")
 
-    # String OUT params: detect .set() with wrong argument types
     for p in out_params:
         if p.java_type == "String":
-            # .set() with bare integer literal (catches catch-block outCode.set(1))
             if re.search(rf'\b{re.escape(p.java_name)}\.set\(\d+\)', all_text):
-                issues += 1
-            # .set() with mapper call returning Object (not String)
+                failed.append(f"String OUT 参数 '{p.java_name}' 的 .set() 收到了整数字面量")
             if re.search(rf'\b{re.escape(p.java_name)}\.set\(\s*\w+Mapper\.', all_text):
-                issues += 1
+                failed.append(f"String OUT 参数 '{p.java_name}' 的 .set() 收到了 Mapper 返回值 (类型不匹配)")
 
     if proc is not None:
         declared_result_vars = {meta["result_var"] for meta in proc.open_cursors.values()}
@@ -6425,48 +6464,40 @@ def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureI
             matches = re.findall(r'\b(\w+Result)\b', line)
             for m in matches:
                 if m not in declared_result_vars and m not in known_names:
-                    issues += 1
+                    failed.append(f"未声明的 cursor 结果变量 '{m}'")
 
-    # UNSUPPORTED function calls generate non-compilable placeholder code
     if re.search(r'/\*\s*(UNSUPPORTED|TODO: implement)\b', all_text):
-        issues += 1
+        failed.append("包含未实现的内置函数调用 (UNSUPPORTED)")
 
-    # GOTO conversions leave unreachable code after while(true) { continue; } with no break
     if re.search(r'while\s*\(\s*true\s*\)', all_text) and 'continue;' in all_text and 'break;' not in all_text:
-        issues += 1
+        failed.append("GOTO 转换残留死循环 (while(true) + continue 无 break)")
 
-    # Trigger functions: PL/pgSQL trigger variables (TG_OP, NEW, OLD) have no Java equivalent
     if re.search(r'\btgOp\b|\btgWhen\b|\btgName\b|\btgTag\b', all_text):
-        issues += 1
+        failed.append("包含 PL/pgSQL 触发器变量 (TG_OP/TG_WHEN 等)，Java 无等价物")
 
-    # Package-state variable access without declaration (e.g., complexClearingPkg.put(...))
     if proc:
         for m in re.finditer(r'\b(\w+)\.put\(', all_text):
             var_name = m.group(1)
             local_java = {snake_to_camel(v) for v in proc.local_vars.keys()}
             param_java = {p.java_name for p in proc.parameters}
             if var_name not in local_java and var_name not in param_java and var_name not in ('_row', 'result'):
-                issues += 1
+                failed.append(f"未声明的包状态变量 '{var_name}' 调用了 .put()")
                 break
 
-    # BigDecimal variable assigned double literal (e.g., vRate = 0.0015d) — only flag if not wrapped in BigDecimal.valueOf
     if re.search(r'\w+\s*=\s*\d+\.\d+d\b', all_text) and 'BigDecimal' in all_text and 'BigDecimal.valueOf' not in all_text:
-        issues += 1
+        failed.append("BigDecimal 变量被赋值了 double 字面量 (类型不匹配)")
 
-    # Math.round(BigDecimal, int) does not exist in Java — only flag if not using setScale
     if re.search(r'Math\.round\(', all_text) and 'BigDecimal' in all_text:
-        issues += 1
+        failed.append("Math.round(BigDecimal) 不存在于 Java 中")
 
-    # Self-injection: service injects itself (circular dependency)
     if proc and re.search(rf'\b{re.escape(proc.package.lower() if proc.package else "")}Service\s+\w+Service\s*,', all_text):
-        issues += 1
+        failed.append("Service 自注入导致循环依赖")
 
-    # Primitive params using .equals() (should be ==)
     if proc:
         for p in proc.parameters:
             if p.java_type in ("int", "long", "double", "float", "boolean", "short", "byte", "char"):
                 if re.search(rf'\b{re.escape(p.java_name)}\.equals\(', all_text):
-                    issues += 1
+                    failed.append(f"基本类型参数 '{p.java_name}' 使用了 .equals() 而非 ==")
 
     _bd = 0
     for line in body_lines:
@@ -6478,11 +6509,11 @@ def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureI
             for after in body_lines[body_lines.index(line) + 1:]:
                 a = after.strip()
                 if a and not a.startswith("//") and a != "}":
-                    issues += 1
+                    failed.append("return 后仍有可达代码 (死代码)")
                     break
             break
 
-    return issues > 0
+    return (len(failed) > 0, failed)
 
 
 def _generate_stub_body(proc: ProcedureInfo, out_params: list) -> list:
@@ -7683,8 +7714,13 @@ def build_conversion_report(
                 for err in (errs if isinstance(errs, list) else [errs])
             )
             notes = ""
+            _proc_stub_key = (proc.name, len(proc.parameters))
+            _proc_reasons = STUB_REASONS.get(_proc_stub_key, [])
             if is_stub:
-                notes = "复杂 PL/pgSQL 模式，生成 Stub，需人工审查"
+                if _proc_reasons:
+                    notes = "；".join(_proc_reasons)
+                else:
+                    notes = "复杂 PL/pgSQL 模式，生成 Stub，需人工审查"
             if any("TODO" in line for line in proc.java_logic_lines):
                 todo_count = sum(1 for line in proc.java_logic_lines if "TODO" in line)
                 if notes:
@@ -7703,6 +7739,7 @@ def build_conversion_report(
                 is_stub=is_stub,
                 has_parse_error=has_error,
                 notes=notes,
+                stub_reasons=list(_proc_reasons),
                 table_refs=proc.table_refs,
             ))
 
@@ -7942,6 +7979,33 @@ def _render_report_markdown(report: ConversionReport) -> str:
             fn = parts[2] if len(parts) > 2 else ""
             src = parts[3] if len(parts) > 3 else ""
             lines.append(f"| `{proc_id}` | {tag} | `{fn}` | {src} |")
+        lines.append("")
+
+    # ── Stub 原因明细 ──
+    stub_mappings = [m for m in report.procedure_mappings if m.is_stub and m.stub_reasons]
+    if stub_mappings:
+        lines.append("---")
+        lines.append("")
+        lines.append("## ⚠️ Stub 原因明细")
+        lines.append("")
+        lines.append("| 存储过程 | Java 方法 | Stub 原因 |")
+        lines.append("|----------|-----------|-----------|")
+        for m in stub_mappings:
+            reasons_str = "；".join(m.stub_reasons)
+            lines.append(f"| `{m.procedure_name}` | `{m.java_service}.{m.java_method}()` | {reasons_str} |")
+        lines.append("")
+
+        from collections import Counter as _StubCounter
+        all_reasons = []
+        for m in stub_mappings:
+            all_reasons.extend(m.stub_reasons)
+        reason_counts = _StubCounter(all_reasons)
+        lines.append("### 按原因统计")
+        lines.append("")
+        lines.append("| 原因 | 影响过程数 |")
+        lines.append("|------|-----------|")
+        for reason, count in reason_counts.most_common():
+            lines.append(f"| {reason} | {count} |")
         lines.append("")
 
     if TODO_SUMMARY:
@@ -8335,6 +8399,7 @@ def main():
             _log(traceback.format_exc(), to_stdout=False)
             proc.java_logic_lines.append(f"// ERROR: 转换失败 - {e}")
             _stub_key = (proc.name, len(proc.parameters))
+            _add_stub_reason(proc, f"转换分析阶段异常: {e}")
             if _stub_key not in STUB_PROCEDURES:
                 STUB_PROCEDURES.append(_stub_key)
     _progress_done("Analyze", n_analyze)
@@ -8389,16 +8454,17 @@ def main():
         }
     _save_manifest(output_dir, new_manifest)
 
-    STUB_PROCEDURES.clear()
-    _PACKAGE_CONSTANTS.clear()
-    _PACKAGE_VARIABLES.clear()
-
     report = build_conversion_report(
         output_dir, packages, all_skipped, parse_errors_map,
         config_path=config_path or "", parse_warnings_map=parse_warnings_map
     )
     report_paths = write_conversion_report(report, output_dir,
                                             report_file=args.report)
+    stub_count = len(STUB_PROCEDURES)
+    STUB_PROCEDURES.clear()
+    STUB_REASONS.clear()
+    _PACKAGE_CONSTANTS.clear()
+    _PACKAGE_VARIABLES.clear()
     UNSUPPORTED_FUNCTIONS.clear()
     TODO_SUMMARY.clear()
 
@@ -8406,7 +8472,6 @@ def main():
     total_procs = sum(len(pkg.procedures) for pkg in packages)
     total_dml = sum(len(proc.dml_statements) for pkg in packages for proc in pkg.procedures)
     total_calls = sum(len(proc.service_calls) for pkg in packages for proc in pkg.procedures)
-    stub_count = len(STUB_PROCEDURES)
 
     itest_cfg = config.get("integration_test", {}) if config else {}
     if not isinstance(itest_cfg, dict):
