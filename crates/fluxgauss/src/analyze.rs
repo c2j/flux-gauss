@@ -9,6 +9,7 @@ pub fn analyze_procedure(
     let body = proc.body.take();
     let mut result = Ok(());
     if let Some(ref body_inner) = body {
+        proc.goto_analysis = Some(crate::statements::goto::analyze_goto_patterns(&body_inner.body));
         for decl in &body_inner.declarations {
             process_declaration(decl, proc);
         }
@@ -18,6 +19,20 @@ pub fn analyze_procedure(
                     .insert((proc.name.clone(), proc.parameters.len()));
                 result = Err(e);
                 break;
+            }
+        }
+        // After normal processing, if GOTO pattern detected, rewrite the procedure body
+        if proc.goto_analysis.as_ref().map_or(false, |a| a.pattern.is_some()) {
+            let analysis = proc.goto_analysis.take().unwrap();
+            proc.java_logic_lines.clear();
+            proc.dml_statements.clear();
+            let rewrite_result = crate::statements::goto::rewrite_with_pattern(
+                &body_inner.body, &analysis, proc
+            );
+            proc.goto_analysis = Some(analysis);
+            if let Err(e) = rewrite_result {
+                proc.java_logic_lines.push("// TODO: GOTO pattern requires manual implementation".into());
+                result = Err(e);
             }
         }
     }

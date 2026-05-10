@@ -45,3 +45,4 @@ sources:
   - demo-project/sql/SWH_ALL_KIND.sql
   - demo-project/sql/pkg_aas_lob_dataclear.sql
   - demo-project/sql/DAT_DATACLEAR_CONFIG.sql
+  - demo-project/sql/proc_Five_Gotos.sql
