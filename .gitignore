@@ -14,3 +14,4 @@ demo-project/sql/DAT_DATACLEAR_CONFIG.sql
 ogsql
 ogsql.broken
 .worktrees/
+.DS_Store

@@ -1,0 +1,610 @@
+use std::collections::BTreeSet;
+use std::path::Path;
+
+use crate::generate::mapper::{is_simple_java_type, resolve_import};
+use crate::generate::writer::CodeWriter;
+use crate::naming::{java_method_name, package_to_classname, snake_to_camel};
+use crate::type_map::sql_type_to_java;
+use crate::types::{DmlType, PackageInfo, ParamMode};
+
+pub fn write_service_class(
+    base_path: &Path,
+    pkg: &PackageInfo,
+    base_package: &str,
+    service_injections: &std::collections::HashMap<String, String>,
+) -> std::io::Result<String> {
+    let java_pkg = format!("{}.service", base_package);
+    let svc_dir = base_path.join(format!("src/main/java/{}/service", base_package.replace('.', "/")));
+    let class_name = format!("{}Service", package_to_classname(&pkg.package_name));
+    let mapper_var = format!(
+        "{}Mapper",
+        {
+            let cn = package_to_classname(&pkg.package_name);
+            let mut c = cn.chars();
+            match c.next() {
+                Some(f) => f.to_ascii_lowercase().to_string() + c.as_str(),
+                None => String::new(),
+            }
+        }
+    );
+
+    let mut all_imports: BTreeSet<String> = BTreeSet::new();
+    all_imports.insert(format!(
+        "import {}.mapper.{}Mapper;",
+        base_package,
+        package_to_classname(&pkg.package_name)
+    ));
+    all_imports.insert(format!("import {}.exception.BusinessException;", base_package));
+    all_imports.insert("import org.slf4j.Logger;".to_string());
+    all_imports.insert("import org.slf4j.LoggerFactory;".to_string());
+    all_imports.insert("import org.springframework.stereotype.Service;".to_string());
+    all_imports.insert("import org.springframework.transaction.annotation.Transactional;".to_string());
+
+    for proc in &pkg.procedures {
+        all_imports.extend(proc.imports.iter().cloned());
+        for p in &proc.parameters {
+            if let Some(imp) = resolve_import(&p.java_type) {
+                all_imports.insert(imp);
+            }
+        }
+    }
+
+    for (svc_var, pkg_name) in service_injections {
+        let svc_class = if !pkg_name.is_empty() {
+            format!("{}Service", package_to_classname(pkg_name))
+        } else {
+            let part = svc_var.replace("Service", "");
+            format!("{}Service", package_to_classname(&part))
+        };
+        all_imports.insert(format!("import {}.service.{};", base_package, svc_class));
+    }
+
+    let all_body: String = pkg
+        .procedures
+        .iter()
+        .flat_map(|p| p.java_logic_lines.iter().cloned())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let has_list_return = pkg.procedures.iter().any(|p| {
+        if p.is_function {
+            p.return_type.as_ref().map_or(false, |t| t.contains("List"))
+        } else {
+            p.parameters.iter().any(|pp| pp.is_out() && pp.is_refcursor())
+        }
+    });
+    let has_map_in_body = all_body.contains("Map<String") || has_list_return;
+    if all_body.contains("List<") || has_list_return {
+        all_imports.insert("import java.util.List;".to_string());
+    }
+    if has_map_in_body {
+        all_imports.insert("import java.util.Map;".to_string());
+    }
+    if all_body.contains("HashMap<") || all_body.contains("new HashMap") {
+        all_imports.insert("import java.util.HashMap;".to_string());
+    }
+    if all_body.contains("BigDecimal") {
+        all_imports.insert("import java.math.BigDecimal;".to_string());
+    }
+    if all_body.contains("Arrays.") {
+        all_imports.insert("import java.util.Arrays;".to_string());
+    }
+    if all_body.contains("AtomicReference<")
+        || pkg.procedures.iter().any(|p| p.parameters.iter().any(|p| p.is_out()))
+    {
+        all_imports.insert("import java.util.concurrent.atomic.AtomicReference;".to_string());
+    }
+    let has_map_var = pkg.procedures.iter().any(|p| {
+        p.local_vars.values().any(|t| t.contains("Map<String"))
+    });
+    if has_map_var {
+        all_imports.insert("import java.util.HashMap;".to_string());
+    }
+
+    let mut w = CodeWriter::new();
+    w.line(&format!("package {};", java_pkg));
+    w.blank();
+    for imp in &all_imports {
+        w.line(imp);
+    }
+    w.blank();
+    w.line("@Service");
+    if !pkg.source_file.is_empty() {
+        w.line(&format!("// Source: {}", pkg.source_file));
+    }
+    w.line(&format!("public class {} {{", class_name));
+    w.push_indent();
+    w.line(&format!(
+        "private static final Logger log = LoggerFactory.getLogger({}.class);",
+        class_name
+    ));
+    w.blank();
+
+    w.line(&format!(
+        "private final {} {};",
+        format!("{}Mapper", package_to_classname(&pkg.package_name)),
+        mapper_var
+    ));
+    for (svc_var, pkg_name) in service_injections {
+        let svc_class = if !pkg_name.is_empty() {
+            format!("{}Service", package_to_classname(pkg_name))
+        } else {
+            let part = svc_var.replace("Service", "");
+            format!("{}Service", package_to_classname(&part))
+        };
+        w.line(&format!("private final {} {};", svc_class, svc_var));
+    }
+    for (var_name, var_info) in &pkg.package_vars {
+        let field_name = crate::naming::java_safe_identifier(&crate::naming::snake_to_camel(var_name));
+        let modifier = if var_info.is_constant { "private static final" } else { "private static" };
+        let default_val = var_info.default_value.as_deref().unwrap_or_else(|| default_for_type(&var_info.java_type));
+        let coerced_default = coerce_default_value(&var_info.java_type, default_val);
+        w.line(&format!("{} {} {} = {};", modifier, var_info.java_type, field_name, coerced_default));
+        if var_info.java_type == "BigDecimal" {
+            all_imports.insert("import java.math.BigDecimal;".to_string());
+        }
+    }
+    w.blank();
+
+    let mut constructor_params = vec![format!(
+        "{} {}",
+        format!("{}Mapper", package_to_classname(&pkg.package_name)),
+        mapper_var
+    )];
+    let mut constructor_assigns = vec![format!("        this.{} = {};", mapper_var, mapper_var)];
+    for (svc_var, _pkg_name) in service_injections {
+        let svc_class = if let Some(pn) = service_injections.get(svc_var) {
+            if !pn.is_empty() {
+                format!("{}Service", package_to_classname(pn))
+            } else {
+                let part = svc_var.replace("Service", "");
+                format!("{}Service", package_to_classname(&part))
+            }
+        } else {
+            let part = svc_var.replace("Service", "");
+            format!("{}Service", package_to_classname(&part))
+        };
+        constructor_params.push(format!("{} {}", svc_class, svc_var));
+        constructor_assigns.push(format!("        this.{} = {};", svc_var, svc_var));
+    }
+    w.line(&format!("public {}({}) {{", class_name, constructor_params.join(", ")));
+    for assign in &constructor_assigns {
+        w.line(assign);
+    }
+    w.line("}");
+
+    let object_pkg_var_names: Vec<String> = pkg.package_vars.iter()
+        .filter(|(_, v)| v.java_type == "Object")
+        .map(|(name, _)| snake_to_camel(name))
+        .collect();
+
+    for proc in &pkg.procedures {
+        w.blank();
+        let method = build_service_method(proc, &mapper_var, &object_pkg_var_names);
+        for line in method.split('\n') {
+            w.line(line);
+        }
+    }
+
+    w.pop_indent();
+    w.line("}");
+
+    std::fs::create_dir_all(&svc_dir)?;
+    let file_path = svc_dir.join(format!("{}.java", class_name));
+    w.write_to_file(&file_path)?;
+    Ok(class_name)
+}
+
+fn boxed_to_primitive(t: &str) -> &str {
+    match t {
+        "Long" => "long",
+        "Integer" => "int",
+        "Boolean" => "boolean",
+        "Double" => "double",
+        "Float" => "float",
+        _ => t,
+    }
+}
+
+fn default_for_type(t: &str) -> &'static str {
+    let tl = t.to_lowercase();
+    if tl.contains("long") { return "0L"; }
+    if tl.contains("integer") || tl == "int" { return "0"; }
+    if tl.contains("bigdecimal") { return "java.math.BigDecimal.ZERO"; }
+    if tl.contains("double") { return "0.0d"; }
+    if tl.contains("float") { return "0.0f"; }
+    if tl.contains("boolean") { return "false"; }
+    if tl.starts_with("map<") { return "new HashMap<>()"; }
+    if tl.starts_with("atomicreference") { return "new AtomicReference<>(null)"; }
+    "null"
+}
+
+fn coerce_default_value(java_type: &str, default_val: &str) -> String {
+    let trimmed = default_val.trim();
+    let tl = java_type.to_lowercase();
+    if tl.contains("bigdecimal") {
+        if trimmed == "0" {
+            return "java.math.BigDecimal.ZERO".to_string();
+        }
+        if trimmed == "1" {
+            return "java.math.BigDecimal.ONE".to_string();
+        }
+        if trimmed == "null" || trimmed == "java.math.bigdecimal.zero" || trimmed == "java.math.bigdecimal.one" {
+            return default_val.to_string();
+        }
+        if trimmed.parse::<i64>().is_ok() || trimmed.parse::<f64>().is_ok() {
+            return format!("java.math.BigDecimal.valueOf({})", trimmed);
+        }
+        if trimmed.starts_with("(") && trimmed.ends_with(")") {
+            let inner = &trimmed[1..trimmed.len()-1];
+            if inner.parse::<i64>().is_ok() || inner.parse::<f64>().is_ok() {
+                return format!("java.math.BigDecimal.valueOf({})", inner);
+            }
+        }
+        return default_val.to_string();
+    }
+    if tl.contains("long") {
+        if trimmed.parse::<i64>().is_ok() && !trimmed.ends_with('l') && !trimmed.ends_with('L') {
+            return format!("{}L", trimmed);
+        }
+    }
+    if tl.contains("double") {
+        if trimmed.parse::<f64>().is_ok() && !trimmed.ends_with('d') && !trimmed.ends_with('D') && !trimmed.contains('.') {
+            return format!("{}d", trimmed);
+        }
+    }
+    if tl.contains("float") {
+        if trimmed.parse::<f64>().is_ok() && !trimmed.ends_with('f') && !trimmed.ends_with('F') {
+            return format!("{}f", trimmed);
+        }
+    }
+    default_val.to_string()
+}
+
+fn should_stub_procedure(proc: &crate::types::ProcedureInfo, object_pkg_var_names: &[String]) -> bool {
+    let object_var_count = proc.local_vars.values().filter(|t| *t == "Object").count();
+
+    if object_var_count > 2 {
+        return true;
+    }
+
+    if object_var_count > 0 {
+        let lines = &proc.java_logic_lines;
+        let uses_object_as_record = lines.iter().any(|l| l.contains("((java.util.Map"));
+        if uses_object_as_record {
+            return true;
+        }
+
+        let object_in_expr = lines.iter().any(|l| {
+            let t = l.trim();
+            (t.contains("Object") && (t.contains(".get(") || t.contains(" + ") || t.contains(" - ") || t.contains(" * ") || t.contains(" / ") || t.contains(" > ") || t.contains(" < ")))
+        });
+        if object_in_expr {
+            return true;
+        }
+    }
+
+    let lines = &proc.java_logic_lines;
+    let has_object_to_map = lines.iter().any(|l| {
+        l.contains("= null;") && !l.contains("String") && !l.contains("Integer") && !l.contains("Long") && !l.contains("Boolean") && !l.contains("BigDecimal") && !l.contains("Map<") && !l.contains("Double") && !l.contains("Float")
+    });
+    let map_get_comparison = lines.iter().any(|l| {
+        l.contains(".get(") && (l.contains(" > ") || l.contains(" < ") || l.contains(" + ") || l.contains(" - ") || l.contains(" * "))
+    });
+    if has_object_to_map && map_get_comparison {
+        return true;
+    }
+
+    let has_goto = lines.iter().any(|l| l.trim().starts_with("// GOTO "));
+    if has_goto {
+        return true;
+    }
+
+    let throws_business_exception = lines.iter().any(|l| l.contains("throw new BusinessException"));
+    let has_dml = !proc.dml_statements.is_empty();
+    if throws_business_exception && !has_dml {
+        return true;
+    }
+
+    let assignment_lines: Vec<&str> = lines.iter().filter(|l| l.contains("=")).map(|s| s.as_str()).collect();
+    let null_assignment_count = assignment_lines.iter().filter(|l| l.contains("null")).count();
+    if !assignment_lines.is_empty() && null_assignment_count > assignment_lines.len() / 3 {
+        return true;
+    }
+
+    let unresolved_count = lines.iter().filter(|l| l.contains("/* null */")).count();
+    if unresolved_count > 1 {
+        return true;
+    }
+
+    if !object_pkg_var_names.is_empty() {
+        let uses_object_pkg_var = lines.iter().any(|l| {
+            object_pkg_var_names.iter().any(|var_name| l.contains(var_name.as_str()))
+        });
+        if uses_object_pkg_var {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn build_service_method(
+    proc: &crate::types::ProcedureInfo,
+    mapper_name: &str,
+    object_pkg_var_names: &[String],
+) -> String {
+    let mut params: Vec<String> = Vec::new();
+    let mut out_params: Vec<&crate::types::Parameter> = Vec::new();
+
+    for p in &proc.parameters {
+        if p.is_out() {
+            if p.is_refcursor() {
+                continue;
+            }
+            params.push(format!("AtomicReference<{}> {}", p.java_type, snake_to_camel(&p.name)));
+            out_params.push(p);
+        } else {
+            params.push(format!("{} {}", boxed_to_primitive(&p.java_type), snake_to_camel(&p.name)));
+        }
+    }
+
+    let params_str = params.join(", ");
+
+    let ret_type = if proc.is_function {
+        proc.return_type
+            .as_deref()
+            .and_then(|rt| sql_type_to_java(rt).map(|s| s.to_string()))
+            .unwrap_or_else(|| "Object".to_string())
+    } else {
+        let has_refcursor = proc.parameters.iter().any(|p| p.is_out() && p.is_refcursor());
+        if has_refcursor {
+            "List<Map<String, Object>>".to_string()
+        } else {
+            "void".to_string()
+        }
+    };
+
+    let method_name = java_method_name(&proc.proc_name);
+    let has_dml = proc.dml_statements.iter().any(|d| matches!(d.sql_type, DmlType::Insert | DmlType::Update | DmlType::Delete));
+
+    let mut body_lines: Vec<String> = Vec::new();
+
+    if should_stub_procedure(proc, object_pkg_var_names) {
+        body_lines.push("// TODO: Auto-generated stub — complex PL/pgSQL pattern requires manual implementation".to_string());
+        if ret_type != "void" {
+            body_lines.push("return null;".to_string());
+        }
+    } else {
+        let out_java_names: std::collections::HashSet<String> =
+            out_params.iter().map(|p| snake_to_camel(&p.name)).collect();
+
+        for (var_name, var_type) in &proc.local_vars {
+            let var_java = snake_to_camel(var_name);
+            if !out_java_names.contains(&var_java) {
+                let default_val = proc.local_var_defaults.get(var_name)
+                    .cloned()
+                    .unwrap_or_else(|| default_for_type(var_type).to_string());
+                let coerced = coerce_default_value(var_type, &default_val);
+                body_lines.push(format!("{} {} = {};", var_type, var_java, coerced));
+            }
+        }
+
+        let logic_text = proc.java_logic_lines.join(" ");
+        let needs_found = logic_text.contains(" found ") || logic_text.contains("!found") || logic_text.contains("(found");
+        if needs_found {
+            body_lines.push("boolean found = false;".to_string());
+        }
+        if logic_text.contains("__SQLERRM__") {
+            body_lines.push("String __SQLERRM__ = \"\";".to_string());
+        }
+        if logic_text.contains("__SQLCODE__") {
+            body_lines.push("int __SQLCODE__ = 0;".to_string());
+        }
+        if logic_text.contains("__ROWCOUNT__") {
+            body_lines.push("int __ROWCOUNT__ = 0;".to_string());
+        }
+
+        for line in &proc.java_logic_lines {
+            let mut l = line.replace("mapper.", &format!("{}.", mapper_name));
+            let trimmed = l.trim().to_string();
+            if trimmed == "null;" || trimmed == "null" {
+                l = format!("// {}", trimmed);
+            } else if trimmed.starts_with("null /*") && trimmed.ends_with("*/;") {
+                l = format!("// {}", trimmed);
+            } else if trimmed.starts_with("/*") && trimmed.contains("null;") {
+                l = l.replace("null;", "");
+            }
+            body_lines.push(l);
+        }
+
+        if body_lines.is_empty() {
+            body_lines.push("// Auto-generated from stored procedure".to_string());
+            if proc.is_function {
+                body_lines.push("return null;".to_string());
+            }
+        }
+
+        if ret_type != "void" {
+            let last_line = body_lines.last().map(|s| s.trim().to_string()).unwrap_or_default();
+            if !last_line.starts_with("return ") && !last_line.starts_with("return;") {
+                let fallback = if ret_type.contains("List") {
+                    "return java.util.Collections.emptyList();"
+                } else {
+                    "return null;"
+                };
+                body_lines.push(fallback.to_string());
+            }
+        }
+    }
+
+    let mut result = Vec::new();
+    let source_info = if !proc.source_file.is_empty() {
+        format!(
+            "{}:{}-{}",
+            proc.source_file, proc.source_start_line, proc.source_end_line
+        )
+    } else {
+        String::new()
+    };
+    result.push(format!(
+        "    // Source: {} ({}) — {}",
+        proc.name,
+        if proc.is_function { "FUNCTION" } else { "PROCEDURE" },
+        source_info
+    ));
+    if has_dml {
+        result.push("    @Transactional".to_string());
+    }
+    result.push(format!("    public {} {}({}) {{", ret_type, method_name, params_str));
+    for line in &body_lines {
+        result.push(format!("        {}", line));
+    }
+    result.push("    }".to_string());
+    result.join("\n")
+}
+
+pub fn collect_service_injections(pkg: &PackageInfo) -> std::collections::HashMap<String, String> {
+    let own_svc = format!(
+        "{}Service",
+        {
+            let cn = package_to_classname(&pkg.package_name);
+            let mut c = cn.chars();
+            match c.next() {
+                Some(f) => f.to_ascii_lowercase().to_string() + c.as_str(),
+                None => String::new(),
+            }
+        }
+    );
+    let mut services = std::collections::HashMap::new();
+    for proc in &pkg.procedures {
+        for call in &proc.service_calls {
+            if call.service_name == own_svc {
+                continue;
+            }
+            if !services.contains_key(&call.service_name) {
+                services.insert(call.service_name.clone(), call.package_name.clone());
+            }
+        }
+    }
+    services
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{DmlStatement, DmlType, Parameter, ProcedureInfo, ServiceCall};
+
+    fn make_pkg(name: &str, procs: Vec<ProcedureInfo>) -> PackageInfo {
+        PackageInfo {
+            package_name: name.to_string(),
+            procedures: procs,
+            table_refs: Default::default(),
+            package_vars: Default::default(),
+            source_file: String::new(),
+            comments: Vec::new(),
+            java_package: String::new(),
+            custom_types: Default::default(),
+        }
+    }
+
+    fn make_proc(name: &str) -> ProcedureInfo {
+        ProcedureInfo::new(format!("pkg.{}", name), "pkg".to_string(), name.to_string())
+    }
+
+    #[test]
+    fn test_simple_service() {
+        let proc = make_proc("do_stuff");
+        let pkg = make_pkg("pkg_order", vec![proc]);
+        let dir = tempfile::tempdir().unwrap();
+        write_service_class(dir.path(), &pkg, "com.example.demo", &Default::default()).unwrap();
+        let content = std::fs::read_to_string(
+            dir.path().join("src/main/java/com/example/demo/service/OrderService.java"),
+        ).unwrap();
+        assert!(content.contains("package com.example.demo.service;"));
+        assert!(content.contains("@Service"));
+        assert!(content.contains("public class OrderService"));
+        assert!(content.contains("private static final Logger log"));
+        assert!(content.contains("private final OrderMapper orderMapper;"));
+    }
+
+    #[test]
+    fn test_function_return_type() {
+        let mut proc = ProcedureInfo::new(
+            "pkg_common.get_sys_date".to_string(),
+            "pkg_common".to_string(),
+            "get_sys_date".to_string(),
+        );
+        proc.is_function = true;
+        proc.return_type = Some("timestamp".to_string());
+        let pkg = make_pkg("pkg_common", vec![proc]);
+        let dir = tempfile::tempdir().unwrap();
+        write_service_class(dir.path(), &pkg, "com.example.demo", &Default::default()).unwrap();
+        let content = std::fs::read_to_string(
+            dir.path().join("src/main/java/com/example/demo/service/CommonService.java"),
+        ).unwrap();
+        assert!(content.contains("public java.sql.Timestamp getSysDate()"));
+    }
+
+    #[test]
+    fn test_out_params_use_atomic_reference() {
+        let mut proc = make_proc("get_data");
+        proc.parameters.push(Parameter {
+            name: "p_result".to_string(),
+            java_type: "String".to_string(),
+            sql_type: "varchar".to_string(),
+            mode: Some(ParamMode::Out),
+        });
+        let pkg = make_pkg("pkg_data", vec![proc]);
+        let dir = tempfile::tempdir().unwrap();
+        write_service_class(dir.path(), &pkg, "com.example.demo", &Default::default()).unwrap();
+        let content = std::fs::read_to_string(
+            dir.path().join("src/main/java/com/example/demo/service/DataService.java"),
+        ).unwrap();
+        assert!(content.contains("AtomicReference<String> pResult"));
+        assert!(content.contains("import java.util.concurrent.atomic.AtomicReference;"));
+    }
+
+    #[test]
+    fn test_service_injections() {
+        let mut proc = make_proc("create_order");
+        proc.service_calls.push(ServiceCall {
+            service_name: "inventoryService".to_string(),
+            method_name: "reserveStock".to_string(),
+            args: vec!["productId".to_string()],
+            package_name: "pkg_inventory".to_string(),
+        });
+        let pkg = make_pkg("pkg_order", vec![proc]);
+        let injections = collect_service_injections(&pkg);
+        assert_eq!(injections.get("inventoryService").unwrap(), "pkg_inventory");
+
+        let dir = tempfile::tempdir().unwrap();
+        write_service_class(dir.path(), &pkg, "com.example.demo", &injections).unwrap();
+        let content = std::fs::read_to_string(
+            dir.path().join("src/main/java/com/example/demo/service/OrderService.java"),
+        ).unwrap();
+        assert!(content.contains("private final InventoryService inventoryService;"));
+        assert!(content.contains("import com.example.demo.service.InventoryService;"));
+    }
+
+    #[test]
+    fn test_transactional_on_dml() {
+        let mut proc = make_proc("create_order");
+        proc.dml_statements.push(DmlStatement {
+            sql_type: DmlType::Insert,
+            method_id: "insertOrder".to_string(),
+            sql_text: "insert into t values(1)".to_string(),
+            result_type: None,
+            parameter_types: Default::default(),
+            optional_filters: Vec::new(),
+            returns_list: false,
+            extra_params: Vec::new(),
+        });
+        let pkg = make_pkg("pkg_order", vec![proc]);
+        let dir = tempfile::tempdir().unwrap();
+        write_service_class(dir.path(), &pkg, "com.example.demo", &Default::default()).unwrap();
+        let content = std::fs::read_to_string(
+            dir.path().join("src/main/java/com/example/demo/service/OrderService.java"),
+        ).unwrap();
+        assert!(content.contains("@Transactional"));
+    }
+}
