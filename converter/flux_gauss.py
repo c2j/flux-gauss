@@ -358,6 +358,19 @@ STUB_PROCEDURES = []
 STUB_REASONS: dict[tuple, list[str]] = {}  # key=(proc.name, param_count) → list of human-readable stub reasons
 UNSUPPORTED_FUNCTIONS = []
 TODO_SUMMARY = []  # Collects (category, proc_id, source_file, detail) for diagnostic
+_MISSING_OVERLOADS: dict[str, list[tuple[str, list[tuple[str, str]]]]] = {}  # pkg → [(method_name, [(java_type, param_name)])]
+
+
+def _register_missing_overload(pkg: str, method_name: str, arg_types: list, arg_count: int):
+    sig_key = (method_name, tuple(arg_types))
+    existing = _MISSING_OVERLOADS.get(pkg, [])
+    for ex_method, ex_params in existing:
+        if ex_method == method_name and len(ex_params) == arg_count:
+            return
+    param_names = [f"p{chr(97 + i)}" for i in range(arg_count)]
+    params = list(zip(arg_types, param_names))
+    existing.append((method_name, params))
+    _MISSING_OVERLOADS[pkg] = existing
 
 
 def _add_stub_reason(proc, reason: str):
@@ -2036,8 +2049,19 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
                 proc.java_logic_lines.append("continue;")
         elif stmt_type == "Goto":
             label = stmt_data.get("label", "unknown")
-            proc.java_logic_lines.append(f"// GOTO {label} — will be rewritten by pattern analysis")
-            proc._has_goto = True
+            if hasattr(proc, '_sm_enum') and proc._sm_enum:
+                sm_enum = proc._sm_enum
+                sm_labels = getattr(proc, '_sm_labels', {})
+                if label in sm_labels:
+                    goto_state = snake_to_pascal(label)
+                    proc.java_logic_lines.append(f"currentState = {sm_enum}.{goto_state};")
+                    proc.java_logic_lines.append("break;")
+                else:
+                    proc.java_logic_lines.append("running = false;")
+                    proc.java_logic_lines.append("break;")
+            else:
+                proc.java_logic_lines.append(f"// GOTO {label} — will be rewritten by pattern analysis")
+                proc._has_goto = True
         elif stmt_type == "Case":
             _process_case_stmt(stmt_data, proc, all_packages, dml_counter)
         elif stmt_type == "Savepoint":
@@ -2072,12 +2096,13 @@ def _collect_goto_info(body_stmts, proc: ProcedureInfo = None):
     gotos = []
     label_stmt_map = {}
 
-    def _walk(stmts, depth=0, path_prefix=None, parent_attr=None):
+    def _walk(stmts, depth=0, path_prefix=None, parent_attr=None, enclosing_top_idx=None):
         if path_prefix is None:
             path_prefix = []
         for idx, stmt in enumerate(stmts):
             if not isinstance(stmt, dict):
                 continue
+            top_idx = idx if depth == 0 else (enclosing_top_idx if enclosing_top_idx is not None else idx)
             for stmt_type, stmt_data in stmt.items():
                 current_path = path_prefix + [idx]
                 if parent_attr:
@@ -2087,24 +2112,24 @@ def _collect_goto_info(body_stmts, proc: ProcedureInfo = None):
                     if label:
                         labels[label] = LabelInfo(name=label, target_idx=idx, target_depth=depth)
                         label_stmt_map[label] = stmt
-                    _walk(stmt_data.get("body", []), depth + 1, current_path)
+                    _walk(stmt_data.get("body", []), depth + 1, current_path, enclosing_top_idx=idx)
                 elif stmt_type in ("If", "For", "While", "Loop") and isinstance(stmt_data, dict):
                     label = stmt_data.get("label")
                     if label:
                         labels[label] = LabelInfo(name=label, target_idx=idx, target_depth=depth)
                         label_stmt_map[label] = stmt
                     if stmt_type == "If":
-                        _walk(stmt_data.get("then_stmts", []), depth + 1, current_path, "then_stmts")
-                        _walk(stmt_data.get("else_stmts", []), depth + 1, current_path, "else_stmts")
+                        _walk(stmt_data.get("then_stmts", []), depth + 1, current_path, "then_stmts", enclosing_top_idx=idx)
+                        _walk(stmt_data.get("else_stmts", []), depth + 1, current_path, "else_stmts", enclosing_top_idx=idx)
                         for elsif in stmt_data.get("elsifs", []):
-                            _walk(elsif.get("stmts", []), depth + 1, current_path, "elsif_stmts")
+                            _walk(elsif.get("stmts", []), depth + 1, current_path, "elsif_stmts", enclosing_top_idx=idx)
                     else:
-                        _walk(stmt_data.get("body", []), depth + 1, current_path, "body")
+                        _walk(stmt_data.get("body", []), depth + 1, current_path, "body", enclosing_top_idx=idx)
                 elif stmt_type == "Goto" and isinstance(stmt_data, dict):
                     goto_label = stmt_data.get("label", "unknown")
                     gotos.append(GotoInfo(
                         label=goto_label,
-                        source_idx=idx,
+                        source_idx=top_idx,
                         source_depth=depth,
                         is_forward=False,
                         is_backward=False,
@@ -2129,7 +2154,7 @@ def _collect_goto_info(body_stmts, proc: ProcedureInfo = None):
                 if m:
                     label_name = m.group(1).strip()
                     if label_name and label_name not in labels:
-                        target_idx = _map_line_to_stmt_idx(line_num, body_stmts, proc.source_start_line)
+                        target_idx = _map_line_to_stmt_idx(line_num, body_stmts, proc.source_start_line, proc.source_end_line)
                         labels[label_name] = LabelInfo(
                             name=label_name,
                             target_idx=target_idx,
@@ -2161,12 +2186,19 @@ def _collect_goto_info(body_stmts, proc: ProcedureInfo = None):
     return labels, gotos, label_stmt_map
 
 
-def _map_line_to_stmt_idx(target_line: int, body_stmts: list, proc_start_line: int) -> int:
-    """Map a source line number to the nearest AST statement index."""
+def _map_line_to_stmt_idx(target_line: int, body_stmts: list, proc_start_line: int, proc_end_line: int = None) -> int:
     if not body_stmts:
         return 0
     n = len(body_stmts)
-    return min(n - 1, max(0, int((target_line - proc_start_line) / 3)))
+    offset_from_start = target_line - proc_start_line
+    if offset_from_start <= 2:
+        return 0
+    if proc_end_line and proc_end_line > proc_start_line:
+        total = proc_end_line - proc_start_line
+        ratio = offset_from_start / total
+        return min(n - 1, max(0, int(ratio * n)))
+    estimated = int((offset_from_start / max(1, n)) * 0.3)
+    return min(n - 1, max(0, estimated))
 
 
 def _classify_goto_pattern(labels, gotos, body_stmts):
@@ -2361,6 +2393,8 @@ def _generate_loop_goto(proc, analysis, body_stmts, all_packages, dml_counter):
     li = analysis.labels[label_name]
     target_idx = li.target_idx
     source_idx = backward_goto.source_idx
+    if target_idx >= source_idx:
+        target_idx = 0
 
     proc.java_logic_lines = []
     proc.dml_statements = []
@@ -2581,6 +2615,103 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
         _process_with_goto_replace(stmt)
 
 
+def _strip_unreachable_in_case(proc, start_offset: int):
+    lines = proc.java_logic_lines
+    case_start = -1
+    for i in range(start_offset - 1, -1, -1):
+        stripped = lines[i].strip()
+        if stripped.startswith("case ") and stripped.endswith(":"):
+            case_start = i
+            break
+    if case_start < 0:
+        return
+    # Scan the case body for a terminal boundary at depth 0
+    depth = 0
+    first_terminal = -1
+    for i in range(case_start + 1, start_offset):
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("//"):
+            prev_depth = depth
+            depth += stripped.count("{") - stripped.count("}")
+            continue
+        prev_depth = depth
+        depth += stripped.count("{") - stripped.count("}")
+        if depth == 0 and first_terminal < 0:
+            if stripped.startswith("throw ") or stripped.startswith("break;") or stripped == "return;" or stripped.startswith("return "):
+                first_terminal = i
+            elif prev_depth == 1 and stripped == "}":
+                has_else = any("} else " in lines[j] or lines[j].strip().startswith("} else ") for j in range(case_start + 1, i) if "}" in lines[j] and "else" in lines[j])
+                last_in_block = ""
+                for j in range(i - 1, case_start, -1):
+                    inner = lines[j].strip()
+                    if not inner or inner.startswith("//"):
+                        continue
+                    last_in_block = inner
+                    break
+                if has_else and last_in_block in ("break;", "return;", "}") or last_in_block.startswith("return ") or last_in_block.startswith("throw "):
+                    first_terminal = i
+    if first_terminal >= 0 and first_terminal < start_offset - 1:
+        del lines[first_terminal + 1:start_offset]
+
+
+def _case_is_fully_terminated(proc, start_offset: int) -> bool:
+    lines = proc.java_logic_lines
+    case_start = -1
+    for i in range(start_offset - 1, -1, -1):
+        stripped = lines[i].strip()
+        if stripped.startswith("case ") and stripped.endswith(":"):
+            case_start = i
+            break
+    if case_start < 0:
+        return False
+    last_nonblank = -1
+    for i in range(start_offset - 1, case_start, -1):
+        s = lines[i].strip()
+        if s and not s.startswith("//"):
+            last_nonblank = i
+            break
+    if last_nonblank < 0:
+        return False
+    if lines[last_nonblank].strip() != "}":
+        return False
+    # Find the LAST block closing at depth 0 — only that block matters
+    depth = 0
+    last_block_end = -1
+    for i in range(case_start + 1, start_offset):
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("//"):
+            depth += stripped.count("{") - stripped.count("}")
+            continue
+        prev_depth = depth
+        depth += stripped.count("{") - stripped.count("}")
+        if depth == 0 and prev_depth == 1 and stripped == "}":
+            last_block_end = i
+    if last_block_end < 0:
+        return False
+    # Check if that last block is a fully-terminated if-else (all branches end with break/return/throw)
+    depth = 0
+    found_terminal = False
+    has_else = False
+    block_start = -1
+    for i in range(case_start + 1, last_block_end):
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("//"):
+            prev_depth = depth
+            depth += stripped.count("{") - stripped.count("}")
+            continue
+        prev_depth = depth
+        depth += stripped.count("{") - stripped.count("}")
+        if depth == 1 and prev_depth == 0 and "{" in stripped:
+            # New sub-block started — reset per-branch tracking
+            found_terminal = False
+        if depth >= 1:
+            if stripped == "break;" or stripped.startswith("return") or stripped.startswith("throw "):
+                found_terminal = True
+        if "} else " in lines[i] or stripped.startswith("} else "):
+            has_else = True
+    return found_terminal and has_else
+
+
 def _generate_state_machine_goto(proc, analysis, body_stmts, all_packages, dml_counter):
     """Pattern E: multiple labels with multiple GOTOs -> enum + while-switch state machine."""
     proc.java_logic_lines = []
@@ -2589,26 +2720,53 @@ def _generate_state_machine_goto(proc, analysis, body_stmts, all_packages, dml_c
     enum_name = f"{snake_to_pascal(proc.proc_name)}State"
     state_names = [snake_to_pascal(ln) for ln in analysis.labels.keys()]
 
+    # Set state machine mode so inner Gotos inside IF/ELSIF become state transitions
+    proc._sm_enum = enum_name
+    proc._sm_labels = analysis.labels
+
     proc.java_logic_lines.append(f"// State machine generated from GOTO labels")
     proc.java_logic_lines.append(f"enum {enum_name} {{{', '.join(state_names)}}}")
     proc.java_logic_lines.append(f"{enum_name} currentState = {enum_name}.{state_names[0]};")
     proc.java_logic_lines.append("boolean running = true;")
-    proc.java_logic_lines.append("while (running) {")
+    proc.java_logic_lines.append("int _smGuard = 0;")
+    proc.java_logic_lines.append("while (running && _smGuard++ < 10000) {")
     proc.java_logic_lines.append("    switch (currentState) {")
 
-    for label_name in analysis.labels.keys():
+    # Detect state boundaries from top-level Goto statements
+    goto_boundaries = []
+    for i, stmt in enumerate(body_stmts):
+        if isinstance(stmt, dict) and "Goto" in stmt:
+            goto_boundaries.append(i)
+
+    # Sort labels by their source order (target_idx from raw SQL scan)
+    sorted_labels = sorted(analysis.labels.items(), key=lambda x: x[1].target_idx)
+
+    # Build state ranges: if N-1 top-level Gotos match N labels, each state
+    # (except the last) spans from the previous Goto boundary to the current one (inclusive).
+    state_ranges = []
+    if len(goto_boundaries) == len(sorted_labels) - 1:
+        start = 0
+        for b in goto_boundaries:
+            state_ranges.append((start, b + 1))
+            start = b + 1
+        state_ranges.append((start, len(body_stmts)))
+    else:
+        # Fallback to label target_idx-based ranges
+        for li, (label_name, label_info) in enumerate(sorted_labels):
+            end_idx = sorted_labels[li + 1][1].target_idx if li + 1 < len(sorted_labels) else len(body_stmts)
+            state_ranges.append((label_info.target_idx, end_idx))
+        # First state always starts at stmt 0
+        if state_ranges:
+            s, e = state_ranges[0]
+            state_ranges[0] = (0, e)
+
+    for li, (label_name, label_info) in enumerate(sorted_labels):
         state_java = snake_to_pascal(label_name)
         proc.java_logic_lines.append(f"        case {state_java}:")
-        li = analysis.labels[label_name]
-        target_idx = li.target_idx
-        next_label_idx = None
-        for other_label, other_li in analysis.labels.items():
-            if other_li.target_idx > li.target_idx:
-                if next_label_idx is None or other_li.target_idx < next_label_idx:
-                    next_label_idx = other_li.target_idx
-        end_idx = next_label_idx if next_label_idx is not None else len(body_stmts)
+        case_line_offset = len(proc.java_logic_lines)
+        start_idx, end_idx = state_ranges[li]
 
-        for idx in range(target_idx, end_idx):
+        for idx in range(start_idx, end_idx):
             stmt = body_stmts[idx]
             if not isinstance(stmt, dict):
                 continue
@@ -2624,13 +2782,32 @@ def _generate_state_machine_goto(proc, analysis, body_stmts, all_packages, dml_c
                     _stmt_list_to_java(sd.get("body", []), proc, all_packages, dml_counter, indent=2)
                 else:
                     _process_statement(stmt, proc, all_packages, dml_counter)
-        proc.java_logic_lines.append("            break;")
+
+        _strip_unreachable_in_case(proc, start_offset=len(proc.java_logic_lines))
+        last_stripped = proc.java_logic_lines[-1].strip() if proc.java_logic_lines else ""
+        needs_break = not (last_stripped.startswith("throw ") or last_stripped.startswith("return") or last_stripped == "break;")
+        if needs_break and _case_is_fully_terminated(proc, len(proc.java_logic_lines)):
+            needs_break = False
+        # Detect terminal state: no currentState assignment means no outgoing transition
+        has_transition = any("currentState = " in line for line in proc.java_logic_lines[case_line_offset:])
+        has_running_false = any("running = false" in line for line in proc.java_logic_lines[case_line_offset:])
+        already_terminal = last_stripped.startswith("throw ") or last_stripped.startswith("return") or last_stripped == "break;"
+        if not has_transition and not has_running_false and not already_terminal:
+            proc.java_logic_lines.append("            running = false;")
+        if needs_break:
+            proc.java_logic_lines.append("            break;")
 
     proc.java_logic_lines.append("        default:")
     proc.java_logic_lines.append("            running = false;")
     proc.java_logic_lines.append("            break;")
     proc.java_logic_lines.append("    }")
     proc.java_logic_lines.append("}")
+
+    # Clean up state machine mode
+    if hasattr(proc, '_sm_enum'):
+        delattr(proc, '_sm_enum')
+    if hasattr(proc, '_sm_labels'):
+        delattr(proc, '_sm_labels')
 
 
 def _dml_method_name(dml_type: str, proc_name: str, counter: dict) -> str:
@@ -3179,6 +3356,8 @@ def _process_perform(perform_data: dict, proc: ProcedureInfo, all_packages: dict
                 else:
                     UNRESOLVED_CALLS.append(f"{proc.package}.{proc.proc_name} -> PERFORM {query}")
                     proc.java_logic_lines.append(_comment_perform(f"PERFORM {query}"))
+                return
+        proc.java_logic_lines.append(f"found = true; // PERFORM {query or 'query'}")
     else:
         proc.java_logic_lines.append(_comment_perform(f"PERFORM {query}"))
 
@@ -4626,10 +4805,12 @@ def _sf_substr(val, proc, _expr_to_java_fn):
     if len(args_java) >= 3:
         start = args_java[1]
         length = args_java[2]
-        return f"{s_expr}.substring(Math.max(0, ({start}) - 1), Math.min({s_expr}.length(), Math.max(0, ({start}) - 1) + ({length})))"
+        _clamped_start = f"Math.min({s_expr}.length(), Math.max(0, ({start}) - 1))"
+        _e = f"Math.min({s_expr}.length(), {_clamped_start} + ({length}))"
+        return f"{s_expr}.substring({_clamped_start}, {_e})"
     elif len(args_java) == 2:
         start = args_java[1]
-        return f"{s_expr}.substring(Math.max(0, ({start}) - 1))"
+        return f"{s_expr}.substring(Math.min({s_expr}.length(), Math.max(0, ({start}) - 1)))"
     return f"{s_expr}"
 
 
@@ -4832,10 +5013,22 @@ def _handle_function(func_name, args_java, proc):
             java_fmt = java_fmt.replace(sql_pat, java_pat)
         has_date_token = any(t in fmt_raw for t in ("yyyy", "yy", "mm", "mon", "dd", "hh", "mi", "ss"))
         if has_date_token:
-            ts_expr = args_java[0]
-            if not (ts_expr.startswith("new java.sql.Timestamp") or ts_expr.startswith("java.sql.Timestamp.valueOf")):
-                ts_expr = f"java.sql.Timestamp.valueOf(String.valueOf({args_java[0]}))"
-            return f"new java.text.SimpleDateFormat(\"{java_fmt}\").format(new java.util.Date({ts_expr}.getTime()))"
+            date_expr = args_java[0]
+            _is_date_arg = date_expr.startswith("new java.sql.Date") or date_expr.startswith("new java.sql.Timestamp")
+            if not _is_date_arg and proc is not None:
+                var_name = date_expr.lstrip("this.").split(".")[0]
+                for p in proc.parameters:
+                    if p.java_name == var_name and p.java_type in ("java.sql.Date", "java.sql.Timestamp", "java.util.Date"):
+                        _is_date_arg = True
+                        break
+                if not _is_date_arg:
+                    for vn, vt in proc.local_vars.items():
+                        if snake_to_camel(vn) == var_name and vt in ("java.sql.Date", "java.sql.Timestamp", "java.util.Date"):
+                            _is_date_arg = True
+                            break
+            if _is_date_arg:
+                return f"new java.text.SimpleDateFormat(\"{java_fmt}\").format({date_expr})"
+            return f"new java.text.SimpleDateFormat(\"{java_fmt}\").format(new java.util.Date(java.sql.Timestamp.valueOf(String.valueOf({date_expr})).getTime()))"
         num_fmt = args_java[1].strip('"').strip("'")
         num_fmt_java = num_fmt.replace("FM", "").replace(",", "").replace("9", "#").replace("0", "0")
         return f"new java.text.DecimalFormat(\"{num_fmt_java}\").format({args_java[0]})"
@@ -4846,7 +5039,7 @@ def _handle_function(func_name, args_java, proc):
         field_raw = args_java[0].strip('"').strip("'").lower()
         unit = _DATE_TRUNC_UNIT_MAP.get(field_raw, "ChronoUnit.DAYS")
         ts_expr = args_java[1]
-        if not (ts_expr.startswith("new java.sql.Timestamp") or ts_expr.startswith("java.sql.Timestamp.valueOf")):
+        if not (ts_expr.startswith("new java.sql.Timestamp") or ts_expr.startswith("java.sql.Timestamp.valueOf") or ts_expr.startswith("new java.sql.Date")):
             ts_expr = f"java.sql.Timestamp.valueOf(String.valueOf({args_java[1]}))"
         if "MONTHS" in unit and field_raw == "quarter":
             return f"java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({ts_expr}.toInstant(), java.time.ZoneId.systemDefault()).truncatedTo(java.time.temporal.ChronoUnit.DAYS).withMonth(((java.time.LocalDateTime.ofInstant({ts_expr}.toInstant(), java.time.ZoneId.systemDefault()).getMonthValue() - 1) / 3) * 3 + 1).withDayOfMonth(1))"
@@ -5327,11 +5520,17 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     if _is_numeric_literal(val.get("left")):
                         left = f"java.math.BigDecimal.valueOf({left})"
                     elif "BigDecimal" not in left_type:
-                        left = f"java.math.BigDecimal.valueOf({left})"
+                        if "?" in left and "null" in left:
+                            left = f"((java.math.BigDecimal) {left})"
+                        else:
+                            left = f"java.math.BigDecimal.valueOf({left})"
                     if _is_numeric_literal(val.get("right")):
                         right = f"java.math.BigDecimal.valueOf({right})"
                     elif "BigDecimal" not in right_type:
-                        right = f"java.math.BigDecimal.valueOf({right})"
+                        if "?" in right and "null" in right:
+                            right = f"((java.math.BigDecimal) {right})"
+                        else:
+                            right = f"java.math.BigDecimal.valueOf({right})"
                     return f"{left}.{method}({right})"
 
                 if is_bd and op == "||":
@@ -5457,7 +5656,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                                 return f"{svc_name}.{method}({', '.join(wrapped_args)})"
                 if self_call_pkg:
                     target_proc = _find_target_proc(self_call_pkg, self_call_func, all_packages, arg_count=len(val.get("args", [])))
-                    if target_proc:
+                    if target_proc and len(target_proc.parameters) == len(val.get("args", [])):
                         method = java_method_name(self_call_func)
                         wrapped_args = []
                         for i, a_java in enumerate(args_java):
@@ -5465,6 +5664,24 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                                 wrapped_args.append(_coerce_java_arg(a_java, target_proc.parameters[i].java_type))
                             else:
                                 wrapped_args.append(a_java)
+                        return f"this.{method}({', '.join(wrapped_args)})"
+                    elif target_proc or all_packages.get(self_call_pkg):
+                        raw_args = val.get("args", [])
+                        arg_types = []
+                        for i, a_java in enumerate(args_java):
+                            inferred = _infer_expr_type(raw_args[i], proc) if i < len(raw_args) else "Object"
+                            if inferred == "Object" and "BigDecimal" in a_java:
+                                inferred = "java.math.BigDecimal"
+                            elif inferred == "Object" and a_java == "true" or a_java == "false":
+                                inferred = "boolean"
+                            arg_types.append(inferred)
+                        method = java_method_name(self_call_func)
+                        _register_missing_overload(self_call_pkg, method, arg_types, len(raw_args))
+                        wrapped_args = []
+                        for i, a_java in enumerate(args_java):
+                            if i < len(arg_types):
+                                wrapped_args.append(_coerce_java_arg(a_java, arg_types[i]))
+                            else:
                                 wrapped_args.append(a_java)
                         return f"this.{method}({', '.join(wrapped_args)})"
                 _record_unsupported(func_name, proc)
@@ -5585,7 +5802,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             elif attr in ("isopen", "is_open"):
                 return f"({cursor_java} != null && !{cursor_java}.isClosed())"
             elif attr in ("rowcount", "row_count"):
-                return f"_rowCount"  # needs cursor row count tracking
+                return f"__ROWCOUNT__"
             return f"/* CursorAttribute:{attr} */ false"
 
     return str(expr)
@@ -6694,6 +6911,26 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
         lines.append("        }")
         lines.append("    }")
 
+    missing = _MISSING_OVERLOADS.get(pkg.package_name, [])
+    for method_name, params in missing:
+        existing_sigs = set()
+        for m in methods:
+            for mline in m.split("\n"):
+                if f"public" in mline and method_name in mline and "(" in mline:
+                    existing_sigs.add(mline.strip())
+        sig_str = ", ".join(f"{pt} {pn}" for pt, pn in params)
+        already_exists = any(sig_str in s for s in existing_sigs)
+        if not already_exists:
+            lines.append("")
+            param_types = [pt for pt, _ in params]
+            has_bd = any("BigDecimal" in pt for pt in param_types)
+            ret = "java.math.BigDecimal" if has_bd else "Object"
+            lines.append(f"    // TODO: Auto-generated stub — parser missed this overload")
+            lines.append(f"    public {ret} {method_name}({sig_str}) {{")
+            lines.append(f"        // TODO: implement {method_name}({sig_str})")
+            lines.append(f"        return null;")
+            lines.append(f"    }}")
+
     for i, method in enumerate(methods):
         if i > 0:
             lines.append("")
@@ -6955,6 +7192,27 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
         body_lines = _wrap_try_catch(body_lines, handlers, proc, all_packages)
 
     body_lines = hoisted_decls + body_lines
+
+    for _bli, _bline in enumerate(body_lines):
+        if "__SQLERRM__" in _bline:
+            body_lines[_bli] = _bline.replace("__SQLERRM__", '""')
+        if "__SQLCODE__" in _bline:
+            body_lines[_bli] = _bline.replace("__SQLCODE__", '"00000"')
+        if "__SQLSTATE__" in _bline:
+            body_lines[_bli] = _bline.replace("__SQLSTATE__", '"00000"')
+
+    for _bli in range(len(body_lines)):
+        if "__ROWCOUNT__" in body_lines[_bli]:
+            if _bli > 0 and ("mapper." in body_lines[_bli - 1] or f"{mapper_name}." in body_lines[_bli - 1]):
+                body_lines[_bli - 1] = re.sub(
+                    r'((?:mapper|\w+Mapper)\.\w+)\(',
+                    r'int __rc = \1(',
+                    body_lines[_bli - 1],
+                    count=1,
+                )
+                body_lines[_bli] = body_lines[_bli].replace("__ROWCOUNT__", "__rc")
+            else:
+                body_lines[_bli] = body_lines[_bli].replace("__ROWCOUNT__", "0")
 
     body_lines = [line.replace("mapper.", f"{mapper_name}.") for line in body_lines]
 
@@ -7915,6 +8173,8 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
                 raw = getattr(dml, 'raw_sql_for_params', '') or getattr(dml, 'sql_text', '')
                 for m in re.finditer(r'\b(\w+)\.NEXTVAL\b', raw, re.IGNORECASE):
                     sequences_needed.add(m.group(1).lower())
+                for m in re.finditer(r"nextval\s*\(\s*'(\w+)'\s*\)", raw, re.IGNORECASE):
+                    sequences_needed.add(m.group(1).lower())
 
     lines = []
     for seq in sorted(sequences_needed):
@@ -7924,10 +8184,111 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
     if sequences_needed:
         lines.append("")
 
+    # Extract tables referenced by DML but missing from TYPE_OVERRIDES (no CREATE TABLE DDL)
+    dml_tables = {}
+    for pkg in packages:
+        for proc in pkg.procedures:
+            for dml in proc.dml_statements:
+                raw = getattr(dml, 'raw_sql_for_params', '') or getattr(dml, 'sql_text', '')
+                if not raw:
+                    continue
+                raw_lower = raw.lower().strip()
+                # INSERT INTO table(col1, col2, ...) VALUES(#{param, jdbcType=X, ...}, ...)
+                m_ins = re.match(r'insert\s+into\s+(\w+)\s*\(([^)]+)\)\s*values\s*\(([^)]+)\)', raw_lower, re.DOTALL)
+                if m_ins:
+                    tbl = m_ins.group(1)
+                    cols = [c.strip().strip('"') for c in m_ins.group(2).split(',')]
+                    vals = m_ins.group(3)
+                    if tbl not in dml_tables:
+                        dml_tables[tbl] = {}
+                    for col in cols:
+                        if col and col not in dml_tables[tbl]:
+                            # Try to infer type from jdbcType in VALUES
+                            jdbc_type = _infer_jdbc_type_from_values(col, cols, vals)
+                            dml_tables[tbl][col] = jdbc_type
+                    continue
+                # SELECT col1, col2 FROM table WHERE ...
+                m_sel = re.match(r'select\s+(.*?)\s+from\s+(\w+)', raw_lower, re.DOTALL)
+                if m_sel:
+                    tbl = m_sel.group(2)
+                    if not re.match(r'^[a-zA-Z_]', tbl):
+                        continue
+                    sel_str = m_sel.group(1)
+                    if tbl not in dml_tables:
+                        dml_tables[tbl] = {}
+                    for part in sel_str.split(','):
+                        part = part.strip()
+                        if not part:
+                            continue
+                        # Extract column names from function calls like SUM(amount), COUNT(x)
+                        for fm in re.finditer(r'\b(\w+)\s*\(\s*(\w+)\s*\)', part):
+                            func_name = fm.group(1).lower()
+                            inner_col = fm.group(2)
+                            if func_name not in ('substring', 'trim', 'coalesce', 'nvl', 'nvl2', 'nullif', 'cast', 'extract', 'overlay', 'replace', 'position') and inner_col.lower() not in ('*', 'distinct', 'all'):
+                                if inner_col not in dml_tables[tbl]:
+                                    dml_tables[tbl][inner_col] = 'TEXT'
+                        if '(' in part:
+                            continue
+                        m_col = re.match(r'(\w+)(?:\s+as\s+(\w+))?', part, re.IGNORECASE)
+                        if m_col:
+                            col_name = (m_col.group(2) or m_col.group(1)).strip()
+                            if col_name and col_name not in dml_tables[tbl] and col_name not in ('*', 'count', 'sum', 'avg', 'min', 'max'):
+                                dml_tables[tbl][col_name] = 'TEXT'
+                    # Also extract columns from WHERE clause
+                    where_m = re.search(r'\bwhere\s+(.+)', raw_lower, re.DOTALL)
+                    if where_m:
+                        for wm in re.finditer(r'(\w+)\s*(?:=|!=|<|>|<=|>=|like)\s*', where_m.group(1)):
+                            wcol = wm.group(1).lower()
+                            if wcol not in dml_tables[tbl] and wcol not in ('and', 'or', 'not', 'is', 'in', 'between', 'null', 'true', 'false', 'javatype', 'jdbctype', 'mode', 'resulttype', 'parametertype'):
+                                dml_tables[tbl][wcol] = 'TEXT'
+                    continue
+                # UPDATE table SET col1 = ..., col2 = ... WHERE ...
+                m_upd = re.match(r'update\s+(\w+)\s+set\s+(.*?)(?:\s+where\s+(.*))?$', raw_lower, re.DOTALL)
+                if m_upd:
+                    tbl = m_upd.group(1)
+                    if not re.match(r'^[a-zA-Z_]', tbl):
+                        continue
+                    set_str = m_upd.group(2)
+                    if tbl not in dml_tables:
+                        dml_tables[tbl] = {}
+                    for assign in set_str.split(','):
+                        assign = assign.strip()
+                        m_asgn = re.match(r'(\w+)\s*=', assign)
+                        if m_asgn:
+                            col = m_asgn.group(1)
+                            if col and col not in dml_tables[tbl]:
+                                val_part = assign[len(col):].lstrip('= ')
+                                if "'" in val_part:
+                                    dml_tables[tbl][col] = 'VARCHAR(255)'
+                                else:
+                                    dml_tables[tbl][col] = 'TEXT'
+                    where_clause = m_upd.group(3)
+                    if where_clause:
+                        for wm in re.finditer(r'(\w+)\s*(?:=|!=|<|>|<=|>=)\s*', where_clause):
+                            wcol = wm.group(1).lower()
+                            if wcol not in dml_tables[tbl] and wcol not in ('and', 'or', 'not', 'is', 'in', 'between', 'null', 'true', 'false', 'javatype', 'jdbctype', 'mode', 'resulttype', 'parametertype'):
+                                dml_tables[tbl][wcol] = 'TEXT'
+                    continue
+
+    # Merge DML-inferred tables into schema_map (only tables not already there)
+    for tbl in sorted(dml_tables.keys()):
+        if tbl in schema_map:
+            continue
+        if not dml_tables[tbl]:
+            dml_tables[tbl]['id'] = 'BIGSERIAL'
+        schema_map[tbl] = dml_tables[tbl]
+
+    _SYSTEM_OBJECTS = {'sys_dummy', 'dual', 'pg_class', 'pg_namespace', 'pg_attribute', 'pg_type',
+                        'pg_proc', 'pg_views', 'pg_tables', 'pg_sequences', 'pg_database',
+                        'information_schema', 'pg_catalog'}
     for table in sorted(schema_map.keys()):
+        if table.lower() in _SYSTEM_OBJECTS:
+            continue
         lines.append(f'DROP TABLE IF EXISTS "{table}" CASCADE;')
     lines.append("")
     for table, columns in sorted(schema_map.items()):
+        if table.lower() in _SYSTEM_OBJECTS:
+            continue
         col_defs = []
         for col, sql_type in sorted(columns.items()):
             sql_stripped = sql_type.strip()
@@ -7967,6 +8328,49 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
     res_dir = base_path / "src/test/resources"
     res_dir.mkdir(parents=True, exist_ok=True)
     (res_dir / "itest-schema.sql").write_text(content)
+
+
+def _infer_jdbc_type_from_values(col_name, cols, vals_str):
+    idx = cols.index(col_name) if col_name in cols else -1
+    if idx < 0:
+        return 'TEXT'
+    # Extract the Nth parameter from the VALUES clause
+    parts = []
+    depth = 0
+    current = []
+    for ch in vals_str:
+        if ch in ('(', '{'):
+            depth += 1
+            current.append(ch)
+        elif ch in (')', '}'):
+            depth -= 1
+            current.append(ch)
+        elif ch == ',' and depth == 0:
+            parts.append(''.join(current).strip())
+            current = []
+        else:
+            current.append(ch)
+    if current:
+        parts.append(''.join(current).strip())
+    if idx >= len(parts):
+        return 'TEXT'
+    val = parts[idx].lower()
+    jdbc_m = re.search(r'jdbctype\s*=\s*(\w+)', val)
+    if jdbc_m:
+        jt = jdbc_m.group(1).upper()
+        if 'INT' in jt or 'BIGINT' in jt:
+            return 'BIGINT'
+        if 'DECIMAL' in jt or 'NUMERIC' in jt:
+            return 'NUMERIC'
+        if 'DATE' in jt:
+            return 'DATE'
+        if 'TIMESTAMP' in jt:
+            return 'TIMESTAMP'
+        if 'BOOL' in jt:
+            return 'BOOLEAN'
+    if "'" in val:
+        return 'VARCHAR(255)'
+    return 'TEXT'
 
 
 def _itest_extract_table_from_select(sql: str) -> str:
