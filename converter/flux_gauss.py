@@ -862,6 +862,34 @@ class ConversionReport:
     total_cross_calls: int = 0
 
 
+@dataclass
+class GotoInfo:
+    """Information about a single GOTO statement."""
+    label: str
+    source_idx: int          # index of the statement containing the GOTO
+    source_depth: int        # nesting depth of the source statement
+    is_forward: bool         # True if target is after source
+    is_backward: bool        # True if target is before source
+    source_path: list = None
+
+
+@dataclass
+class LabelInfo:
+    """Information about a single label."""
+    name: str
+    target_idx: int          # index of the labeled statement
+    target_depth: int        # nesting depth of the labeled statement
+
+
+@dataclass
+class GotoAnalysis:
+    """Result of analyzing GOTO patterns in a procedure body."""
+    labels: dict             # label_name -> LabelInfo
+    gotos: list              # list of GotoInfo
+    pattern: str             # one of A/B/C/D/E or "unknown"
+    label_stmt_map: dict     # label_name -> statement dict
+
+
 # ── AST Parser ─────────────────────────────────────────────────
 
 def _is_parse_warning(err) -> bool:
@@ -1774,6 +1802,10 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
     if proc.inline_comments and stmt_checkpoints:
         _inject_inline_comments(proc, stmt_checkpoints)
 
+    # Post-process GOTO patterns: if any GOTO was encountered, analyze and rewrite
+    if getattr(proc, '_has_goto', False):
+        _analyze_and_rewrite_goto(proc, all_packages, dml_counter)
+
 
 def _inject_inline_comments(proc: ProcedureInfo, checkpoints: list):
     """Insert inline comments into java_logic_lines at the correct positions.
@@ -2004,12 +2036,8 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
                 proc.java_logic_lines.append("continue;")
         elif stmt_type == "Goto":
             label = stmt_data.get("label", "unknown")
-            proc.java_logic_lines.append(f"// GOTO {label} — Java has no goto, manual refactor required")
-            _record_todo("GOTO", proc, f"label={label}")
-            _stub_key = (proc.name, len(proc.parameters))
-            _add_stub_reason(proc, f"GOTO 语句无法转换为 Java (label={label})")
-            if _stub_key not in STUB_PROCEDURES:
-                STUB_PROCEDURES.append(_stub_key)
+            proc.java_logic_lines.append(f"// GOTO {label} — will be rewritten by pattern analysis")
+            proc._has_goto = True
         elif stmt_type == "Case":
             _process_case_stmt(stmt_data, proc, all_packages, dml_counter)
         elif stmt_type == "Savepoint":
@@ -2027,6 +2055,552 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
             _record_todo("UNHANDLED_STMT", proc, str(stmt_type))
 
 
+# ── GOTO Analysis and Pattern-Based Rewriting ─────────────────
+
+def _collect_goto_info(body_stmts, proc: ProcedureInfo = None):
+    """Walk the AST to find all GOTO statements and labels.
+
+    The ogsql parser does not preserve <<label>> declarations as standalone
+    AST nodes, so we also scan the raw SQL text to discover label positions.
+
+    Returns (labels, gotos, label_stmt_map) where:
+      labels: dict mapping label_name -> LabelInfo
+      gotos: list of GotoInfo
+      label_stmt_map: dict mapping label_name -> the statement dict that carries the label
+    """
+    labels = {}
+    gotos = []
+    label_stmt_map = {}
+
+    def _walk(stmts, depth=0, path_prefix=None, parent_attr=None):
+        if path_prefix is None:
+            path_prefix = []
+        for idx, stmt in enumerate(stmts):
+            if not isinstance(stmt, dict):
+                continue
+            for stmt_type, stmt_data in stmt.items():
+                current_path = path_prefix + [idx]
+                if parent_attr:
+                    current_path = path_prefix + [parent_attr, idx]
+                if stmt_type == "Block" and isinstance(stmt_data, dict):
+                    label = stmt_data.get("label")
+                    if label:
+                        labels[label] = LabelInfo(name=label, target_idx=idx, target_depth=depth)
+                        label_stmt_map[label] = stmt
+                    _walk(stmt_data.get("body", []), depth + 1, current_path)
+                elif stmt_type in ("If", "For", "While", "Loop") and isinstance(stmt_data, dict):
+                    label = stmt_data.get("label")
+                    if label:
+                        labels[label] = LabelInfo(name=label, target_idx=idx, target_depth=depth)
+                        label_stmt_map[label] = stmt
+                    if stmt_type == "If":
+                        _walk(stmt_data.get("then_stmts", []), depth + 1, current_path, "then_stmts")
+                        _walk(stmt_data.get("else_stmts", []), depth + 1, current_path, "else_stmts")
+                        for elsif in stmt_data.get("elsifs", []):
+                            _walk(elsif.get("stmts", []), depth + 1, current_path, "elsif_stmts")
+                    else:
+                        _walk(stmt_data.get("body", []), depth + 1, current_path, "body")
+                elif stmt_type == "Goto" and isinstance(stmt_data, dict):
+                    goto_label = stmt_data.get("label", "unknown")
+                    gotos.append(GotoInfo(
+                        label=goto_label,
+                        source_idx=idx,
+                        source_depth=depth,
+                        is_forward=False,
+                        is_backward=False,
+                        source_path=current_path,
+                    ))
+
+    _walk(body_stmts)
+
+    if proc and (proc._source_path or proc.source_file):
+        src_path = proc._source_path or proc.source_file
+        try:
+            with open(src_path, 'r', encoding='utf-8', errors='replace') as f:
+                all_lines = f.readlines()
+        except Exception:
+            all_lines = []
+
+        if all_lines and proc.source_start_line > 0 and proc.source_end_line > 0:
+            proc_text_lines = all_lines[proc.source_start_line - 1:proc.source_end_line]
+            for offset, line in enumerate(proc_text_lines):
+                line_num = proc.source_start_line + offset
+                m = re.search(r'<<([^>]+)>>', line)
+                if m:
+                    label_name = m.group(1).strip()
+                    if label_name and label_name not in labels:
+                        target_idx = _map_line_to_stmt_idx(line_num, body_stmts, proc.source_start_line)
+                        labels[label_name] = LabelInfo(
+                            name=label_name,
+                            target_idx=target_idx,
+                            target_depth=0,
+                        )
+
+            goto_line_map = {}
+            for offset, line in enumerate(proc_text_lines):
+                line_num = proc.source_start_line + offset
+                for gm in re.finditer(r'GOTO\s+(\w+)', line, re.IGNORECASE):
+                    gtarget = gm.group(1)
+                    goto_line_map[gtarget] = goto_line_map.get(gtarget, []) + [line_num]
+
+            for g in gotos:
+                li = labels.get(g.label)
+                if li and g.label in goto_line_map:
+                    goto_lines = goto_line_map[g.label]
+                    label_line = None
+                    for offset, line in enumerate(proc_text_lines):
+                        line_num = proc.source_start_line + offset
+                        m = re.search(r'<<([^>]+)>>', line)
+                        if m and m.group(1).strip() == g.label:
+                            label_line = line_num
+                            break
+                    if label_line and goto_lines:
+                        g.is_forward = any(gl < label_line for gl in goto_lines)
+                        g.is_backward = any(gl > label_line for gl in goto_lines)
+
+    return labels, gotos, label_stmt_map
+
+
+def _map_line_to_stmt_idx(target_line: int, body_stmts: list, proc_start_line: int) -> int:
+    """Map a source line number to the nearest AST statement index."""
+    if not body_stmts:
+        return 0
+    n = len(body_stmts)
+    return min(n - 1, max(0, int((target_line - proc_start_line) / 3)))
+
+
+def _classify_goto_pattern(labels, gotos, body_stmts):
+    """Classify GOTO usage into one of the 5 patterns (E > D > B > A > C).
+
+    Returns a pattern string: 'A', 'B', 'C', 'D', 'E', or 'unknown'.
+    """
+    if not gotos or not labels:
+        return "unknown"
+
+    goto_labels = set(g.label for g in gotos)
+    label_names = set(labels.keys())
+    if not goto_labels.issubset(label_names):
+        return "unknown"
+    effective_labels = goto_labels
+
+    has_backward = any(g.is_backward for g in gotos)
+
+    cross_boundary = False
+    for g in gotos:
+        li = labels.get(g.label)
+        if li and g.source_depth >= 2:
+            if li.target_depth > 0 and g.source_depth > li.target_depth:
+                cross_boundary = True
+                break
+            elif li.target_depth == 0 and g.source_depth >= 3:
+                cross_boundary = True
+                break
+
+    incoming_counts = {ln: 0 for ln in label_names}
+    for g in gotos:
+        incoming_counts[g.label] = incoming_counts.get(g.label, 0) + 1
+
+    multi_label = len(effective_labels) >= 2
+    multi_incoming = sum(1 for c in incoming_counts.values() if c > 1)
+    has_graph = multi_label and multi_incoming >= 1
+
+    if has_graph:
+        return "E"
+    if cross_boundary:
+        return "D"
+    if has_backward:
+        return "B"
+
+    all_forward = all(g.is_forward for g in gotos)
+    if all_forward and len(effective_labels) == 1:
+        li = list(labels.values())[0]
+        g = gotos[0]
+        distance = li.target_idx - g.source_idx
+        if li.target_idx >= len(body_stmts) - 2 and distance > 3:
+            return "A"
+
+    if all_forward and len(gotos) == 1:
+        return "C"
+
+    return "unknown"
+
+
+def _analyze_and_rewrite_goto(proc: ProcedureInfo, all_packages: dict, dml_counter: dict):
+    """Analyze GOTO patterns in proc and regenerate java_logic_lines."""
+    body_stmts = proc.body.get("body", []) if proc.body else []
+    if not body_stmts:
+        return
+
+    labels, gotos, label_stmt_map = _collect_goto_info(body_stmts, proc)
+    pattern = _classify_goto_pattern(labels, gotos, body_stmts)
+
+    if pattern == "unknown":
+        _stub_key = (proc.name, len(proc.parameters))
+        _add_stub_reason(proc, f"GOTO 模式无法识别，需要手动重构")
+        if _stub_key not in STUB_PROCEDURES:
+            STUB_PROCEDURES.append(_stub_key)
+        return
+
+    analysis = GotoAnalysis(labels=labels, gotos=gotos, pattern=pattern, label_stmt_map=label_stmt_map)
+
+    # Clear DML state before regeneration so mapper is generated from the second pass only
+    proc.dml_statements = []
+    proc.service_calls = []
+    for k in list(dml_counter.keys()):
+        dml_counter[k] = 0
+
+    if pattern == "A":
+        _generate_cleanup_goto(proc, analysis, body_stmts, all_packages, dml_counter)
+    elif pattern == "B":
+        _generate_loop_goto(proc, analysis, body_stmts, all_packages, dml_counter)
+    elif pattern == "C":
+        _generate_skip_goto(proc, analysis, body_stmts, all_packages, dml_counter)
+    elif pattern == "D":
+        _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml_counter)
+    elif pattern == "E":
+        _generate_state_machine_goto(proc, analysis, body_stmts, all_packages, dml_counter)
+
+    goto_labels = {g.label for g in gotos}
+    proc.java_logic_lines = [
+        line for line in proc.java_logic_lines
+        if not any(f"// GOTO {label} — will be rewritten by pattern analysis" in line for label in goto_labels)
+    ]
+
+    # Remove from stub list — the GOTO rewrite has replaced the normal processing output
+    _stub_key = (proc.name, len(proc.parameters))
+    if _stub_key in STUB_PROCEDURES:
+        STUB_PROCEDURES.remove(_stub_key)
+    proc._stub_reasons = []
+
+
+def _stmt_list_to_java(stmts, proc, all_packages, dml_counter, indent=0):
+    """Process a list of AST statements into java_logic_lines."""
+    for stmt in stmts:
+        if isinstance(stmt, dict):
+            _process_statement(stmt, proc, all_packages, dml_counter)
+
+
+def _generate_cleanup_goto(proc, analysis, body_stmts, all_packages, dml_counter):
+    """Pattern A: cleanup label near end -> try { ... } finally { cleanup }"""
+    label_name = list(analysis.labels.keys())[0]
+    li = analysis.labels[label_name]
+    target_idx = li.target_idx
+
+    proc.java_logic_lines = []
+    proc.dml_statements = []
+
+    cleanup_start = max(0, len(body_stmts) - 2)
+    if target_idx < cleanup_start:
+        cleanup_start = target_idx
+
+    proc.java_logic_lines.append("try {")
+    for idx, stmt in enumerate(body_stmts):
+        if idx >= cleanup_start:
+            break
+        if isinstance(stmt, dict):
+            for st, sd in stmt.items():
+                if st == "Goto" and sd.get("label") == label_name:
+                    continue
+            _process_statement(stmt, proc, all_packages, dml_counter)
+    proc.java_logic_lines.append("} finally {")
+    for idx, stmt in enumerate(body_stmts):
+        if idx < cleanup_start:
+            continue
+        if isinstance(stmt, dict):
+            for st, sd in stmt.items():
+                if st == "Block" and sd.get("label") == label_name:
+                    _stmt_list_to_java(sd.get("body", []), proc, all_packages, dml_counter, indent=1)
+                    continue
+            _process_statement(stmt, proc, all_packages, dml_counter)
+    proc.java_logic_lines.append("}")
+
+
+def _generate_loop_goto(proc, analysis, body_stmts, all_packages, dml_counter):
+    """Pattern B: backward GOTO -> do { ... } while (condition)"""
+    backward_goto = None
+    for g in analysis.gotos:
+        if g.is_backward:
+            backward_goto = g
+            break
+    if not backward_goto:
+        return
+
+    label_name = backward_goto.label
+    li = analysis.labels[label_name]
+    target_idx = li.target_idx
+    source_idx = backward_goto.source_idx
+
+    proc.java_logic_lines = []
+    proc.dml_statements = []
+
+    proc.java_logic_lines.append("do {")
+    for stmt in body_stmts[target_idx:source_idx + 1]:
+        if isinstance(stmt, dict):
+            for st, sd in stmt.items():
+                if st == "Goto" and sd.get("label") == label_name:
+                    continue
+                if st == "If" and isinstance(sd, dict):
+                    then_stmts = sd.get("then_stmts", [])
+                    has_goto = any(
+                        isinstance(s, dict) and any(k == "Goto" and v.get("label") == label_name for k, v in s.items())
+                        for s in then_stmts
+                    )
+                    if has_goto:
+                        cond = _expr_to_java(sd.get("condition", {}), proc, all_packages=all_packages)
+                        proc.java_logic_lines.append(f"}} while ({cond});")
+                        continue
+            _process_statement(stmt, proc, all_packages, dml_counter)
+    if not any(l.strip().startswith("} while (") for l in proc.java_logic_lines):
+        proc.java_logic_lines.append("} while (true);")
+
+
+def _invert_condition(java_cond: str) -> str:
+    cond = java_cond.strip()
+    if cond.startswith("(!") and cond.endswith(")"):
+        return cond[2:-1]
+    if cond.startswith("(") and cond.endswith(")"):
+        inner = cond[1:-1].strip()
+        if " " not in inner or inner.startswith("("):
+            return f"!{cond}"
+    if " " not in cond or cond.startswith("("):
+        return f"!{cond}"
+    return f"!({cond})"
+
+
+def _generate_skip_goto(proc, analysis, body_stmts, all_packages, dml_counter):
+    """Pattern C: single forward GOTO from conditional -> invert IF, wrap skipped in else."""
+    goto_info = analysis.gotos[0]
+    label_name = goto_info.label
+    li = analysis.labels[label_name]
+    target_idx = li.target_idx
+
+    proc.java_logic_lines = []
+    proc.dml_statements = []
+
+    if_condition = None
+    path = goto_info.source_path or []
+    if len(path) >= 3 and path[1] in ("then_stmts", "else_stmts", "elsif_stmts"):
+        enclosing_idx = path[0]
+        if enclosing_idx < len(body_stmts):
+            source_stmt = body_stmts[enclosing_idx]
+            if isinstance(source_stmt, dict) and "If" in source_stmt:
+                if_data = source_stmt["If"]
+                then_stmts = if_data.get("then_stmts", [])
+                has_goto = any(
+                    isinstance(s, dict) and any(k == "Goto" and v.get("label") == label_name for k, v in s.items())
+                    for s in then_stmts
+                )
+                if has_goto:
+                    if_condition = _expr_to_java(if_data.get("condition", {}), proc, all_packages=all_packages)
+    if if_condition is None:
+        source_stmt = body_stmts[goto_info.source_idx] if goto_info.source_idx < len(body_stmts) else None
+        if source_stmt and isinstance(source_stmt, dict) and "If" in source_stmt:
+            if_data = source_stmt["If"]
+            then_stmts = if_data.get("then_stmts", [])
+            has_goto = any(
+                isinstance(s, dict) and any(k == "Goto" and v.get("label") == label_name for k, v in s.items())
+                for s in then_stmts
+            )
+            if has_goto:
+                if_condition = _expr_to_java(if_data.get("condition", {}), proc, all_packages=all_packages)
+
+    if if_condition:
+        inverted = _invert_condition(if_condition)
+        enclosing_idx = goto_info.source_idx
+        path = goto_info.source_path or []
+        if path and isinstance(path[0], int):
+            enclosing_idx = path[0]
+        for idx, stmt in enumerate(body_stmts):
+            if idx >= enclosing_idx:
+                break
+            if isinstance(stmt, dict):
+                _process_statement(stmt, proc, all_packages, dml_counter)
+        proc.java_logic_lines.append(f"if ({inverted}) {{")
+        for idx, stmt in enumerate(body_stmts):
+            if idx <= enclosing_idx:
+                continue
+            if idx >= target_idx:
+                break
+            if isinstance(stmt, dict):
+                _process_statement(stmt, proc, all_packages, dml_counter)
+        proc.java_logic_lines.append("}")
+        for stmt in body_stmts[target_idx:]:
+            if isinstance(stmt, dict):
+                for st, sd in stmt.items():
+                    if st == "Block" and sd.get("label") == label_name:
+                        _stmt_list_to_java(sd.get("body", []), proc, all_packages, dml_counter, indent=1)
+                        continue
+                _process_statement(stmt, proc, all_packages, dml_counter)
+    else:
+        for stmt in body_stmts:
+            if isinstance(stmt, dict):
+                _process_statement(stmt, proc, all_packages, dml_counter)
+
+
+def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml_counter):
+    proc.java_logic_lines = []
+    proc.dml_statements = []
+
+    goto_labels = {g.label for g in analysis.gotos}
+
+    def _process_with_goto_replace(stmt):
+        if not isinstance(stmt, dict):
+            return
+        for stmt_type, stmt_data in stmt.items():
+            if stmt_type == "Goto" and isinstance(stmt_data, dict):
+                label = stmt_data.get("label", "")
+                if label in goto_labels:
+                    proc.java_logic_lines.append("continue;")
+                    return
+            elif stmt_type == "If" and isinstance(stmt_data, dict):
+                condition = _expr_to_java(stmt_data.get("condition", {}), proc, all_packages=all_packages)
+                proc.java_logic_lines.append(f"if ({condition}) {{")
+                for s in _iter_statements(stmt_data.get("then_stmts", [])):
+                    _process_with_goto_replace(s)
+                _indent_last_lines(proc, 1)
+                if stmt_data.get("else_stmts"):
+                    proc.java_logic_lines.append("} else {")
+                    for s in _iter_statements(stmt_data["else_stmts"]):
+                        _process_with_goto_replace(s)
+                    _indent_last_lines(proc, 1)
+                for elsif in stmt_data.get("elsifs", []):
+                    elsif_cond = _expr_to_java(elsif.get("condition", {}), proc, all_packages=all_packages)
+                    proc.java_logic_lines.append(f"}} else if ({elsif_cond}) {{")
+                    for s in _iter_statements(elsif.get("stmts", [])):
+                        _process_with_goto_replace(s)
+                    _indent_last_lines(proc, 1)
+                proc.java_logic_lines.append("}")
+                return
+            elif stmt_type in ("For", "While", "Loop") and isinstance(stmt_data, dict):
+                _process_loop_with_goto_replace(stmt, proc, all_packages, dml_counter)
+                return
+            elif stmt_type == "Block" and isinstance(stmt_data, dict):
+                for s in _iter_statements(stmt_data.get("body", [])):
+                    _process_with_goto_replace(s)
+                return
+        _process_statement(stmt, proc, all_packages, dml_counter)
+
+    def _process_loop_with_goto_replace(stmt, proc, all_packages, dml_counter):
+        for stmt_type, stmt_data in stmt.items():
+            if stmt_type == "For" and isinstance(stmt_data, dict):
+                variable = stmt_data.get("variable", "i")
+                var_java = snake_to_camel(variable)
+                kind = stmt_data.get("kind", {})
+                body = stmt_data.get("body", [])
+                if "Range" in kind:
+                    range_data = kind["Range"]
+                    if variable not in proc.local_vars:
+                        proc.local_vars[variable] = "Integer"
+                    low = _expr_to_java(range_data.get("low", {"Literal": {"Integer": 0}}), proc, all_packages=all_packages)
+                    high = _expr_to_java(range_data.get("high", {"Literal": {"Integer": 0}}), proc, all_packages=all_packages)
+                    reverse = range_data.get("reverse", False)
+                    if reverse:
+                        proc.java_logic_lines.append(f"for ({var_java} = {high}; {var_java} >= {low}; {var_java}--) {{")
+                    else:
+                        proc.java_logic_lines.append(f"for ({var_java} = {low}; {var_java} <= {high}; {var_java}++) {{")
+                    for s in _iter_statements(body):
+                        _process_with_goto_replace(s)
+                    _indent_last_lines(proc, 1)
+                    proc.java_logic_lines.append("}")
+                    return
+                elif "Query" in kind:
+                    query_data = kind["Query"]
+                    parsed_query = query_data.get("parsed_query")
+                    if parsed_query:
+                        sql_text = _reconstruct_sql_from_ast(parsed_query)
+                        if sql_text:
+                            raw_sql_for_params = sql_text
+                            sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
+                            mapper_method = _dml_method_name("select", proc.proc_name, dml_counter)
+                            proc.dml_statements.append(DmlStatement(
+                                sql_type="select",
+                                method_id=mapper_method,
+                                sql_text=sql_text,
+                                result_type="Map<String, Object>",
+                                returns_list=True,
+                            ))
+                            proc.java_logic_lines.append(
+                                f"List<Map<String, Object>> {var_java}List = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});"
+                            )
+                            proc.java_logic_lines.append(f"for (Map<String, Object> {var_java} : {var_java}List) {{")
+                            proc.local_vars[variable] = "Map<String, Object>"
+                            proc._loop_vars = getattr(proc, '_loop_vars', set())
+                            proc._loop_vars.add(variable)
+                            for s in _iter_statements(body):
+                                _process_with_goto_replace(s)
+                            _indent_last_lines(proc, 1)
+                            proc.java_logic_lines.append("}")
+                            return
+                proc.java_logic_lines.append(f"// TODO: nested breakout loop — manual extraction recommended")
+                return
+            elif stmt_type in ("While", "Loop") and isinstance(stmt_data, dict):
+                condition = "true"
+                if stmt_type == "While" and "condition" in stmt_data:
+                    condition = _expr_to_java(stmt_data["condition"], proc, all_packages=all_packages)
+                proc.java_logic_lines.append(f"while ({condition}) {{")
+                for s in _iter_statements(stmt_data.get("body", [])):
+                    _process_with_goto_replace(s)
+                _indent_last_lines(proc, 1)
+                proc.java_logic_lines.append("}")
+                return
+        _process_statement(stmt, proc, all_packages, dml_counter)
+
+    for stmt in body_stmts:
+        _process_with_goto_replace(stmt)
+
+
+def _generate_state_machine_goto(proc, analysis, body_stmts, all_packages, dml_counter):
+    """Pattern E: multiple labels with multiple GOTOs -> enum + while-switch state machine."""
+    proc.java_logic_lines = []
+    proc.dml_statements = []
+
+    enum_name = f"{snake_to_pascal(proc.proc_name)}State"
+    state_names = [snake_to_pascal(ln) for ln in analysis.labels.keys()]
+
+    proc.java_logic_lines.append(f"// State machine generated from GOTO labels")
+    proc.java_logic_lines.append(f"enum {enum_name} {{{', '.join(state_names)}}}")
+    proc.java_logic_lines.append(f"{enum_name} currentState = {enum_name}.{state_names[0]};")
+    proc.java_logic_lines.append("boolean running = true;")
+    proc.java_logic_lines.append("while (running) {")
+    proc.java_logic_lines.append("    switch (currentState) {")
+
+    for label_name in analysis.labels.keys():
+        state_java = snake_to_pascal(label_name)
+        proc.java_logic_lines.append(f"        case {state_java}:")
+        li = analysis.labels[label_name]
+        target_idx = li.target_idx
+        next_label_idx = None
+        for other_label, other_li in analysis.labels.items():
+            if other_li.target_idx > li.target_idx:
+                if next_label_idx is None or other_li.target_idx < next_label_idx:
+                    next_label_idx = other_li.target_idx
+        end_idx = next_label_idx if next_label_idx is not None else len(body_stmts)
+
+        for idx in range(target_idx, end_idx):
+            stmt = body_stmts[idx]
+            if not isinstance(stmt, dict):
+                continue
+            for st, sd in stmt.items():
+                if st == "Goto":
+                    goto_label = sd.get("label", "")
+                    if goto_label in analysis.labels:
+                        goto_state = snake_to_pascal(goto_label)
+                        proc.java_logic_lines.append(f"            currentState = {enum_name}.{goto_state};")
+                    else:
+                        proc.java_logic_lines.append(f"            running = false;")
+                elif st == "Block" and sd.get("label") in analysis.labels:
+                    _stmt_list_to_java(sd.get("body", []), proc, all_packages, dml_counter, indent=2)
+                else:
+                    _process_statement(stmt, proc, all_packages, dml_counter)
+        proc.java_logic_lines.append("            break;")
+
+    proc.java_logic_lines.append("        default:")
+    proc.java_logic_lines.append("            running = false;")
+    proc.java_logic_lines.append("            break;")
+    proc.java_logic_lines.append("    }")
+    proc.java_logic_lines.append("}")
+
+
 def _dml_method_name(dml_type: str, proc_name: str, counter: dict) -> str:
     n = counter.get(dml_type, 0)
     counter[dml_type] = n + 1
@@ -2037,6 +2611,9 @@ def _strip_into_clause(sql: str) -> str:
     stripped = re.sub(r'\s+into\s+.*?(?=\s+from\b)', ' ', sql, flags=re.IGNORECASE | re.DOTALL)
     if stripped == sql:
         stripped = re.sub(r'\s+into\s+\w+(\s*,\s*\w+)*\s+(?=from\b)', ' ', sql, flags=re.IGNORECASE)
+    # Also strip INTO clause when there's no FROM (e.g., SELECT nextval() INTO var)
+    if stripped == sql:
+        stripped = re.sub(r'\s+into\s+.*$', ' ', sql, flags=re.IGNORECASE | re.DOTALL)
     return stripped
 
 
@@ -2050,9 +2627,12 @@ def _rewrite_select_for_into(sql: str, into_targets: list) -> str:
     stripped = re.sub(r'\s+into\s+.*?(?=\s+from\b)', ' ', sql, flags=re.IGNORECASE | re.DOTALL)
     if stripped == sql:
         stripped = re.sub(r'\s+into\s+\w+(\s*,\s*\w+)*\s+(?=from\b)', ' ', sql, flags=re.IGNORECASE)
+    # Handle SELECT without FROM (e.g., SELECT nextval() INTO var)
+    if stripped == sql:
+        stripped = re.sub(r'\s+into\s+.*$', ' ', sql, flags=re.IGNORECASE | re.DOTALL)
     m = re.match(r'(select\s+)(.*?)(\s+from\b)', stripped, re.IGNORECASE | re.DOTALL)
     if not m:
-        return stripped
+        return stripped.strip()
     col_clause = m.group(2).strip()
     cols = [c.strip() for c in re.split(r',\s*', col_clause)]
     if len(cols) != len(field_names):
@@ -4675,10 +5255,18 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     left = f"((java.math.BigDecimal) {left})"
                 elif ".get(" in left and left_type == "Integer":
                     left = f"((Integer) {left})"
+                elif ".get(" in left and "Long" in left_type:
+                    left = f"((Long) {left})"
+                elif ".get(" in left and left_type == "Object" and op in (">", "<", ">=", "<=", "=", "<>"):
+                    left = f"((Number) {left}).intValue()"
                 if ".get(" in right and "BigDecimal" in right_type:
                     right = f"((java.math.BigDecimal) {right})"
                 elif ".get(" in right and right_type == "Integer":
                     right = f"((Integer) {right})"
+                elif ".get(" in right and "Long" in right_type:
+                    right = f"((Long) {right})"
+                elif ".get(" in right and right_type == "Object" and op in (">", "<", ">=", "<=", "=", "<>"):
+                    right = f"((Number) {right}).intValue()"
 
                 is_bd = "BigDecimal" in left_type or "BigDecimal" in right_type
                 is_str = left_type == "String" or right_type == "String"
@@ -6321,7 +6909,11 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
     for line in body_lines:
         s = line.strip()
         if re.match(r'^(String|Long|Integer|BigDecimal|java\.math\.BigDecimal|AtomicReference|List<Map<String, Object>>|boolean|int|long|double|float)\s+\w+\s*=', s):
-            hoisted_decls.append(line)
+            # Don't hoist mapper query result assignments — they must stay in place (e.g., inside loops)
+            if 'mapper.' not in s:
+                hoisted_decls.append(line)
+            else:
+                remaining_lines.append(line)
         else:
             remaining_lines.append(line)
     body_lines = remaining_lines

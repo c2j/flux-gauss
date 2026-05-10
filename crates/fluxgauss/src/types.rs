@@ -2,6 +2,32 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GotoPattern {
+    CleanupExit,
+    LoopSimulation,
+    LogicSkip,
+    DeepNestedBreak,
+    StateMachine,
+}
+
+#[derive(Debug, Clone)]
+pub struct GotoInfo {
+    pub label: String,
+    pub stmt_index: usize,
+    pub nesting_depth: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct GotoAnalysis {
+    pub pattern: Option<GotoPattern>,
+    pub labels: HashMap<String, usize>,
+    pub gotos: Vec<GotoInfo>,
+    pub has_backward: bool,
+    pub has_forward: bool,
+    pub cross_block: bool,
+}
+
 // ── Parameter ──
 
 #[derive(Debug, Clone, PartialEq)]
@@ -145,6 +171,8 @@ pub struct ProcedureInfo {
     // Custom types
     pub custom_types: HashMap<String, CustomTypeInfo>,
 
+    pub goto_analysis: Option<GotoAnalysis>,
+
     // Source tracing
     pub source_file: String,
     pub source_path: String,
@@ -185,6 +213,7 @@ impl ProcedureInfo {
             cursor_decls: HashMap::new(),
             cursor_params: HashMap::new(),
             custom_types: HashMap::new(),
+            goto_analysis: None,
             source_file: String::new(),
             source_path: String::new(),
             source_start_line: 0,

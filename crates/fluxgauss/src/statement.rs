@@ -404,7 +404,7 @@ pub fn process_statement(
             Ok(())
         }
         PlStatement::Goto { label } => {
-            push_logic_line(proc, format!("// GOTO {};", label));
+            push_logic_line(proc, format!("// GOTO {} — will be rewritten by pattern analysis", label));
             Ok(())
         }
         PlStatement::Execute(_) => {
