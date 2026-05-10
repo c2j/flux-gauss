@@ -8,7 +8,7 @@ pub fn analyze_goto_patterns(body: &[PlStatement]) -> GotoAnalysis {
     let mut labels: HashMap<String, usize> = HashMap::new();
     let mut gotos: Vec<GotoInfo> = Vec::new();
 
-    collect_labels_and_gotos(body, 0, &mut labels, &mut gotos);
+    collect_labels_and_gotos(body, 0, false, &mut labels, &mut gotos);
 
     let mut has_backward = false;
     let mut has_forward = false;
@@ -21,7 +21,10 @@ pub fn analyze_goto_patterns(body: &[PlStatement]) -> GotoAnalysis {
             } else if target > goto.stmt_index {
                 has_forward = true;
             }
-            if goto.nesting_depth > 0 {
+            // Only set cross_block when GOTO is inside a loop (FOR/WHILE/LOOP),
+            // not inside a simple IF — GOTO inside IF to a top-level label
+            // is a cleanup/skip pattern, not a deep nested break.
+            if goto.inside_loop {
                 cross_block = true;
             }
         }
@@ -43,6 +46,7 @@ pub fn analyze_goto_patterns(body: &[PlStatement]) -> GotoAnalysis {
 fn collect_labels_and_gotos(
     body: &[PlStatement],
     depth: usize,
+    inside_loop: bool,
     labels: &mut HashMap<String, usize>,
     gotos: &mut Vec<GotoInfo>,
 ) {
@@ -52,10 +56,10 @@ fn collect_labels_and_gotos(
                 if let Some(label) = &block.node.label {
                     labels.insert(label.clone(), idx);
                 }
-                collect_labels_and_gotos(&block.node.body, depth + 1, labels, gotos);
+                collect_labels_and_gotos(&block.node.body, depth + 1, inside_loop, labels, gotos);
                 if let Some(exc) = &block.node.exception_block {
                     for handler in &exc.handlers {
-                        collect_labels_and_gotos(&handler.statements, depth + 1, labels, gotos);
+                        collect_labels_and_gotos(&handler.statements, depth + 1, inside_loop, labels, gotos);
                     }
                 }
             }
@@ -63,32 +67,33 @@ fn collect_labels_and_gotos(
                 if let Some(label) = &loop_stmt.node.label {
                     labels.insert(label.clone(), idx);
                 }
-                collect_labels_and_gotos(&loop_stmt.node.body, depth + 1, labels, gotos);
+                collect_labels_and_gotos(&loop_stmt.node.body, depth + 1, true, labels, gotos);
             }
             PlStatement::While(while_stmt) => {
                 if let Some(label) = &while_stmt.node.label {
                     labels.insert(label.clone(), idx);
                 }
-                collect_labels_and_gotos(&while_stmt.node.body, depth + 1, labels, gotos);
+                collect_labels_and_gotos(&while_stmt.node.body, depth + 1, true, labels, gotos);
             }
             PlStatement::For(for_stmt) => {
                 if let Some(label) = &for_stmt.node.label {
                     labels.insert(label.clone(), idx);
                 }
-                collect_labels_and_gotos(&for_stmt.node.body, depth + 1, labels, gotos);
+                collect_labels_and_gotos(&for_stmt.node.body, depth + 1, true, labels, gotos);
             }
             PlStatement::If(if_stmt) => {
-                collect_labels_and_gotos(&if_stmt.node.then_stmts, depth + 1, labels, gotos);
+                collect_labels_and_gotos(&if_stmt.node.then_stmts, depth + 1, inside_loop, labels, gotos);
                 for elsif in &if_stmt.node.elsifs {
-                    collect_labels_and_gotos(&elsif.stmts, depth + 1, labels, gotos);
+                    collect_labels_and_gotos(&elsif.stmts, depth + 1, inside_loop, labels, gotos);
                 }
-                collect_labels_and_gotos(&if_stmt.node.else_stmts, depth + 1, labels, gotos);
+                collect_labels_and_gotos(&if_stmt.node.else_stmts, depth + 1, inside_loop, labels, gotos);
             }
             PlStatement::Goto { label } => {
                 gotos.push(GotoInfo {
                     label: label.clone(),
                     stmt_index: idx,
                     nesting_depth: depth,
+                    inside_loop,
                 });
             }
             _ => {}
@@ -107,26 +112,37 @@ fn classify_goto_pattern(
     let label_count = analysis.labels.len();
     let goto_count = analysis.gotos.len();
 
+    // E. StateMachine: many labels and gotos forming a net
     if label_count >= 3 && goto_count >= 3 {
         return Some(GotoPattern::StateMachine);
     }
 
+    let all_forward = !analysis.has_backward;
+    let last_label_index = analysis.labels.values().copied().max().unwrap_or(0);
+    // Label must be at the top-level body scope (index < body_len) to be a cleanup target.
+    // Labels from nested scopes (inside FOR/WHILE) have indices relative to their scope,
+    // which may exceed body_len and cause false positives.
+    let label_at_top_level = last_label_index < body_len;
+    let label_at_end = body_len > 0 && last_label_index >= (body_len * 4) / 5;
+
+    // A. CleanupExit: all forward GOTOs, label at the end of top-level body
+    //    Must come before DeepNestedBreak so that Pattern A (GOTO inside IF)
+    //    is not misclassified as deep nested.
+    if all_forward && label_at_end && label_at_top_level {
+        return Some(GotoPattern::CleanupExit);
+    }
+
+    // D. DeepNestedBreak: GOTOs inside loops crossing block boundaries
     if analysis.cross_block {
         return Some(GotoPattern::DeepNestedBreak);
     }
 
+    // B. LoopSimulation: backward GOTO
     if analysis.has_backward {
         return Some(GotoPattern::LoopSimulation);
     }
 
-    let last_label_index = analysis.labels.values().copied().max().unwrap_or(0);
-    let all_forward = !analysis.has_backward;
-    let label_at_end = body_len > 0 && last_label_index >= (body_len * 4) / 5;
-
-    if all_forward && label_at_end && goto_count > 1 {
-        return Some(GotoPattern::CleanupExit);
-    }
-
+    // C. LogicSkip: single forward GOTO (fallback)
     if all_forward && goto_count == 1 {
         return Some(GotoPattern::LogicSkip);
     }
@@ -166,6 +182,8 @@ fn invert_condition(cond: &str) -> String {
     }
 }
 
+// ── Pattern A: CleanupExit (try-finally) ──
+
 fn generate_cleanup_goto(
     body: &[PlStatement],
     analysis: &GotoAnalysis,
@@ -180,21 +198,18 @@ fn generate_cleanup_goto(
 
     proc.java_logic_lines.push("try {".to_string());
 
+    // Process statements before the cleanup label inside try block,
+    // replacing GOTOs to cleanup label with `return;` (triggers finally)
     for (idx, stmt) in body.iter().enumerate() {
         if idx >= cleanup_idx {
             break;
         }
-        // Skip GOTOs that target the cleanup label
-        if let PlStatement::Goto { label } = stmt {
-            if label == &cleanup_label {
-                continue;
-            }
-        }
-        crate::statement::process_statement(stmt, proc)?;
+        process_cleanup_stmt(stmt, &cleanup_label, proc)?;
     }
 
     proc.java_logic_lines.push("} finally {".to_string());
 
+    // Process cleanup label body inside finally block
     for (idx, stmt) in body.iter().enumerate() {
         if idx < cleanup_idx {
             continue;
@@ -214,6 +229,53 @@ fn generate_cleanup_goto(
     proc.java_logic_lines.push("}".to_string());
     Ok(())
 }
+
+fn process_cleanup_stmt(
+    stmt: &PlStatement,
+    cleanup_label: &str,
+    proc: &mut ProcedureInfo,
+) -> Result<(), ConversionError> {
+    match stmt {
+        PlStatement::Goto { label } if label == cleanup_label => {
+            proc.java_logic_lines.push("return;".to_string());
+            Ok(())
+        }
+        PlStatement::If(if_stmt) => {
+            let cond = crate::expr::bool_expr_to_java(&if_stmt.node.condition, proc);
+            proc.java_logic_lines.push(format!("if ({}) {{", cond));
+            for s in &if_stmt.node.then_stmts {
+                process_cleanup_stmt(s, cleanup_label, proc)?;
+            }
+            for elsif in &if_stmt.node.elsifs {
+                let elsif_cond = crate::expr::bool_expr_to_java(&elsif.condition, proc);
+                proc.java_logic_lines.push(format!("}} else if ({}) {{", elsif_cond));
+                for s in &elsif.stmts {
+                    process_cleanup_stmt(s, cleanup_label, proc)?;
+                }
+            }
+            if !if_stmt.node.else_stmts.is_empty() {
+                proc.java_logic_lines.push("} else {".to_string());
+                for s in &if_stmt.node.else_stmts {
+                    process_cleanup_stmt(s, cleanup_label, proc)?;
+                }
+            }
+            proc.java_logic_lines.push("}".to_string());
+            Ok(())
+        }
+        PlStatement::Block(block) => {
+            // Process block body recursively (may contain GOTOs)
+            for s in &block.node.body {
+                process_cleanup_stmt(s, cleanup_label, proc)?;
+            }
+            Ok(())
+        }
+        _ => {
+            crate::statement::process_statement(stmt, proc)
+        }
+    }
+}
+
+// ── Pattern B: LoopSimulation (do-while) ──
 
 fn generate_loop_goto(
     body: &[PlStatement],
@@ -305,6 +367,8 @@ fn generate_loop_goto(
     Ok(())
 }
 
+// ── Pattern C: LogicSkip (inverted if) ──
+
 fn generate_logic_skip_goto(
     body: &[PlStatement],
     analysis: &GotoAnalysis,
@@ -389,6 +453,8 @@ fn generate_logic_skip_goto(
 
     Ok(())
 }
+
+// ── Pattern D: DeepNestedBreak (mainLoop + continue/break) ──
 
 fn generate_deep_nested_goto(
     body: &[PlStatement],
@@ -507,6 +573,8 @@ fn process_with_goto_replace(
     }
     Ok(())
 }
+
+// ── Pattern E: StateMachine (while-switch) ──
 
 fn generate_state_machine_goto(
     body: &[PlStatement],

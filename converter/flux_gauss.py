@@ -2293,6 +2293,36 @@ def _generate_cleanup_goto(proc, analysis, body_stmts, all_packages, dml_counter
     if target_idx < cleanup_start:
         cleanup_start = target_idx
 
+    def _cleanup_process_stmts(stmts):
+        for s in stmts:
+            if not isinstance(s, dict):
+                continue
+            for st, sd in s.items():
+                if st == "Goto" and sd.get("label") == label_name:
+                    proc.java_logic_lines.append("return;")
+                    break
+                if st == "If" and isinstance(sd, dict):
+                    condition = _expr_to_java(sd.get("condition", {}), proc, all_packages=all_packages)
+                    proc.java_logic_lines.append(f"if ({condition}) {{")
+                    _cleanup_process_stmts(sd.get("then_stmts", []))
+                    _indent_last_lines(proc, 1)
+                    for elsif in sd.get("elsifs", []):
+                        ec = _expr_to_java(elsif.get("condition", {}), proc, all_packages=all_packages)
+                        proc.java_logic_lines.append(f"}} else if ({ec}) {{")
+                        _cleanup_process_stmts(elsif.get("stmts", []))
+                        _indent_last_lines(proc, 1)
+                    if sd.get("else_stmts"):
+                        proc.java_logic_lines.append("} else {")
+                        _cleanup_process_stmts(sd["else_stmts"])
+                        _indent_last_lines(proc, 1)
+                    proc.java_logic_lines.append("}")
+                    break
+                if st == "Block" and isinstance(sd, dict):
+                    _cleanup_process_stmts(sd.get("body", []))
+                    break
+            else:
+                _process_statement(s, proc, all_packages, dml_counter)
+
     proc.java_logic_lines.append("try {")
     for idx, stmt in enumerate(body_stmts):
         if idx >= cleanup_start:
@@ -2300,8 +2330,10 @@ def _generate_cleanup_goto(proc, analysis, body_stmts, all_packages, dml_counter
         if isinstance(stmt, dict):
             for st, sd in stmt.items():
                 if st == "Goto" and sd.get("label") == label_name:
-                    continue
-            _process_statement(stmt, proc, all_packages, dml_counter)
+                    proc.java_logic_lines.append("return;")
+                    break
+            else:
+                _cleanup_process_stmts([stmt])
     proc.java_logic_lines.append("} finally {")
     for idx, stmt in enumerate(body_stmts):
         if idx < cleanup_start:

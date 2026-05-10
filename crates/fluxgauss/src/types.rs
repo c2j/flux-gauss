@@ -16,6 +16,7 @@ pub struct GotoInfo {
     pub label: String,
     pub stmt_index: usize,
     pub nesting_depth: usize,
+    pub inside_loop: bool,
 }
 
 #[derive(Debug, Clone)]
