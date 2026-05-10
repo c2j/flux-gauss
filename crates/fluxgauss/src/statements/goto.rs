@@ -403,7 +403,18 @@ fn generate_deep_nested_goto(
 
     process_with_goto_replace(body, &goto_labels, proc)?;
 
-    proc.java_logic_lines.push("    break mainLoop;".to_string());
+    let has_terminal = proc.java_logic_lines.iter().rev()
+        .find(|l| {
+            let t = l.trim();
+            !t.starts_with("//") && !t.is_empty() && !t.starts_with("}")
+        })
+        .map_or(false, |l| {
+            let t = l.trim();
+            t.starts_with("return ") || t == "return;" || t.starts_with("throw ")
+        });
+    if !has_terminal {
+        proc.java_logic_lines.push("    break mainLoop;".to_string());
+    }
     proc.java_logic_lines.push("}".to_string());
 
     Ok(())
