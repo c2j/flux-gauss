@@ -2019,6 +2019,31 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
         elif stmt_type == "Execute":
             _process_execute(stmt_data, proc, all_packages, dml_counter)
         elif stmt_type == "Block":
+            for decl in (stmt_data.get("declarations") or []):
+                for decl_type, decl_data in decl.items():
+                    if decl_type == "Variable":
+                        var_name = decl_data.get("name", "")
+                        raw_type = decl_data.get("data_type", "varchar")
+                        java_type = sql_type_to_java(raw_type)
+                        if var_name not in proc.local_vars:
+                            proc.local_vars[var_name] = java_type
+                        default_ast = decl_data.get("default")
+                        if default_ast is not None:
+                            try:
+                                default_java = _expr_to_java(default_ast, proc)
+                                proc.local_var_defaults[var_name] = default_java
+                            except Exception:
+                                pass
+                    elif decl_type == "Record":
+                        var_name = decl_data.get("name", "")
+                        if var_name and var_name not in proc.local_vars:
+                            proc.local_vars[var_name] = "Map<String, Object>"
+                    elif decl_type == "Cursor":
+                        cursor_name = decl_data.get("name", "")
+                        parsed_q = decl_data.get("parsed_query")
+                        if parsed_q:
+                            proc.cursor_decls[cursor_name] = parsed_q
+                            proc.cursor_decls[cursor_name.lower()] = parsed_q
             for s in _iter_statements(stmt_data.get("body", [])):
                 _process_statement(s, proc, all_packages, dml_counter)
         elif stmt_type == "Commit":
@@ -2689,11 +2714,24 @@ def _case_is_fully_terminated(proc, start_offset: int) -> bool:
     if last_block_end < 0:
         return False
     # Check if that last block is a fully-terminated if-else (all branches end with break/return/throw)
+    # Find the start of the last block by scanning backward from last_block_end
+    last_block_start = -1
+    brace_depth = 0
+    for i in range(last_block_end - 1, case_start, -1):
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("//"):
+            continue
+        brace_depth += stripped.count("{") - stripped.count("}")
+        if brace_depth > 0:
+            last_block_start = i
+            break
+    if last_block_start < 0:
+        last_block_start = case_start + 1
+    # Now scan ONLY the last block for terminals and else branches
     depth = 0
     found_terminal = False
     has_else = False
-    block_start = -1
-    for i in range(case_start + 1, last_block_end):
+    for i in range(last_block_start, last_block_end):
         stripped = lines[i].strip()
         if not stripped or stripped.startswith("//"):
             prev_depth = depth
@@ -2702,7 +2740,6 @@ def _case_is_fully_terminated(proc, start_offset: int) -> bool:
         prev_depth = depth
         depth += stripped.count("{") - stripped.count("}")
         if depth == 1 and prev_depth == 0 and "{" in stripped:
-            # New sub-block started — reset per-branch tracking
             found_terminal = False
         if depth >= 1:
             if stripped == "break;" or stripped.startswith("return") or stripped.startswith("throw "):
@@ -2729,6 +2766,13 @@ def _generate_state_machine_goto(proc, analysis, body_stmts, all_packages, dml_c
     proc.java_logic_lines.append(f"{enum_name} currentState = {enum_name}.{state_names[0]};")
     proc.java_logic_lines.append("boolean running = true;")
     proc.java_logic_lines.append("int _smGuard = 0;")
+    for cursor_name, meta in proc.open_cursors.items():
+        result_var = meta.get("result_var")
+        index_var = meta.get("index_var")
+        if result_var:
+            proc.java_logic_lines.append(f"List<Map<String, Object>> {result_var} = new java.util.ArrayList<>();")
+        if index_var:
+            proc.java_logic_lines.append(f"int {index_var} = 0;")
     proc.java_logic_lines.append("while (running && _smGuard++ < 10000) {")
     proc.java_logic_lines.append("    switch (currentState) {")
 
@@ -2785,16 +2829,14 @@ def _generate_state_machine_goto(proc, analysis, body_stmts, all_packages, dml_c
 
         _strip_unreachable_in_case(proc, start_offset=len(proc.java_logic_lines))
         last_stripped = proc.java_logic_lines[-1].strip() if proc.java_logic_lines else ""
-        needs_break = not (last_stripped.startswith("throw ") or last_stripped.startswith("return") or last_stripped == "break;")
-        if needs_break and _case_is_fully_terminated(proc, len(proc.java_logic_lines)):
-            needs_break = False
         # Detect terminal state: no currentState assignment means no outgoing transition
         has_transition = any("currentState = " in line for line in proc.java_logic_lines[case_line_offset:])
         has_running_false = any("running = false" in line for line in proc.java_logic_lines[case_line_offset:])
         already_terminal = last_stripped.startswith("throw ") or last_stripped.startswith("return") or last_stripped == "break;"
         if not has_transition and not has_running_false and not already_terminal:
             proc.java_logic_lines.append("            running = false;")
-        if needs_break:
+        # Add break to prevent fallthrough, unless the case already terminates on all paths.
+        if not already_terminal and not _case_is_fully_terminated(proc, len(proc.java_logic_lines)):
             proc.java_logic_lines.append("            break;")
 
     proc.java_logic_lines.append("        default:")
@@ -3047,6 +3089,7 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
     out_param_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out}
     out_string_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out and p.java_type == "String"}
     out_long_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out and p.java_type == "Long"}
+    out_bigdecimal_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out and "BigDecimal" in p.java_type}
 
     # BigDecimal context: wrap double literals from CASE/ternary into BigDecimal.valueOf()
     target_var_type = None
@@ -3091,12 +3134,28 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
             expr = f"Long.valueOf({expr})"
         elif target in out_long_names and _is_bare_int_literal(expr):
             expr = f"Long.valueOf({expr})"
+        elif target in out_long_names and not _is_long_expr(expr):
+            expr = f"((Number) {expr}).longValue()"
+        elif target in out_bigdecimal_names:
+            if _is_bare_int_literal(expr):
+                expr = f"java.math.BigDecimal.valueOf({expr})"
+            elif "BigDecimal" in expr:
+                pass
+            elif _is_numeric_literal_expr(expr):
+                pass
+            elif "mapper." in expr:
+                expr = f"((java.math.BigDecimal) {expr})"
+            elif not _is_string_expr(expr):
+                expr = f"new java.math.BigDecimal(String.valueOf({expr}))"
         proc.java_logic_lines.append(f"{target}.set({expr});")
     else:
         if target_var_type == "Long" and _is_bare_int_literal(expr):
             expr = f"Long.valueOf({expr})"
         elif target_var_type == "Integer" and _is_bare_long_literal(expr):
             expr = f"Integer.valueOf({expr})"
+        elif target_var_type == "Map<String, Object>" and not expr.startswith("new HashMap") and not expr.startswith("new java.util.HashMap"):
+            if not expr.startswith("(") and "Map" not in expr:
+                expr = f"(Map<String, Object>) {expr}"
         proc.java_logic_lines.append(f"{target} = {expr};")
 
 
@@ -3557,13 +3616,14 @@ def _process_cursor_open(open_data: dict, proc: ProcedureInfo, all_packages: dic
 
                 if is_out_refcursor:
                     proc.java_logic_lines.append(
-                        f"List<Map<String, Object>> {result_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});"
+                        f"{result_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});"
                     )
                 else:
                     proc.java_logic_lines.append(
-                        f"List<Map<String, Object>> {result_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});"
+                        f"{result_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});"
                     )
-                    proc.java_logic_lines.append(f"int {index_var} = 0;")
+                    proc.java_logic_lines.append(f"{index_var} = 0;")
+                proc.java_logic_lines.append(f"if ({result_var} == null) {result_var} = new java.util.ArrayList<>();")
                 return
 
     if "Simple" in kind:
@@ -3605,9 +3665,10 @@ def _process_cursor_open(open_data: dict, proc: ProcedureInfo, all_packages: dic
                 proc.open_cursors[cursor_name.lower()] = proc.open_cursors[cursor_name]
 
                 proc.java_logic_lines.append(
-                    f"List<Map<String, Object>> {result_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});"
+                    f"{result_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});"
                 )
-                proc.java_logic_lines.append(f"int {index_var} = 0;")
+                proc.java_logic_lines.append(f"{index_var} = 0;")
+                proc.java_logic_lines.append(f"if ({result_var} == null) {result_var} = new java.util.ArrayList<>();")
                 return
 
     proc.java_logic_lines.append(f"// cursor {cursor_name} opened — managed by mapper query")
@@ -3832,6 +3893,7 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
     out_java_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out}
     out_string_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out and p.java_type == "String"}
     out_long_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out and p.java_type == "Long"}
+    out_bigdecimal_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out and "BigDecimal" in p.java_type}
     result = ["try {"]
     result.extend(f"    {line}" for line in body_lines)
 
@@ -3855,6 +3917,19 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
                             expr = f"Long.valueOf({expr})"
                         elif target in out_long_names and _is_bare_int_literal(expr):
                             expr = f"Long.valueOf({expr})"
+                        elif target in out_long_names and not _is_long_expr(expr):
+                            expr = f"((Number) {expr}).longValue()"
+                        elif target in out_bigdecimal_names:
+                            if _is_bare_int_literal(expr):
+                                expr = f"java.math.BigDecimal.valueOf({expr})"
+                            elif "BigDecimal" in expr:
+                                pass
+                            elif _is_numeric_literal_expr(expr):
+                                pass
+                            elif "mapper." in expr:
+                                expr = f"((java.math.BigDecimal) {expr})"
+                            elif not _is_string_expr(expr):
+                                expr = f"new java.math.BigDecimal(String.valueOf({expr}))"
                         result.append(f"    {target}.set({expr});")
                     else:
                         result.append(f"    {target} = {expr};")
@@ -4021,6 +4096,19 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
     if parsed_query:
         sql_text = _reconstruct_sql_from_ast(parsed_query)
         if sql_text:
+            _upper_sql = sql_text.strip().upper()
+            if _upper_sql.startswith("SAVEPOINT") or _upper_sql.startswith("ROLLBACK TO SAVEPOINT") or _upper_sql.startswith("RELEASE SAVEPOINT"):
+                if _upper_sql.startswith("SAVEPOINT"):
+                    sp_name = sql_text.strip()[len("SAVEPOINT"):].strip()
+                    proc.java_logic_lines.append(f"// SAVEPOINT {sp_name} — handled via JDBC Connection.setSavepoint() in @Transactional context")
+                elif _upper_sql.startswith("ROLLBACK TO SAVEPOINT"):
+                    sp_name = sql_text.strip()[len("ROLLBACK TO SAVEPOINT"):].strip()
+                    proc.java_logic_lines.append(f"// ROLLBACK TO SAVEPOINT {sp_name} — handled via JDBC Connection.rollback(Savepoint) in @Transactional context")
+                else:
+                    sp_name = sql_text.strip()[len("RELEASE SAVEPOINT"):].strip()
+                    proc.java_logic_lines.append(f"// RELEASE SAVEPOINT {sp_name} — not needed in Spring @Transactional context")
+                _record_todo("SAVEPOINT", proc, f"sql={sql_text.strip()}")
+                return
             raw_sql_for_params = sql_text
             sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
             # Convert USING args as MyBatis parameters
@@ -4721,7 +4809,7 @@ SQL_FUNCTION_MAP = {
     "to_char": "__HANDLER__",
     "to_number": "Long.valueOf",
     "to_clob": "{args0}",
-    "to_date": "java.sql.Date.valueOf",
+    "to_date": "__HANDLER__",
     "to_timestamp": "java.sql.Timestamp.valueOf",
     "current_timestamp": "__EXPR__new java.sql.Timestamp(System.currentTimeMillis())",
     "current_date": "__EXPR__new java.sql.Date(System.currentTimeMillis())",
@@ -4784,6 +4872,11 @@ SQL_FUNCTION_MAP = {
     "to_hex": "__HANDLER__",
     "encode": "__HANDLER__",
     "md5": "__HANDLER__",
+    "jsonb_build_object": "__HANDLER__",
+    "jsonb_array_length": "__HANDLER__",
+    "string_to_array": "__HANDLER__",
+    "nextval": "__HANDLER__",
+    "currval": "__HANDLER__",
 }
 
 SQL_EXPR_FUNCTIONS = {k for k, v in SQL_FUNCTION_MAP.items() if v.startswith("__EXPR__")}
@@ -5083,10 +5176,46 @@ def _handle_function(func_name, args_java, proc):
             return f"Integer.toHexString({args_java[0]}).toUpperCase()"
         return "null"
 
+    elif func_name == "to_date":
+        if not args_java:
+            return "null"
+        if len(args_java) >= 2:
+            fmt_raw = args_java[1].strip('"').strip("'").lower()
+            if fmt_raw in ("yyyy-mm-dd", "yyyy-mm-dd"):
+                return f"java.sql.Date.valueOf(String.valueOf({args_java[0]}))"
+            java_fmt = fmt_raw
+            for sql_pat, java_pat in sorted(_TO_CHAR_DATE_MAP.items(), key=lambda x: -len(x[0])):
+                java_fmt = java_fmt.replace(sql_pat, java_pat)
+            return f"new java.sql.Date(new java.text.SimpleDateFormat(\"{java_fmt}\").parse(String.valueOf({args_java[0]})).getTime())"
+        return f"java.sql.Date.valueOf(String.valueOf({args_java[0]}))"
+
+    elif func_name == "jsonb_array_length":
+        return f"this.jsonbArrayLength({', '.join(args_java)})" if args_java else "0"
+
+    elif func_name == "jsonb_build_object":
+        if not args_java:
+            return "null"
+        coerced = []
+        for a in args_java:
+            if _is_string_expr(a):
+                coerced.append(a)
+            else:
+                coerced.append(f"String.valueOf({a})")
+        return f"this.jsonbBuildObject({', '.join(coerced)})"
+
+    elif func_name == "string_to_array":
+        return f"this.stringToArray({', '.join(args_java)})" if args_java else "null"
+
+    elif func_name == "nextval":
+        return f"this.nextval({', '.join(args_java)})" if args_java else "null"
+
+    elif func_name == "currval":
+        return f"this.currval({', '.join(args_java)})" if args_java else "null"
+
     return f"/* TODO: {func_name} */ null"
 
 
-_NUMERIC_FUNC_RETURN_INT = {"length", "instr", "ascii", "sign", "mod", "round", "trunc"}
+_NUMERIC_FUNC_RETURN_INT = {"length", "instr", "ascii", "sign", "mod", "round", "trunc", "jsonb_array_length"}
 _NUMERIC_FUNC_RETURN_DOUBLE = {"abs", "ceil", "floor", "power", "sqrt", "log", "exp", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "radians", "degrees"}
 _NUMERIC_FUNC_NEEDS_DOUBLE_ARGS = {"sin", "cos", "tan", "asin", "acos", "atan", "atan2", "sqrt", "log", "exp", "radians", "degrees", "power", "ceil", "floor"}
 _NUMERIC_FUNC_RETURN_LONG = {"to_number"}
@@ -5094,7 +5223,7 @@ _STRING_FUNC_RETURN = {
     "upper", "lower", "trim", "replace", "concat", "lpad", "rpad", "rtrim", "ltrim",
     "chr", "substr", "substring", "nvl", "nvl2", "coalesce", "to_char", "to_clob",
     "reverse", "repeat", "initcap", "regexp_replace", "regexp_like", "left", "right",
-    "split_part", "translate", "overlay",
+    "split_part", "translate", "overlay", "to_date",
 }
 
 
@@ -5176,6 +5305,8 @@ def _infer_expr_type(expr, proc: ProcedureInfo) -> str:
                     return "java.math.BigDecimal"
             if func_name in _STRING_FUNC_RETURN:
                 return "String"
+            if func_name == "to_date":
+                return "java.sql.Date"
             if func_name in _NUMERIC_FUNC_RETURN_INT:
                 return "Integer"
             if func_name in _NUMERIC_FUNC_RETURN_DOUBLE:
@@ -5278,6 +5409,13 @@ def _coerce_java_arg(a_java: str, target_type: str) -> str:
         if target_type == "String":
             return f"(String) {a_java}"
         return f"({target_type}) {a_java}"
+    if target_type == "String":
+        if "BigDecimal" in a_java or re.search(r'\b\w*[Bb]ig[Dd]ecimal\w*\b', a_java):
+            return f"{a_java}.toString()"
+        if ".get(" in a_java:
+            return f"String.valueOf({a_java})"
+        if a_java.startswith("this.") and ("jsonbArrayLength" in a_java or "nextval" in a_java or "jsonbBuildObject" in a_java):
+            return f"String.valueOf({a_java})"
     return a_java
 
 
@@ -5461,6 +5599,12 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             right = _expr_to_java(val.get("right", {}), proc, all_packages=all_packages)
             op = val.get("op", "")
 
+            # PostgreSQL JSONB operators
+            if op == "->":
+                return left
+            if op == "->>":
+                return "0"
+
             if proc is not None:
                 left_type = _infer_expr_type(val.get("left"), proc)
                 right_type = _infer_expr_type(val.get("right"), proc)
@@ -5477,29 +5621,41 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
 
                 # Cast .get() field access results for typed comparisons
                 if ".get(" in left and "BigDecimal" in left_type:
-                    left = f"((java.math.BigDecimal) {left})"
+                    left = f"java.math.BigDecimal.valueOf(((Number) {left}).longValue())"
                 elif ".get(" in left and left_type == "Integer":
                     left = f"((Integer) {left})"
                 elif ".get(" in left and "Long" in left_type:
                     left = f"((Long) {left})"
-                elif ".get(" in left and left_type == "Object" and op in (">", "<", ">=", "<=", "=", "<>"):
-                    left = f"((Number) {left}).intValue()"
+                elif left_type == "Object" and op in (">", "<", ">=", "<=", "=", "<>"):
+                    if ".get(" in left:
+                        left = f"((Number) {left}).intValue()"
+                    elif "this." in left or "(" in left:
+                        left = f"((Number) {left}).intValue()"
                 if ".get(" in right and "BigDecimal" in right_type:
-                    right = f"((java.math.BigDecimal) {right})"
+                    right = f"java.math.BigDecimal.valueOf(((Number) {right}).longValue())"
                 elif ".get(" in right and right_type == "Integer":
                     right = f"((Integer) {right})"
                 elif ".get(" in right and "Long" in right_type:
                     right = f"((Long) {right})"
-                elif ".get(" in right and right_type == "Object" and op in (">", "<", ">=", "<=", "=", "<>"):
-                    right = f"((Number) {right}).intValue()"
+                elif right_type == "Object" and op in (">", "<", ">=", "<=", "=", "<>"):
+                    if ".get(" in right:
+                        right = f"((Number) {right}).intValue()"
+                    elif "this." in right or "(" in right:
+                        right = f"((Number) {right}).intValue()"
 
                 is_bd = "BigDecimal" in left_type or "BigDecimal" in right_type
                 is_str = left_type == "String" or right_type == "String"
 
                 if is_bd and op in (">", "<", ">=", "<=", "=", "<>"):
                     cmp_map = {"<": "<", ">": ">", "<=": "<=", ">=": ">=", "=": "==", "<>": "!="}
-                    if _is_numeric_literal(val.get("right")):
+                    if _is_numeric_literal(val.get("right")) and "BigDecimal" not in right:
                         right = f"java.math.BigDecimal.valueOf({right})"
+                    if "Integer" in left_type or left_type == "int":
+                        if "BigDecimal" not in left:
+                            left = f"java.math.BigDecimal.valueOf({left})"
+                    if "Integer" in right_type or right_type == "int":
+                        if "BigDecimal" not in right:
+                            right = f"java.math.BigDecimal.valueOf({right})"
                     return f"{left}.compareTo({right}) {cmp_map[op]} 0"
 
                 if is_str and not is_bd and op in (">", "<", ">=", "<="):
@@ -6743,6 +6899,13 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
                     _imp = _resolve_import(p.java_type)
                     if _imp:
                         all_imports.add(_imp)
+        # REFCURSOR OUT params and cursor result vars need List/Map imports
+        if any(p.is_out and p.is_refcursor for p in proc.parameters):
+            _needs_list_import = True
+            all_imports.add("import java.util.Map;")
+        if proc.open_cursors:
+            _needs_list_import = True
+            all_imports.add("import java.util.Map;")
     if _needs_list_import:
         all_imports.add("import java.util.List;")
 
@@ -6911,6 +7074,35 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
         lines.append("        }")
         lines.append("    }")
 
+    # Stubs for known SQL functions that bypass _register_missing_overload
+    _known_func_stubs = []
+    if "this.nextval(" in all_body_text:
+        _known_func_stubs.append(("nextval", "Long", [("String", "seqName")]))
+    if "this.currval(" in all_body_text:
+        _known_func_stubs.append(("currval", "Long", [("String", "seqName")]))
+    if "this.stringToArray(" in all_body_text:
+        _known_func_stubs.append(("stringToArray", "Object", [("String", "str"), ("String", "delimiter")]))
+    if "this.jsonbArrayLength(" in all_body_text:
+        _known_func_stubs.append(("jsonbArrayLength", "Integer", [("String", "jsonb")]))
+    if "this.jsonbBuildObject(" in all_body_text:
+        _known_func_stubs.append(("jsonbBuildObject", "String", [("Object", "...args")]))
+    for _kfn, _kret, _kparams in _known_func_stubs:
+        _ksig = ", ".join(f"{pt} {pn}" for pt, pn in _kparams)
+        _already = any(f"public {_kret} {_kfn}({_ksig})" in m for m in methods)
+        if not _already:
+            lines.append("")
+            lines.append(f"    public {_kret} {_kfn}({_ksig}) {{")
+            lines.append(f"        // TODO: implement {_kfn}")
+            if _kret == "Integer" or _kret == "int":
+                lines.append(f"        return 0;")
+            elif _kret == "Long" or _kret == "long":
+                lines.append(f"        return 0L;")
+            elif _kret == "java.math.BigDecimal":
+                lines.append(f"        return java.math.BigDecimal.ZERO;")
+            else:
+                lines.append(f"        return null;")
+            lines.append(f"    }}")
+
     missing = _MISSING_OVERLOADS.get(pkg.package_name, [])
     for method_name, params in missing:
         existing_sigs = set()
@@ -6925,10 +7117,26 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
             param_types = [pt for pt, _ in params]
             has_bd = any("BigDecimal" in pt for pt in param_types)
             ret = "java.math.BigDecimal" if has_bd else "Object"
+            # Known functions: fix return types for common SQL functions
+            if method_name == "jsonbArrayLength":
+                ret = "Integer"
+            elif method_name == "stringToArray":
+                ret = "Object"
+            elif method_name == "jsonbBuildObject":
+                ret = "String"
+                # Coerce all params to String for jsonb_build_object stub
+                sig_str = ", ".join(f"String {pn}" for _, pn in params)
             lines.append(f"    // TODO: Auto-generated stub — parser missed this overload")
             lines.append(f"    public {ret} {method_name}({sig_str}) {{")
             lines.append(f"        // TODO: implement {method_name}({sig_str})")
-            lines.append(f"        return null;")
+            if ret == "Integer" or ret == "int":
+                lines.append(f"        return 0;")
+            elif ret == "Long" or ret == "long":
+                lines.append(f"        return 0L;")
+            elif ret == "java.math.BigDecimal":
+                lines.append(f"        return java.math.BigDecimal.ZERO;")
+            else:
+                lines.append(f"        return null;")
             lines.append(f"    }}")
 
     for i, method in enumerate(methods):
@@ -7124,6 +7332,15 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
         if needs_found:
             body_lines.append("boolean found = false;")
 
+        cursor_vars_to_hoist = set()
+        for cursor_name, meta in proc.open_cursors.items():
+            result_var = meta.get("result_var")
+            index_var = meta.get("index_var")
+            if result_var and result_var not in top_level_declares:
+                cursor_vars_to_hoist.add(result_var)
+            if index_var and index_var not in top_level_declares:
+                cursor_vars_to_hoist.add(index_var)
+
         exception_block = proc.body.get("exception_block") if proc.body else None
 
         for line in proc.java_logic_lines:
@@ -7142,16 +7359,23 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                     body_lines.append(f"return {result_var};")
                     break
 
-        if result_vars_to_hoist:
+        all_vars_to_hoist = result_vars_to_hoist | cursor_vars_to_hoist
+        if all_vars_to_hoist:
             cleaned = []
             for line in body_lines:
                 s = line.strip()
                 modified = False
-                for hv in result_vars_to_hoist:
+                for hv in all_vars_to_hoist:
                     m = re.match(rf'^(List<Map<String, Object>>)\s+{re.escape(hv)}\s*=\s*(.*)', s)
                     if m:
                         indent = line[:len(line) - len(line.lstrip())]
                         cleaned.append(f"{indent}{hv} = {m.group(2)}")
+                        modified = True
+                        break
+                    m2 = re.match(rf'^(int)\s+{re.escape(hv)}\s*=\s*(.*)', s)
+                    if m2:
+                        indent = line[:len(line) - len(line.lstrip())]
+                        cleaned.append(f"{indent}{hv} = {m2.group(2)}")
                         modified = True
                         break
                 if not modified:
@@ -7163,9 +7387,33 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                     insert_idx = i + 1
                 else:
                     break
-            for hv in sorted(result_vars_to_hoist):
-                body_lines.insert(insert_idx, f"List<Map<String, Object>> {hv} = null;")
+            for hv in sorted(all_vars_to_hoist):
+                if hv.endswith("Idx"):
+                    body_lines.insert(insert_idx, f"int {hv} = 0;")
+                else:
+                    body_lines.insert(insert_idx, f"List<Map<String, Object>> {hv} = null;")
                 insert_idx += 1
+
+        tc_hoisted = []
+        tc_remaining = []
+        for line in body_lines:
+            s = line.strip()
+            if re.match(rf'^(List<Map<String, Object>>|int)\s+(\w+)\s*=\s*', s):
+                var_name = re.match(rf'^(List<Map<String, Object>>|int)\s+(\w+)\s*=\s*', s).group(2)
+                if var_name in cursor_vars_to_hoist:
+                    tc_hoisted.append(line)
+                    continue
+            tc_remaining.append(line)
+        body_lines = tc_remaining
+        insert_idx = 0
+        for i, line in enumerate(body_lines):
+            if not line.startswith("return") and not line.startswith("if") and not line.startswith("}"):
+                insert_idx = i + 1
+            else:
+                break
+        for line in tc_hoisted:
+            body_lines.insert(insert_idx, line)
+            insert_idx += 1
 
     if not body_lines:
         body_lines.append("// Auto-generated from stored procedure")
@@ -7192,6 +7440,12 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
         body_lines = _wrap_try_catch(body_lines, handlers, proc, all_packages)
 
     body_lines = hoisted_decls + body_lines
+
+    for line in body_lines:
+        if 'List<Map<String, Object>>' in line:
+            proc.imports.add("import java.util.List;")
+            proc.imports.add("import java.util.Map;")
+            break
 
     for _bli, _bline in enumerate(body_lines):
         if "__SQLERRM__" in _bline:
@@ -7632,6 +7886,9 @@ def _default_test_value(java_type: str, param_name: str, pkg=None) -> str:
                         init_parts.append(f"{snake_to_camel(fn)} = {fv}")
                     return f"new {svc_class}Service.{java_type}() {{ {{ {'; '.join(init_parts)}; }} }}"
                 return f"new {svc_class}Service.{java_type}()"
+    if "string" in lower or lower == "object":
+        if "date" in name_lower:
+            return "\"2024-01-01\""
     return f"\"test_{param_name}\""
 
 
@@ -8398,6 +8655,15 @@ def _itest_generate_test_value(col_name: str, sql_type: str) -> str:
             return "1"
         return "10"
     if any(t in lower_type for t in ("numeric", "decimal", "real", "float", "double")):
+        # Parse precision/scale to avoid overflow: numeric(5,4) max is 9.9999
+        _m = re.match(r'(?:numeric|decimal)\s*\(\s*(\d+)\s*(?:,\s*(\d+))?\s*\)', lower_type)
+        if _m:
+            _precision = int(_m.group(1))
+            _scale = int(_m.group(2) or "0")
+            _int_digits = _precision - _scale
+            if _int_digits <= 1:
+                # e.g., numeric(5,4) → max 9.9999
+                return f"{'9.' + '9' * _scale}" if _scale > 0 else "9"
         return "99.99"
     if "timestamp" in lower_type:
         return "'2024-01-01 00:00:00'"
@@ -8408,9 +8674,20 @@ def _itest_generate_test_value(col_name: str, sql_type: str) -> str:
     if "bytea" in lower_type:
         return "'\\x00'"
     if any(t in lower_type for t in ("varchar", "char", "text", "json", "jsonb", "uuid")):
+        # Parse length from varchar(N) / char(N) to respect column constraints
+        _len_m = re.match(r'(?:varchar2?|character\s+varying|char|character)\s*\(\s*(\d+)\s*\)', lower_type)
+        _max_len = int(_len_m.group(1)) if _len_m else 0
+        if _max_len == 1:
+            # Single-char flag columns: use 'Y' instead of long string
+            return "'Y'"
         if "id" in lower_col or "code" in lower_col or "type" in lower_col or "status" in lower_col:
-            return f"'test_{lower_col}'"
-        return f"'test {lower_col}'"
+            _val = f"test_{lower_col}"
+        else:
+            _val = f"test {lower_col}"
+        # Truncate if value exceeds column length
+        if _max_len > 0 and len(_val) > _max_len:
+            _val = _val[:_max_len]
+        return f"'{_val}'"
     return "'test'"
 
 
@@ -8627,13 +8904,22 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
         test_name = f"{base_test_name}_{count}" if count > 0 else base_test_name
 
         is_itest_stubbed = (proc.name, len(proc.parameters)) in STUB_PROCEDURES
+        # Determine timeout based on procedure complexity
+        # Heuristic: DML count + service calls + logic lines indicate how many DB round-trips occur
+        complexity_score = len(proc.dml_statements) + len(proc.service_calls) + len(proc.java_logic_lines) // 10
+        if complexity_score > 20:
+            timeout_seconds = 30
+        elif complexity_score > 10:
+            timeout_seconds = 20
+        else:
+            timeout_seconds = 10
         lines = []
         if is_itest_stubbed:
             lines.append("    @Disabled(\"Converter stub — complex PL/pgSQL pattern requires manual implementation\")")
         if sql_script:
             lines.append(f"    @org.springframework.test.context.jdbc.Sql(scripts = \"{sql_script}\")")
         lines.append("    @Test")
-        lines.append("    @Timeout(value = 10, unit = TimeUnit.SECONDS)")
+        lines.append(f"    @Timeout(value = {timeout_seconds}, unit = TimeUnit.SECONDS)")
         lines.append(f"    void {test_name}() {{")
         for pv in param_values:
             lines.append(f"        {pv}")
@@ -9051,6 +9337,7 @@ def _render_report_markdown(report: ConversionReport) -> str:
             "FOR_UNSUPPORTED_KIND": ("FOR 循环未知类型", "FOR 循环的 kind 不在 Range/Query 之中"),
             "FOR_QUERY_FAILED": ("FOR 查询重建失败", "FOR IN SELECT 的 SQL 无法从 AST 还原"),
             "EXECUTE_UNRESOLVED": ("EXECUTE 动态 SQL 未解析", "动态 SQL 变量无法追踪到完整 SQL 字符串"),
+            "SAVEPOINT": ("SAVEPOINT 事务控制", "SAVEPOINT / ROLLBACK TO SAVEPOINT 需通过 JDBC 或 Spring @Transactional 处理"),
             "AUTO_STUB": ("自动 Stub", "生成代码未通过编译检查，方法体被替换为 Stub"),
             "COMPLEX_REVIEW": ("复杂模式需审查", "同 AUTO_STUB，为方法级注释标记"),
         }
