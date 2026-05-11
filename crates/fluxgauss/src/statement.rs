@@ -207,6 +207,10 @@ pub fn process_statement(
             Ok(())
         }
         PlStatement::Block(block_stmt) => {
+            // Promote inner Block declarations to method-level scope
+            for decl in &block_stmt.node.declarations {
+                crate::analyze::process_declaration(decl, proc);
+            }
             let has_exceptions = block_stmt.node.exception_block.is_some();
             if has_exceptions {
                 push_logic_line(proc, "try {".into());

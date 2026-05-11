@@ -386,7 +386,7 @@ fn parse_param_mode(mode: Option<&str>) -> Option<ParamMode> {
     }
 }
 
-fn normalize_sql_type(sql_type: &str) -> String {
+pub fn normalize_sql_type(sql_type: &str) -> String {
     let lower = sql_type.to_lowercase();
     let trimmed = lower.trim();
     if trimmed.starts_with("character varying") {

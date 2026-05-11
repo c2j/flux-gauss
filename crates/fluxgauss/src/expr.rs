@@ -358,7 +358,7 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
                     if r_other_is_int {
                         format!("((Number) {}).longValue()", l)
                     } else {
-                        l.clone()
+                        format!("((Number) {}).longValue()", l)
                     }
                 } else { l.clone() };
                 let ro = if has_get_r {
@@ -366,7 +366,7 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
                     if l_other_is_int {
                         format!("((Number) {}).longValue()", r)
                     } else {
-                        r.clone()
+                        format!("((Number) {}).longValue()", r)
                     }
                 } else { r.clone() };
                 (lo, ro)
