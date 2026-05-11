@@ -58,10 +58,15 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
+    let config_path_str = cli.config.as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "CLI mode".into());
+
     let (config, sql_files, output_dir) = resolve_inputs(&cli)?;
 
     let base_package = config.base_package_or_default();
     println!("  Output:     {}", output_dir);
+    println!("  Config:     {}", config_path_str);
     println!("  Package:    {}", base_package);
     println!("  Input:      {} SQL file(s)", sql_files.len());
 
@@ -73,16 +78,51 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let mut incremental = IncrementalState::new(&output_dir, cli.full);
     incremental.initialize()?;
 
+    let mut log = fluxgauss::logging::ConversionLog::new(&output_dir)?;
+    log.log(&format!("Output: {}", output_dir));
+    log.log(&format!("Config: {}", config_path_str));
+    log.log(&format!("Input: {} SQL file(s)", sql_files.len()));
+
     let result = pipeline::run_pipeline(&sql_files, &config, &mut incremental);
 
     let total_packages = result.packages.len();
     let total_procedures: usize = result.packages.iter().map(|p| p.procedures.len()).sum();
     let total_generated = result.generated_files.len();
 
-    println!("\n  ── Results ──");
-    println!("  Packages:    {}", total_packages);
-    println!("  Procedures:  {}", total_procedures);
-    println!("  Generated:   {} file(s)", total_generated);
+    log.log(&format!("Done! {} packages, {} procedures, {} files",
+              total_packages, total_procedures, total_generated));
+
+    println!();
+    println!("  Done!");
+    println!("    Packages:    {}", total_packages);
+    println!("    Procedures:  {}", total_procedures);
+    println!("    DML stmts:   {} (extracted as iBatis mapper methods)", result.total_dml);
+    println!("    Cross-calls: {}", result.total_cross_calls);
+    println!("    Test files:  {} (generated unit tests)", result.test_file_count);
+
+    let itest_enabled = config.integration_test
+        .as_ref()
+        .and_then(|it| it.enabled)
+        .unwrap_or(false);
+    if itest_enabled {
+        let itest_mode = config.integration_test
+            .as_ref()
+            .and_then(|it| it.mode.clone())
+            .unwrap_or_else(|| "remote".into());
+        println!("    IT files:    {} (generated integration tests, {} mode)",
+                 result.itest_file_count, itest_mode);
+    }
+
+    println!("    Skipped:     {} (non-procedure SQL)", result.skipped.len());
+
+    if !result.unresolved_calls.is_empty() {
+        println!("    Unresolved:  {} (cross-package calls, 详见转换报告)",
+                 result.unresolved_calls.len());
+    }
+
+    if result.stub_count > 0 {
+        println!("    Stubs:       {} (需人工审查, 详见转换报告)", result.stub_count);
+    }
 
     if !result.errors.is_empty() {
         println!("\n  ── Errors ({} total) ──", result.errors.len());
@@ -91,15 +131,39 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    println!("\n  Done. {} package(s), {} file(s) generated.", total_packages, total_generated);
+    let report = fluxgauss::report::build_report(
+        &result.packages,
+        result.skipped,
+        result.unresolved_calls,
+        result.stub_count,
+        &config_path_str,
+        &output_dir,
+        sql_files.len(),
+    );
+    let report_paths = report.save_auto(std::path::Path::new(&output_dir));
 
     if let Some(report_path) = &cli.report {
-        let mut report = fluxgauss::report::ConversionReport::new();
-        report.total_files = sql_files.len();
-        report.total_packages = total_procedures;
-        report.save(report_path)?;
-        println!("  Report:     {}", report_path.display());
+        if report.save(report_path).is_ok() {
+            println!("  Report:     {}", report_path.display());
+        }
     }
+
+    let log_latest = log.latest_log_path().to_path_buf();
+    let _ = log.close();
+    println!("\n    详细处理日志: {}", log_latest.display());
+
+    if !report_paths.is_empty() {
+        println!("\n  📄 转换报告:");
+        for p in &report_paths {
+            println!("    - {}", p);
+        }
+        println!("    - {}", log_latest.display());
+    }
+
+    let abs_output = std::path::Path::new(&output_dir).canonicalize()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| output_dir.clone());
+    println!("\n  Output: {}", abs_output);
 
     Ok(())
 }

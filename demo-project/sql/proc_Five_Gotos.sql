@@ -258,7 +258,7 @@ BEGIN
     FOR order_rec IN (
         SELECT order_id, customer_id
         FROM orders
-        WHERE create_date = p_batch_date
+        WHERE create_time = p_batch_date
     ) LOOP
         <<check_next>>
 
@@ -287,7 +287,7 @@ BEGIN
         END LOOP;
 
         -- 通过全部检查
-        UPDATE orders SET validate_flag = 'Y' WHERE order_id = order_rec.order_id;
+        UPDATE orders SET process_flag = 'VALIDATED' WHERE order_id = order_rec.order_id;
 
         <<next_order>>
         NULL;  -- PL/SQL 标签后必须跟语句

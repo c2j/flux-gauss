@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::config::AppConfig;
@@ -13,6 +14,13 @@ pub struct PipelineResult {
     pub errors: Vec<ConversionError>,
     pub warnings: Vec<String>,
     pub skipped: Vec<crate::types::SkippedItem>,
+    pub unresolved_calls: Vec<String>,
+    pub stub_count: usize,
+    pub stub_reasons: HashMap<(String, usize), Vec<String>>,
+    pub test_file_count: usize,
+    pub itest_file_count: usize,
+    pub total_dml: usize,
+    pub total_cross_calls: usize,
 }
 
 pub fn run_pipeline(
@@ -22,17 +30,38 @@ pub fn run_pipeline(
 ) -> PipelineResult {
     let base_package = config.base_package_or_default();
 
+    let mut ctx = AnalysisContext::new();
     let parsed = phase1_parse(sql_files, config, incremental);
-    let analyzed = phase2_analyze(parsed);
-    let (generated, errors) = phase3_generate(&analyzed, config, incremental);
+    let analyzed = phase2_analyze(parsed, &mut ctx);
+    let (generated, test_count, itest_count, errors) = phase3_generate(&analyzed, config, incremental);
 
-    let analyzed_packages = analyzed.packages;
+    let packages = analyzed.packages;
+    let skipped = analyzed.skipped;
+
+    let total_dml: usize = packages
+        .iter()
+        .flat_map(|p| p.procedures.iter())
+        .map(|p| p.dml_statements.len())
+        .sum();
+    let total_cross_calls: usize = packages
+        .iter()
+        .flat_map(|p| p.procedures.iter())
+        .map(|p| p.service_calls.len())
+        .sum();
+
     PipelineResult {
-        packages: analyzed_packages,
+        packages,
         generated_files: generated,
         errors,
         warnings: Vec::new(),
-        skipped: Vec::new(),
+        skipped,
+        unresolved_calls: ctx.unresolved_calls.clone(),
+        stub_count: ctx.stub_procedures.len(),
+        stub_reasons: ctx.stub_reasons.clone(),
+        test_file_count: test_count,
+        itest_file_count: itest_count,
+        total_dml,
+        total_cross_calls,
     }
 }
 
@@ -46,8 +75,13 @@ fn phase1_parse(
     let mut summaries = Vec::new();
     let mut skipped = Vec::new();
     let mut errors = Vec::new();
+    let total = sql_files.len();
 
-    for sql_file in sql_files {
+    for (idx, sql_file) in sql_files.iter().enumerate() {
+        let basename = sql_file.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+
         if incremental.is_cached(sql_file) {
             if let Some(ast_json) = incremental.load_cached_ast(sql_file) {
                 if let Ok(parse_output) =
@@ -61,10 +95,13 @@ fn phase1_parse(
                     packages.extend(result.packages);
                     skipped.extend(result.skipped);
                     errors.extend(result.errors);
+                    crate::progress::progress_bar("Parse", idx + 1, total, &format!("Cached {}", basename));
                     continue;
                 }
             }
         }
+
+        crate::progress::progress_bar("Parse", idx + 1, total, &format!("Parsing {}", basename));
 
         let content = match std::fs::read(sql_file) {
             Ok(bytes) => match ogsql_parser::token::decode_sql_file(&bytes) {
@@ -133,6 +170,8 @@ fn phase1_parse(
         errors.extend(result.errors);
     }
 
+    crate::progress::progress_done("Parse", total);
+
     ParsedPackages {
         packages,
         summaries,
@@ -141,19 +180,27 @@ fn phase1_parse(
     }
 }
 
-fn phase2_analyze(parsed: ParsedPackages) -> AnalyzedPackages {
+fn phase2_analyze(
+    parsed: ParsedPackages,
+    mut ctx: &mut AnalysisContext,
+) -> AnalyzedPackages {
     let summary_map: std::collections::HashMap<String, &PackageSummary> = parsed
         .summaries
         .iter()
         .map(|s| (s.name.clone(), s))
         .collect();
 
-    let mut ctx = AnalysisContext::new();
     let mut errors = Vec::new();
     let mut packages = parsed.packages;
 
+    let total: usize = packages.iter().map(|p| p.procedures.len()).sum();
+    let mut idx = 0;
+
     for pkg in &mut packages {
         for proc in &mut pkg.procedures {
+            idx += 1;
+            crate::progress::progress_bar("Analyze", idx, total, &proc.name);
+
             let proc_summaries: std::collections::HashMap<String, PackageSummary> = parsed
                 .summaries
                 .iter()
@@ -169,6 +216,8 @@ fn phase2_analyze(parsed: ParsedPackages) -> AnalyzedPackages {
         }
     }
 
+    crate::progress::progress_done("Analyze", total);
+
     AnalyzedPackages {
         packages,
         summaries: parsed.summaries,
@@ -181,12 +230,14 @@ fn phase3_generate(
     analyzed: &AnalyzedPackages,
     config: &AppConfig,
     _incremental: &IncrementalState,
-) -> (Vec<String>, Vec<ConversionError>) {
+) -> (Vec<String>, usize, usize, Vec<ConversionError>) {
     let base_package = config.base_package_or_default();
     let output_dir_str = config.output_dir_or_default();
     let output_dir = std::path::Path::new(&output_dir_str);
     let mut generated = Vec::new();
     let mut errors = Vec::new();
+    let mut test_count = 0usize;
+    let mut itest_count = 0usize;
 
     match crate::generate::skeleton::write_skeleton_files(output_dir, config, &base_package) {
         Ok(files) => generated.extend(files),
@@ -196,7 +247,11 @@ fn phase3_generate(
         }),
     }
 
-    for pkg in &analyzed.packages {
+    for (idx, pkg) in analyzed.packages.iter().enumerate() {
+        let n = idx + 1;
+        let total = analyzed.packages.len();
+        crate::progress::progress_bar("Generate", n, total, &pkg.package_name);
+
         let service_injections = crate::generate::service::collect_service_injections(pkg);
 
         if let Err(e) = crate::generate::mapper::write_mapper_interface(output_dir, pkg, &base_package) {
@@ -231,6 +286,8 @@ fn phase3_generate(
                 path: pkg.package_name.clone(),
                 message: format!("write_service_test: {}", e),
             });
+        } else {
+            test_count += 1;
         }
 
         if config.integration_test.as_ref().and_then(|it| it.enabled).unwrap_or(false) {
@@ -239,9 +296,13 @@ fn phase3_generate(
                     path: pkg.package_name.clone(),
                     message: format!("write_itest_class: {}", e),
                 });
+            } else {
+                itest_count += 1;
             }
         }
     }
 
-    (generated, errors)
+    crate::progress::progress_done("Generate", analyzed.packages.len());
+
+    (generated, test_count, itest_count, errors)
 }

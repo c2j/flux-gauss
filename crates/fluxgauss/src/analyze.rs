@@ -40,14 +40,15 @@ pub fn analyze_procedure(
     result
 }
 
-fn process_declaration(
+pub fn process_declaration(
     decl: &ogsql_parser::ast::plpgsql::PlDeclaration,
     proc: &mut ProcedureInfo,
 ) {
     use ogsql_parser::ast::plpgsql::PlDeclaration;
     match decl {
         PlDeclaration::Variable(var) => {
-            let sql_type = crate::extract::format_pl_data_type(&var.data_type);
+            let sql_type_raw = crate::extract::format_pl_data_type(&var.data_type);
+            let sql_type = crate::extract::normalize_sql_type(&sql_type_raw);
             let sql_type_lower = sql_type.to_lowercase();
             let java_type = if sql_type_lower.contains("%rowtype") {
                 proc.imports.insert("import java.util.Map;".into());

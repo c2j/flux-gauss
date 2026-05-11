@@ -216,6 +216,9 @@ fn generate_cleanup_goto(
         }
         // For Block statements with the cleanup label, process the body
         if let PlStatement::Block(block) = stmt {
+            for decl in &block.node.declarations {
+                crate::analyze::process_declaration(decl, proc);
+            }
             if block.node.label.as_deref() == Some(&cleanup_label) {
                 for s in &block.node.body {
                     crate::statement::process_statement(s, proc)?;
@@ -263,7 +266,9 @@ fn process_cleanup_stmt(
             Ok(())
         }
         PlStatement::Block(block) => {
-            // Process block body recursively (may contain GOTOs)
+            for decl in &block.node.declarations {
+                crate::analyze::process_declaration(decl, proc);
+            }
             for s in &block.node.body {
                 process_cleanup_stmt(s, cleanup_label, proc)?;
             }
@@ -435,6 +440,9 @@ fn generate_logic_skip_goto(
             }
             // For Block with the target label, process its body
             if let PlStatement::Block(block) = stmt {
+                for decl in &block.node.declarations {
+                    crate::analyze::process_declaration(decl, proc);
+                }
                 if block.node.label.as_deref() == Some(label_name.as_str()) {
                     for s in &block.node.body {
                         crate::statement::process_statement(s, proc)?;
@@ -512,7 +520,9 @@ fn process_with_goto_replace(
                 proc.java_logic_lines.push("}".to_string());
             }
             PlStatement::Block(block) => {
-                // Process block body without the label wrapper
+                for decl in &block.node.declarations {
+                    crate::analyze::process_declaration(decl, proc);
+                }
                 process_with_goto_replace(&block.node.body, goto_labels, proc)?;
             }
             PlStatement::Loop(loop_stmt) => {
@@ -623,6 +633,9 @@ fn generate_state_machine_goto(
                     }
                 }
                 PlStatement::Block(block) => {
+                    for decl in &block.node.declarations {
+                        crate::analyze::process_declaration(decl, proc);
+                    }
                     if block.node.label.as_deref() == Some(label_name.as_str()) {
                         for s in &block.node.body {
                             crate::statement::process_statement(s, proc)?;

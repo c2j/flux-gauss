@@ -15,3 +15,4 @@ ogsql
 ogsql.broken
 .worktrees/
 .DS_Store
+target
