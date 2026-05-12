@@ -4,16 +4,17 @@ use ogsql_parser::ast::plpgsql::PlStatement;
 
 use crate::types::{ConversionError, GotoAnalysis, GotoInfo, GotoPattern, ProcedureInfo};
 
-pub fn analyze_goto_patterns(body: &[PlStatement], proc: &ProcedureInfo) -> GotoAnalysis {
+pub fn analyze_goto_patterns(
+    body: &[PlStatement],
+    proc: &ProcedureInfo,
+    source_cache: &mut std::collections::HashMap<String, Vec<String>>,
+) -> GotoAnalysis {
     let mut labels: HashMap<String, usize> = HashMap::new();
     let mut gotos: Vec<GotoInfo> = Vec::new();
 
     collect_labels_and_gotos(body, 0, false, 0, &mut labels, &mut gotos);
 
-    // The ogsql parser does not preserve standalone <<label>> declarations
-    // in the AST (only labels on Block/Loop/While/For nodes). We scan the
-    // raw source text to discover missing labels and determine GOTO direction.
-    let (text_labels, goto_lines, label_lines) = scan_source_text_for_labels(proc, body);
+    let (text_labels, goto_lines, label_lines) = scan_source_text_for_labels(proc, body, source_cache);
 
     // Merge text-discovered labels into the AST-discovered ones.
     // Text labels take precedence when they don't exist in AST.
@@ -78,6 +79,7 @@ pub fn analyze_goto_patterns(body: &[PlStatement], proc: &ProcedureInfo) -> Goto
 fn scan_source_text_for_labels(
     proc: &ProcedureInfo,
     body: &[PlStatement],
+    source_cache: &mut HashMap<String, Vec<String>>,
 ) -> (
     HashMap<String, usize>,
     HashMap<String, Vec<usize>>,
@@ -94,12 +96,15 @@ fn scan_source_text_for_labels(
         return (text_labels, goto_lines, label_lines);
     }
 
-    let all_lines = match std::fs::read_to_string(&proc.source_file) {
-        Ok(content) => content,
-        Err(_) => return (text_labels, goto_lines, label_lines),
-    };
-
-    let all_lines: Vec<&str> = all_lines.lines().collect();
+    let all_lines = source_cache.entry(proc.source_file.clone())
+        .or_insert_with(|| {
+            std::fs::read_to_string(&proc.source_file)
+                .map(|c| c.lines().map(String::from).collect())
+                .unwrap_or_default()
+        });
+    if all_lines.is_empty() {
+        return (text_labels, goto_lines, label_lines);
+    }
     let start = (proc.source_start_line as usize).saturating_sub(1);
     let end = (proc.source_end_line as usize).min(all_lines.len());
 
@@ -107,11 +112,10 @@ fn scan_source_text_for_labels(
         return (text_labels, goto_lines, label_lines);
     }
 
-    let proc_lines = &all_lines[start..end];
-
-    // Scan for <<label>> patterns
-    for (offset, line) in proc_lines.iter().enumerate() {
-        let line_num = start + offset + 1; // 1-based line number
+    // Scan for <<label>> patterns — use index-based access on owned Vec<String>
+    for line_idx in start..end {
+        let line = &all_lines[line_idx];
+        let line_num = line_idx + 1; // 1-based line number
         // Find all <<label>> on this line
         let mut chars = line.char_indices().peekable();
         while let Some((i, c)) = chars.next() {
@@ -379,7 +383,7 @@ fn generate_cleanup_goto(
         }
         if let PlStatement::Block(block) = stmt {
             for decl in &block.node.declarations {
-                crate::analyze::process_declaration(decl, proc);
+                crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new());
             }
             if block.node.label.as_deref() == Some(&cleanup_label) {
                 for s in &block.node.body {
@@ -430,7 +434,7 @@ fn process_cleanup_stmt(
         }
         PlStatement::Block(block) => {
             for decl in &block.node.declarations {
-                crate::analyze::process_declaration(decl, proc);
+                crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new());
             }
             for s in &block.node.body {
                 process_cleanup_stmt(s, cleanup_label, proc, stmt_ctx)?;
@@ -598,7 +602,7 @@ fn generate_logic_skip_goto(
             }
             if let PlStatement::Block(block) = stmt {
                 for decl in &block.node.declarations {
-                    crate::analyze::process_declaration(decl, proc);
+                    crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new());
                 }
                 if block.node.label.as_deref() == Some(label_name.as_str()) {
                     for s in &block.node.body {
@@ -679,7 +683,7 @@ fn process_with_goto_replace(
         }
         PlStatement::Block(block) => {
             for decl in &block.node.declarations {
-                crate::analyze::process_declaration(decl, proc);
+                crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new());
             }
             process_with_goto_replace(&block.node.body, goto_labels, proc, stmt_ctx)?;
         }
@@ -791,7 +795,7 @@ fn generate_state_machine_goto(
                 }
                 PlStatement::Block(block) => {
                     for decl in &block.node.declarations {
-                        crate::analyze::process_declaration(decl, proc);
+                        crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new());
                     }
                     if block.node.label.as_deref() == Some(label_name.as_str()) {
                         for s in &block.node.body {

@@ -6,6 +6,28 @@ use crate::generate::writer::CodeWriter;
 use crate::naming::{java_method_name, package_to_classname, snake_to_camel};
 use crate::types::{DmlType, PackageInfo};
 
+static IDENTIFIER_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+
+fn case_insensitive_word_match(text: &str, word: &str) -> bool {
+    let lower_text = text.to_lowercase();
+    let lower_word = word.to_lowercase();
+    let mut start = 0;
+    while let Some(pos) = lower_text[start..].find(&lower_word) {
+        let abs_pos = start + pos;
+        let before_ok = abs_pos == 0 || !lower_text.as_bytes()[abs_pos - 1].is_ascii_alphanumeric()
+            && lower_text.as_bytes()[abs_pos - 1] != b'_';
+        let after_pos = abs_pos + lower_word.len();
+        let after_ok = after_pos >= lower_text.len()
+            || (!lower_text.as_bytes()[after_pos].is_ascii_alphanumeric()
+                && lower_text.as_bytes()[after_pos] != b'_');
+        if before_ok && after_ok {
+            return true;
+        }
+        start = abs_pos + 1;
+    }
+    false
+}
+
 pub fn write_service_test(
     base_path: &Path,
     pkg: &PackageInfo,
@@ -232,7 +254,7 @@ fn count_local_var_refs_in_sql(
         .map(|p| p.name.to_lowercase())
         .collect();
     let mut found: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let re = regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap();
+    let re = IDENTIFIER_RE.get_or_init(|| regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap());
     for caps in re.captures_iter(sql_text) {
         let word = caps.get(1).unwrap().as_str();
         if local_vars.contains_key(word) && !param_names.contains(&word.to_lowercase()) {
@@ -254,7 +276,7 @@ fn count_package_var_refs_in_sql(
         .map(|p| p.name.to_lowercase())
         .collect();
     let mut found: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let re = regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap();
+    let re = IDENTIFIER_RE.get_or_init(|| regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap());
     for caps in re.captures_iter(sql_text) {
         let word = caps.get(1).unwrap().as_str();
         if package_vars.contains_key(word)
@@ -384,10 +406,9 @@ fn build_map_mock(cols: &[String]) -> String {
                  .collect();
              let out_param_count = proc.parameters.iter()
                  .filter(|p| p.is_out())
-                 .filter(|p| {
-                     let re = regex::Regex::new(&format!(r"(?i)\b{}\b", regex::escape(&p.name))).unwrap();
-                     re.is_match(&dml.sql_text)
-                 })
+                  .filter(|p| {
+                      case_insensitive_word_match(&dml.sql_text, &p.name)
+                  })
                  .filter(|p| {
                      let jn = crate::naming::snake_to_camel(&p.name).to_lowercase();
                      !param_java_names.iter().any(|pn| pn == &jn)

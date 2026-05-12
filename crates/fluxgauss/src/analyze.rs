@@ -1,17 +1,24 @@
 use crate::context::{AnalysisContext, ScanContext};
 use crate::types::{ConversionError, PackageInfo, ProcedureInfo};
+use ogsql_parser::ast::plpgsql::PlStatement;
 
 pub fn analyze_procedure(
     proc: &mut ProcedureInfo,
     summaries: &std::collections::HashMap<String, crate::types::PackageSummary>,
     ctx: &mut AnalysisContext,
+    ddl_schema: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
 ) -> Result<(), ConversionError> {
     let body = proc.body.take();
     let mut result = Ok(());
     if let Some(ref body_inner) = body {
-        proc.goto_analysis = Some(crate::statements::goto::analyze_goto_patterns(&body_inner.body, proc));
+        // Only run GOTO analysis when the body actually contains GOTO statements
+        if body_inner.body.iter().any(|s| matches!(s, PlStatement::Goto { .. })) {
+            proc.goto_analysis = Some(crate::statements::goto::analyze_goto_patterns(
+                &body_inner.body, proc, &mut ctx.source_cache,
+            ));
+        }
         for decl in &body_inner.declarations {
-            process_declaration(decl, proc);
+            process_declaration(decl, proc, ddl_schema);
         }
         let mut stmt_ctx = crate::context::StatementContext::new(summaries);
         for stmt in &body_inner.body {
@@ -45,23 +52,51 @@ pub fn analyze_procedure(
 pub fn process_declaration(
     decl: &ogsql_parser::ast::plpgsql::PlDeclaration,
     proc: &mut ProcedureInfo,
+    ddl_schema: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
 ) {
     use ogsql_parser::ast::plpgsql::PlDeclaration;
     match decl {
         PlDeclaration::Variable(var) => {
-            let sql_type_raw = crate::extract::format_pl_data_type(&var.data_type);
-            let sql_type = crate::extract::normalize_sql_type(&sql_type_raw);
-            let sql_type_lower = sql_type.to_lowercase();
-            let java_type = if sql_type_lower.contains("%rowtype") {
-                proc.imports.insert("import java.util.Map;".into());
-                "Map<String, Object>".into()
-            } else if proc.custom_types.contains_key(&sql_type_lower) || proc.custom_types.contains_key(&sql_type) {
-                proc.imports.insert("import java.util.Map;".into());
-                "Map<String, Object>".into()
-            } else {
-                crate::type_map::sql_type_to_java(&sql_type)
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "Object".into())
+            let java_type = match &var.data_type {
+                ogsql_parser::ast::plpgsql::PlDataType::PercentRowType(_) => {
+                    proc.imports.insert("import java.util.Map;".into());
+                    "Map<String, Object>".into()
+                }
+                ogsql_parser::ast::plpgsql::PlDataType::PercentType { table, column } => {
+                    let table_lower = table.to_lowercase();
+                    let column_lower = column.to_lowercase();
+                    if let Some(columns) = ddl_schema.get(&table_lower) {
+                        if let Some(raw_sql_type) = columns.get(&column_lower) {
+                            let sql_type = crate::extract::normalize_sql_type(raw_sql_type);
+                            crate::type_map::sql_type_to_java(&sql_type)
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| "String".into())
+                        } else {
+                            let inferred = crate::type_map::infer_sql_type_from_column_name(column);
+                            crate::type_map::sql_type_to_java(inferred)
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| "String".into())
+                        }
+                    } else {
+                        let inferred = crate::type_map::infer_sql_type_from_column_name(column);
+                        crate::type_map::sql_type_to_java(inferred)
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| "String".into())
+                    }
+                }
+                _ => {
+                    let sql_type_raw = crate::extract::format_pl_data_type(&var.data_type);
+                    let sql_type = crate::extract::normalize_sql_type(&sql_type_raw);
+                    let sql_type_lower = sql_type.to_lowercase();
+                    if proc.custom_types.contains_key(&sql_type_lower) || proc.custom_types.contains_key(&sql_type) {
+                        proc.imports.insert("import java.util.Map;".into());
+                        "Map<String, Object>".into()
+                    } else {
+                        crate::type_map::sql_type_to_java(&sql_type)
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| "Object".into())
+                    }
+                }
             };
             proc.local_vars.insert(var.name.clone(), java_type.clone());
             if let Some(default) = &var.default {
