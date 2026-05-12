@@ -29,10 +29,10 @@ pub fn run_pipeline(
     incremental: &mut IncrementalState,
 ) -> PipelineResult {
     let base_package = config.base_package_or_default();
-
     let mut ctx = AnalysisContext::new();
+
     let parsed = phase1_parse(sql_files, config, incremental);
-    let analyzed = phase2_analyze(parsed, &mut ctx);
+    let analyzed = phase2_analyze(parsed, &mut ctx, sql_files);
     let (generated, test_count, itest_count, errors) = phase3_generate(&analyzed, config, incremental, sql_files);
 
     let packages = analyzed.packages;
@@ -71,6 +71,7 @@ fn phase1_parse(
     incremental: &mut IncrementalState,
 ) -> ParsedPackages {
     let base_package = config.base_package_or_default();
+
     let mut packages = Vec::new();
     let mut summaries = Vec::new();
     let mut skipped = Vec::new();
@@ -183,15 +184,18 @@ fn phase1_parse(
 fn phase2_analyze(
     parsed: ParsedPackages,
     mut ctx: &mut AnalysisContext,
+    sql_files: &[PathBuf],
 ) -> AnalyzedPackages {
-    let summary_map: std::collections::HashMap<String, &PackageSummary> = parsed
-        .summaries
-        .iter()
-        .map(|s| (s.name.clone(), s))
-        .collect();
-
     let mut errors = Vec::new();
     let mut packages = parsed.packages;
+
+    let proc_summaries: std::collections::HashMap<String, PackageSummary> = parsed
+        .summaries
+        .iter()
+        .map(|s| (s.name.clone(), s.clone()))
+        .collect();
+
+    let ddl_schema = crate::generate::itest::parse_table_ddl(sql_files);
 
     let total: usize = packages.iter().map(|p| p.procedures.len()).sum();
     let mut idx = 0;
@@ -203,13 +207,7 @@ fn phase2_analyze(
             idx += 1;
             crate::progress::progress_bar("Analyze", idx, total, &proc.name);
 
-            let proc_summaries: std::collections::HashMap<String, PackageSummary> = parsed
-                .summaries
-                .iter()
-                .map(|s| (s.name.clone(), s.clone()))
-                .collect();
-
-            if let Err(e) = crate::analyze::analyze_procedure(proc, &proc_summaries, &mut ctx) {
+            if let Err(e) = crate::analyze::analyze_procedure(proc, &proc_summaries, &mut ctx, &ddl_schema) {
                 errors.push(e);
             }
         }
@@ -250,14 +248,21 @@ fn phase3_generate(
         }),
     }
 
-    if config.integration_test.as_ref().and_then(|it| it.enabled).unwrap_or(false) {
+    let schema_map = if config.integration_test.as_ref().and_then(|it| it.enabled).unwrap_or(false) {
+        Some(crate::generate::itest::build_full_schema_map(&analyzed.packages, sql_files))
+    } else {
+        None
+    };
+
+    if schema_map.is_some() {
         if let Err(e) = crate::generate::itest::write_abstract_integration_test(output_dir, &base_package) {
             errors.push(ConversionError::Io {
                 path: output_dir.to_string_lossy().into_owned(),
                 message: format!("write_abstract_integration_test: {}", e),
             });
         }
-        if let Err(e) = crate::generate::itest::write_itest_schema_sql(output_dir, &analyzed.packages, sql_files) {
+
+        if let Err(e) = crate::generate::itest::write_itest_schema_sql(output_dir, &analyzed.packages, schema_map.as_ref().unwrap()) {
             errors.push(ConversionError::Io {
                 path: output_dir.to_string_lossy().into_owned(),
                 message: format!("write_itest_schema_sql: {}", e),
@@ -308,8 +313,8 @@ fn phase3_generate(
             test_count += 1;
         }
 
-        if config.integration_test.as_ref().and_then(|it| it.enabled).unwrap_or(false) {
-            if let Err(e) = crate::generate::itest::write_itest_class(output_dir, pkg, &base_package, &service_injections, &analyzed.packages, sql_files) {
+        if let Some(sm) = schema_map.as_ref() {
+            if let Err(e) = crate::generate::itest::write_itest_class(output_dir, pkg, &base_package, &service_injections, &analyzed.packages, sm) {
                 errors.push(ConversionError::Io {
                     path: pkg.package_name.clone(),
                     message: format!("write_itest_class: {}", e),

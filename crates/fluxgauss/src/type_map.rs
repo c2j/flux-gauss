@@ -101,6 +101,39 @@ pub fn sql_type_to_jdbc(sql_type: &str) -> Option<&'static str> {
         .map(|(_, v)| *v)
 }
 
+/// Infer SQL type from a column name (heuristic, mirrors Python _infer_type_from_column_name).
+/// Used as fallback when %TYPE anchoring can't resolve the actual column type.
+pub fn infer_sql_type_from_column_name(column_name: &str) -> &'static str {
+    let col = column_name.to_lowercase();
+    if col.contains("name") || col.contains("txt") || col.contains("text")
+        || col.contains("info") || col.contains("desc") || col.contains("msg")
+        || col.contains("remark") || col.contains("comment")
+    {
+        return "varchar";
+    }
+    if col.contains("id") || col.contains("no") || col.contains("seq") {
+        if col.contains("num") {
+            return "integer";
+        }
+        return "bigint";
+    }
+    if col.contains("amount") || col.contains("balance") || col.contains("price")
+        || col.contains("qty") || col.contains("quantity") || col.contains("total")
+        || col.contains("salary")
+    {
+        return "numeric";
+    }
+    if col.contains("date") || col.contains("time") || col.contains("stamp") {
+        return "timestamp";
+    }
+    if col.contains("flag") || col.contains("status") || col.contains("level")
+        || col.contains("type") || col.contains("code")
+    {
+        return "varchar";
+    }
+    "varchar"
+}
+
 /// Map Java type back to JDBC type for MyBatis result mapping
 pub fn java_type_to_jdbc(java_type: &str) -> &'static str {
     match java_type {

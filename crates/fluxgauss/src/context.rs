@@ -28,6 +28,8 @@ pub struct AnalysisContext {
     pub stub_reasons: HashMap<(String, usize), Vec<String>>,
     pub unsupported_functions: Vec<String>,
     pub unresolved_calls: Vec<String>,
+    /// Cache for source file contents: path → lines. Avoids re-reading files per procedure.
+    pub source_cache: HashMap<String, Vec<String>>,
 }
 
 impl AnalysisContext {
@@ -40,6 +42,7 @@ impl AnalysisContext {
             stub_reasons: HashMap::new(),
             unsupported_functions: Vec::new(),
             unresolved_calls: Vec::new(),
+            source_cache: HashMap::new(),
         }
     }
 }

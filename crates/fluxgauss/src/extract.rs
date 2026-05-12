@@ -475,6 +475,9 @@ pub fn normalize_sql_type(sql_type: &str) -> String {
     if trimmed.starts_with("decimal(") {
         return "numeric".into();
     }
+    if trimmed.starts_with("number") {
+        return "number".into();
+    }
     if trimmed.starts_with("varchar2(") || trimmed == "varchar2" {
         return "varchar".into();
     }
