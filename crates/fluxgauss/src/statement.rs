@@ -1,8 +1,52 @@
 use std::collections::HashMap;
+use std::sync::OnceLock;
+use regex::Regex;
 use crate::context::StatementContext;
 use crate::types::{ConversionError, DmlType, DmlStatement, Parameter, ProcedureInfo, ServiceCall};
+
+fn out_param_set_expr(var_java: &str, method_id: &str, args: &str, proc: &ProcedureInfo) -> String {
+    let base_name = if var_java.contains('.') {
+        var_java.split('.').next().unwrap()
+    } else {
+        var_java
+    };
+    // var_java is camelCase (e.g. "pFinalBal") but proc.parameters[].name is snake_case (e.g. "p_final_bal")
+    // so match by normalizing both to a comparable form
+    let param_type = proc.parameters.iter()
+        .find(|p| p.is_out() && (
+            p.name == base_name ||
+            snake_to_camel(&p.name) == base_name
+        ))
+        .map(|p| p.java_type.as_str())
+        .unwrap_or("Object");
+    let mapper_call = format!("mapper.{}({})", method_id, args);
+    if param_type == "Object" || param_type == "String" {
+        format!("{}.set(String.valueOf({}));", var_java, mapper_call)
+    } else if param_type.contains("BigDecimal") {
+        format!("{}.set(new java.math.BigDecimal(String.valueOf({})));", var_java, mapper_call)
+    } else {
+        format!("{}.set(({}) {});", var_java, param_type, mapper_call)
+    }
+}
 use crate::naming::{snake_to_camel, snake_to_pascal, package_to_classname, java_method_name};
 use crate::type_map::{sql_type_to_jdbc, java_type_to_jdbc};
+
+fn cast_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?i)\s*::\s*(?:DATE|TIMESTAMP|INTEGER|BIGINT|VARCHAR|TEXT|BOOLEAN|NUMERIC|DECIMAL|FLOAT|DOUBLE|REAL|SMALLINT|BYTEA|JSONB|JSON|UUID)\b").unwrap()
+    })
+}
+
+fn into_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?i)\s+into\s+\w+(\s*\.\s*\w+)*(\s*,\s*\w+(\s*\.\s*\w+)*)*").unwrap())
+}
+
+fn capture_into_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?i)\bINTO\s+(\w+(?:\s*,\s*\w+)*)").unwrap())
+}
 
 fn is_terminal_statement(line: &str) -> bool {
     let trimmed = line.trim_start();
@@ -16,42 +60,30 @@ fn is_terminal_statement(line: &str) -> bool {
 }
 
 fn is_unreachable_after_terminal(java_logic_lines: &[String]) -> bool {
+    // Scan backward from the end. Typical case is O(1) since the first
+    // return/throw at the current block depth terminates the search.
     let mut depth: i32 = 0;
-    let mut last_terminal: Option<(i32, String)> = None;
-    for line in java_logic_lines {
+    for line in java_logic_lines.iter().rev() {
         let t = line.trim_start();
         if t.starts_with("//") || t.is_empty() {
             continue;
         }
         let opens = t.chars().filter(|&c| c == '{').count() as i32;
         let closes = t.chars().filter(|&c| c == '}').count() as i32;
-        depth += opens - closes;
-        if is_terminal_statement(t) {
-            last_terminal = Some((depth, t.to_string()));
-        }
-    }
-    match &last_terminal {
-        Some((d, stmt)) => {
-            let trimmed = stmt.trim_start();
-            if trimmed.starts_with("return") || trimmed.starts_with("throw") {
+        depth += closes - opens;  // reverse: } opens scope, { closes it
+        if depth <= 0 {
+            if t.starts_with("return") || t.starts_with("throw") {
                 return true;
             }
-            if trimmed.starts_with("break") {
+            if t.starts_with("break") {
                 return false;
             }
-            // continue; — check if there's any break at the same or enclosing scope
-            let has_break_at_scope = java_logic_lines.iter().any(|l| {
-                let t = l.trim_start();
-                t.starts_with("break")
-            });
-            if has_break_at_scope {
-                return false;
+            if depth < 0 {
+                break;  // exited current block — unreachability doesn't cross blocks
             }
-            // continue without any break — loop is infinite, code after } is unreachable
-            *d <= 1
         }
-        None => false,
     }
+    false
 }
 
 fn is_control_structure_line(line: &str) -> bool {
@@ -127,21 +159,39 @@ fn detect_dml_type(sql: &str) -> Option<DmlType> {
     }
 }
 
+fn select_capture_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?i)^select\s+(.+)$").unwrap())
+}
+
 fn clean_sql_for_mapper(sql: &str, dml_type: DmlType) -> String {
     let mut s = sql.to_string();
     if matches!(dml_type, DmlType::Select) {
         let sql_lower = s.to_lowercase();
-        let into_pos = regex::Regex::new(r"(?i)\binto\b").unwrap().find(&sql_lower)
-            .and_then(|m| {
-                let after = &sql_lower[m.end()..];
-                if after.trim_start().starts_with("values") { return None; }
-                Some(m.start())
-            });
+        // Use simple string search instead of regex for "into" keyword
+        let into_pos = {
+            let mut pos = None;
+            let mut search_start = 0;
+            while let Some(found) = sql_lower[search_start..].find("into") {
+                let abs_pos = search_start + found;
+                // Word boundary check: char before "into" must not be alphanumeric
+                if abs_pos > 0 && sql_lower.as_bytes()[abs_pos - 1].is_ascii_alphanumeric() {
+                    search_start = abs_pos + 4;
+                    continue;
+                }
+                let after = &sql_lower[abs_pos + 4..];
+                if after.trim_start().starts_with("values") {
+                    search_start = abs_pos + 4;
+                    continue;
+                }
+                pos = Some(abs_pos);
+                break;
+            }
+            pos
+        };
 
         if let Some(ipos) = into_pos {
-            let from_re = regex::Regex::new(r"(?i)\bfrom\b").unwrap();
-            if let Some(from_match) = from_re.find(&sql_lower[ipos..]) {
-                let from_pos = ipos + from_match.start();
+            if let Some(from_pos) = sql_lower[ipos..].find("from").map(|p| ipos + p) {
                 let into_text = s[ipos + 4..from_pos].trim();
                 let before_into = &s[..ipos];
                 let from_and_rest = &s[from_pos..];
@@ -154,8 +204,7 @@ fn clean_sql_for_mapper(sql: &str, dml_type: DmlType) -> String {
                     })
                     .collect();
 
-                let select_re = regex::Regex::new(r"(?i)^select\s+(.+)$").unwrap();
-                if let Some(sel_caps) = select_re.captures(before_into) {
+                if let Some(sel_caps) = select_capture_regex().captures(before_into) {
                     let select_list = sel_caps.get(1).unwrap().as_str();
                     let columns: Vec<&str> = select_list.split(',').map(|c| c.trim()).collect();
 
@@ -175,8 +224,7 @@ fn clean_sql_for_mapper(sql: &str, dml_type: DmlType) -> String {
             }
         }
 
-        let re = regex::Regex::new(r"(?i)\s+into\s+\w+(\s*\.\s*\w+)*(\s*,\s*\w+(\s*\.\s*\w+)*)*").unwrap();
-        s = re.replace(&s, "").to_string();
+        s = into_regex().replace(&s, "").to_string();
     }
     s
 }
@@ -194,13 +242,9 @@ fn extract_into_var_from_text(sql: &str) -> Option<String> {
 }
 
 fn extract_into_var_count_from_text(sql: &str) -> usize {
-    let re = regex::Regex::new(r"(?i)\bINTO\s+(\w+(?:\s*,\s*\w+)*)");
-    match re {
-        Ok(re) => match re.captures(sql) {
-            Some(caps) => caps.get(1).map(|m| m.as_str().split(',').count()).unwrap_or(0),
-            None => 0,
-        },
-        Err(_) => 0,
+    match capture_into_regex().captures(sql) {
+        Some(caps) => caps.get(1).map(|m| m.as_str().split(',').count()).unwrap_or(0),
+        None => 0,
     }
 }
 
@@ -340,10 +384,7 @@ fn process_execute_stmt(
                 clean_sql = re.replace_all(&clean_sql, placeholder.as_str()).to_string();
             }
         }
-        let re_cast = regex::Regex::new(
-            r"(?i)\s*::\s*(?:DATE|TIMESTAMP|INTEGER|BIGINT|VARCHAR|TEXT|BOOLEAN|NUMERIC|DECIMAL|FLOAT|DOUBLE|REAL|SMALLINT|BYTEA|JSONB|JSON|UUID)\b"
-        ).unwrap();
-        clean_sql = re_cast.replace_all(&clean_sql, "").to_string();
+        clean_sql = cast_regex().replace_all(&clean_sql, "").to_string();
 
         for (i, arg) in execute.using_args.iter().enumerate() {
             let pos = i + 1;
@@ -437,7 +478,7 @@ fn process_execute_stmt(
                         returns_list: false,
                         extra_params: Vec::new(),
                     });
-                    push_logic_line(proc, format!("{}.set(String.valueOf(mapper.{}({})));", var_java, method_id, args));
+                    push_logic_line(proc, out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc));
                 } else {
                     let java_type = proc.local_vars.get(var_name)
                         .cloned()
@@ -554,7 +595,7 @@ fn process_execute_stmt(
                                 returns_list: false,
                                 extra_params: Vec::new(),
                             });
-                            push_logic_line(proc, format!("{}.set(String.valueOf(mapper.{}({})));", var_java, method_id, args));
+                            push_logic_line(proc, out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc));
                         } else {
                             let var_java = snake_to_camel(var_name);
                             let java_type = proc.local_vars.get(var_name)
@@ -670,7 +711,7 @@ fn process_sql_statement(
                     let var_java = snake_to_camel(var_name);
 
                     if is_out_param(var_name, proc) {
-                        let line = format!("{}.set(String.valueOf(mapper.{}({})));", var_java, method_id, args);
+                        let line = out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc);
                         ("Object".to_string(), line, String::new())
                     } else {
                         let java_type = proc.local_vars.get(var_name)
@@ -1057,7 +1098,7 @@ pub fn process_statement(
         PlStatement::Block(block_stmt) => {
             // Promote inner Block declarations to method-level scope
             for decl in &block_stmt.node.declarations {
-                crate::analyze::process_declaration(decl, proc);
+                crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new());
             }
             let has_exceptions = block_stmt.node.exception_block.is_some();
             if has_exceptions {
@@ -1362,7 +1403,7 @@ pub fn process_statement(
                                 returns_list: false,
                                 extra_params: Vec::new(),
                             });
-                            push_logic_line(proc, format!("{}.set(String.valueOf(mapper.{}({})));", var_java, method_id, args));
+                            push_logic_line(proc, out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc));
                         } else {
                             let var_java = snake_to_camel(var_name);
                             let java_type = proc.local_vars.get(var_name)

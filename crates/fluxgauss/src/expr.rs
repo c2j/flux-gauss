@@ -58,6 +58,20 @@ pub fn assignment_to_java(target: &ogsql_parser::ast::Expr, value: &ogsql_parser
                     format!("String.valueOf({})", val)
                 } else if ptype == "Long" && val.starts_with('"') {
                     format!("Long.valueOf({})", val)
+                } else if ptype == "java.math.BigDecimal" {
+                    if val.starts_with("String.valueOf(") {
+                        let inner = val.trim_start_matches("String.valueOf(").trim_end_matches(')');
+                        format!("((java.math.BigDecimal) {})", inner)
+                    } else {
+                        val
+                    }
+                } else if !ptype.is_empty() && ptype != "Object" && ptype != "String" {
+                    if val.starts_with("String.valueOf(") {
+                        let inner = val.trim_start_matches("String.valueOf(").trim_end_matches(')');
+                        format!("(({}) {})", ptype, inner)
+                    } else {
+                        val
+                    }
                 } else {
                     val
                 }
@@ -354,6 +368,15 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
         }
         if r == "null" {
             r = "(0 /* null */)".into();
+        }
+
+        // When arithmetic involves a String-typed operand, the PL/SQL is building
+        // a SQL fragment (e.g. to_char(sysdate-v_date-i,'yyyymmdd')). Fall back to
+        // string concatenation to produce valid Java.
+        let l_is_string = is_string_var(&l, proc) || l.starts_with('"');
+        let r_is_string = is_string_var(&r, proc) || r.starts_with('"');
+        if l_is_string || r_is_string {
+            return format!("\"\" + {} + {}", l, r);
         }
     }
 
