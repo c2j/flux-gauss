@@ -4,7 +4,7 @@ use std::path::Path;
 use ogsql_parser::ast::{
     CreateFunctionStatement, CreatePackageBodyStatement, CreatePackageStatement,
     CreateProcedureStatement, PackageFunction, PackageItem, PackageProcedure, RoutineParam,
-    Statement, StatementInfo,
+    Statement, StatementInfo, TypeKind,
 };
 use ogsql_parser::parser::ParseOutput;
 
@@ -104,6 +104,7 @@ pub fn extract_from_parse_output(
                     &stmt_info.sql_text,
                     source_file,
                     line_number,
+                    stmt_info.end_line as u32,
                     proc_stmt.node.block.clone(),
                 );
                 procedures.push(proc_info);
@@ -136,6 +137,7 @@ pub fn extract_from_parse_output(
                     &stmt_info.sql_text,
                     source_file,
                     line_number,
+                    stmt_info.end_line as u32,
                     func_stmt.node.block.clone(),
                 );
                 procedures.push(proc_info);
@@ -150,6 +152,22 @@ pub fn extract_from_parse_output(
                     line_number,
                     reason: "Table creation not converted".into(),
                 });
+            }
+            Statement::CreateType(ct) => {
+                let type_name = object_name_to_string(&ct.name);
+                if let TypeKind::Composite { attributes } = &ct.type_kind {
+                    let fields: Vec<(String, String)> = attributes.iter().map(|attr| {
+                        let sql_t = format_sql_data_type(&attr.data_type);
+                        let jt = sql_type_to_java(&sql_t)
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| "Object".into());
+                        (attr.name.clone(), jt)
+                    }).collect();
+                    custom_types.insert(type_name.clone(), CustomTypeInfo {
+                        fields,
+                        is_record: true,
+                    });
+                }
             }
             Statement::Grant(_) => {
                 skipped.push(SkippedItem {
@@ -175,14 +193,24 @@ pub fn extract_from_parse_output(
     }
 
     if !procedures.is_empty() {
-        let pkg_name = if current_pkg_name.is_empty() {
+        let pkg_name = if !current_pkg_name.is_empty() {
+            current_pkg_name
+        } else if let Some(first_proc) = procedures.first() {
+            if !first_proc.package.is_empty() {
+                first_proc.package.clone()
+            } else {
+                std::path::Path::new(source_file)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("unknown")
+                    .to_string()
+            }
+        } else {
             std::path::Path::new(source_file)
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("unknown")
                 .to_string()
-        } else {
-            current_pkg_name
         };
         packages.push(build_package_info(
             &pkg_name,
@@ -225,6 +253,7 @@ fn extract_package_item(
                 "",
                 source_file,
                 proc.start_line as u32,
+                proc.end_line as u32,
                 proc.block.clone(),
             );
             procedures.push(proc_info);
@@ -246,6 +275,7 @@ fn extract_package_item(
                 "",
                 source_file,
                 func.start_line as u32,
+                func.end_line as u32,
                 func.block.clone(),
             );
             procedures.push(proc_info);
@@ -357,15 +387,59 @@ pub fn format_pl_data_type(dt: &ogsql_parser::ast::plpgsql::PlDataType) -> Strin
     }
 }
 
+fn format_sql_data_type(dt: &ogsql_parser::ast::DataType) -> String {
+    use ogsql_parser::ast::DataType;
+    match dt {
+        DataType::BigInt(_) => "BIGINT".into(),
+        DataType::Integer(_) => "INTEGER".into(),
+        DataType::SmallInt(_) => "SMALLINT".into(),
+        DataType::TinyInt(_) => "TINYINT".into(),
+        DataType::Numeric(p, s) => {
+            match (p, s) {
+                (Some(p), Some(s)) => format!("NUMERIC({},{})", p, s),
+                (Some(p), None) => format!("NUMERIC({})", p),
+                _ => "NUMERIC".into(),
+            }
+        }
+        DataType::Real => "REAL".into(),
+        DataType::Float(_) => "FLOAT".into(),
+        DataType::Double => "DOUBLE".into(),
+        DataType::Varchar(n) => match n {
+            Some(n) => format!("VARCHAR({})", n),
+            None => "VARCHAR".into(),
+        },
+        DataType::Char(n) => match n {
+            Some(n) => format!("CHAR({})", n),
+            None => "CHAR".into(),
+        },
+        DataType::Text => "TEXT".into(),
+        DataType::Boolean => "BOOLEAN".into(),
+        DataType::Date => "DATE".into(),
+        DataType::Timestamp(_, _) => "TIMESTAMP".into(),
+        DataType::Timestamptz(_) => "TIMESTAMPTZ".into(),
+        DataType::Bytea => "BYTEA".into(),
+        DataType::Json => "JSON".into(),
+        DataType::Jsonb => "JSONB".into(),
+        DataType::Uuid => "UUID".into(),
+        DataType::Array(inner) => format!("{}[]", format_sql_data_type(inner)),
+        _ => "TEXT".into(),
+    }
+}
+
 fn convert_params(params: &[RoutineParam]) -> Vec<Parameter> {
     params
         .iter()
         .map(|p| {
             let mode = parse_param_mode(p.mode.as_deref());
             let sql_type = normalize_sql_type(&p.data_type);
-            let java_type = sql_type_to_java(&sql_type)
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "Object".into());
+            let sql_type_lower = sql_type.to_lowercase();
+            let java_type = if sql_type_lower.contains("%rowtype") || sql_type_lower.contains("%type") {
+                "Map<String, Object>".into()
+            } else {
+                sql_type_to_java(&sql_type)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "Object".into())
+            };
             Parameter {
                 name: p.name.clone(),
                 java_type,
@@ -401,7 +475,10 @@ pub fn normalize_sql_type(sql_type: &str) -> String {
     if trimmed.starts_with("decimal(") {
         return "numeric".into();
     }
-    if trimmed.starts_with("varchar(") {
+    if trimmed.starts_with("varchar2(") || trimmed == "varchar2" {
+        return "varchar".into();
+    }
+    if trimmed.starts_with("varchar(") || trimmed == "varchar" {
         return "varchar".into();
     }
     if trimmed.starts_with("bigint(") || trimmed == "bigint" {
@@ -451,6 +528,7 @@ fn build_procedure_info(
     sql_text: &str,
     source_file: &str,
     start_line: u32,
+    end_line: u32,
     body: Option<ogsql_parser::ast::plpgsql::PlBlock>,
 ) -> ProcedureInfo {
     let mut proc = ProcedureInfo::new(name, package, proc_name);
@@ -462,6 +540,7 @@ fn build_procedure_info(
     proc.source_file = source_file.into();
     proc.source_path = source_file.into();
     proc.source_start_line = start_line;
+    proc.source_end_line = end_line;
     proc
 }
 
@@ -493,7 +572,8 @@ fn dedup_procedures(procs: Vec<ProcedureInfo>) -> Vec<ProcedureInfo> {
     let mut result: Vec<ProcedureInfo> = Vec::new();
     for proc in procs {
         let short_name = proc.name.split('.').last().unwrap_or(&proc.name);
-        let key = crate::naming::java_method_name(short_name);
+        let method_name = crate::naming::java_method_name(short_name);
+        let key = format!("{}_{}", method_name, proc.parameters.len());
         if let Some(&existing_idx) = seen.get(&key) {
             let existing_has_body = result[existing_idx].body.is_some();
             let new_has_body = proc.body.is_some();

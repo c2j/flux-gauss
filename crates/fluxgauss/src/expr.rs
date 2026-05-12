@@ -179,6 +179,19 @@ fn expr_to_java_impl(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> St
         Expr::FieldAccess { object, field } => {
             format!("{}.get(\"{}\")", expr_to_java(object, proc), snake_to_camel(field))
         }
+        Expr::CursorAttribute { cursor, attribute } => {
+            let cursor_name = match cursor.as_ref() {
+                Expr::ColumnRef(name) | Expr::PlVariable(name) => name.join("."),
+                _ => "cursor".into(),
+            };
+            match attribute {
+                ogsql_parser::ast::CursorAttributeKind::RowCount => "__ROWCOUNT__".into(),
+                ogsql_parser::ast::CursorAttributeKind::Found => "found".into(),
+                ogsql_parser::ast::CursorAttributeKind::NotFound => "!found".into(),
+                ogsql_parser::ast::CursorAttributeKind::IsOpen => format!("{} != null", cursor_name),
+                ogsql_parser::ast::CursorAttributeKind::BulkExceptions => "java.util.Collections.emptyList()".into(),
+            }
+        }
         Expr::Default => "null".into(),
         Expr::Prior(_) => "null".into(),
         _ => "null".into(),
@@ -273,6 +286,23 @@ fn is_bigdecimal_var(expr_str: &str, proc: &ProcedureInfo) -> bool {
             return p.java_type.contains("BigDecimal");
         }
     }
+    // Check if expression is a .get() call on a Map variable whose field type is BigDecimal
+    if let Some(dot_get_pos) = name.find(".get(") {
+        let var_part = &name[..dot_get_pos];
+        // Try the variable part against custom_types fields
+        let var_lower = var_part.to_lowercase();
+        for (_key, custom_type) in &proc.custom_types {
+            for (field_name, field_type) in &custom_type.fields {
+                if field_name.to_lowercase() == var_lower {
+                    return field_type.contains("BigDecimal");
+                }
+            }
+        }
+    }
+    // Check if expression already contains BigDecimal method calls (intermediate result)
+    if name.contains(".multiply(") || name.contains(".add(") || name.contains(".subtract(") || name.contains(".divide(") {
+        return true;
+    }
     false
 }
 
@@ -281,11 +311,36 @@ fn wrap_bigdecimal(expr: &str, already_bd: bool, _proc: &ProcedureInfo) -> Strin
         return expr.to_string();
     }
     let trimmed = expr.trim();
-    if trimmed.chars().all(|c| c.is_ascii_digit() || c == '.') && !trimmed.is_empty() {
+    if trimmed.contains(".get(") {
+        // .get() returns Object, cast to BigDecimal instead of using valueOf()
+        format!("((java.math.BigDecimal) {})", trimmed)
+    } else if trimmed.chars().all(|c| c.is_ascii_digit() || c == '.') && !trimmed.is_empty() {
         format!("java.math.BigDecimal.valueOf({})", trimmed)
     } else {
         format!("java.math.BigDecimal.valueOf({})", trimmed)
     }
+}
+
+fn is_string_var(expr_str: &str, proc: &ProcedureInfo) -> bool {
+    let name = expr_str.trim();
+    let base = name.split(|c: char| c == '.' || c == '(').next().unwrap_or(name);
+    if let Some(ty) = proc.local_vars.get(base) {
+        return ty == "String";
+    }
+    let base_lower = base.to_lowercase().replace("_", "");
+    for (var_name, var_type) in &proc.local_vars {
+        let var_lower = var_name.to_lowercase().replace("_", "");
+        if var_lower == base_lower {
+            return var_type == "String";
+        }
+    }
+    for p in &proc.parameters {
+        let p_lower = p.name.to_lowercase().replace("_", "");
+        if p_lower == base_lower || crate::naming::snake_to_camel(&p.name) == base {
+            return p.java_type == "String";
+        }
+    }
+    false
 }
 
 fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> String {
@@ -354,17 +409,17 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
             let is_comparison = matches!(op, ">" | "<" | ">=" | "<=");
             let (l_out, r_out) = if is_comparison {
                 let lo = if has_get_l {
-                    let r_other_is_int = r.chars().all(|c| c.is_ascii_digit() || c == '-' || c == '+');
-                    if r_other_is_int {
-                        format!("((Number) {}).longValue()", l)
+                    let l_base = l.split(".get(").next().unwrap_or(&l);
+                    if is_string_var(l_base, proc) {
+                        format!("Long.valueOf({}.toString())", l)
                     } else {
                         format!("((Number) {}).longValue()", l)
                     }
                 } else { l.clone() };
                 let ro = if has_get_r {
-                    let l_other_is_int = l.chars().all(|c| c.is_ascii_digit() || c == '-' || c == '+');
-                    if l_other_is_int {
-                        format!("((Number) {}).longValue()", r)
+                    let r_base = r.split(".get(").next().unwrap_or(&r);
+                    if is_string_var(r_base, proc) {
+                        format!("Long.valueOf({}.toString())", r)
                     } else {
                         format!("((Number) {}).longValue()", r)
                     }
@@ -471,6 +526,8 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         "TXID_CURRENT" => "Thread.currentThread().getId()".into(),
         "SYSDATE" | "CURRENT_TIMESTAMP" | "NOW" => "new java.sql.Timestamp(System.currentTimeMillis())".into(),
         "CURRENT_DATE" => "new java.sql.Date(System.currentTimeMillis())".into(),
+        "CHR" if !jargs.is_empty() => format!("String.valueOf((char)({}))", jargs[0]),
+        "ASCII" if !jargs.is_empty() => format!("(int){}.charAt(0)", jargs[0]),
         "TO_NUMBER" => format!("new BigDecimal({})", jargs.first().map(|s| s.as_str()).unwrap_or("\"0\"")),
         "INSTR" if jargs.len() >= 2 => format!("{}.indexOf({}) + 1", jargs[0], jargs[1]),
         _ => "null".into(),

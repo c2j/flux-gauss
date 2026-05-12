@@ -17,6 +17,8 @@ pub struct GotoInfo {
     pub stmt_index: usize,
     pub nesting_depth: usize,
     pub inside_loop: bool,
+    pub is_forward: bool,
+    pub is_backward: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -174,7 +176,8 @@ pub struct ProcedureInfo {
 
     pub goto_analysis: Option<GotoAnalysis>,
 
-    // Source tracing
+    pub select_counter: usize,
+
     pub source_file: String,
     pub source_path: String,
     pub source_start_line: u32,
@@ -215,6 +218,7 @@ impl ProcedureInfo {
             cursor_params: HashMap::new(),
             custom_types: HashMap::new(),
             goto_analysis: None,
+            select_counter: 0,
             source_file: String::new(),
             source_path: String::new(),
             source_start_line: 0,

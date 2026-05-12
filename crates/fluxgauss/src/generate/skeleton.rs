@@ -195,9 +195,16 @@ fn write_dep(
 
 fn write_application_yml(resources_dir: &Path, config: &AppConfig) -> std::io::Result<()> {
     let db = config.database.as_ref();
-    let url = db.and_then(|d| d.url.as_deref()).unwrap_or("jdbc:postgresql://localhost:5432/demo");
-    let username = db.and_then(|d| d.username.as_deref()).unwrap_or("postgres");
-    let password = db.and_then(|d| d.password.as_deref()).unwrap_or("postgres");
+    let it = config.integration_test.as_ref();
+    let url = db.and_then(|d| d.url.as_deref())
+        .or_else(|| it.and_then(|i| i.url.as_deref()))
+        .unwrap_or("jdbc:postgresql://localhost:5432/demo");
+    let username = db.and_then(|d| d.username.as_deref())
+        .or_else(|| it.and_then(|i| i.username.as_deref()))
+        .unwrap_or("postgres");
+    let password = db.and_then(|d| d.password.as_deref())
+        .or_else(|| it.and_then(|i| i.password.as_deref()))
+        .unwrap_or("postgres");
     let driver = db.and_then(|d| d.driver.as_deref()).unwrap_or("org.postgresql.Driver");
 
     let mut w = CodeWriter::new();
