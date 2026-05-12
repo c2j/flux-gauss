@@ -6,6 +6,31 @@ use crate::naming::{package_to_classname, snake_to_camel};
 use crate::type_map::{java_type_to_jdbc, sql_type_to_java};
 use crate::types::{DmlType, PackageInfo, Parameter};
 
+static IDENTIFIER_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static CLEAN_SQL_WS_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static INTERVAL_PAREN_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static INTERVAL_CONCAT_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static OUTER_JOIN_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static NVL_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static ADD_MONTHS_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static TO_CHAR_NOW_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static EMPTY_BLOB_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static DATE_CAST_EQ_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static DATE_CAST_TRAILING_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static DATE_FUNC_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static DECODE_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static DOT_ACCESS_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static AS_PARAM_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static GET_SYS_DATE_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static SYSDATE_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static NEXTVAL_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static CURRVAL_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static AS_NEXTVAL_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static AS_CURRVAL_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static RESERVED_COL_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static DOLLAR_PARAM_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static PG_CAST_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+
 pub fn write_mapper_interface(
     base_path: &Path,
     pkg: &PackageInfo,
@@ -214,7 +239,7 @@ fn extract_local_var_refs(
     param_java_names: &std::collections::HashSet<String>,
 ) -> Vec<(String, String)> {
     let mut result = Vec::new();
-    let re = regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap();
+    let re = IDENTIFIER_RE.get_or_init(|| regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap());
     for caps in re.captures_iter(sql_text) {
         let word = caps.get(1).unwrap().as_str();
         let lower = word.to_lowercase();
@@ -249,7 +274,7 @@ fn extract_package_var_refs(
     existing_params: &std::collections::HashSet<String>,
 ) -> Vec<(String, String)> {
     let mut result = Vec::new();
-    let re = regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap();
+    let re = IDENTIFIER_RE.get_or_init(|| regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap());
     for caps in re.captures_iter(sql_text) {
         let word = caps.get(1).unwrap().as_str();
         let lower = word.to_lowercase();
@@ -376,68 +401,75 @@ fn build_mapper_statement(
 }
 
 fn clean_sql(sql: &str) -> String {
-    let s = regex::Regex::new(r"\s+").unwrap().replace_all(sql.trim(), " ");
+    let s = CLEAN_SQL_WS_RE.get_or_init(|| regex::Regex::new(r"\s+").unwrap()).replace_all(sql.trim(), " ");
     s.to_string()
 }
 
 fn fix_postgresql_syntax(sql: &str) -> String {
     let mut result = sql.to_string();
 
-    let interval_re = regex::Regex::new(
+    let interval_re = INTERVAL_PAREN_RE.get_or_init(|| regex::Regex::new(
         r"(?i)\)\s*interval\b"
-    ).unwrap();
+    ).unwrap());
     result = interval_re.replace_all(&result, ")::interval").to_string();
 
-    let interval_re2 = regex::Regex::new(
+    let interval_re2 = INTERVAL_CONCAT_RE.get_or_init(|| regex::Regex::new(
         r"(?i)(\|\|\s*'[^']+'\s*)interval\b"
-    ).unwrap();
+    ).unwrap());
     result = interval_re2.replace_all(&result, "${1}::interval").to_string();
 
-    let outer_join_re = regex::Regex::new(
+    let outer_join_re = OUTER_JOIN_RE.get_or_init(|| regex::Regex::new(
         r"(?i)(\w+)\s*\.\s*(\w+)\s*\(\s*\+\s*\)"
-    ).unwrap();
+    ).unwrap());
     result = outer_join_re.replace_all(&result, "$1.$2").to_string();
 
     result = replace_decode_with_case(&result);
 
-    let nvl_re = regex::Regex::new(r"(?i)\bnvl\s*\(").unwrap();
+    let nvl_re = NVL_RE.get_or_init(|| regex::Regex::new(r"(?i)\bnvl\s*\(").unwrap());
     result = nvl_re.replace_all(&result, "coalesce(").to_string();
 
-    let add_months_re = regex::Regex::new(
+    let add_months_re = ADD_MONTHS_RE.get_or_init(|| regex::Regex::new(
         r"(?i)add_months\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)"
-    ).unwrap();
+    ).unwrap());
     result = add_months_re.replace_all(&result, "($1 + ($2 || ' months')::interval)").to_string();
 
-    let to_char_re = regex::Regex::new(
+    let to_char_re = TO_CHAR_NOW_RE.get_or_init(|| regex::Regex::new(
         r"(?i)to_char\s*\(\s*now\s*\(\s*\)\s*,\s*'([^']+)'\s*\)"
-    ).unwrap();
+    ).unwrap());
     result = to_char_re.replace_all(&result, "to_char(now(), '$1')").to_string();
 
-    let empty_blob_re = regex::Regex::new(r"(?i)\bempty_blob\s*\(\s*\)").unwrap();
+    let empty_blob_re = EMPTY_BLOB_RE.get_or_init(|| regex::Regex::new(r"(?i)\bempty_blob\s*\(\s*\)").unwrap());
     result = empty_blob_re.replace_all(&result, "''").to_string();
 
-    let date_cast_eq_re = regex::Regex::new(
+    let date_cast_eq_re = DATE_CAST_EQ_RE.get_or_init(|| regex::Regex::new(
         r"(?i)date\s*\(\s*(\w+)\s*\)\s*=\s*(\w+)\s+date\b"
-    ).unwrap();
+    ).unwrap());
     result = date_cast_eq_re.replace_all(&result, "CAST($1 AS DATE) = $2").to_string();
 
-    let date_cast_trailing_re = regex::Regex::new(
+    let date_cast_trailing_re = DATE_CAST_TRAILING_RE.get_or_init(|| regex::Regex::new(
         r"(?i)(=\s*#\{[^}]+\})\s+date\b"
-    ).unwrap();
+    ).unwrap());
     result = date_cast_trailing_re.replace_all(&result, "$1").to_string();
 
-    let date_func3_re = regex::Regex::new(
+    let date_func3_re = DATE_FUNC_RE.get_or_init(|| regex::Regex::new(
         r"(?i)\bdate\s*\(\s*(\w+(?:\s*\.\s*\w+)*)\s*\)"
-    ).unwrap();
+    ).unwrap());
     result = date_func3_re.replace_all(&result, "CAST($1 AS DATE)").to_string();
+
+    // Quote SQL reserved words used as column names in INSERT/UPDATE column lists
+    // Matches: ( timestamp, or , timestamp, or , timestamp)
+    let reserved_col_re = RESERVED_COL_RE.get_or_init(|| regex::Regex::new(
+        r"(?i)(\(\s*|,\s*)\btimestamp\b(\s*[,)])"
+    ).unwrap());
+    result = reserved_col_re.replace_all(&result, "${1}\"timestamp\"${2}").to_string();
 
     result
 }
 
 fn replace_decode_with_case(sql: &str) -> String {
-    let decode_re = regex::Regex::new(
+    let decode_re = DECODE_RE.get_or_init(|| regex::Regex::new(
         r"(?i)decode\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\s*\)"
-    ).unwrap();
+    ).unwrap());
     let mut result = sql.to_string();
     let mut changed = true;
     while changed {
@@ -470,7 +502,7 @@ fn fix_select_into_aliases(
         known_vars.insert(name.to_lowercase());
     }
 
-    let re = regex::Regex::new(r"(?i)\b([a-zA-Z_]\w*)\s*\.\s*([a-zA-Z_]\w*)").unwrap();
+    let re = DOT_ACCESS_RE.get_or_init(|| regex::Regex::new(r"(?i)\b([a-zA-Z_]\w*)\s*\.\s*([a-zA-Z_]\w*)").unwrap());
     let mut result = sql.to_string();
     let mut changed = true;
     while changed {
@@ -489,6 +521,7 @@ fn fix_select_into_aliases(
                 | "as" | "on" | "join" | "left" | "right" | "inner" | "outer" | "order" | "by"
                 | "group" | "having" | "limit" | "offset" | "union" | "all" | "distinct" | "case"
                 | "when" | "then" | "else" | "end" | "exists" | "true" | "false" | "asc" | "desc"
+                | "nextval" | "currval"
             ) {
                 return caps.get(0).unwrap().as_str().to_string();
             }
@@ -517,25 +550,33 @@ fn fix_select_into_aliases(
 /// aliases simple INTO targets (e.g., `name AS v_emp_name`) that later become `#{vEmpName}`.
 /// Only composite dotted targets should keep their AS aliases.
 fn cleanup_as_param_aliases(sql: &str) -> String {
-    let re = regex::Regex::new(r"(?i)\s*\bAS\s+#\{[^}]+\}").unwrap();
+    let re = AS_PARAM_RE.get_or_init(|| regex::Regex::new(r"(?i)\s*\bAS\s+#\{[^}]+\}").unwrap());
     let cleaned = re.replace_all(sql, "").to_string();
-    let ws = regex::Regex::new(r"\s+").unwrap();
+    let ws = CLEAN_SQL_WS_RE.get_or_init(|| regex::Regex::new(r"\s+").unwrap());
     ws.replace_all(&cleaned, " ").to_string()
 }
 
 fn replace_cross_package_functions(sql: &str) -> String {
-    let re = regex::Regex::new(r"(?i)\b\w+\s*\.\s*get_sys_date\s*\(\s*\)").unwrap();
+    let re = GET_SYS_DATE_RE.get_or_init(|| regex::Regex::new(r"(?i)\b\w+\s*\.\s*get_sys_date\s*\(\s*\)").unwrap());
     let sql = re.replace_all(sql, "CURRENT_TIMESTAMP").to_string();
-    let re2 = regex::Regex::new(r"(?i)\b\w+\s*\.\s*sysdate\b").unwrap();
+    let re2 = SYSDATE_RE.get_or_init(|| regex::Regex::new(r"(?i)\b\w+\s*\.\s*sysdate\b").unwrap());
     re2.replace_all(&sql, "CURRENT_TIMESTAMP").to_string()
 }
 
 fn replace_sequence_refs(sql: &str) -> String {
-    let re_next = regex::Regex::new(r"(?i)\b(\w+)\.NEXTVAL\b").unwrap();
+    let re_next = NEXTVAL_RE.get_or_init(|| regex::Regex::new(r"(?i)\b(\w+)\s*\.\s*NEXTVAL\b").unwrap());
     let sql = re_next.replace_all(sql, |caps: &regex::Captures| {
         format!("nextval('{}')", caps[1].to_lowercase())
     }).to_string();
-    let re_curr = regex::Regex::new(r"(?i)\b(\w+)\.CURRVAL\b").unwrap();
+    let re_as_nextval = AS_NEXTVAL_RE.get_or_init(|| regex::Regex::new(r"(?i)\b(\w+)\s+AS\s+nextval\b").unwrap());
+    let sql = re_as_nextval.replace_all(&sql, |caps: &regex::Captures| {
+        format!("nextval('{}')", caps[1].to_lowercase())
+    }).to_string();
+    let re_as_currval = AS_CURRVAL_RE.get_or_init(|| regex::Regex::new(r"(?i)\b(\w+)\s+AS\s+currval\b").unwrap());
+    let sql = re_as_currval.replace_all(&sql, |caps: &regex::Captures| {
+        format!("currval('{}')", caps[1].to_lowercase())
+    }).to_string();
+    let re_curr = CURRVAL_RE.get_or_init(|| regex::Regex::new(r"(?i)\b(\w+)\s*\.\s*CURRVAL\b").unwrap());
     re_curr.replace_all(&sql, |caps: &regex::Captures| {
         format!("currval('{}')", caps[1].to_lowercase())
     }).to_string()
@@ -549,7 +590,7 @@ fn convert_params_to_mybatis(
 ) -> String {
     let mut result = sql.to_string();
 
-    let alias_col_re = regex::Regex::new(r"(?i)\b([a-zA-Z_]\w*)\s*\.\s*([a-zA-Z_]\w*)").unwrap();
+    let alias_col_re = DOT_ACCESS_RE.get_or_init(|| regex::Regex::new(r"(?i)\b([a-zA-Z_]\w*)\s*\.\s*([a-zA-Z_]\w*)").unwrap());
     let mut alias_protected: Vec<String> = Vec::new();
     let local_var_names: Vec<String> = local_vars.keys().map(|k| k.to_lowercase()).collect();
     let pkg_var_names: Vec<String> = package_vars.keys().map(|k| k.to_lowercase()).collect();
@@ -652,15 +693,15 @@ fn convert_params_to_mybatis(
         }
     }
 
-    let dollar_re = regex::Regex::new(r"\$(\d+)").unwrap();
+    let dollar_re = DOLLAR_PARAM_RE.get_or_init(|| regex::Regex::new(r"\$(\d+)").unwrap());
     s = dollar_re.replace_all(&s, |caps: &regex::Captures| {
         let n: usize = caps.get(1).unwrap().as_str().parse().unwrap_or(1);
         format!("#{{arg{}}}", n)
     }).to_string();
 
-    let re_cast = regex::Regex::new(
+    let re_cast = PG_CAST_RE.get_or_init(|| regex::Regex::new(
         r"(?i)\s*::\s*(?:DATE|TIMESTAMP|INTEGER|BIGINT|VARCHAR|TEXT|BOOLEAN|NUMERIC|DECIMAL|FLOAT|DOUBLE|REAL|SMALLINT|BYTEA|JSONB|JSON|UUID)\b"
-    ).unwrap();
+    ).unwrap());
     s = re_cast.replace_all(&s, "").to_string();
 
     for (idx, original) in alias_protected.iter().enumerate() {
