@@ -11,7 +11,7 @@ pub fn write_itest_class(
     base_package: &str,
     service_injections: &std::collections::HashMap<String, String>,
     all_packages: &[PackageInfo],
-    sql_files: &[std::path::PathBuf],
+    precomputed_schema_map: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
 ) -> std::io::Result<String> {
     let itest_dir = base_path.join(format!(
         "src/test/java/{}/itest",
@@ -69,8 +69,7 @@ pub fn write_itest_class(
         imports.insert(format!("import {}.{};", target_jp, svc_class_inj));
     }
 
-    let ddl_schemas = parse_table_ddl(sql_files);
-    let schema_map = build_schema_map(all_packages, &ddl_schemas);
+    let schema_map = precomputed_schema_map;
 
     let object_pkg_var_names: Vec<String> = pkg.package_vars.iter()
         .filter(|(_, v)| v.java_type == "Object")
@@ -262,29 +261,32 @@ pub fn write_abstract_integration_test(
 pub fn write_itest_schema_sql(
     base_path: &Path,
     all_packages: &[PackageInfo],
-    sql_files: &[std::path::PathBuf],
+    precomputed_schema_map: &HashMap<String, HashMap<String, String>>,
 ) -> std::io::Result<()> {
-    let ddl_schemas = parse_table_ddl(sql_files);
-    let schema_map = build_schema_map(all_packages, &ddl_schemas);
+    let schema_map = precomputed_schema_map;
 
     let mut tables_with_explicit_id_insert: HashSet<String> = HashSet::new();
     let mut tables_with_implicit_id_insert: HashSet<String> = HashSet::new();
-    for pkg in all_packages {
-        for proc in &pkg.procedures {
-            for dml in &proc.dml_statements {
-                let raw = &dml.sql_text;
-                let raw_lower = raw.to_lowercase();
-                if !raw_lower.starts_with("insert") {
-                    continue;
-                }
-                if let Some(caps) = regex::Regex::new(r"insert\s+into\s+(\w+)\s*\(([^)]+)\)").ok().and_then(|re| re.captures(&raw_lower)) {
-                    let tbl = caps.get(1).unwrap().as_str().to_lowercase();
-                    let cols_str = caps.get(2).unwrap().as_str();
-                    let insert_cols: Vec<String> = cols_str.split(',').map(|s| s.trim().trim_matches('"').to_lowercase()).collect();
-                    if insert_cols.contains(&"id".to_string()) {
-                        tables_with_explicit_id_insert.insert(tbl);
-                    } else {
-                        tables_with_implicit_id_insert.insert(tbl);
+    {
+        static INSERT_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+        let insert_re = INSERT_RE.get_or_init(|| regex::Regex::new(r"insert\s+into\s+(\w+)\s*\(([^)]+)\)").unwrap());
+        for pkg in all_packages {
+            for proc in &pkg.procedures {
+                for dml in &proc.dml_statements {
+                    let raw = &dml.sql_text;
+                    let raw_lower = raw.to_lowercase();
+                    if !raw_lower.starts_with("insert") {
+                        continue;
+                    }
+                    if let Some(caps) = insert_re.captures(&raw_lower) {
+                        let tbl = caps.get(1).unwrap().as_str().to_lowercase();
+                        let cols_str = caps.get(2).unwrap().as_str();
+                        let insert_cols: Vec<String> = cols_str.split(',').map(|s| s.trim().trim_matches('"').to_lowercase()).collect();
+                        if insert_cols.contains(&"id".to_string()) {
+                            tables_with_explicit_id_insert.insert(tbl);
+                        } else {
+                            tables_with_implicit_id_insert.insert(tbl);
+                        }
                     }
                 }
             }
@@ -363,11 +365,15 @@ pub fn write_itest_schema_sql(
                 effective_type = "BIGSERIAL".to_string();
             }
             let effective_lower = effective_type.to_lowercase();
-            if let Some(caps) = regex::Regex::new(r"varchar\((\d+)\)").ok().and_then(|re| re.captures(&effective_lower)) {
-                if let Some(width_str) = caps.get(1) {
-                    if let Ok(width) = width_str.as_str().parse::<usize>() {
-                        if width > 8000 {
-                            effective_type = "TEXT".to_string();
+            {
+                static VARCHAR_WIDTH_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+                let re = VARCHAR_WIDTH_RE.get_or_init(|| regex::Regex::new(r"varchar\((\d+)\)").unwrap());
+                if let Some(caps) = re.captures(&effective_lower) {
+                    if let Some(width_str) = caps.get(1) {
+                        if let Ok(width) = width_str.as_str().parse::<usize>() {
+                            if width > 8000 {
+                                effective_type = "TEXT".to_string();
+                            }
                         }
                     }
                 }
@@ -392,6 +398,16 @@ pub fn write_itest_schema_sql(
     std::fs::create_dir_all(&res_dir)?;
     std::fs::write(res_dir.join("itest-schema.sql"), content)?;
     Ok(())
+}
+
+/// Compute the full schema map once: parses DDL from SQL files, then augments with DML-inferred columns.
+/// Call this once before the per-package loop and pass the result to both `write_itest_schema_sql` and `write_itest_class`.
+pub fn build_full_schema_map(
+    all_packages: &[PackageInfo],
+    sql_files: &[std::path::PathBuf],
+) -> HashMap<String, HashMap<String, String>> {
+    let ddl_schemas = parse_table_ddl(sql_files);
+    build_schema_map(all_packages, &ddl_schemas)
 }
 
 fn is_better_type(new_type: &str, existing_type: &str) -> bool {
@@ -498,16 +514,16 @@ fn build_schema_map(
     schema_map
 }
 
-fn parse_table_ddl(sql_files: &[std::path::PathBuf]) -> HashMap<String, HashMap<String, String>> {
+pub fn parse_table_ddl(sql_files: &[std::path::PathBuf]) -> HashMap<String, HashMap<String, String>> {
     let mut schema: HashMap<String, HashMap<String, String>> = HashMap::new();
     let create_re = regex::Regex::new(r"(?i)create\s+table\s+(?:if\s+not\s+exists\s+)?(?:\w+\.)?(\w+)\s*\(").unwrap();
 
     for sql_file in sql_files {
-        let content = match std::fs::read_to_string(sql_file) {
-            Ok(s) => s,
+        let content = match std::fs::read(sql_file) {
+            Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
             Err(_) => continue,
         };
-        let content_clean = regex::Regex::new(r"/\*.*?\*/").unwrap().replace_all(&content, "");
+        let content_clean = regex::Regex::new(r"(?s)/\*.*?\*/").unwrap().replace_all(&content, "");
 
         for caps in create_re.captures_iter(&content_clean) {
             let table_name = caps.get(1).unwrap().as_str().to_lowercase();
@@ -571,7 +587,7 @@ fn parse_table_ddl(sql_files: &[std::path::PathBuf]) -> HashMap<String, HashMap<
                     continue;
                 }
 
-                let col_name = tokens[0].trim().to_lowercase();
+                let col_name = tokens[0].trim().trim_matches('"').to_lowercase();
                 let mut col_type = tokens[1].trim().to_string();
 
                 if let Some(stripped) = regex::Regex::new(r"\s+(NOT\s+NULL|NULL|DEFAULT|PRIMARY|UNIQUE|CHECK|REFERENCES|CONSTRAINT|USING|PCTFREE|INITRANS|MAXTRANS|STORAGE|TABLESPACE|ENABLE|DISABLE|NOCOMPRESS|COMPRESS)").ok().and_then(|re| re.split(&col_type).next()) {
@@ -845,6 +861,11 @@ fn split_values(vals_str: &str) -> Vec<String> {
 }
 
 fn infer_test_data(proc: &ProcedureInfo, _pkg: &PackageInfo, schema_map: &HashMap<String, HashMap<String, String>>, _all_packages: &[PackageInfo]) -> HashMap<String, HashMap<String, String>> {
+    let system_objects: HashSet<&str> = [
+        "sys_dummy", "dual", "pg_class", "pg_namespace", "pg_attribute", "pg_type",
+        "pg_proc", "pg_views", "pg_tables", "pg_sequences", "pg_database",
+    ].iter().copied().collect();
+
     let mut needed: HashMap<String, HashMap<String, String>> = HashMap::new();
     let mut handled: HashSet<String> = HashSet::new();
     for dml in &proc.dml_statements {
@@ -857,7 +878,7 @@ fn infer_test_data(proc: &ProcedureInfo, _pkg: &PackageInfo, schema_map: &HashMa
             }
             DmlType::Select => {
                 if let Some(tbl) = extract_table_from_select(sql) {
-                    if !handled.contains(&tbl) {
+                    if !handled.contains(&tbl) && !system_objects.contains(tbl.as_str()) {
                         if let Some(cols) = schema_map.get(&tbl) {
                             needed.insert(tbl.clone(), cols.clone());
                         }
@@ -866,7 +887,7 @@ fn infer_test_data(proc: &ProcedureInfo, _pkg: &PackageInfo, schema_map: &HashMa
             }
             DmlType::Update | DmlType::Delete => {
                 if let Some(tbl) = extract_table_from_update_delete(sql) {
-                    if !handled.contains(&tbl) {
+                    if !handled.contains(&tbl) && !system_objects.contains(tbl.as_str()) {
                         if let Some(cols) = schema_map.get(&tbl) {
                             needed.insert(tbl.clone(), cols.clone());
                         }
@@ -951,18 +972,17 @@ fn generate_test_value(col_name: &str, sql_type: &str) -> String {
         return "5".to_string();
     }
     if lower_type.contains("numeric") || lower_type.contains("decimal") || lower_type.contains("real") || lower_type.contains("float") || lower_type.contains("double") {
-        let re = regex::Regex::new(r"(?:numeric|decimal)\s*\(\s*(\d+)\s*(?:,\s*(\d+))?\s*\)").ok();
-        if let Some(re) = re {
-            if let Some(caps) = re.captures(&lower_type) {
-                let precision: i32 = caps.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(10);
-                let scale: i32 = caps.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-                let int_digits = precision - scale;
-                if int_digits <= 1 {
-                    if scale > 0 {
-                        return format!("{}.{}", "9", "9".repeat(scale as usize));
-                    }
-                    return "9".to_string();
+        static NUMERIC_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+        let re = NUMERIC_RE.get_or_init(|| regex::Regex::new(r"(?:numeric|decimal)\s*\(\s*(\d+)\s*(?:,\s*(\d+))?\s*\)").unwrap());
+        if let Some(caps) = re.captures(&lower_type) {
+            let precision: i32 = caps.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(10);
+            let scale: i32 = caps.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+            let int_digits = precision - scale;
+            if int_digits <= 1 {
+                if scale > 0 {
+                    return format!("{}.{}", "9", "9".repeat(scale as usize));
                 }
+                return "9".to_string();
             }
         }
         return "10.50".to_string();
@@ -980,12 +1000,9 @@ fn generate_test_value(col_name: &str, sql_type: &str) -> String {
         return "'\\x00'".to_string();
     }
     if lower_type.contains("varchar") || lower_type.contains("char") || lower_type.contains("text") || lower_type.contains("json") || lower_type.contains("jsonb") || lower_type.contains("uuid") {
-        let re = regex::Regex::new(r"(?:varchar2?|character\s+varying|char|character)\s*\(\s*(\d+)\s*\)").ok();
-        let max_len = if let Some(re) = re {
-            re.captures(&lower_type).and_then(|caps| caps.get(1)?.as_str().parse::<usize>().ok()).unwrap_or(0)
-        } else {
-            0
-        };
+        static VARCHAR_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+        let re = VARCHAR_RE.get_or_init(|| regex::Regex::new(r"(?:varchar2?|character\s+varying|char|character)\s*\(\s*(\d+)\s*\)").unwrap());
+        let max_len = re.captures(&lower_type).and_then(|caps| caps.get(1)?.as_str().parse::<usize>().ok()).unwrap_or(0);
         if max_len == 1 {
             return "'Y'".to_string();
         }
@@ -1005,29 +1022,31 @@ fn generate_test_value(col_name: &str, sql_type: &str) -> String {
 }
 
 fn extract_table_from_select(sql: &str) -> Option<String> {
-    let re = regex::Regex::new(r"\bfrom\s+(?:\w+\.)?(\w+)").ok()?;
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r"\bfrom\s+(?:\w+\.)?(\w+)").unwrap());
     re.captures(sql).map(|caps| caps.get(1).unwrap().as_str().to_lowercase())
 }
 
 fn extract_table_from_insert(sql: &str) -> Option<String> {
-    let re = regex::Regex::new(r"\binto\s+(?:\w+\.)?(\w+)").ok()?;
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r"\binto\s+(?:\w+\.)?(\w+)").unwrap());
     re.captures(sql).map(|caps| caps.get(1).unwrap().as_str().to_lowercase())
 }
 
 fn extract_table_from_update_delete(sql: &str) -> Option<String> {
-    let re = regex::Regex::new(r"\b(?:update|delete\s+from?)\s+(?:\w+\.)?(\w+)").ok()?;
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r"\b(?:update|delete\s+from?)\s+(?:\w+\.)?(\w+)").unwrap());
     re.captures(sql).map(|caps| caps.get(1).unwrap().as_str().to_lowercase())
 }
 
 fn extract_numeric_string_params(proc: &ProcedureInfo) -> HashSet<String> {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r"to_number\s*\(\s*#?\{?(\w+)").unwrap());
     let mut result = HashSet::new();
-    let re = regex::Regex::new(r"to_number\s*\(\s*#?\{?(\w+)").ok();
-    if let Some(re) = re {
-        for dml in &proc.dml_statements {
-            for caps in re.captures_iter(&dml.sql_text) {
-                if let Some(m) = caps.get(1) {
-                    result.insert(m.as_str().to_lowercase());
-                }
+    for dml in &proc.dml_statements {
+        for caps in re.captures_iter(&dml.sql_text) {
+            if let Some(m) = caps.get(1) {
+                result.insert(m.as_str().to_lowercase());
             }
         }
     }
@@ -1073,8 +1092,11 @@ fn lowercase_first(s: &str) -> String {
 }
 
 fn is_valid_identifier(s: &str) -> bool {
-    let re = regex::Regex::new(r"^[a-zA-Z_]\w*$").unwrap();
-    re.is_match(s)
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => chars.all(|c| c.is_ascii_alphanumeric() || c == '_'),
+        _ => false,
+    }
 }
 
 fn is_sql_reserved_word(s: &str) -> bool {
@@ -1150,7 +1172,7 @@ mod tests {
         let proc = make_proc("do_work");
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &[]).unwrap();
+        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new()).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/itest/OrderServiceIntegrationTest.java"),
         ).unwrap();
@@ -1181,7 +1203,7 @@ mod tests {
         let p2 = make_proc("cancel_order");
         let pkg = make_pkg("pkg_order", vec![p1, p2]);
         let dir = tempfile::tempdir().unwrap();
-        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &[]).unwrap();
+        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new()).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/itest/OrderServiceIntegrationTest.java"),
         ).unwrap();
@@ -1206,7 +1228,7 @@ mod tests {
         });
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &[]).unwrap();
+        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new()).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/itest/OrderServiceIntegrationTest.java"),
         ).unwrap();
@@ -1228,7 +1250,7 @@ mod tests {
         });
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &[]).unwrap();
+        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new()).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/itest/OrderServiceIntegrationTest.java"),
         ).unwrap();
@@ -1253,7 +1275,7 @@ mod tests {
         });
         let pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &[]).unwrap();
+        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new()).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/itest/DataServiceIntegrationTest.java"),
         ).unwrap();
@@ -1277,7 +1299,7 @@ mod tests {
         let mut pkg = make_pkg("pkg_inventory", vec![proc]);
         pkg.table_refs.insert("inventory".to_string());
         let dir = tempfile::tempdir().unwrap();
-        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[pkg.clone()], &[]).unwrap();
+        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[pkg.clone()], &HashMap::new()).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/itest/InventoryServiceIntegrationTest.java"),
         ).unwrap();
@@ -1301,7 +1323,7 @@ mod tests {
         });
         let pkg = make_pkg("pkg_inventory", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_itest_schema_sql(dir.path(), &[pkg], &[]).unwrap();
+        write_itest_schema_sql(dir.path(), &[pkg], &HashMap::new()).unwrap();
         let schema_path = dir.path().join("src/test/resources/itest-schema.sql");
         assert!(schema_path.exists());
         let content = std::fs::read_to_string(&schema_path).unwrap();
