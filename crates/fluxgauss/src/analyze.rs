@@ -9,12 +9,13 @@ pub fn analyze_procedure(
     let body = proc.body.take();
     let mut result = Ok(());
     if let Some(ref body_inner) = body {
-        proc.goto_analysis = Some(crate::statements::goto::analyze_goto_patterns(&body_inner.body));
+        proc.goto_analysis = Some(crate::statements::goto::analyze_goto_patterns(&body_inner.body, proc));
         for decl in &body_inner.declarations {
             process_declaration(decl, proc);
         }
+        let mut stmt_ctx = crate::context::StatementContext::new(summaries);
         for stmt in &body_inner.body {
-            if let Err(e) = crate::statement::process_statement(stmt, proc) {
+            if let Err(e) = crate::statement::process_statement(stmt, proc, &mut stmt_ctx) {
                 ctx.stub_procedures
                     .insert((proc.name.clone(), proc.parameters.len()));
                 result = Err(e);
@@ -26,8 +27,9 @@ pub fn analyze_procedure(
             let analysis = proc.goto_analysis.take().unwrap();
             proc.java_logic_lines.clear();
             proc.dml_statements.clear();
+            proc.select_counter = 0;
             let rewrite_result = crate::statements::goto::rewrite_with_pattern(
-                &body_inner.body, &analysis, proc
+                &body_inner.body, &analysis, proc, summaries
             );
             proc.goto_analysis = Some(analysis);
             if let Err(e) = rewrite_result {
@@ -51,6 +53,9 @@ pub fn process_declaration(
             let sql_type = crate::extract::normalize_sql_type(&sql_type_raw);
             let sql_type_lower = sql_type.to_lowercase();
             let java_type = if sql_type_lower.contains("%rowtype") {
+                proc.imports.insert("import java.util.Map;".into());
+                "Map<String, Object>".into()
+            } else if proc.custom_types.contains_key(&sql_type_lower) || proc.custom_types.contains_key(&sql_type) {
                 proc.imports.insert("import java.util.Map;".into());
                 "Map<String, Object>".into()
             } else {

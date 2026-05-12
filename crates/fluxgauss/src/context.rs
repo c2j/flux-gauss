@@ -63,3 +63,17 @@ impl GenerationContext {
         }
     }
 }
+
+pub struct StatementContext<'a> {
+    pub summaries: &'a HashMap<String, PackageSummary>,
+    pub dml_counter: HashMap<String, usize>,
+}
+
+impl<'a> StatementContext<'a> {
+    pub fn new(summaries: &'a HashMap<String, PackageSummary>) -> Self {
+        Self {
+            summaries,
+            dml_counter: HashMap::new(),
+        }
+    }
+}

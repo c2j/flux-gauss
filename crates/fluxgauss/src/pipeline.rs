@@ -33,7 +33,7 @@ pub fn run_pipeline(
     let mut ctx = AnalysisContext::new();
     let parsed = phase1_parse(sql_files, config, incremental);
     let analyzed = phase2_analyze(parsed, &mut ctx);
-    let (generated, test_count, itest_count, errors) = phase3_generate(&analyzed, config, incremental);
+    let (generated, test_count, itest_count, errors) = phase3_generate(&analyzed, config, incremental, sql_files);
 
     let packages = analyzed.packages;
     let skipped = analyzed.skipped;
@@ -197,7 +197,9 @@ fn phase2_analyze(
     let mut idx = 0;
 
     for pkg in &mut packages {
+        let pkg_custom_types = pkg.custom_types.clone();
         for proc in &mut pkg.procedures {
+            proc.custom_types = pkg_custom_types.clone();
             idx += 1;
             crate::progress::progress_bar("Analyze", idx, total, &proc.name);
 
@@ -230,6 +232,7 @@ fn phase3_generate(
     analyzed: &AnalyzedPackages,
     config: &AppConfig,
     _incremental: &IncrementalState,
+    sql_files: &[PathBuf],
 ) -> (Vec<String>, usize, usize, Vec<ConversionError>) {
     let base_package = config.base_package_or_default();
     let output_dir_str = config.output_dir_or_default();
@@ -245,6 +248,21 @@ fn phase3_generate(
             path: output_dir.to_string_lossy().into_owned(),
             message: e.to_string(),
         }),
+    }
+
+    if config.integration_test.as_ref().and_then(|it| it.enabled).unwrap_or(false) {
+        if let Err(e) = crate::generate::itest::write_abstract_integration_test(output_dir, &base_package) {
+            errors.push(ConversionError::Io {
+                path: output_dir.to_string_lossy().into_owned(),
+                message: format!("write_abstract_integration_test: {}", e),
+            });
+        }
+        if let Err(e) = crate::generate::itest::write_itest_schema_sql(output_dir, &analyzed.packages, sql_files) {
+            errors.push(ConversionError::Io {
+                path: output_dir.to_string_lossy().into_owned(),
+                message: format!("write_itest_schema_sql: {}", e),
+            });
+        }
     }
 
     for (idx, pkg) in analyzed.packages.iter().enumerate() {
@@ -291,7 +309,7 @@ fn phase3_generate(
         }
 
         if config.integration_test.as_ref().and_then(|it| it.enabled).unwrap_or(false) {
-            if let Err(e) = crate::generate::itest::write_itest_class(output_dir, pkg, &base_package) {
+            if let Err(e) = crate::generate::itest::write_itest_class(output_dir, pkg, &base_package, &service_injections, &analyzed.packages, sql_files) {
                 errors.push(ConversionError::Io {
                     path: pkg.package_name.clone(),
                     message: format!("write_itest_class: {}", e),

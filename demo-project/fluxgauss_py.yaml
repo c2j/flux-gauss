@@ -1,5 +1,5 @@
-output_dir: ./dest
-base_package: com.example.demo
+output_dir: ./dest_py
+base_package: ced
 
 integration_test:
   enabled: true

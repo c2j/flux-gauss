@@ -179,7 +179,7 @@ pub fn write_service_class(
 
     for proc in &pkg.procedures {
         w.blank();
-        let method = build_service_method(proc, &mapper_var, &object_pkg_var_names);
+        let method = build_service_method(proc, &mapper_var, &object_pkg_var_names, &pkg.package_vars);
         for line in method.split('\n') {
             w.line(line);
         }
@@ -260,15 +260,55 @@ fn coerce_default_value(java_type: &str, default_val: &str) -> String {
     default_val.to_string()
 }
 
-fn should_stub_procedure(proc: &crate::types::ProcedureInfo, object_pkg_var_names: &[String]) -> bool {
-    let object_var_count = proc.local_vars.values().filter(|t| *t == "Object").count();
+pub(crate) fn should_stub_procedure(proc: &crate::types::ProcedureInfo, object_pkg_var_names: &[String]) -> bool {
+    let lines = &proc.java_logic_lines;
 
-    if object_var_count > 2 {
+    let has_goto = lines.iter().any(|l| l.trim().starts_with("// GOTO "));
+    if has_goto {
+        return true;
+    }
+
+    let unresolved_count = lines.iter().filter(|l| l.contains("/* null */")).count();
+    if unresolved_count > 3 {
+        return true;
+    }
+
+    let broken_java = lines.iter().any(|l| {
+        let t = l.trim();
+        t.contains("null ^ ") || t.contains("null > null") || t.contains("null < null")
+            || t.contains("null + ") || t.contains("null - ") || t.contains("null * ")
+            || t.contains("if (1)") || t.contains("if (2)") || t.contains("if (3)")
+            || t.contains("Objects.equals(null,") || t.contains("((Object)")
+            || t.contains("->>") || t.contains("-> ")
+            || t.contains(".matches(") || t.contains("(Object[])")
+    });
+    if broken_java {
+        return true;
+    }
+
+    let broken_defaults = proc.local_var_defaults.values().any(|v| v.contains("((Object)") || v.contains(">>") || v.contains("-> ") || v.contains("(Object[])"));
+    if broken_defaults {
+        return true;
+    }
+
+    let has_empty_list_loop = lines.iter().any(|l| l.contains("Collections.<Map<String, Object>>emptyList()") || l.contains("Collections.emptyList()"));
+    if has_empty_list_loop {
+        return true;
+    }
+
+    let service_call_with_get = lines.iter().any(|l| {
+        (l.contains("Service.") || l.contains("this.")) && l.contains(".get()")
+    });
+    if service_call_with_get {
+        return true;
+    }
+
+    let object_var_count = proc.local_vars.values().filter(|t| *t == "Object").count();
+    if object_var_count > 5 {
         return true;
     }
 
     if object_var_count > 0 {
-        let lines = &proc.java_logic_lines;
         let uses_object_as_record = lines.iter().any(|l| l.contains("((java.util.Map"));
         if uses_object_as_record {
             return true;
@@ -276,43 +316,53 @@ fn should_stub_procedure(proc: &crate::types::ProcedureInfo, object_pkg_var_name
 
         let object_in_expr = lines.iter().any(|l| {
             let t = l.trim();
-            (t.contains("Object") && (t.contains(".get(") || t.contains(" + ") || t.contains(" - ") || t.contains(" * ") || t.contains(" / ") || t.contains(" > ") || t.contains(" < ")))
+            t.contains("Object") && (t.contains(".get(") || t.contains(" + ") || t.contains(" - ") || t.contains(" * ") || t.contains(" / ") || t.contains(" > ") || t.contains(" < "))
         });
         if object_in_expr {
             return true;
         }
+
+        let has_comparison = lines.iter().any(|l| {
+            l.contains(" > ") || l.contains(" < ") || l.contains(" >= ") || l.contains(" <= ")
+        });
+        if has_comparison {
+            let object_var_names: Vec<&str> = proc.local_vars.iter()
+                .filter(|(_, t)| *t == "Object")
+                .map(|(n, _)| n.as_str())
+                .collect();
+            let uses_object_in_comparison = lines.iter().any(|l| {
+                object_var_names.iter().any(|vname| {
+                    let java_name = snake_to_camel(vname);
+                    l.contains(&format!("{} > ", java_name)) || l.contains(&format!("{} < ", java_name))
+                        || l.contains(&format!("{} >= ", java_name)) || l.contains(&format!("{} <= ", java_name))
+                })
+            });
+            if uses_object_in_comparison {
+                return true;
+            }
+        }
     }
 
-    let lines = &proc.java_logic_lines;
-    let has_object_to_map = lines.iter().any(|l| {
-        l.contains("= null;") && !l.contains("String") && !l.contains("Integer") && !l.contains("Long") && !l.contains("Boolean") && !l.contains("BigDecimal") && !l.contains("Map<") && !l.contains("Double") && !l.contains("Float")
-    });
     let map_get_comparison = lines.iter().any(|l| {
         l.contains(".get(") && (l.contains(" > ") || l.contains(" < ") || l.contains(" + ") || l.contains(" - ") || l.contains(" * "))
+    });
+    let has_object_to_map = lines.iter().any(|l| {
+        l.contains("= null;") && !l.contains("String") && !l.contains("Integer") && !l.contains("Long") && !l.contains("Boolean") && !l.contains("BigDecimal") && !l.contains("Map<") && !l.contains("Double") && !l.contains("Float")
     });
     if has_object_to_map && map_get_comparison {
         return true;
     }
 
-    let has_goto = lines.iter().any(|l| l.trim().starts_with("// GOTO "));
-    if has_goto {
-        return true;
-    }
-
     let throws_business_exception = lines.iter().any(|l| l.contains("throw new BusinessException"));
     let has_dml = !proc.dml_statements.is_empty();
-    if throws_business_exception && !has_dml {
+    let has_mapper_call = lines.iter().any(|l| l.contains("mapper.") || l.contains("this."));
+    if throws_business_exception && !has_dml && !has_mapper_call {
         return true;
     }
 
     let assignment_lines: Vec<&str> = lines.iter().filter(|l| l.contains("=")).map(|s| s.as_str()).collect();
     let null_assignment_count = assignment_lines.iter().filter(|l| l.contains("null")).count();
-    if !assignment_lines.is_empty() && null_assignment_count > assignment_lines.len() / 3 {
-        return true;
-    }
-
-    let unresolved_count = lines.iter().filter(|l| l.contains("/* null */")).count();
-    if unresolved_count > 1 {
+    if assignment_lines.len() > 2 && null_assignment_count > assignment_lines.len() / 2 {
         return true;
     }
 
@@ -332,6 +382,7 @@ fn build_service_method(
     proc: &crate::types::ProcedureInfo,
     mapper_name: &str,
     object_pkg_var_names: &[String],
+    package_vars: &std::collections::HashMap<String, crate::types::VarInfo>,
 ) -> String {
     let mut params: Vec<String> = Vec::new();
     let mut out_params: Vec<&crate::types::Parameter> = Vec::new();
@@ -381,6 +432,12 @@ fn build_service_method(
         for (var_name, var_type) in &proc.local_vars {
             let var_java = snake_to_camel(var_name);
             if !out_java_names.contains(&var_java) {
+                let is_loop_iter = proc.java_logic_lines.iter().any(|l| {
+                    l.contains(&format!("for ({} ", var_type)) && l.contains(&format!(" : {}List)", var_java))
+                });
+                if is_loop_iter {
+                    continue;
+                }
                 let default_val = proc.local_var_defaults.get(var_name)
                     .cloned()
                     .unwrap_or_else(|| default_for_type(var_type).to_string());
@@ -406,6 +463,7 @@ fn build_service_method(
 
         for line in &proc.java_logic_lines {
             let mut l = line.replace("mapper.", &format!("{}.", mapper_name));
+            l = append_local_vars_to_mapper_calls(&l, proc, mapper_name, package_vars);
             let trimmed = l.trim().to_string();
             if trimmed == "null;" || trimmed == "null" {
                 l = format!("// {}", trimmed);
@@ -425,16 +483,26 @@ fn build_service_method(
         }
 
         if ret_type != "void" {
-            let last_line = body_lines.last().map(|s| s.trim().to_string()).unwrap_or_default();
-            if !last_line.starts_with("return ") && !last_line.starts_with("return;") {
-                let fallback = if ret_type.contains("List") {
-                    "return java.util.Collections.emptyList();"
-                } else {
-                    "return null;"
-                };
-                body_lines.push(fallback.to_string());
-            }
-        }
+             let last_line = body_lines.last().map(|s| s.trim().to_string()).unwrap_or_default();
+             if !last_line.starts_with("return ") && !last_line.starts_with("return;") {
+                 let fallback = if ret_type.contains("List") {
+                     "return java.util.Collections.emptyList();"
+                 } else if ret_type == "int" || ret_type == "Integer" {
+                     "return 0;"
+                 } else if ret_type == "long" || ret_type == "Long" {
+                     "return 0L;"
+                 } else if ret_type == "double" || ret_type == "Double" {
+                     "return 0.0;"
+                 } else if ret_type == "boolean" || ret_type == "Boolean" {
+                     "return false;"
+                 } else if ret_type.contains("BigDecimal") {
+                     "return java.math.BigDecimal.ZERO;"
+                 } else {
+                     "return null;"
+                 };
+                 body_lines.push(fallback.to_string());
+             }
+         }
     }
 
     let mut result = Vec::new();
@@ -461,6 +529,109 @@ fn build_service_method(
     }
     result.push("    }".to_string());
     result.join("\n")
+}
+
+fn append_local_vars_to_mapper_calls(
+    line: &str,
+    proc: &crate::types::ProcedureInfo,
+    mapper_name: &str,
+    package_vars: &std::collections::HashMap<String, crate::types::VarInfo>,
+) -> String {
+    let mapper_prefix = format!("{}.", mapper_name);
+    if !line.contains(&mapper_prefix) {
+        return line.to_string();
+    }
+
+    let param_java_names: std::collections::HashSet<String> = proc
+        .parameters
+        .iter()
+        .filter(|p| !p.is_out())
+        .map(|p| snake_to_camel(&p.name))
+        .collect();
+
+    let out_params: Vec<&crate::types::Parameter> = proc
+        .parameters
+        .iter()
+        .filter(|p| p.is_out())
+        .collect();
+
+    let call_re = regex::Regex::new(&format!(
+        r"{}\.(\w+)\s*\(([^)]*)\)",
+        regex::escape(mapper_name)
+    )).unwrap();
+
+    let mut result = line.to_string();
+    for caps in call_re.captures_iter(line) {
+        let method_name = caps.get(1).unwrap().as_str();
+        let existing_args = caps.get(2).unwrap().as_str().trim();
+
+        let dml = proc.dml_statements.iter().find(|d| d.method_id == method_name);
+        if let Some(dml) = dml {
+            let mut local_args: Vec<String> = Vec::new();
+            let mut pkg_args: Vec<String> = Vec::new();
+            let mut out_args: Vec<String> = Vec::new();
+            let word_re = regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap();
+            for word_caps in word_re.captures_iter(&dml.sql_text) {
+                let word = word_caps.get(1).unwrap().as_str();
+                if proc.local_vars.contains_key(word) {
+                    let jn = snake_to_camel(word);
+                    let jn_lower = jn.to_lowercase();
+                    if !param_java_names.iter().any(|pn| pn == &jn_lower) {
+                        local_args.push(jn);
+                    }
+                }
+            }
+            local_args.sort();
+            local_args.dedup();
+
+            for word_caps in word_re.captures_iter(&dml.sql_text) {
+                let word = word_caps.get(1).unwrap().as_str();
+                if let Some(_) = package_vars.get(word) {
+                    let jn = snake_to_camel(word);
+                    let jn_lower = jn.to_lowercase();
+                    if !param_java_names.iter().any(|pn| pn == &jn_lower)
+                        && !local_args.iter().any(|a| a.to_lowercase() == jn_lower)
+                    {
+                        pkg_args.push(jn);
+                    }
+                }
+            }
+            pkg_args.sort();
+            pkg_args.dedup();
+
+            for out_p in &out_params {
+                let jn = snake_to_camel(&out_p.name);
+                let jn_lower = jn.to_lowercase();
+                if !param_java_names.iter().any(|pn| pn == &jn_lower)
+                    && !local_args.iter().any(|a| a.to_lowercase() == jn_lower)
+                    && !pkg_args.iter().any(|a| a.to_lowercase() == jn_lower)
+                {
+                    let re = regex::Regex::new(&format!(r"(?i)\b{}\b", regex::escape(&out_p.name))).unwrap();
+                    if re.is_match(&dml.sql_text) {
+                        out_args.push(format!("{}.get()", jn));
+                    }
+                }
+            }
+            out_args.sort();
+            out_args.dedup();
+
+            let mut extra_args = local_args;
+            extra_args.extend(pkg_args);
+            extra_args.extend(out_args);
+
+            if !extra_args.is_empty() {
+                let new_args = if existing_args.is_empty() {
+                    extra_args.join(", ")
+                } else {
+                    format!("{}, {}", existing_args, extra_args.join(", "))
+                };
+                let old_call = format!("{}.{method_name}({existing_args})", mapper_name);
+                let new_call = format!("{}.{method_name}({new_args})", mapper_name);
+                result = result.replace(&old_call, &new_call);
+            }
+        }
+    }
+    result
 }
 
 pub fn collect_service_injections(pkg: &PackageInfo) -> std::collections::HashMap<String, String> {

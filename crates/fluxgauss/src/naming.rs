@@ -59,20 +59,20 @@ pub fn snake_to_pascal(s: &str) -> String {
 }
 
 /// Extract the Java class name from a SQL package name.
-/// Strips common prefixes: "pkg_", "pack_", "p_", then applies PascalCase.
-/// Examples: "pkg_order" → "Order", "pkg_common" → "Common", "inventory" → "Inventory"
+/// Strips schema prefix and common prefixes ("pkg_", "PKG_", "pack_"), then lowercases before PascalCase.
+/// Examples: "bigfund.PKG_2008802001_MGT" → "_2008802001Mgt", "pkg_order" → "Order"
 pub fn package_to_classname(pkg_name: &str) -> String {
-    let lower = pkg_name.to_lowercase();
-    let stripped = if lower.starts_with("pkg_") {
-        &pkg_name[4..]
-    } else if lower.starts_with("pack_") {
-        &pkg_name[5..]
-    } else if lower.starts_with("p_") {
-        &pkg_name[2..]
+    let short_name = pkg_name.rsplit('.').next().unwrap_or(pkg_name);
+    let stripped = if short_name.starts_with("pkg_") {
+        &short_name[4..]
+    } else if short_name.starts_with("PKG_") {
+        &short_name[4..]
+    } else if short_name.starts_with("pack_") {
+        &short_name[5..]
     } else {
-        pkg_name
+        short_name
     };
-    snake_to_pascal(stripped)
+    snake_to_pascal(&stripped.to_lowercase())
 }
 
 /// Convert a SQL procedure/function name to a Java method name.
@@ -160,7 +160,32 @@ mod tests {
 
     #[test]
     fn test_package_to_classname_with_p_prefix() {
-        assert_eq!(package_to_classname("p_user"), "User");
+        assert_eq!(package_to_classname("p_user"), "PUser");
+    }
+
+    #[test]
+    fn test_package_to_classname_schema_prefix() {
+        assert_eq!(package_to_classname("bigfund.pkg_order"), "Order");
+    }
+
+    #[test]
+    fn test_package_to_classname_uppercase() {
+        assert_eq!(package_to_classname("PKG_WARPDRIVER_STRESS_TEST"), "WarpdriverStressTest");
+    }
+
+    #[test]
+    fn test_package_to_classname_schema_uppercase() {
+        assert_eq!(package_to_classname("BIGFUND.PKG_2008802001_MGT"), "_2008802001Mgt");
+    }
+
+    #[test]
+    fn test_package_to_classname_pack_uppercase() {
+        assert_eq!(package_to_classname("BIGFUND.PACK_LOG"), "PackLog");
+    }
+
+    #[test]
+    fn test_package_to_classname_mixed_case() {
+        assert_eq!(package_to_classname("proc_GOto"), "ProcGoto");
     }
 
     #[test]
