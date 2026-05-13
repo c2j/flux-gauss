@@ -292,6 +292,97 @@ SQL_TO_JAVA = {
     "exception": "String",
 }
 
+# ── Custom / Package-Qualified Type Aliases ─────────────────────────
+# Maps lowercased type name patterns (suffix/prefix/keyword) to Java types.
+# Used when sql_type_to_java() encounters an unrecognised type name that
+# is likely a user-defined array or table type from another package.
+#
+# Matching strategy (evaluated in order, first match wins):
+#   1. Exact match on the *short* type name (after stripping package prefix)
+#   2. Suffix match  — e.g. "arrytype" matches "pkg_param_common.arrytype"
+#   3. Keyword match — e.g. "array" anywhere in the name
+#
+# Users can extend this at runtime via the `type_aliases` key in the YAML
+# config file, which is merged on top of the presets below.
+
+_CUSTOM_TYPE_PRESETS = {
+    # ── Oracle/OpenGauss array-type naming conventions ───────────
+    # Generic "array of varchar" names
+    "arrytype":              "List<String>",
+    "arrtype":               "List<String>",
+    "array_type":            "List<String>",
+    "arraytype":             "List<String>",
+    "str_array":             "List<String>",
+    "string_array":          "List<String>",
+    "varchar2_array":        "List<String>",
+    "varchar_array":         "List<String>",
+    "text_array":            "List<String>",
+    "char_array":            "List<String>",
+    "split_tbl":             "List<String>",
+    "split_array":           "List<String>",
+    "id_list":               "List<String>",
+    "string_list":           "List<String>",
+    "string_tbl":            "List<String>",
+    # Oracle TABLE OF VARCHAR2
+    "tab_varchar2":          "List<String>",
+    "tab_varchar":           "List<String>",
+    "tab_text":              "List<String>",
+    "tab_char":              "List<String>",
+    "tab_string":            "List<String>",
+    # Numeric arrays
+    "num_array":             "List<java.math.BigDecimal>",
+    "number_array":          "List<java.math.BigDecimal>",
+    "number_tbl":            "List<java.math.BigDecimal>",
+    "decimal_array":         "List<java.math.BigDecimal>",
+    "dec_array":             "List<java.math.BigDecimal>",
+    "int_array":             "List<Integer>",
+    "integer_array":         "List<Integer>",
+    "int_list":              "List<Integer>",
+    "integer_list":          "List<Integer>",
+    "integer_tbl":           "List<Integer>",
+    "tab_number":            "List<java.math.BigDecimal>",
+    "tab_integer":           "List<Integer>",
+    "tab_numeric":           "List<java.math.BigDecimal>",
+    "long_array":            "List<Long>",
+    "long_list":             "List<Long>",
+    "bigint_array":          "List<Long>",
+    "tab_bigint":            "List<Long>",
+    # Date/time arrays
+    "date_array":            "List<java.sql.Date>",
+    "date_list":             "List<java.sql.Date>",
+    "date_tbl":              "List<java.sql.Date>",
+    "timestamp_array":       "List<java.sql.Timestamp>",
+    "timestamp_list":        "List<java.sql.Timestamp>",
+    "tab_date":              "List<java.sql.Date>",
+    "tab_timestamp":         "List<java.sql.Timestamp>",
+    # Boolean arrays
+    "bool_array":            "List<Boolean>",
+    "boolean_array":         "List<Boolean>",
+    # Generic / catch-all
+    "raw_array":             "List<byte[]>",
+    "blob_array":            "List<byte[]>",
+    "byte_array":            "List<byte[]>",
+    # ── Oracle RECORD / OBJECT naming conventions ────────────────
+    "rec_type":              "Map<String, Object>",
+    "record_type":           "Map<String, Object>",
+    "obj_type":              "Map<String, Object>",
+    "row_type":              "Map<String, Object>",
+    # ── Oracle REF CURSOR aliases ────────────────────────────────
+    "sys_refcursor":         "Object",
+    "ref_cursor":            "Object",
+    "refcursor":             "Object",
+    # ── Common OpenGauss / PostgreSQL custom types ────────────────
+    "int4range":             "Object",
+    "int8range":             "Object",
+    "numrange":              "Object",
+    "tsrange":               "Object",
+    "tstzrange":             "Object",
+    "daterange":             "Object",
+    "jsonb_array":           "List<String>",
+    "json_array":            "List<String>",
+    "uuid_array":            "List<String>",
+}
+
 # ── SQL → MyBatis jdbcType Mapping ─────────────────────────────
 # Maps normalized SQL type names to MyBatis JdbcType enum values.
 # Used when generating #{param, jdbcType=X} in mapper XML.
@@ -530,8 +621,17 @@ def sql_type_to_java(sql_type) -> str:
     result = SQL_TO_JAVA.get(normalized)
     if result:
         return result
-    # Unknown type name — likely a user-defined composite type (CREATE TYPE ... AS (...))
-    # Map to Map<String, Object> so field access via .get() compiles
+
+    _aliases = _CUSTOM_TYPE_PRESETS
+    short_name = normalized.rsplit(".", 1)[-1] if "." in normalized else normalized
+    if short_name in _aliases:
+        return _aliases[short_name]
+    if normalized in _aliases:
+        return _aliases[normalized]
+    for keyword, java_type in _aliases.items():
+        if keyword in short_name or keyword in normalized:
+            return java_type
+
     return "Map<String, Object>"
 
 
@@ -832,6 +932,7 @@ class PackageInfo:
     comments: list = field(default_factory=list)  # List[CommentInfo] — package-level comments not in any procedure
     java_package: str = ""  # Custom Java package override (empty = use BASE_PACKAGE)
     custom_types: dict = field(default_factory=dict)  # name -> {"kind": "record"/"varray", "fields"/...}
+    _extra_mapper_methods: list = field(default_factory=list)  # [(method_name, sql, return_type)]
 
 
 # ── Conversion Report ──────────────────────────────────────────
@@ -1993,6 +2094,48 @@ def _iter_statements(stmts):
             yield s
 
 
+def _process_get_diagnostics(stmt_data: dict, proc: ProcedureInfo):
+    items = stmt_data.get("items", [])
+    for item_data in items:
+        diag_item = item_data.get("item", "")
+        target = item_data.get("target", {})
+        var_name = None
+        if isinstance(target, dict):
+            for k, v in target.items():
+                if k == "PlVariable":
+                    var_name = v[-1] if isinstance(v, list) and v else str(v)
+                    break
+        if not var_name:
+            continue
+
+        var_java = snake_to_camel(var_name)
+
+        if diag_item == "RowCount":
+            captured = False
+            for idx in range(len(proc.java_logic_lines) - 1, -1, -1):
+                line = proc.java_logic_lines[idx]
+                stripped = line.strip()
+                if 'mapper.' in stripped and stripped.endswith(';') and not stripped.startswith('//'):
+                    indent = line[:len(line) - len(line.lstrip())]
+                    proc.java_logic_lines[idx] = f"{indent}int _diag_rowcount = {stripped}"
+                    var_type = proc.local_vars.get(var_name, "Integer")
+                    if var_type == "int":
+                        proc.java_logic_lines.append(f"{indent}{var_java} = _diag_rowcount;")
+                    else:
+                        proc.java_logic_lines.append(f"{indent}{var_java} = Integer.valueOf(_diag_rowcount);")
+                    captured = True
+                    break
+            if not captured:
+                proc.java_logic_lines.append(f"// GET DIAGNOSTICS {var_java} = ROW_COUNT — no preceding mapper call to capture")
+                var_type = proc.local_vars.get(var_name, "Integer")
+                if var_type == "int":
+                    proc.java_logic_lines.append(f"{var_java} = 0;")
+                else:
+                    proc.java_logic_lines.append(f"{var_java} = Integer.valueOf(0);")
+        else:
+            proc.java_logic_lines.append(f"// GET DIAGNOSTICS {var_java} = {diag_item} — manual review needed")
+
+
 def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_counter: dict):
     for stmt_type, stmt_data in stmt.items():
         if stmt_type == "SqlStatement":
@@ -2103,6 +2246,8 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
             proc.imports.add("import java.sql.Savepoint;")
         elif stmt_type == "ReturnQuery":
             _process_return_query(stmt_data, proc, all_packages, dml_counter)
+        elif stmt_type == "GetDiagnostics":
+            _process_get_diagnostics(stmt_data, proc)
         elif stmt_type == "ForAll":
             proc.java_logic_lines.append(f"// TODO: FORALL — bulk operation requires manual implementation")
             _record_todo("FORALL", proc, "bulk DML")
@@ -2145,6 +2290,10 @@ def _collect_goto_info(body_stmts, proc: ProcedureInfo = None):
                         labels[label] = LabelInfo(name=label, target_idx=idx, target_depth=depth)
                         label_stmt_map[label] = stmt
                     _walk(stmt_data.get("body", []), depth + 1, current_path, enclosing_top_idx=idx)
+                    exc_block = stmt_data.get("exception_block")
+                    if exc_block and isinstance(exc_block, dict):
+                        for handler in exc_block.get("handlers", []):
+                            _walk(handler.get("statements", []), depth + 2, current_path, enclosing_top_idx=idx)
                 elif stmt_type in ("If", "For", "While", "Loop") and isinstance(stmt_data, dict):
                     label = stmt_data.get("label")
                     if label:
@@ -2540,6 +2689,40 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
     proc.dml_statements = []
 
     goto_labels = {g.label for g in analysis.gotos}
+    label_names = set(analysis.labels.keys())
+    goto_by_label = {}
+    for g in analysis.gotos:
+        goto_by_label.setdefault(g.label, []).append(g)
+
+    # Identify which top-level stmt is the loop containing GOTOs
+    _loop_idx = None
+    _loop_labels_internal = set()
+    for i, stmt in enumerate(body_stmts):
+        for st, sd in stmt.items():
+            if st in ("For", "While", "Loop") and isinstance(sd, dict):
+                _text = json.dumps(stmt)
+                if any(f'"Goto"' in _text for _ in _text.split()):
+                    if '"Goto"' in _text:
+                        _loop_idx = i
+                        _loop_body = sd.get("body", [])
+                        _loop_labels_internal = {
+                            lbl for lbl, li in analysis.labels.items()
+                            if li.target_idx == i and li.target_depth > 0
+                        }
+                        if not _loop_labels_internal:
+                            for lbl, li in analysis.labels.items():
+                                for inner_s in _loop_body:
+                                    if isinstance(inner_s, dict):
+                                        for ik, iv in inner_s.items():
+                                            if ik == "Block" and isinstance(iv, dict) and iv.get("label") == lbl:
+                                                _loop_labels_internal.add(lbl)
+                        break
+        if _loop_idx is not None:
+            break
+
+    _external_labels = goto_labels - _loop_labels_internal
+    _needs_dispatch = len(_external_labels) > 0
+    _goto_target_var = "_gotoTarget"
 
     def _process_with_goto_replace(stmt):
         if not isinstance(stmt, dict):
@@ -2548,7 +2731,11 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
             if stmt_type == "Goto" and isinstance(stmt_data, dict):
                 label = stmt_data.get("label", "")
                 if label in goto_labels:
-                    proc.java_logic_lines.append("continue;")
+                    if _needs_dispatch and label in _external_labels:
+                        proc.java_logic_lines.append(f'{_goto_target_var} = "{label}";')
+                        proc.java_logic_lines.append("break;")
+                    else:
+                        proc.java_logic_lines.append("continue;")
                     return
             elif stmt_type == "If" and isinstance(stmt_data, dict):
                 condition = _expr_to_java(stmt_data.get("condition", {}), proc, all_packages=all_packages)
@@ -2573,8 +2760,23 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
                 _process_loop_with_goto_replace(stmt, proc, all_packages, dml_counter)
                 return
             elif stmt_type == "Block" and isinstance(stmt_data, dict):
-                for s in _iter_statements(stmt_data.get("body", [])):
-                    _process_with_goto_replace(s)
+                exc_block = stmt_data.get("exception_block")
+                if exc_block and exc_block.get("handlers"):
+                    proc.java_logic_lines.append("try {")
+                    for s in _iter_statements(stmt_data.get("body", [])):
+                        _process_with_goto_replace(s)
+                    _indent_last_lines(proc, 1)
+                    for handler in exc_block.get("handlers", []):
+                        conditions = handler.get("conditions", [])
+                        cond_name = conditions[0] if conditions else "EXCEPTION"
+                        proc.java_logic_lines.append(f"}} catch (Exception e) {{ // {cond_name}")
+                        for hs in _iter_statements(handler.get("statements", [])):
+                            _process_with_goto_replace(hs)
+                        _indent_last_lines(proc, 1)
+                    proc.java_logic_lines.append("}")
+                else:
+                    for s in _iter_statements(stmt_data.get("body", [])):
+                        _process_with_goto_replace(s)
                 return
         _process_statement(stmt, proc, all_packages, dml_counter)
 
@@ -2599,6 +2801,10 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
                     for s in _iter_statements(body):
                         _process_with_goto_replace(s)
                     _indent_last_lines(proc, 1)
+                    if _needs_dispatch:
+                        if proc.java_logic_lines and proc.java_logic_lines[-1].strip() == "continue;":
+                            proc.java_logic_lines.pop()
+                        proc.java_logic_lines.append(f"if ({_goto_target_var} != null) break;")
                     proc.java_logic_lines.append("}")
                     return
                 elif "Query" in kind:
@@ -2627,6 +2833,10 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
                             for s in _iter_statements(body):
                                 _process_with_goto_replace(s)
                             _indent_last_lines(proc, 1)
+                            if _needs_dispatch:
+                                if proc.java_logic_lines and proc.java_logic_lines[-1].strip() == "continue;":
+                                    proc.java_logic_lines.pop()
+                                proc.java_logic_lines.append(f"if ({_goto_target_var} != null) break;")
                             proc.java_logic_lines.append("}")
                             return
                 proc.java_logic_lines.append(f"// TODO: nested breakout loop — manual extraction recommended")
@@ -2639,12 +2849,113 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
                 for s in _iter_statements(stmt_data.get("body", [])):
                     _process_with_goto_replace(s)
                 _indent_last_lines(proc, 1)
+                if _needs_dispatch:
+                    if proc.java_logic_lines and proc.java_logic_lines[-1].strip() == "continue;":
+                        proc.java_logic_lines.pop()
+                    proc.java_logic_lines.append(f"if ({_goto_target_var} != null) break;")
                 proc.java_logic_lines.append("}")
                 return
         _process_statement(stmt, proc, all_packages, dml_counter)
 
-    for stmt in body_stmts:
-        _process_with_goto_replace(stmt)
+    # Phase 1: pre-loop statements
+    if _loop_idx is not None:
+        for stmt in body_stmts[:_loop_idx]:
+            _process_with_goto_replace(stmt)
+        if _needs_dispatch:
+            proc.java_logic_lines.append(f'String {_goto_target_var} = null;')
+
+    # Phase 2: the loop
+    if _loop_idx is not None:
+        _process_with_goto_replace(body_stmts[_loop_idx])
+    else:
+        for stmt in body_stmts:
+            _process_with_goto_replace(stmt)
+        return
+
+    # Phase 3: post-loop statements with dispatch for external labels
+    _post_stmts = body_stmts[_loop_idx + 1:]
+    if not _post_stmts:
+        return
+
+    if not _needs_dispatch:
+        for stmt in _post_stmts:
+            _process_with_goto_replace(stmt)
+        return
+
+    # Build ordered list of external labels that appear in post-loop stmts
+    _sorted_ext_labels = []
+    for i, stmt in enumerate(_post_stmts):
+        for st, sd in stmt.items():
+            if st == "Block" and isinstance(sd, dict):
+                lbl = sd.get("label")
+                if lbl and lbl in _external_labels:
+                    _sorted_ext_labels.append((i, lbl))
+
+    if not _sorted_ext_labels:
+        for stmt in _post_stmts:
+            _process_with_goto_replace(stmt)
+        return
+
+    # Generate dispatch: group each external label block with its trailing Raise stmts,
+    # wrap each group in if(_gotoTarget == "label")
+    _first_label_idx = None
+    for _pi, stmt in enumerate(_post_stmts):
+        for st, sd in stmt.items():
+            if st == "Block" and isinstance(sd, dict):
+                lbl = sd.get("label")
+                if lbl and lbl in _external_labels:
+                    _first_label_idx = _pi
+                    break
+        if _first_label_idx is not None:
+            break
+
+    # Statements before first external label → run when _gotoTarget is null (normal flow)
+    _pre_label_stmts = _post_stmts[:_first_label_idx] if _first_label_idx is not None else []
+    if _pre_label_stmts:
+        proc.java_logic_lines.append(f'if ({_goto_target_var} == null) {{')
+        for stmt in _pre_label_stmts:
+            _process_with_goto_replace(stmt)
+        _indent_last_lines(proc, 1)
+        proc.java_logic_lines.append("}")
+
+    _label_groups = []  # list of (label_name, [stmt_indices])
+    _current_label = None
+    _current_group = []
+    for _pi, stmt in enumerate(_post_stmts):
+        _found_label = None
+        for st, sd in stmt.items():
+            if st == "Block" and isinstance(sd, dict):
+                lbl = sd.get("label")
+                if lbl and lbl in _external_labels:
+                    _found_label = lbl
+                break
+        if _found_label:
+            if _current_label:
+                _label_groups.append((_current_label, _current_group))
+            _current_label = _found_label
+            _current_group = [_pi]
+        elif _current_label:
+            _current_group.append(_pi)
+    if _current_label:
+        _label_groups.append((_current_label, _current_group))
+
+    for _gi, (lbl, indices) in enumerate(_label_groups):
+        _is_last = _gi == len(_label_groups) - 1
+        if _is_last and len(_label_groups) == 1:
+            # Only one external label — can use simple if or fall-through
+            # Since the while(true) only exits via break with _gotoTarget set,
+            # the label code always runs. But use if for safety.
+            proc.java_logic_lines.append(f'if ("{lbl}".equals({_goto_target_var})) {{')
+            for _pi in indices:
+                _process_with_goto_replace(_post_stmts[_pi])
+            _indent_last_lines(proc, 1)
+            proc.java_logic_lines.append("}")
+        else:
+            proc.java_logic_lines.append(f'if ("{lbl}".equals({_goto_target_var})) {{')
+            for _pi in indices:
+                _process_with_goto_replace(_post_stmts[_pi])
+            _indent_last_lines(proc, 1)
+            proc.java_logic_lines.append("}")
 
 
 def _strip_unreachable_in_case(proc, start_offset: int):
@@ -4097,6 +4408,54 @@ def _extract_var_name_from_expr(expr: dict) -> str:
     return ""
 
 
+def _extract_savepoint_from_string_expr(string_expr: dict):
+    """Check if a dynamic EXECUTE builds a SAVEPOINT/ROLLBACK TO SAVEPOINT command.
+
+    Handles patterns like: EXECUTE IMMEDIATE 'SAVEPOINT ' || v_sp1
+    Returns (kind, java_name) or None.
+    """
+    if not isinstance(string_expr, dict):
+        return None
+    binop = string_expr.get("BinaryOp")
+    if not binop:
+        lit = string_expr.get("Literal", {})
+        if isinstance(lit, dict) and "String" in lit:
+            s = lit["String"].strip().upper()
+            if s.startswith("SAVEPOINT ") or s.startswith("ROLLBACK TO SAVEPOINT ") or s.startswith("RELEASE SAVEPOINT "):
+                name_part = lit["String"].strip()
+                if s.startswith("SAVEPOINT "):
+                    return ("SAVEPOINT", name_part[len("SAVEPOINT "):].strip() or "sp")
+                elif s.startswith("ROLLBACK TO SAVEPOINT "):
+                    return ("ROLLBACK TO SAVEPOINT", name_part[len("ROLLBACK TO SAVEPOINT "):].strip() or "sp")
+                else:
+                    return ("RELEASE SAVEPOINT", name_part[len("RELEASE SAVEPOINT "):].strip() or "sp")
+        return None
+    left = binop.get("left", {})
+    right = binop.get("right", {})
+    op = binop.get("op", "")
+    if op != "||":
+        return None
+    left_str = None
+    if isinstance(left, dict) and "Literal" in left:
+        left_str = left["Literal"].get("String", "")
+    if not left_str:
+        return None
+    upper = left_str.strip().upper()
+    if upper == "SAVEPOINT " or upper == "SAVEPOINT":
+        var_name = _extract_var_name_from_expr(right)
+        if var_name:
+            return ("SAVEPOINT", snake_to_camel(var_name))
+    elif upper == "ROLLBACK TO SAVEPOINT " or upper == "ROLLBACK TO SAVEPOINT":
+        var_name = _extract_var_name_from_expr(right)
+        if var_name:
+            return ("ROLLBACK TO SAVEPOINT", snake_to_camel(var_name))
+    elif upper == "RELEASE SAVEPOINT " or upper == "RELEASE SAVEPOINT":
+        var_name = _extract_var_name_from_expr(right)
+        if var_name:
+            return ("RELEASE SAVEPOINT", snake_to_camel(var_name))
+    return None
+
+
 def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict, dml_counter: dict):
     # NEW: Prefer parsed_query when available (parser already parsed the SQL)
     parsed_query = execute_data.get("parsed_query")
@@ -4240,6 +4599,19 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
 
     # FALLBACK: existing string tracing logic (keep as-is)
     string_expr = execute_data.get("string_expr", {})
+
+    # Detect dynamic SAVEPOINT/ROLLBACK TO SAVEPOINT via string concatenation
+    _sp_match = _extract_savepoint_from_string_expr(string_expr)
+    if _sp_match:
+        _sp_kind, _sp_name_java = _sp_match
+        if _sp_kind == "SAVEPOINT":
+            proc.java_logic_lines.append(f"// SAVEPOINT {_sp_name_java} — use TransactionAspectSupport.currentTransactionStatus().createSavepoint() if needed")
+        elif _sp_kind == "ROLLBACK TO SAVEPOINT":
+            proc.java_logic_lines.append(f"// ROLLBACK TO SAVEPOINT {_sp_name_java} — use TransactionAspectSupport.currentTransactionStatus().rollbackToSavepoint() if needed")
+        elif _sp_kind == "RELEASE SAVEPOINT":
+            proc.java_logic_lines.append(f"// RELEASE SAVEPOINT {_sp_name_java} — not needed in Spring @Transactional context")
+        return
+
     var_name = _extract_var_name_from_expr(string_expr)
     sql_text = proc.var_assignments.get(var_name, "")
     using_args = execute_data.get("using_args", [])
@@ -4806,7 +5178,7 @@ SQL_FUNCTION_MAP = {
     "greatest": "Math.max",
     "least": "Math.min",
     "abs": "__HANDLER__",
-    "ceil": "Math.ceil",
+    "ceil": "__HANDLER__",
     "floor": "Math.floor",
     "round": "__HANDLER__",
     "upper": "String.valueOf({args}).toUpperCase()",
@@ -4882,6 +5254,7 @@ SQL_FUNCTION_MAP = {
     "jsonb_build_object": "__HANDLER__",
     "jsonb_array_length": "__HANDLER__",
     "string_to_array": "__HANDLER__",
+    "getarray": "__HANDLER__",
     "nextval": "__HANDLER__",
     "currval": "__HANDLER__",
     "gen_random_uuid": "__EXPR__java.util.UUID.randomUUID().toString()",
@@ -5100,13 +5473,34 @@ _TO_CHAR_DATE_MAP = {
 }
 
 
+def _is_bigdecimal_expr(java_expr: str, proc) -> bool:
+    if "BigDecimal" in java_expr or ".subtract(" in java_expr or ".add(" in java_expr or ".multiply(" in java_expr or ".divide(" in java_expr or ".setScale(" in java_expr:
+        return True
+    if proc is not None:
+        var_name = java_expr.lstrip("this.").split(".")[0]
+        for vname, vtype in proc.local_vars.items():
+            if snake_to_camel(vname) == var_name and "BigDecimal" in vtype:
+                return True
+        for p in proc.parameters:
+            if p.java_name == var_name and "BigDecimal" in p.java_type:
+                return True
+    return False
+
+
 def _handle_function(func_name, args_java, proc):
     if func_name == "abs":
         if args_java:
             arg = args_java[0]
-            if "BigDecimal" in arg or ".subtract(" in arg or ".add(" in arg or ".multiply(" in arg or ".divide(" in arg:
+            if _is_bigdecimal_expr(arg, proc):
                 return f"({arg}).abs()"
         return f"Math.abs({args_java[0] if args_java else '0'})"
+
+    elif func_name == "ceil":
+        if args_java:
+            arg = args_java[0]
+            if _is_bigdecimal_expr(arg, proc):
+                return f"({arg}).setScale(0, java.math.RoundingMode.CEILING)"
+        return f"Math.ceil({args_java[0]})"
 
     elif func_name == "decode":
         if len(args_java) < 3:
@@ -5248,6 +5642,9 @@ def _handle_function(func_name, args_java, proc):
     elif func_name == "string_to_array":
         return f"this.stringToArray({', '.join(args_java)})" if args_java else "null"
 
+    elif func_name == "getarray":
+        return f"this.stringToArray({', '.join(args_java)})" if args_java else "null"
+
     elif func_name == "nextval":
         return f"this.nextval({', '.join(args_java)})" if args_java else "null"
 
@@ -5355,7 +5752,7 @@ def _handle_function(func_name, args_java, proc):
 
 _NUMERIC_FUNC_RETURN_INT = {"length", "instr", "ascii", "sign", "mod", "round", "trunc", "jsonb_array_length"}
 _NUMERIC_FUNC_RETURN_DOUBLE = {"abs", "ceil", "floor", "power", "sqrt", "log", "exp", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "radians", "degrees"}
-_NUMERIC_FUNC_NEEDS_DOUBLE_ARGS = {"sin", "cos", "tan", "asin", "acos", "atan", "atan2", "sqrt", "log", "exp", "radians", "degrees", "power", "ceil", "floor"}
+_NUMERIC_FUNC_NEEDS_DOUBLE_ARGS = {"sin", "cos", "tan", "asin", "acos", "atan", "atan2", "sqrt", "log", "exp", "radians", "degrees", "power", "floor"}
 _NUMERIC_FUNC_RETURN_LONG = {"to_number"}
 _STRING_FUNC_RETURN = {
     "upper", "lower", "trim", "replace", "concat", "lpad", "rpad", "rtrim", "ltrim",
@@ -5553,14 +5950,14 @@ def _coerce_java_arg(a_java: str, target_type: str) -> str:
     # BigDecimal target with numeric literal
     if "BigDecimal" in target_type and _is_numeric_literal_expr(a_java):
         return f"java.math.BigDecimal.valueOf({a_java})"
-    # Map.get() result needs casting to target type
+    # Map.get() or List.get() result needs casting to target type
     if ".get(" in a_java and target_type not in ("Object", "Map<String, Object>"):
         if target_type in ("long", "Long"):
-            return f"((Number) {a_java}).longValue()"
+            return f"Long.parseLong(String.valueOf({a_java}))"
         if target_type in ("int", "Integer"):
-            return f"((Number) {a_java}).intValue()"
+            return f"Integer.parseInt(String.valueOf({a_java}))"
         if "BigDecimal" in target_type:
-            return f"((java.math.BigDecimal) {a_java})"
+            return f"new java.math.BigDecimal(String.valueOf({a_java}))"
         if target_type == "String":
             return f"(String) {a_java}"
         return f"({target_type}) {a_java}"
@@ -5864,6 +6261,10 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 return f"{right}.equals({left})"
             elif op == "<>" and _is_string_comparison(val):
                 return f"!{right}.equals({left})"
+            if op in ("=", "<>", "!=", "==") and proc is not None:
+                _str_int = _coerce_string_int_compare(val, left, right, proc)
+                if _str_int:
+                    return _str_int
             return f"{left} {java_op} {right}"
         elif key == "UnaryOp":
             operand = _expr_to_java(val.get("expr", {}), proc, all_packages=all_packages)
@@ -6016,7 +6417,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                                 wrapped_args.append(a_java)
                         return f"this.{method}({', '.join(wrapped_args)})"
                 _record_unsupported(func_name, proc)
-                return f"/* TODO: implement {func_name}({args_str}) */ ({snake_to_camel(func_name)}(/* {args_str} */))"
+                return f"false /* TODO: implement {func_name}({args_str}) */"
         elif key == "SpecialFunction":
             func_name = val.get("name", "").lower()
             handler = SPECIAL_FUNCTION_MAP.get(func_name)
@@ -6025,13 +6426,25 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 return handler(val, proc, _wrapped_fn)
             _record_unsupported(func_name, proc, is_special=True)
             args_java = [_expr_to_java(a, proc, all_packages=all_packages) for a in val.get("args", [])]
-            return f"/* UNSUPPORTED: {func_name} — special syntax, no Java mapping */"
+            return f"false /* UNSUPPORTED: {func_name} — special syntax, no Java mapping */"
         elif key == "IsNull":
             inner = _expr_to_java(val.get("expr", {}), proc, all_packages=all_packages)
             negated = val.get("negated", False)
             if negated:
                 return f"{inner} != null"
             return f"{inner} == null"
+        elif key == "IsBoolean":
+            inner = _expr_to_java(val.get("expr", {}), proc, all_packages=all_packages)
+            negated = val.get("negated", False)
+            bool_val = val.get("value", True)
+            if bool_val:
+                if negated:
+                    return f"!Boolean.TRUE.equals({inner})"
+                return f"Boolean.TRUE.equals({inner})"
+            else:
+                if negated:
+                    return f"!Boolean.FALSE.equals({inner})"
+                return f"Boolean.FALSE.equals({inner})"
         elif key == "Parenthesized":
             return f"({_expr_to_java(val, proc, all_packages=all_packages)})"
         elif key == "Case":
@@ -6166,6 +6579,41 @@ def _is_string_comparison(binary_op: dict) -> bool:
             if k == "Literal" and isinstance(v, dict) and "String" in v:
                 return True
     return False
+
+
+def _coerce_string_int_compare(binary_op: dict, left_java: str, right_java: str, proc):
+    if proc is None:
+        return None
+    left_ast = binary_op.get("left", {})
+    right_ast = binary_op.get("right", {})
+    op = binary_op.get("op", "=")
+    neg = op in ("<>", "!=")
+
+    def _is_int_literal(node):
+        return isinstance(node, dict) and "Literal" in node and isinstance(node["Literal"], dict) and "Integer" in node["Literal"]
+
+    def _is_string_var(node):
+        if not isinstance(node, dict):
+            return False
+        for k, v in node.items():
+            if k == "PlVariable" and isinstance(v, list) and v:
+                vname = v[0].lower()
+                for p in proc.parameters:
+                    if p.name.lower() == vname and p.java_type == "String":
+                        return True
+                if vname in proc.local_vars and proc.local_vars[vname] == "String":
+                    return True
+        return False
+
+    if _is_string_var(left_ast) and _is_int_literal(right_ast):
+        int_val = right_ast["Literal"]["Integer"]
+        eq = f'"{int_val}".equals({left_java})'
+        return f"!{eq}" if neg else eq
+    if _is_string_var(right_ast) and _is_int_literal(left_ast):
+        int_val = left_ast["Literal"]["Integer"]
+        eq = f'"{int_val}".equals({right_java})'
+        return f"!{eq}" if neg else eq
+    return None
 
 
 def _literal_to_java(lit) -> str:
@@ -6456,6 +6904,11 @@ def generate_project(output_dir: str, packages: list, changed_packages: set = No
             service_injections = _collect_service_injections(pkg)
 
             try:
+                _write_service_class(base_path, pkg, service_injections, all_packages)
+            except Exception as e:
+                raise RuntimeError(f"_write_service_class: {e}") from e
+
+            try:
                 _write_mapper_interface(base_path, pkg)
             except Exception as e:
                 raise RuntimeError(f"_write_mapper_interface: {e}") from e
@@ -6464,11 +6917,6 @@ def generate_project(output_dir: str, packages: list, changed_packages: set = No
                 _write_mapper_xml(base_path, pkg)
             except Exception as e:
                 raise RuntimeError(f"_write_mapper_xml: {e}") from e
-
-            try:
-                _write_service_class(base_path, pkg, service_injections, all_packages)
-            except Exception as e:
-                raise RuntimeError(f"_write_service_class: {e}") from e
 
             service_injections = _collect_service_injections(pkg)
 
@@ -6725,6 +7173,14 @@ def _write_mapper_interface(base_path: Path, pkg: PackageInfo):
     if not methods:
         methods = [f"// No direct DML operations for {pkg.package_name}"]
 
+    for method_name, sql, return_type in getattr(pkg, '_extra_mapper_methods', []):
+        if return_type == "Long":
+            methods.append(f"{return_type} {method_name}(@Param(\"seqName\") String seqName);")
+            imports.add("import org.apache.ibatis.annotations.Param;")
+        elif return_type == "Integer":
+            methods.append(f"{return_type} {method_name}(@Param(\"jsonb\") String jsonb);")
+            imports.add("import org.apache.ibatis.annotations.Param;")
+
     imports_str = "\n".join(sorted(imports)) + "\n" if imports else ""
     methods_str = "\n".join(methods)
     indented_methods = _indent(methods_str, 1)
@@ -6838,6 +7294,14 @@ def _write_mapper_xml(base_path: Path, pkg: PackageInfo):
 
     stmts_xml = "\n\n".join(statements) if statements else f"<!-- No statements for {pkg.package_name} -->"
 
+    extra_stmts = []
+    for method_name, sql, return_type in getattr(pkg, '_extra_mapper_methods', []):
+        rt_alias = return_type.lower() if return_type in ("Long", "Integer", "String") else return_type
+        xml_lines = [f'<select id="{method_name}" resultType="{rt_alias}">']
+        xml_lines.append(f'        {sql}')
+        xml_lines.append('</select>')
+        extra_stmts.append("\n".join(xml_lines))
+
     lines = []
     lines.append('<?xml version="1.0" encoding="UTF-8"?>')
     lines.append('<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"')
@@ -6849,6 +7313,13 @@ def _write_mapper_xml(base_path: Path, pkg: PackageInfo):
             lines.append("")
         for stmt_line in stmt.split("\n"):
             lines.append(f"    {stmt_line}")
+    if extra_stmts:
+        lines.append("")
+        for i, estmt in enumerate(extra_stmts):
+            if i > 0:
+                lines.append("")
+            for eline in estmt.split("\n"):
+                lines.append(f"    {eline}")
     lines.append("")
     lines.append("</mapper>")
     content = "\n".join(lines) + "\n"
@@ -7135,6 +7606,8 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
         all_body_text += " ".join(proc.java_logic_lines) + " "
         for vn, vt in proc.local_vars.items():
             all_body_text += vt + " "
+        for vn, vd in proc.local_var_defaults.items():
+            all_body_text += vd + " "
         if proc.body and proc.body.get("exception_block"):
             for handler in (proc.body.get("exception_block") or {}).get("handlers", []):
                 for s in _iter_statements(handler.get("statements", [])):
@@ -7302,6 +7775,23 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
             if _kfn == "stringToArray":
                 lines.append(f"        if (str == null || str.isEmpty()) return java.util.Collections.emptyList();")
                 lines.append(f"        return java.util.Arrays.asList(str.split(java.util.regex.Pattern.quote(delimiter)));")
+            elif _kfn == "nextval":
+                lines.append(f"        return {mapper_name}.selectNextval(seqName);")
+                pkg._extra_mapper_methods.append(("selectNextval", "SELECT nextval(#" + "{seqName, jdbcType=VARCHAR}) AS val", "Long"))
+            elif _kfn == "currval":
+                lines.append(f"        return {mapper_name}.selectCurrval(seqName);")
+                pkg._extra_mapper_methods.append(("selectCurrval", "SELECT currval(#" + "{seqName, jdbcType=VARCHAR}) AS val", "Long"))
+            elif _kfn == "jsonbArrayLength":
+                lines.append(f"        try {{")
+                lines.append(f"            return new com.fasterxml.jackson.databind.ObjectMapper().readValue(jsonb, com.fasterxml.jackson.databind.JsonNode.class).size();")
+                lines.append(f"        }} catch (Exception e) {{ return 0; }}")
+            elif _kfn == "jsonbBuildObject":
+                lines.append(f"        java.util.Map<String, Object> map = new java.util.LinkedHashMap<>();")
+                lines.append(f"        for (int i = 0; i + 1 < args.length; i += 2) {{")
+                lines.append(f"            map.put(String.valueOf(args[i]), args[i + 1]);")
+                lines.append(f"        }}")
+                lines.append(f"        try {{ return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(map); }}")
+                lines.append(f"        catch (Exception e) {{ throw new RuntimeException(e); }}")
             else:
                 lines.append(f"        // TODO: implement {_kfn}")
                 if _kret == "Integer" or _kret == "int":
@@ -9818,6 +10308,10 @@ def main():
             BASE_DIR = "src/main/java/" + BASE_PACKAGE.replace(".", "/")
         if 'logger' in config:
             _LOGGER_CONFIG = _resolve_logger_config(config)
+        if 'type_aliases' in config:
+            _user_aliases = config['type_aliases']
+            if isinstance(_user_aliases, dict):
+                _CUSTOM_TYPE_PRESETS.update({k.lower(): v for k, v in _user_aliases.items()})
     elif args.output and args.sources:
         output_dir = args.output
         sql_files = args.sources
