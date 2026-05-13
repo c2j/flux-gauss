@@ -4700,9 +4700,9 @@ def _process_raise(raise_data: dict, proc: ProcedureInfo):
             proc.java_logic_lines.append(f'log.{log_level}("{log_msg}");')
     else:
         if message:
-            proc.java_logic_lines.append(f'throw new RuntimeException("{message}");')
+            proc.java_logic_lines.append(f'throw new BusinessException("{message}");')
         else:
-            proc.java_logic_lines.append(f'throw new RuntimeException("RAISE {level}");')
+            proc.java_logic_lines.append(f'throw new BusinessException("RAISE {level}");')
 
 
 def _process_call_text(sql: str, proc: ProcedureInfo, all_packages: dict):
@@ -4877,6 +4877,33 @@ SQL_FUNCTION_MAP = {
     "string_to_array": "__HANDLER__",
     "nextval": "__HANDLER__",
     "currval": "__HANDLER__",
+    "gen_random_uuid": "__EXPR__java.util.UUID.randomUUID().toString()",
+    "ln": "__HANDLER__",
+    "random": "__EXPR__Math.random()",
+    "strpos": "__EXPR__String.valueOf({args0}).indexOf(String.valueOf({args1})) + 1",
+    "pi": "__EXPR__Math.PI",
+    "clock_timestamp": "__EXPR__new java.sql.Timestamp(System.currentTimeMillis())",
+    "statement_timestamp": "__EXPR__new java.sql.Timestamp(System.currentTimeMillis())",
+    "digest": "__HANDLER__",
+    "convert_to": "__HANDLER__",
+    "quote_literal": "__HANDLER__",
+    "array_length": "__HANDLER__",
+    "array_append": "__HANDLER__",
+    "array_to_string": "__HANDLER__",
+    "age": "__HANDLER__",
+    "inet_client_addr": "__EXPR__\"127.0.0.1\"",
+    "current_setting": "__HANDLER__",
+    "pg_backend_pid": "__EXPR__Thread.currentThread().getId()",
+    "jsonb_build_array": "__HANDLER__",
+    "jsonb_set": "__HANDLER__",
+    "xmltype": "__HANDLER__",
+    "st_makepoint": "__HANDLER__",
+    "st_setsrid": "__HANDLER__",
+    "st_buffer": "__HANDLER__",
+    "st_envelope": "__HANDLER__",
+    "numrange": "__HANDLER__",
+    "tsrange": "__HANDLER__",
+    "t_spectrum_array": "__HANDLER__",
 }
 
 SQL_EXPR_FUNCTIONS = {k for k, v in SQL_FUNCTION_MAP.items() if v.startswith("__EXPR__")}
@@ -5211,6 +5238,101 @@ def _handle_function(func_name, args_java, proc):
 
     elif func_name == "currval":
         return f"this.currval({', '.join(args_java)})" if args_java else "null"
+
+    elif func_name == "ln":
+        if args_java:
+            return f"java.math.BigDecimal.valueOf(Math.log({args_java[0]}.doubleValue()))"
+        return "java.math.BigDecimal.ZERO"
+
+    elif func_name == "digest":
+        if len(args_java) >= 2:
+            algo = args_java[1].strip('"').strip("'") if args_java[1].startswith('"') or args_java[1].startswith("'") else f"String.valueOf({args_java[1]})"
+            return f"java.security.MessageDigest.getInstance({algo}).digest(String.valueOf({args_java[0]}).getBytes())"
+        return "new byte[0]"
+
+    elif func_name == "convert_to":
+        if len(args_java) >= 2:
+            return f"String.valueOf({args_java[0]}).getBytes(java.nio.charset.Charset.forName(String.valueOf({args_java[1]})))"
+        return "new byte[0]"
+
+    elif func_name == "quote_literal":
+        if args_java:
+            return f"\"'\" + String.valueOf({args_java[0]}) + \"'\""
+        return "null"
+
+    elif func_name == "array_length":
+        if len(args_java) >= 1:
+            return f"java.lang.reflect.Array.getLength({args_java[0]})"
+        return "0"
+
+    elif func_name == "array_append":
+        if len(args_java) >= 2:
+            return f"java.util.Arrays.copyOf({args_java[0]}, java.lang.reflect.Array.getLength({args_java[0]}) + 1)"
+        return "null"
+
+    elif func_name == "array_to_string":
+        if len(args_java) >= 2:
+            delim = args_java[1]
+            delim_expr = delim if (delim.startswith('"') or delim.startswith("'")) else f"String.valueOf({delim})"
+            return f"java.util.Arrays.stream((Object[]){args_java[0]}).map(Object::toString).collect(java.util.stream.Collectors.joining({delim_expr}))"
+        return "null"
+
+    elif func_name == "age":
+        if len(args_java) >= 2:
+            return f"java.time.Period.between(new java.sql.Date(((java.sql.Timestamp){args_java[1]}).getTime()).toLocalDate(), new java.sql.Date(((java.sql.Timestamp){args_java[0]}).getTime()).toLocalDate())"
+        return "null"
+
+    elif func_name == "current_setting":
+        if args_java:
+            return f"System.getProperty(String.valueOf({args_java[0]}), \"\")"
+        return "\"\""
+
+    elif func_name == "jsonb_build_array":
+        if args_java:
+            coerced = [f"String.valueOf({a})" for a in args_java]
+            return f"\"[\" + String.join(\",\", {', '.join(coerced)}) + \"]\""
+        return "\"[]\""
+
+    elif func_name == "jsonb_set":
+        if len(args_java) >= 3:
+            return f"({args_java[0]})"
+        return "null"
+
+    elif func_name == "xmltype":
+        if args_java:
+            return f"String.valueOf({args_java[0]})"
+        return "null"
+
+    elif func_name == "st_makepoint":
+        if len(args_java) >= 2:
+            return f"String.format(\"POINT(%s %s)\", {args_java[0]}, {args_java[1]})"
+        return "null"
+
+    elif func_name == "st_setsrid":
+        if len(args_java) >= 2:
+            return f"String.format(\"SRID=%s;%s\", {args_java[1]}, {args_java[0]})"
+        return "null"
+
+    elif func_name == "st_buffer":
+        return f"String.valueOf({args_java[0]})" if args_java else "null"
+
+    elif func_name == "st_envelope":
+        return f"String.valueOf({args_java[0]})" if args_java else "null"
+
+    elif func_name == "numrange":
+        if len(args_java) >= 2:
+            return f"String.format(\"[%s,%s)\", {args_java[0]}, {args_java[1]})"
+        return "null"
+
+    elif func_name == "tsrange":
+        if len(args_java) >= 2:
+            return f"String.format(\"[%s,%s]\", {args_java[0]}, {args_java[1]})"
+        return "null"
+
+    elif func_name == "t_spectrum_array":
+        if args_java:
+            return f"String.valueOf({args_java[0]})"
+        return "null"
 
     return f"/* TODO: {func_name} */ null"
 
