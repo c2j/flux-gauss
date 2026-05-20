@@ -48,3 +48,4 @@ sources:
   - demo-project/sql/proc_Five_Gotos.sql
   - demo-project/sql/PKG_WARPDRIVER_STRESS_TEST.sql
   - demo-project/sql/PKG_WARPDRIVER_STRESS_TEST-DDL.sql
+  - demo-project/sql/gauss_complete_examples.sql

@@ -4,9 +4,11 @@ base_package: ced
 integration_test:
   enabled: true
   mode: remote
-  url: jdbc:postgresql://localhost:5432/postgres
+  url: jdbc:postgresql://localhost:5432/postgres?currentSchema=gaussdb
   username: gaussdb
   password: Enmo@123
+  init_sql:
+    - demo-project/sql/missing_tables.sql
 
 # Optional: database connection (used to generate application.yml)
 # database:
@@ -16,35 +18,45 @@ integration_test:
 #   driver: org.postgresql.Driver
 
 sources:
-  - demo-project/sql/DB_LOG.sql
-  - demo-project/sql/PACK_LOG.sql
-  - demo-project/sql/pkg_common.sql
-  - demo-project/sql/pkg_order.sql
-  - demo-project/sql/pkg_inventory.sql
-  - demo-project/sql/pkg_product.sql
-  - demo-project/sql/pkg_payment.sql
-  - demo-project/sql/pkg_report.sql
-  - demo-project/sql/pkg_cursor_patterns.sql
-  - demo-project/sql/pkg_test_patterns.sql
-  - demo-project/sql/pkg_builtin_funcs_test.sql
-  - demo-project/sql/pkg_custom_funcs_test.sql
-  - demo-project/sql/pkg_employee_comments.sql
-  - demo-project/sql/pkg_type_test.sql
-  - demo-project/sql/proc_GOto.sql
-  - demo-project/sql/complex_clearing_pkg.sql
-  - demo-project/sql/PKG_DEPOSIT_ACNT_INFO_INQUIRY.sql
-  - demo-project/sql/PKG_RPT_BATCH_DOWNLOAD.sql
-  - demo-project/sql/astro_functions_pkg.sql
-  - demo-project/sql/tables.sql
-  - demo-project/sql/pkg_package_vars_test.sql
+  - demo-project/sql/gauss_delete_all_styles.sql
+  - demo-project/sql/gauss_update_select.sql
   - demo-project/sql/pkg_mapper_param_test_tables.sql
-  - demo-project/sql/pkg_mapper_param_test.sql
-  - demo-project/sql/missing_tables.sql
-  - demo-project/sql/PKG_2008802001_MGT.sql
+  - demo-project/sql/gauss_update_all_styles.sql
+  - demo-project/sql/proc_GOto.sql
+  - demo-project/sql/pkg_order.sql
+  - demo-project/sql/complex_clearing_pkg.sql
+  - demo-project/sql/pkg_test_patterns.sql
+  - demo-project/sql/tables.sql
+  - demo-project/sql/pkg_payment.sql
+  - demo-project/sql/astro_functions_pkg.sql
   - demo-project/sql/PKG_AAS_DATACLEAR.sql
+  - demo-project/sql/PKG_WARPDRIVER_STRESS_TEST-DDL.sql
+  - demo-project/sql/pkg_custom_funcs_test.sql
+  - demo-project/sql/DB_LOG.sql
+  - demo-project/sql/gauss_complete_examples.sql
+  - demo-project/sql/PKG_CURSOR.sql
+  - demo-project/sql/pkg_cursor_patterns.sql
+  - demo-project/sql/missing_tables.sql
   - demo-project/sql/SWH_ALL_KIND.sql
   - demo-project/sql/pkg_aas_lob_dataclear.sql
-  - demo-project/sql/DAT_DATACLEAR_CONFIG.sql
-  - demo-project/sql/proc_Five_Gotos.sql
+  - demo-project/sql/pkg_product.sql
+  - demo-project/sql/gauss_select_all_styles.sql
   - demo-project/sql/PKG_WARPDRIVER_STRESS_TEST.sql
-  - demo-project/sql/PKG_WARPDRIVER_STRESS_TEST-DDL.sql
+  - demo-project/sql/PKG_RPT_BATCH_DOWNLOAD.sql
+  - demo-project/sql/pkg_employee_comments.sql
+  - demo-project/sql/pkg_mapper_param_test.sql
+  - demo-project/sql/pkg_builtin_funcs_test.sql
+  - demo-project/sql/pkg_common.sql
+  - demo-project/sql/pkg_type_test.sql
+  - demo-project/sql/gauss_package_constants.sql
+  - demo-project/sql/PKG_2008802001_MGT.sql
+  - demo-project/sql/proc_Five_Gotos.sql
+  - demo-project/sql/pkg_package_vars_test.sql
+  - demo-project/sql/pkg_report.sql
+  - demo-project/sql/PKG_DEPOSIT_ACNT_INFO_INQUIRY.sql
+  - demo-project/sql/pkg_inventory.sql
+  - demo-project/sql/PKG_FOR.sql
+  - demo-project/sql/gauss_function_calls.sql
+  - demo-project/sql/DAT_DATACLEAR_CONFIG.sql
+  - demo-project/sql/gauss_insert_all_styles.sql
+  - demo-project/sql/PACK_LOG.sql

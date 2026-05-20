@@ -194,12 +194,17 @@ $$ LANGUAGE plpgsql;
 
 -- 测试3: %ROWTYPE 锚定到表行
 CREATE OR REPLACE PROCEDURE pkg_type_test.test_rowtype(p_emp_id BIGINT)
-AS $$
-DECLARE
+IS
+-- AS $$
+-- DECLARE
     -- %ROWTYPE — 期望转译为 Map<String, Object>
     v_emp  t_employees%ROWTYPE;
 BEGIN
     SELECT * INTO v_emp FROM t_employees WHERE id = p_emp_id;
+    insert into t_employees
+       (select v_emp.id,
+           v_emp.status
+       from sys_dummpy);
 
     -- 访问 %ROWTYPE 字段
     IF v_emp.status = 'ACTIVE' THEN

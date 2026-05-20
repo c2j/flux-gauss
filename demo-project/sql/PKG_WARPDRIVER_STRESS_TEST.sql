@@ -806,6 +806,8 @@ CREATE OR REPLACE PACKAGE BODY PKG_WARPDRIVER_STRESS_TEST AS
     v_balance     NUMERIC(18,4);
     v_sp1         TEXT;
     v_sp2         TEXT;
+    v_sp3         TEXT;
+    v_ins TEXT;
   BEGIN
     SELECT balance INTO v_balance FROM accounts WHERE account_id = p_account_id;
 
@@ -842,7 +844,10 @@ CREATE OR REPLACE PACKAGE BODY PKG_WARPDRIVER_STRESS_TEST AS
       VALUES(p_account_id, 'SMS', 'Debit ' || p_amount);
     EXCEPTION
       WHEN OTHERS THEN
-        EXECUTE IMMEDIATE 'ROLLBACK TO SAVEPOINT sp_notify';
+        EXECUTE IMMEDIATE 'INSERT INTO notifications1(' || p_account_id ||', notify_type, content)';
+        v_ins = "INSERT INTO";
+        v_sp3  := v_ins || ' notifications(' || p_account_id ||', notify_type, content)';
+        EXECUTE IMMEDIATE v_sp3;
         -- 通知失败不影响主交易
         NULL;
     END;
