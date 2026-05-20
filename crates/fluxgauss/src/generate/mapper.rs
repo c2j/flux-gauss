@@ -457,11 +457,11 @@ fn fix_postgresql_syntax(sql: &str) -> String {
     result = date_func3_re.replace_all(&result, "CAST($1 AS DATE)").to_string();
 
     // Quote SQL reserved words used as column names in INSERT/UPDATE column lists
-    // Matches: ( timestamp, or , timestamp, or , timestamp)
+    // Matches reserved words between ( or , and , or ) — column list positions
     let reserved_col_re = RESERVED_COL_RE.get_or_init(|| regex::Regex::new(
-        r"(?i)(\(\s*|,\s*)\btimestamp\b(\s*[,)])"
+        r"(?i)(\(\s*|,\s*)(date|user|order|performance|type|check|primary|foreign|unique|constraint|index|table|timestamp)(\s*[,)])"
     ).unwrap());
-    result = reserved_col_re.replace_all(&result, "${1}\"timestamp\"${2}").to_string();
+    result = reserved_col_re.replace_all(&result, "${1}\"${2}\"${3}").to_string();
 
     result
 }
@@ -750,6 +750,16 @@ fn build_params_attr(
     dml: &crate::types::DmlStatement,
 ) -> String {
     if proc.parameters.is_empty() || !dml.extra_params.is_empty() {
+        return String::new();
+    }
+    // Local vars in DML → skip parameterType (mirrors Python _dml_used_local_vars)
+    let param_java_names: std::collections::HashSet<String> = proc
+        .parameters
+        .iter()
+        .filter(|p| !p.is_out())
+        .map(|p| snake_to_camel(&p.name).to_lowercase())
+        .collect();
+    if !extract_local_var_refs(&dml.sql_text, &proc.local_vars, &param_java_names).is_empty() {
         return String::new();
     }
     let in_types: std::collections::HashSet<String> = proc

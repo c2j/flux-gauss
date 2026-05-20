@@ -177,12 +177,67 @@ pub fn write_service_class(
         .map(|(name, _)| snake_to_camel(name))
         .collect();
 
+    let has_any_array_vars = pkg.procedures.iter().any(|p| p.has_array_vars);
+
     for proc in &pkg.procedures {
         w.blank();
         let method = build_service_method(proc, &mapper_var, &object_pkg_var_names, &pkg.package_vars);
         for line in method.split('\n') {
             w.line(line);
         }
+    }
+
+    if has_any_array_vars {
+        w.blank();
+        w.line("public java.util.List<String> stringToArray(String str, String delimiter) {");
+        w.line("    if (str == null || str.isEmpty()) return java.util.Collections.emptyList();");
+        w.line("    return java.util.Arrays.asList(str.split(java.util.regex.Pattern.quote(delimiter)));");
+        w.line("}");
+    }
+
+    let all_body: String = pkg.procedures.iter()
+        .flat_map(|p| p.java_logic_lines.iter())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if all_body.contains("this.jsonbArrayLength(") {
+        w.blank();
+        w.line("public Integer jsonbArrayLength(String jsonb) {");
+        w.line("    try {");
+        w.line("        return new com.fasterxml.jackson.databind.ObjectMapper().readValue(jsonb, com.fasterxml.jackson.databind.JsonNode.class).size();");
+        w.line("    } catch (Exception e) { return 0; }");
+        w.line("}");
+    }
+    if all_body.contains("this.jsonbBuildObject(") {
+        w.blank();
+        w.line("public String jsonbBuildObject(Object... args) {");
+        w.line("    java.util.Map<String, Object> map = new java.util.LinkedHashMap<>();");
+        w.line("    for (int i = 0; i + 1 < args.length; i += 2) {");
+        w.line("        map.put(String.valueOf(args[i]), args[i + 1]);");
+        w.line("    }");
+        w.line("    try { return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(map); }");
+        w.line("    catch (Exception e) { throw new RuntimeException(e); }");
+        w.line("}");
+    }
+    if all_body.contains("this.jsonbGet(") {
+        w.blank();
+        w.line("public Object jsonbGet(String jsonb, Object key) {");
+        w.line("    try {");
+        w.line("        com.fasterxml.jackson.databind.JsonNode node = new com.fasterxml.jackson.databind.ObjectMapper().readValue(jsonb, com.fasterxml.jackson.databind.JsonNode.class);");
+        w.line("        if (key instanceof Integer) return node.get((Integer) key);");
+        w.line("        return node.get(String.valueOf(key));");
+        w.line("    } catch (Exception e) { return null; }");
+        w.line("}");
+    }
+    if all_body.contains("this.jsonbGetText(") {
+        w.blank();
+        w.line("public String jsonbGetText(String jsonb, Object key) {");
+        w.line("    try {");
+        w.line("        com.fasterxml.jackson.databind.JsonNode node = new com.fasterxml.jackson.databind.ObjectMapper().readValue(jsonb, com.fasterxml.jackson.databind.JsonNode.class);");
+        w.line("        if (key instanceof Integer) return node.get((Integer) key).asText();");
+        w.line("        return node.get(String.valueOf(key)).asText();");
+        w.line("    } catch (Exception e) { return null; }");
+        w.line("}");
     }
 
     w.pop_indent();
@@ -231,8 +286,11 @@ fn coerce_default_value(java_type: &str, default_val: &str) -> String {
         if trimmed == "null" || trimmed == "java.math.bigdecimal.zero" || trimmed == "java.math.bigdecimal.one" {
             return default_val.to_string();
         }
-        if trimmed.parse::<i64>().is_ok() || trimmed.parse::<f64>().is_ok() {
+        if trimmed.parse::<i64>().is_ok() {
             return format!("java.math.BigDecimal.valueOf({})", trimmed);
+        }
+        if trimmed.parse::<f64>().is_ok() {
+            return format!("new java.math.BigDecimal(\"{}\")", trimmed);
         }
         if trimmed.starts_with("(") && trimmed.ends_with(")") {
             let inner = &trimmed[1..trimmed.len()-1];
@@ -260,7 +318,7 @@ fn coerce_default_value(java_type: &str, default_val: &str) -> String {
     default_val.to_string()
 }
 
-pub(crate) fn should_stub_procedure(proc: &crate::types::ProcedureInfo, object_pkg_var_names: &[String]) -> bool {
+pub(crate) fn should_stub_procedure(proc: &crate::types::ProcedureInfo, _object_pkg_var_names: &[String]) -> bool {
     let lines = &proc.java_logic_lines;
 
     let has_goto = lines.iter().any(|l| l.trim().starts_with("// GOTO "));
@@ -268,19 +326,19 @@ pub(crate) fn should_stub_procedure(proc: &crate::types::ProcedureInfo, object_p
         return true;
     }
 
-    let unresolved_count = lines.iter().filter(|l| l.contains("/* null */")).count();
-    if unresolved_count > 3 {
-        return true;
-    }
-
     let broken_java = lines.iter().any(|l| {
         let t = l.trim();
         t.contains("null ^ ") || t.contains("null > null") || t.contains("null < null")
-            || t.contains("null + ") || t.contains("null - ") || t.contains("null * ")
             || t.contains("if (1)") || t.contains("if (2)") || t.contains("if (3)")
             || t.contains("Objects.equals(null,") || t.contains("((Object)")
-            || t.contains("->>") || t.contains("-> ")
-            || t.contains(".matches(") || t.contains("(Object[])")
+            || t.contains("(Object[])")
+            || t.contains("Math.pow(null,")
+            || t.contains("/* ENCODE */") || t.contains("/* MD5 */")
+            || t.contains(".set((-")
+            || (t.contains("Math.abs(") && t.contains(".compareTo("))
+            || t.contains(".longValue() / 0")
+            || t.contains("Timestamp(System.currentTimeMillis()) - ")
+            || t.contains("((Long) ") && t.contains(".get(")
     });
     if broken_java {
         return true;
@@ -289,90 +347,6 @@ pub(crate) fn should_stub_procedure(proc: &crate::types::ProcedureInfo, object_p
     let broken_defaults = proc.local_var_defaults.values().any(|v| v.contains("((Object)") || v.contains(">>") || v.contains("-> ") || v.contains("(Object[])"));
     if broken_defaults {
         return true;
-    }
-
-    let has_empty_list_loop = lines.iter().any(|l| l.contains("Collections.<Map<String, Object>>emptyList()") || l.contains("Collections.emptyList()"));
-    if has_empty_list_loop {
-        return true;
-    }
-
-    let service_call_with_get = lines.iter().any(|l| {
-        (l.contains("Service.") || l.contains("this.")) && l.contains(".get()")
-    });
-    if service_call_with_get {
-        return true;
-    }
-
-    let object_var_count = proc.local_vars.values().filter(|t| *t == "Object").count();
-    if object_var_count > 5 {
-        return true;
-    }
-
-    if object_var_count > 0 {
-        let uses_object_as_record = lines.iter().any(|l| l.contains("((java.util.Map"));
-        if uses_object_as_record {
-            return true;
-        }
-
-        let object_in_expr = lines.iter().any(|l| {
-            let t = l.trim();
-            t.contains("Object") && (t.contains(".get(") || t.contains(" + ") || t.contains(" - ") || t.contains(" * ") || t.contains(" / ") || t.contains(" > ") || t.contains(" < "))
-        });
-        if object_in_expr {
-            return true;
-        }
-
-        let has_comparison = lines.iter().any(|l| {
-            l.contains(" > ") || l.contains(" < ") || l.contains(" >= ") || l.contains(" <= ")
-        });
-        if has_comparison {
-            let object_var_names: Vec<&str> = proc.local_vars.iter()
-                .filter(|(_, t)| *t == "Object")
-                .map(|(n, _)| n.as_str())
-                .collect();
-            let uses_object_in_comparison = lines.iter().any(|l| {
-                object_var_names.iter().any(|vname| {
-                    let java_name = snake_to_camel(vname);
-                    l.contains(&format!("{} > ", java_name)) || l.contains(&format!("{} < ", java_name))
-                        || l.contains(&format!("{} >= ", java_name)) || l.contains(&format!("{} <= ", java_name))
-                })
-            });
-            if uses_object_in_comparison {
-                return true;
-            }
-        }
-    }
-
-    let map_get_comparison = lines.iter().any(|l| {
-        l.contains(".get(") && (l.contains(" > ") || l.contains(" < ") || l.contains(" + ") || l.contains(" - ") || l.contains(" * "))
-    });
-    let has_object_to_map = lines.iter().any(|l| {
-        l.contains("= null;") && !l.contains("String") && !l.contains("Integer") && !l.contains("Long") && !l.contains("Boolean") && !l.contains("BigDecimal") && !l.contains("Map<") && !l.contains("Double") && !l.contains("Float")
-    });
-    if has_object_to_map && map_get_comparison {
-        return true;
-    }
-
-    let throws_business_exception = lines.iter().any(|l| l.contains("throw new BusinessException"));
-    let has_dml = !proc.dml_statements.is_empty();
-    let has_mapper_call = lines.iter().any(|l| l.contains("mapper.") || l.contains("this."));
-    if throws_business_exception && !has_dml && !has_mapper_call {
-        return true;
-    }
-
-    let assignment_lines: Vec<&str> = lines.iter().filter(|l| l.contains("=")).map(|s| s.as_str()).collect();
-    let null_assignment_count = assignment_lines.iter().filter(|l| l.contains("null")).count();
-    if assignment_lines.len() > 2 && null_assignment_count > assignment_lines.len() / 2 {
-        return true;
-    }
-
-    if !object_pkg_var_names.is_empty() {
-        let uses_object_pkg_var = lines.iter().any(|l| {
-            object_pkg_var_names.iter().any(|var_name| l.contains(var_name.as_str()))
-        });
-        if uses_object_pkg_var {
-            return true;
-        }
     }
 
     false
@@ -402,10 +376,17 @@ fn build_service_method(
     let params_str = params.join(", ");
 
     let ret_type = if proc.is_function {
-        proc.return_type
-            .as_deref()
-            .and_then(|rt| sql_type_to_java(rt).map(|s| s.to_string()))
-            .unwrap_or_else(|| "Object".to_string())
+        match &proc.return_type {
+            Some(rt) => {
+                if rt.chars().next().map_or(false, |c| c.is_uppercase()) || rt.contains('.') {
+                    rt.clone()
+                } else {
+                    sql_type_to_java(rt).map(|s| s.to_string())
+                        .unwrap_or_else(|| "Object".to_string())
+                }
+            }
+            None => "Object".to_string(),
+        }
     } else {
         let has_refcursor = proc.parameters.iter().any(|p| p.is_out() && p.is_refcursor());
         if has_refcursor {
@@ -438,11 +419,16 @@ fn build_service_method(
                 if is_loop_iter {
                     continue;
                 }
-                let default_val = proc.local_var_defaults.get(var_name)
-                    .cloned()
-                    .unwrap_or_else(|| default_for_type(var_type).to_string());
-                let coerced = coerce_default_value(var_type, &default_val);
-                body_lines.push(format!("{} {} = {};", var_type, var_java, coerced));
+                // Check if this local var was promoted to AtomicReference for OUT param usage
+                if let Some(inner_type) = proc.out_local_vars.get(var_name) {
+                    body_lines.push(format!("AtomicReference<{}> {} = new AtomicReference<>(null);", inner_type, var_java));
+                } else {
+                    let default_val = proc.local_var_defaults.get(var_name)
+                        .cloned()
+                        .unwrap_or_else(|| default_for_type(var_type).to_string());
+                    let coerced = coerce_default_value(var_type, &default_val);
+                    body_lines.push(format!("{} {} = {};", var_type, var_java, coerced));
+                }
             }
         }
 
@@ -464,6 +450,25 @@ fn build_service_method(
         for line in &proc.java_logic_lines {
             let mut l = line.replace("mapper.", &format!("{}.", mapper_name));
             l = append_local_vars_to_mapper_calls(&l, proc, mapper_name, package_vars);
+            let is_self_call = l.trim().starts_with("this.");
+            for (vname, _inner_type) in &proc.out_local_vars {
+                let vcamel = snake_to_camel(vname);
+                if !is_self_call {
+                    l = l.replace(&format!("{},", vcamel), &format!("{}.get(),", vcamel));
+                    l = l.replace(&format!("{})", vcamel), &format!("{}.get())", vcamel));
+                }
+                l = l.replace(&format!("String.valueOf({})", vcamel), &format!("String.valueOf({}.get())", vcamel));
+                let assign_pat = format!("{} = ", vcamel);
+                if l.contains(&assign_pat) && !l.contains(&format!("{}.set(", vcamel)) {
+                    l = l.replace(&assign_pat, &format!("{}.set(", vcamel));
+                    if l.trim().ends_with(";") {
+                        let trimmed = l.trim();
+                        l = format!("{});", &trimmed[..trimmed.len()-1]);
+                    }
+                }
+                l = l.replace(&format!("{} != null", vcamel), &format!("{}.get() != null", vcamel));
+                l = l.replace(&format!("{} == null", vcamel), &format!("{}.get() == null", vcamel));
+            }
             let trimmed = l.trim().to_string();
             if trimmed == "null;" || trimmed == "null" {
                 l = format!("// {}", trimmed);
@@ -483,8 +488,15 @@ fn build_service_method(
         }
 
         if ret_type != "void" {
-             let last_line = body_lines.last().map(|s| s.trim().to_string()).unwrap_or_default();
-             if !last_line.starts_with("return ") && !last_line.starts_with("return;") {
+              let last_line = body_lines.last().map(|s| s.trim().to_string()).unwrap_or_default();
+              let needs_fallback = if last_line.starts_with("return ") || last_line.starts_with("return;") {
+                  false
+              } else if last_line == "}" {
+                  !is_if_else_all_return(&body_lines)
+              } else {
+                  true
+              };
+              if needs_fallback {
                  let fallback = if ret_type.contains("List") {
                      "return java.util.Collections.emptyList();"
                  } else if ret_type == "int" || ret_type == "Integer" {
@@ -496,14 +508,14 @@ fn build_service_method(
                  } else if ret_type == "boolean" || ret_type == "Boolean" {
                      "return false;"
                  } else if ret_type.contains("BigDecimal") {
-                     "return java.math.BigDecimal.ZERO;"
-                 } else {
-                     "return null;"
-                 };
-                 body_lines.push(fallback.to_string());
-             }
-         }
-    }
+                      "return java.math.BigDecimal.ZERO;"
+                  } else {
+                      "return null;"
+                  };
+                  body_lines.push(fallback.to_string());
+              }
+          }
+     }
 
     let mut result = Vec::new();
     let source_info = if !proc.source_file.is_empty() {
@@ -776,6 +788,26 @@ mod tests {
         let content = std::fs::read_to_string(
             dir.path().join("src/main/java/com/example/demo/service/OrderService.java"),
         ).unwrap();
-        assert!(content.contains("@Transactional"));
+         assert!(content.contains("@Transactional"));
+     }
+ }
+
+fn is_if_else_all_return(lines: &[String]) -> bool {
+    let lines_trimmed: Vec<&str> = lines.iter().map(|l| l.trim()).collect();
+    let n = lines_trimmed.len();
+    if n < 5 { return false; }
+    if lines_trimmed[n-1] != "}" { return false; }
+    if !lines_trimmed[n-2].starts_with("return ") { return false; }
+    if lines_trimmed[n-3] != "} else {" { return false; }
+    let mut found_if_return = false;
+    for i in (0..n-3).rev() {
+        if lines_trimmed[i].starts_with("return ") {
+            found_if_return = true;
+        } else if lines_trimmed[i].starts_with("if ") || lines_trimmed[i].starts_with("if(") {
+            return found_if_return;
+        } else if lines_trimmed[i].starts_with("}") {
+            break;
+        }
     }
+    false
 }

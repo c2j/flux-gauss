@@ -135,19 +135,9 @@ fn phase1_parse(
             }
         };
 
-        let stmts = ogsql_parser::Parser::new(tokens).parse();
+        let stmts_with_info = ogsql_parser::Parser::new(tokens).parse_with_text();
         let parse_output = ogsql_parser::parser::ParseOutput {
-            statements: stmts
-                .into_iter()
-                .map(|s| ogsql_parser::ast::StatementInfo {
-                    sql_text: String::new(),
-                    start_line: 0,
-                    start_col: 0,
-                    end_line: 0,
-                    end_col: 0,
-                    statement: s,
-                })
-                .collect(),
+            statements: stmts_with_info,
             errors: Vec::new(),
             comments: Vec::new(),
         };
@@ -202,8 +192,18 @@ fn phase2_analyze(
 
     for pkg in &mut packages {
         let pkg_custom_types = pkg.custom_types.clone();
+        let pkg_vars = pkg.package_vars.clone();
+
+        let mut sibling_params: HashMap<String, Vec<Vec<_>>> = HashMap::new();
+        for p in &pkg.procedures {
+            let method_name = crate::naming::java_method_name(&p.proc_name);
+            sibling_params.entry(method_name).or_default().push(p.parameters.clone());
+        }
+
         for proc in &mut pkg.procedures {
             proc.custom_types = pkg_custom_types.clone();
+            proc.package_vars = pkg_vars.clone();
+            proc.package_proc_params = sibling_params.clone();
             idx += 1;
             crate::progress::progress_bar("Analyze", idx, total, &proc.name);
 

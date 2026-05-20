@@ -728,9 +728,16 @@ fn process_with_goto_replace(
                     }
                 }
                 _ => {
-                    proc.java_logic_lines.push(
-                        format!("for (Map<String, Object> {} : java.util.Collections.<Map<String, Object>>emptyList()) {{", var)
-                    );
+                    let already_declared = proc.local_vars.contains_key(&for_stmt.node.variable);
+                    if already_declared {
+                        let iter_var = format!("_{}", var);
+                        proc.java_logic_lines.push(
+                            format!("for (Map<String, Object> {} : java.util.Collections.<Map<String, Object>>emptyList()) {{", iter_var));
+                        proc.java_logic_lines.push(format!("{} = {};", var, iter_var));
+                    } else {
+                        proc.java_logic_lines.push(
+                            format!("for (Map<String, Object> {} : java.util.Collections.<Map<String, Object>>emptyList()) {{", var));
+                    }
                 }
             }
             process_with_goto_replace(&for_stmt.node.body, goto_labels, proc, stmt_ctx)?;
@@ -754,6 +761,11 @@ fn generate_state_machine_goto(
 ) -> Result<(), ConversionError> {
     let enum_name = format!("{}State", crate::naming::snake_to_pascal(&proc.proc_name));
 
+    // Set state machine mode so nested Gotos are converted to transitions
+    let all_labels: HashSet<String> = analysis.labels.keys().cloned().collect();
+    stmt_ctx.sm_enum_name = Some(enum_name.clone());
+    stmt_ctx.sm_labels = all_labels;
+
     // Build ordered label list
     let mut ordered_labels: Vec<(String, usize)> = analysis.labels.iter()
         .map(|(name, &idx)| (name.clone(), idx))
@@ -768,7 +780,8 @@ fn generate_state_machine_goto(
     proc.java_logic_lines.push(format!("enum {} {{ {} }}", enum_name, state_names.join(", ")));
     proc.java_logic_lines.push(format!("{} currentState = {}.{};", enum_name, enum_name, state_names[0]));
     proc.java_logic_lines.push("boolean running = true;".to_string());
-    proc.java_logic_lines.push("while (running) {".to_string());
+    proc.java_logic_lines.push("int _smGuard = 0;".to_string());
+    proc.java_logic_lines.push("while (running && _smGuard++ < 10000) {".to_string());
     proc.java_logic_lines.push("    switch (currentState) {".to_string());
 
     for (label_name, target_idx) in &ordered_labels {
@@ -810,7 +823,19 @@ fn generate_state_machine_goto(
                 }
             }
         }
-        proc.java_logic_lines.push("            break;".to_string());
+        let last_meaningful = proc.java_logic_lines.iter().rev()
+            .find(|l| {
+                let t = l.trim();
+                !t.is_empty() && t != "}" && !t.starts_with("//")
+            });
+        let needs_break = !last_meaningful.map_or(true, |l| {
+            let t = l.trim();
+            t == "break;" || t == "continue;" || t.starts_with("return ") || t == "return;" || t.starts_with("throw ")
+                || t == "running = false;"
+        });
+        if needs_break {
+            proc.java_logic_lines.push("            break;".to_string());
+        }
     }
 
     proc.java_logic_lines.push("        default:".to_string());
@@ -818,6 +843,10 @@ fn generate_state_machine_goto(
     proc.java_logic_lines.push("            break;".to_string());
     proc.java_logic_lines.push("    }".to_string());
     proc.java_logic_lines.push("}".to_string());
+
+    // Clear state machine mode
+    stmt_ctx.sm_enum_name = None;
+    stmt_ctx.sm_labels.clear();
 
     Ok(())
 }

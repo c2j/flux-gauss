@@ -174,7 +174,16 @@ pub struct ProcedureInfo {
     // Custom types
     pub custom_types: HashMap<String, CustomTypeInfo>,
 
+    pub package_vars: HashMap<String, VarInfo>,
+
+    pub has_array_vars: bool,
+    pub out_local_vars: HashMap<String, String>,
+
     pub goto_analysis: Option<GotoAnalysis>,
+
+    /// Maps java method name → list of parameter lists (one per overload) for sibling procedures.
+    /// Populated before analysis phase so function_call_to_java can coerce args.
+    pub package_proc_params: HashMap<String, Vec<Vec<Parameter>>>,
 
     pub select_counter: usize,
 
@@ -217,7 +226,11 @@ impl ProcedureInfo {
             cursor_decls: HashMap::new(),
             cursor_params: HashMap::new(),
             custom_types: HashMap::new(),
+            package_vars: HashMap::new(),
+            has_array_vars: false,
+            out_local_vars: HashMap::new(),
             goto_analysis: None,
+            package_proc_params: HashMap::new(),
             select_counter: 0,
             source_file: String::new(),
             source_path: String::new(),

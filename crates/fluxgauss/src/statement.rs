@@ -60,13 +60,14 @@ fn is_terminal_statement(line: &str) -> bool {
 }
 
 fn is_unreachable_after_terminal(java_logic_lines: &[String]) -> bool {
-    // Scan backward from the end. Typical case is O(1) since the first
-    // return/throw at the current block depth terminates the search.
     let mut depth: i32 = 0;
     for line in java_logic_lines.iter().rev() {
         let t = line.trim_start();
         if t.starts_with("//") || t.is_empty() {
             continue;
+        }
+        if t.starts_with("} else") {
+            return false;
         }
         let opens = t.chars().filter(|&c| c == '{').count() as i32;
         let closes = t.chars().filter(|&c| c == '}').count() as i32;
@@ -122,6 +123,19 @@ fn push_logic_line(proc: &mut ProcedureInfo, line: String) {
         return;
     }
     proc.java_logic_lines.push(line);
+}
+
+fn strip_out_param_get(java: &str, proc: &ProcedureInfo) -> String {
+    if java.ends_with(".get()") {
+        let base = &java[..java.len() - 6];
+        let camel = crate::naming::snake_to_camel;
+        for p in &proc.parameters {
+            if p.is_out() && camel(&p.name) == base {
+                return base.to_string();
+            }
+        }
+    }
+    java.to_string()
 }
 
 fn dml_method_name(dml_type: &str, proc_name: &str, counter: &mut HashMap<String, usize>) -> String {
@@ -824,6 +838,48 @@ fn process_sql_statement(
     }
 }
 
+fn infer_arg_type(arg: &str, proc: &ProcedureInfo) -> &'static str {
+    let trimmed = arg.trim();
+    if trimmed.starts_with('"') || trimmed.starts_with("String.valueOf(") {
+        return "String";
+    }
+    if trimmed.starts_with("Long.parseLong(") || trimmed == "null" {
+        return "unknown";
+    }
+    // List element access like vAccntIdList.get((int)(i) - 1)
+    if trimmed.contains(".get(") && !trimmed.starts_with("AtomicReference") {
+        for (_, vtype) in &proc.local_vars {
+            if vtype.starts_with("List<") {
+                return "String";
+            }
+        }
+    }
+    for (vname, vtype) in &proc.local_vars {
+        let camel = crate::naming::snake_to_camel(vname);
+        if trimmed == camel {
+            return match vtype.as_str() {
+                "long" | "Long" => "long",
+                "String" => "String",
+                t if t.starts_with("AtomicReference") => "AtomicReference",
+                t if t.contains("BigDecimal") => "BigDecimal",
+                t if t.starts_with("List<") => "String",
+                _ => "unknown",
+            };
+        }
+    }
+    for p in &proc.parameters {
+        let camel = crate::naming::snake_to_camel(&p.name);
+        if trimmed == camel {
+            return match p.java_type.as_str() {
+                "long" | "Long" => "long",
+                "String" => "String",
+                _ => "unknown",
+            };
+        }
+    }
+    "unknown"
+}
+
 fn process_procedure_call(
     call: &ogsql_parser::ast::plpgsql::PlProcedureCall,
     proc: &mut ProcedureInfo,
@@ -844,10 +900,9 @@ fn process_procedure_call(
     };
 
     let method = java_method_name(func);
-    let args: Vec<String> = call.arguments.iter()
+    let raw_args: Vec<String> = call.arguments.iter()
         .map(|a| crate::expr::expr_to_java(a, proc))
         .collect();
-    let args_java = args.join(", ");
 
     // Try to resolve package from the hint
     let mut matched_pkg = resolve_package_name(pkg_hint, ctx.summaries);
@@ -873,9 +928,9 @@ fn process_procedure_call(
         }
     }
 
-    if let Some(matched_pkg) = matched_pkg {
+    if let Some(ref matched_pkg_name) = matched_pkg {
         let svc_name = format!("{}Service", {
-            let cn = package_to_classname(&matched_pkg);
+            let cn = package_to_classname(matched_pkg_name);
             let mut c = cn.chars();
             match c.next() {
                 Some(f) => f.to_ascii_lowercase().to_string() + c.as_str(),
@@ -883,7 +938,48 @@ fn process_procedure_call(
             }
         });
 
-        let is_self_call = matched_pkg.to_lowercase() == proc.package.to_lowercase();
+        let is_self_call = matched_pkg_name.to_lowercase() == proc.package.to_lowercase();
+
+        // Look up target procedure for type coercion
+        let target_summary = ctx.summaries.get(matched_pkg_name)
+            .or_else(|| {
+                let lower = matched_pkg_name.to_lowercase();
+                ctx.summaries.iter().find(|(k, _)| k.to_lowercase() == lower).map(|(_, v)| v)
+            });
+        let target_proc = target_summary.and_then(|s| s.find_procedure(func));
+
+        let args: Vec<String> = raw_args.iter().enumerate().map(|(i, raw)| {
+            let mut arg = strip_out_param_get(raw, proc);
+            if let Some(tp) = &target_proc {
+                if i < tp.parameters.len() {
+                    let param = &tp.parameters[i];
+                    let target_type = &param.java_type;
+                    if param.is_out() {
+                        let arg_trimmed = arg.trim();
+                        if !arg_trimmed.contains('.') && !arg_trimmed.contains('(') {
+                            for (vname, _) in &proc.local_vars {
+                                let vname_camel = crate::naming::snake_to_camel(vname);
+                                if vname_camel == arg_trimmed {
+                                    proc.out_local_vars.insert(vname.clone(), target_type.clone());
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        let arg_type_inferred = infer_arg_type(&arg, proc);
+                        let target_is_long = target_type == "long" || target_type == "Long";
+                        let target_is_string = target_type == "String";
+                        if target_is_string && arg_type_inferred == "long" {
+                            arg = format!("String.valueOf({})", arg);
+                        } else if target_is_long && arg_type_inferred == "String" {
+                            arg = format!("Long.parseLong(String.valueOf({}))", arg);
+                        }
+                    }
+                }
+            }
+            arg
+        }).collect();
+        let args_java = args.join(", ");
 
         if is_self_call {
             let found = ctx.summaries.get(&proc.package)
@@ -903,13 +999,16 @@ fn process_procedure_call(
                 service_name: svc_name.clone(),
                 method_name: method.clone(),
                 args: Vec::new(),
-                package_name: matched_pkg,
+                package_name: matched_pkg_name.clone(),
             });
             push_logic_line(proc, format!("{}.{}({});", svc_name, method, args_java));
         }
     } else {
+        let args_fallback: Vec<String> = call.arguments.iter()
+            .map(|a| crate::expr::expr_to_java(a, proc))
+            .collect();
         let full_name = name_parts.join(".");
-        push_logic_line(proc, format!("// CALL {}({})", full_name, args_java));
+        push_logic_line(proc, format!("// CALL {}({})", full_name, args_fallback.join(", ")));
     }
 }
 
@@ -932,7 +1031,10 @@ fn try_resolve_perform_call(
 
             let method = java_method_name(func_name);
             let args: Vec<String> = args.iter()
-                .map(|a| crate::expr::expr_to_java(a, proc))
+                .map(|a| {
+                    let java = crate::expr::expr_to_java(a, proc);
+                    strip_out_param_get(&java, proc)
+                })
                 .collect();
             let args_java = args.join(", ");
 
@@ -965,6 +1067,32 @@ fn try_resolve_perform_call(
         }
         _ => false,
     }
+}
+
+fn is_primitive_selector(sel: &str, proc: &ProcedureInfo) -> bool {
+    let sel_var = sel.trim();
+    let primitive_types: &[&str] = &["int", "long", "double", "float", "short", "byte", "char", "boolean"];
+    if let Some(ty) = proc.local_vars.get(sel_var) {
+        return primitive_types.contains(&ty.as_str());
+    }
+    for p in &proc.parameters {
+        let name = crate::naming::snake_to_camel(&p.name);
+        if name == sel_var {
+            let prim: &str = match p.java_type.as_str() {
+                "Integer" => "int",
+                "Long" => "long",
+                "Double" => "double",
+                "Float" => "float",
+                "Short" => "short",
+                "Byte" => "byte",
+                "Character" => "char",
+                "Boolean" => "boolean",
+                other => other,
+            };
+            return primitive_types.contains(&prim);
+        }
+    }
+    false
 }
 
 pub fn process_statement(
@@ -1029,22 +1157,35 @@ pub fn process_statement(
                 Some(ogsql_parser::ast::plpgsql::RaiseLevel::Warning) => "warning",
                 None => "info",
             };
-            let msg = raise_stmt.node.message.as_deref().unwrap_or("");
+            let raw_msg = raise_stmt.node.message.as_deref().unwrap_or("");
+            let formatted_msg = raw_msg.replace('%', "{}");
+            let params_java: Vec<String> = raise_stmt.node.params.iter()
+                .map(|p| crate::expr::expr_to_java(p, proc))
+                .collect();
+            let params_str = if params_java.is_empty() {
+                String::new()
+            } else {
+                format!(", {}", params_java.join(", "))
+            };
             match level_str {
                 "exception" => {
-                    push_logic_line(proc, format!("throw new BusinessException(\"{}\");", msg));
+                    if params_java.is_empty() {
+                        push_logic_line(proc, format!("throw new BusinessException(\"{}\");", formatted_msg));
+                    } else {
+                        push_logic_line(proc, format!("throw new BusinessException(String.format(\"{}\"{}));", formatted_msg, params_str));
+                    }
                 }
                 "notice" | "info" => {
-                    push_logic_line(proc, format!("log.info(\"{}\");", msg));
+                    push_logic_line(proc, format!("log.info(\"{}\"{});", formatted_msg, params_str));
                 }
                 "debug" => {
-                    push_logic_line(proc, format!("log.debug(\"{}\");", msg));
+                    push_logic_line(proc, format!("log.debug(\"{}\"{});", formatted_msg, params_str));
                 }
                 "warning" => {
-                    push_logic_line(proc, format!("log.warn(\"{}\");", msg));
+                    push_logic_line(proc, format!("log.warn(\"{}\"{});", formatted_msg, params_str));
                 }
                 _ => {
-                    push_logic_line(proc, format!("log.info(\"{}\");", msg));
+                    push_logic_line(proc, format!("log.info(\"{}\"{});", formatted_msg, params_str));
                 }
             }
             Ok(())
@@ -1072,12 +1213,23 @@ pub fn process_statement(
             Ok(())
         }
         PlStatement::Case(case_stmt) => {
-            if let Some(expr) = &case_stmt.node.expression {
-                let case_expr = crate::expr::expr_to_java(expr, proc);
-                push_logic_line(proc, format!("// case {}:", case_expr));
+            let selector_java = case_stmt.node.expression.as_ref()
+                .map(|expr| crate::expr::expr_to_java(expr, proc));
+            if let Some(ref sel) = selector_java {
+                push_logic_line(proc, format!("// case {}:", sel));
             }
             for (i, when) in case_stmt.node.whens.iter().enumerate() {
-                let cond = crate::expr::expr_to_java(&when.condition, proc);
+                let cond = if let Some(ref sel) = selector_java {
+                    let when_val = crate::expr::expr_to_java(&when.condition, proc);
+                    let sel_primitive = is_primitive_selector(sel, proc);
+                    if sel_primitive {
+                        format!("{} == {}", sel, when_val)
+                    } else {
+                        format!("{}.equals({})", sel, when_val)
+                    }
+                } else {
+                    crate::expr::expr_to_java(&when.condition, proc)
+                };
                 let prefix = if i == 0 { "if" } else { "} else if" };
                 push_logic_line(proc, format!("{} ({}) {{", prefix, cond));
                 for s in &when.stmts {
@@ -1270,39 +1422,48 @@ pub fn process_statement(
             Ok(())
         }
         PlStatement::Exit { label, condition } => {
-            match (label, condition) {
-                (Some(l), Some(c)) => {
-                    let cond = crate::expr::bool_expr_to_java(c, proc);
-                    push_logic_line(proc, format!("if ({}) {{ break {}; }}", cond, l));
-                }
-                (Some(l), None) => {
-                    push_logic_line(proc, format!("break {};", l));
-                }
-                (None, Some(c)) => {
-                    let cond = crate::expr::bool_expr_to_java(c, proc);
-                    push_logic_line(proc, format!("if ({}) {{ break; }}", cond));
-                }
-                (None, None) => {
-                    push_logic_line(proc, "break;".into());
+            if ctx.sm_enum_name.is_some() {
+                push_logic_line(proc, "running = false;".into());
+                push_logic_line(proc, "break;".into());
+            } else {
+                match (label, condition) {
+                    (Some(l), Some(c)) => {
+                        let cond = crate::expr::bool_expr_to_java(c, proc);
+                        push_logic_line(proc, format!("if ({}) {{ break {}; }}", cond, l));
+                    }
+                    (Some(l), None) => {
+                        push_logic_line(proc, format!("break {};", l));
+                    }
+                    (None, Some(c)) => {
+                        let cond = crate::expr::bool_expr_to_java(c, proc);
+                        push_logic_line(proc, format!("if ({}) {{ break; }}", cond));
+                    }
+                    (None, None) => {
+                        push_logic_line(proc, "break;".into());
+                    }
                 }
             }
             Ok(())
         }
         PlStatement::Continue { label, condition } => {
-            match (label, condition) {
-                (Some(l), Some(c)) => {
-                    let cond = crate::expr::bool_expr_to_java(c, proc);
-                    push_logic_line(proc, format!("if ({}) {{ continue {}; }}", cond, l));
-                }
-                (Some(l), None) => {
-                    push_logic_line(proc, format!("continue {};", l));
-                }
-                (None, Some(c)) => {
-                    let cond = crate::expr::bool_expr_to_java(c, proc);
-                    push_logic_line(proc, format!("if ({}) {{ continue; }}", cond));
-                }
-                (None, None) => {
-                    push_logic_line(proc, "continue;".into());
+            if ctx.sm_enum_name.is_some() {
+                push_logic_line(proc, "break;".into());
+            } else {
+                match (label, condition) {
+                    (Some(l), Some(c)) => {
+                        let cond = crate::expr::bool_expr_to_java(c, proc);
+                        push_logic_line(proc, format!("if ({}) {{ continue {}; }}", cond, l));
+                    }
+                    (Some(l), None) => {
+                        push_logic_line(proc, format!("continue {};", l));
+                    }
+                    (None, Some(c)) => {
+                        let cond = crate::expr::bool_expr_to_java(c, proc);
+                        push_logic_line(proc, format!("if ({}) {{ continue; }}", cond));
+                    }
+                    (None, None) => {
+                        push_logic_line(proc, "continue;".into());
+                    }
                 }
             }
             Ok(())
@@ -1357,8 +1518,25 @@ pub fn process_statement(
             push_logic_line(proc, "// SET TRANSACTION;".into());
             Ok(())
         }
+        PlStatement::VariableSet(_) => {
+            push_logic_line(proc, "// SET variable;".into());
+            Ok(())
+        }
+        PlStatement::VariableReset(_) => {
+            push_logic_line(proc, "// RESET variable;".into());
+            Ok(())
+        }
         PlStatement::Goto { label } => {
-            push_logic_line(proc, format!("// GOTO {} — will be rewritten by pattern analysis", label));
+            if let Some(ref enum_name) = ctx.sm_enum_name {
+                if ctx.sm_labels.contains(label) {
+                    let goto_state = crate::naming::snake_to_pascal(label);
+                    push_logic_line(proc, format!("currentState = {}.{};", enum_name, goto_state));
+                } else {
+                    push_logic_line(proc, "running = false;".into());
+                }
+            } else {
+                push_logic_line(proc, format!("// GOTO {} — will be rewritten by pattern analysis", label));
+            }
             Ok(())
         }
         PlStatement::Execute(execute) => {

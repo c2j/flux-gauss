@@ -70,6 +70,8 @@ impl GenerationContext {
 pub struct StatementContext<'a> {
     pub summaries: &'a HashMap<String, PackageSummary>,
     pub dml_counter: HashMap<String, usize>,
+    pub sm_enum_name: Option<String>,
+    pub sm_labels: HashSet<String>,
 }
 
 impl<'a> StatementContext<'a> {
@@ -77,6 +79,8 @@ impl<'a> StatementContext<'a> {
         Self {
             summaries,
             dml_counter: HashMap::new(),
+            sm_enum_name: None,
+            sm_labels: HashSet::new(),
         }
     }
 }

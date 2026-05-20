@@ -134,10 +134,16 @@ pub fn write_itest_class(
         };
 
         let is_stubbed = super::service::should_stub_procedure(proc, &object_pkg_var_names);
+        let has_while_loop = proc.java_logic_lines.iter().any(|l| {
+            let t = l.trim();
+            t.starts_with("while (true)") || t.starts_with("while (running")
+        });
 
         let mut lines: Vec<String> = Vec::new();
         if is_stubbed {
             lines.push("    @org.junit.jupiter.api.Disabled(\"Converter stub — complex PL/pgSQL pattern requires manual implementation\")".to_string());
+        } else if has_while_loop {
+            lines.push("    @org.junit.jupiter.api.Disabled(\"auto-generated itest cannot terminate while loop\")".to_string());
         }
         if !sql_script.is_empty() {
             lines.push(format!("    @org.springframework.test.context.jdbc.Sql(scripts = \"{}\")", sql_script));
@@ -860,7 +866,7 @@ fn split_values(vals_str: &str) -> Vec<String> {
     parts
 }
 
-fn infer_test_data(proc: &ProcedureInfo, _pkg: &PackageInfo, schema_map: &HashMap<String, HashMap<String, String>>, _all_packages: &[PackageInfo]) -> HashMap<String, HashMap<String, String>> {
+fn infer_test_data(proc: &ProcedureInfo, pkg: &PackageInfo, schema_map: &HashMap<String, HashMap<String, String>>, all_packages: &[PackageInfo]) -> HashMap<String, HashMap<String, String>> {
     let system_objects: HashSet<&str> = [
         "sys_dummy", "dual", "pg_class", "pg_namespace", "pg_attribute", "pg_type",
         "pg_proc", "pg_views", "pg_tables", "pg_sequences", "pg_database",
@@ -896,7 +902,107 @@ fn infer_test_data(proc: &ProcedureInfo, _pkg: &PackageInfo, schema_map: &HashMa
             }
         }
     }
+
+    add_transitive_tables(proc, pkg, schema_map, &mut handled, &mut needed, all_packages, 0);
+
     needed
+}
+
+fn add_transitive_tables(
+    proc: &ProcedureInfo,
+    pkg: &PackageInfo,
+    schema_map: &HashMap<String, HashMap<String, String>>,
+    handled: &mut HashSet<String>,
+    needed: &mut HashMap<String, HashMap<String, String>>,
+    all_packages: &[PackageInfo],
+    depth: usize,
+) {
+    if depth > 2 {
+        return;
+    }
+    let system_objects: HashSet<&str> = [
+        "sys_dummy", "dual", "pg_class", "pg_namespace", "pg_attribute", "pg_type",
+        "pg_proc", "pg_views", "pg_tables", "pg_sequences", "pg_database",
+    ].iter().copied().collect();
+
+    let self_call_re = regex::Regex::new(r"\bthis\.(\w+)\s*\(").unwrap();
+    let mut visited: HashSet<String> = HashSet::new();
+
+    let add_proc_tables = |target_proc: &ProcedureInfo, handled: &mut HashSet<String>, needed: &mut HashMap<String, HashMap<String, String>>| {
+        for dml in &target_proc.dml_statements {
+            let sql = &dml.sql_text;
+            match dml.sql_type {
+                DmlType::Insert => {
+                    if let Some(tbl) = extract_table_from_insert(sql) {
+                        handled.insert(tbl);
+                    }
+                }
+                DmlType::Select => {
+                    if let Some(tbl) = extract_table_from_select(sql) {
+                        if !handled.contains(&tbl) && !system_objects.contains(tbl.as_str()) {
+                            if let Some(cols) = schema_map.get(&tbl) {
+                                needed.insert(tbl.clone(), cols.clone());
+                            }
+                        }
+                    }
+                }
+                DmlType::Update | DmlType::Delete => {
+                    if let Some(tbl) = extract_table_from_update_delete(sql) {
+                        if !handled.contains(&tbl) && !system_objects.contains(tbl.as_str()) {
+                            if let Some(cols) = schema_map.get(&tbl) {
+                                needed.insert(tbl.clone(), cols.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    for line in &proc.java_logic_lines {
+        for cap in self_call_re.captures_iter(line) {
+            let method_java = &cap[1];
+            let proc_name = crate::naming::java_method_to_snake(method_java);
+            if visited.contains(&proc_name) {
+                continue;
+            }
+            visited.insert(proc_name.clone());
+            for tp in &pkg.procedures {
+                if tp.proc_name == proc_name {
+                    add_proc_tables(tp, handled, needed);
+                    add_transitive_tables(tp, pkg, schema_map, handled, needed, all_packages, depth + 1);
+                    break;
+                }
+            }
+        }
+
+        let cross_call_re = regex::Regex::new(r"\b(\w+Service)\.(\w+)\s*\(").unwrap();
+        for cap in cross_call_re.captures_iter(line) {
+            let svc_var = &cap[1];
+            let method_java = &cap[2];
+            let proc_name = crate::naming::java_method_to_snake(method_java);
+            if visited.contains(&format!("{}_{}", svc_var, proc_name)) {
+                continue;
+            }
+            visited.insert(format!("{}_{}", svc_var, proc_name));
+
+            let svc_class = format!("{}Service", svc_var);
+            for ap in all_packages {
+                let ap_class = crate::naming::package_to_classname(&ap.package_name);
+                if ap_class != svc_class {
+                    continue;
+                }
+                for tp in &ap.procedures {
+                    if tp.proc_name == proc_name {
+                        add_proc_tables(tp, handled, needed);
+                        add_transitive_tables(tp, ap, schema_map, handled, needed, all_packages, depth + 1);
+                        break;
+                    }
+                }
+                break;
+            }
+        }
+    }
 }
 
 fn write_fixtures(base_path: &Path, proc: &ProcedureInfo, pkg: &PackageInfo, test_data: &HashMap<String, HashMap<String, String>>) -> std::io::Result<String> {
@@ -1109,6 +1215,7 @@ fn is_sql_reserved_word(s: &str) -> bool {
         "join", "left", "right", "inner", "outer", "cross", "order", "group",
         "having", "limit", "offset", "union", "distinct", "asc", "desc", "true",
         "false", "cast", "coalesce", "count", "sum", "avg", "min", "max",
+        "date", "user", "performance", "type", "check", "primary", "timestamp",
     ].contains(&lower.as_str())
 }
 

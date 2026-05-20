@@ -11,14 +11,52 @@ pub fn analyze_procedure(
     let body = proc.body.take();
     let mut result = Ok(());
     if let Some(ref body_inner) = body {
-        // Only run GOTO analysis when the body actually contains GOTO statements
-        if body_inner.body.iter().any(|s| matches!(s, PlStatement::Goto { .. })) {
-            proc.goto_analysis = Some(crate::statements::goto::analyze_goto_patterns(
+        fn has_goto_deep(stmts: &[PlStatement]) -> bool {
+            for s in stmts {
+                match s {
+                    PlStatement::Goto { .. } => return true,
+                    PlStatement::If(if_stmt) => {
+                        if has_goto_deep(&if_stmt.node.then_stmts) { return true; }
+                        for elsif in &if_stmt.node.elsifs {
+                            if has_goto_deep(&elsif.stmts) { return true; }
+                        }
+                        if has_goto_deep(&if_stmt.node.else_stmts) { return true; }
+                    }
+                    PlStatement::Block(block) => {
+                        if has_goto_deep(&block.node.body) { return true; }
+                        if let Some(exc) = &block.node.exception_block {
+                            for h in &exc.handlers {
+                                if has_goto_deep(&h.statements) { return true; }
+                            }
+                        }
+                    }
+                    PlStatement::Loop(loop_stmt) => if has_goto_deep(&loop_stmt.node.body) { return true; },
+                    PlStatement::While(while_stmt) => if has_goto_deep(&while_stmt.node.body) { return true; },
+                    PlStatement::For(for_stmt) => if has_goto_deep(&for_stmt.node.body) { return true; },
+                    PlStatement::ForEach(for_each) => if has_goto_deep(&for_each.node.body) { return true; },
+                    PlStatement::Case(case_stmt) => {
+                        for when in &case_stmt.node.whens {
+                            if has_goto_deep(&when.stmts) { return true; }
+                        }
+                        if has_goto_deep(&case_stmt.node.else_stmts) { return true; }
+                    }
+                    _ => {}
+                }
+            }
+            false
+        }
+        if has_goto_deep(&body_inner.body) {
+            let analysis = crate::statements::goto::analyze_goto_patterns(
                 &body_inner.body, proc, &mut ctx.source_cache,
-            ));
+            );
+            proc.goto_analysis = Some(analysis);
         }
         for decl in &body_inner.declarations {
             process_declaration(decl, proc, ddl_schema);
+        }
+        let has_exceptions = body_inner.exception_block.is_some();
+        if has_exceptions {
+            proc.java_logic_lines.push("try {".into());
         }
         let mut stmt_ctx = crate::context::StatementContext::new(summaries);
         for stmt in &body_inner.body {
@@ -43,6 +81,20 @@ pub fn analyze_procedure(
                 proc.java_logic_lines.push("// TODO: GOTO pattern requires manual implementation".into());
                 result = Err(e);
             }
+            if has_exceptions {
+                proc.java_logic_lines.insert(0, "try {".into());
+            }
+        }
+        if let Some(exc_block) = &body_inner.exception_block {
+            for handler in &exc_block.handlers {
+                proc.java_logic_lines.push("} catch (Exception e) {".into());
+                for s in &handler.statements {
+                    if let Err(_) = crate::statement::process_statement(s, proc, &mut stmt_ctx) {
+                        break;
+                    }
+                }
+            }
+            proc.java_logic_lines.push("}".into());
         }
     }
     proc.body = body;
@@ -86,21 +138,45 @@ pub fn process_declaration(
                 }
                 _ => {
                     let sql_type_raw = crate::extract::format_pl_data_type(&var.data_type);
-                    let sql_type = crate::extract::normalize_sql_type(&sql_type_raw);
-                    let sql_type_lower = sql_type.to_lowercase();
-                    if proc.custom_types.contains_key(&sql_type_lower) || proc.custom_types.contains_key(&sql_type) {
-                        proc.imports.insert("import java.util.Map;".into());
-                        "Map<String, Object>".into()
+                    let sql_type_lower = sql_type_raw.to_lowercase();
+                    // Detect array-like types (e.g., pkg_param_common.arrytype)
+                    if sql_type_lower.contains("arrytype") || sql_type_lower.contains("array_type") {
+                        proc.imports.insert("import java.util.List;".into());
+                        proc.imports.insert("import java.util.Collections;".into());
+                        proc.has_array_vars = true;
+                        "List<String>".into()
                     } else {
-                        crate::type_map::sql_type_to_java(&sql_type)
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| "Object".into())
+                        let sql_type = crate::extract::normalize_sql_type(&sql_type_raw);
+                        let sql_type_lower = sql_type.to_lowercase();
+                        if proc.custom_types.contains_key(&sql_type_lower) || proc.custom_types.contains_key(&sql_type) {
+                            proc.imports.insert("import java.util.Map;".into());
+                            "Map<String, Object>".into()
+                        } else {
+                            crate::type_map::sql_type_to_java(&sql_type)
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| "Object".into())
+                        }
                     }
                 }
             };
             proc.local_vars.insert(var.name.clone(), java_type.clone());
             if let Some(default) = &var.default {
-                let default_java = crate::expr::expr_to_java(default, proc);
+                // Detect pkg_param_common.getarray() calls → stringToArray()
+                let default_java = match default {
+                    ogsql_parser::ast::Expr::FunctionCall { name, args, .. } => {
+                        let name_str = name.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(".");
+                        let name_lower = name_str.to_lowercase();
+                        if name_lower.contains("getarray") && args.len() >= 2 {
+                            let arg1 = crate::expr::expr_to_java(&args[0], proc);
+                            let arg2 = crate::expr::expr_to_java(&args[1], proc);
+                            proc.has_array_vars = true;
+                            format!("this.stringToArray({}, {})", arg1, arg2)
+                        } else {
+                            crate::expr::expr_to_java(default, proc)
+                        }
+                    }
+                    _ => crate::expr::expr_to_java(default, proc),
+                };
                 proc.local_var_defaults
                     .insert(var.name.clone(), default_java);
             }

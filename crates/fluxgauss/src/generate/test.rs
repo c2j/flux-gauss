@@ -224,6 +224,13 @@ fn proc_has_unterminated_loop(proc: &crate::types::ProcedureInfo, pkg: &PackageI
     if has_recursive_call {
         return true;
     }
+    let camel_name = java_method_name(&proc.proc_name);
+    let has_self_call_in_expr = proc.java_logic_lines.iter().any(|l| {
+        l.contains(&format!("this.{}(", camel_name))
+    });
+    if has_self_call_in_expr {
+        return true;
+    }
     let has_while_with_mapper = {
         let mut in_while = false;
         for l in &proc.java_logic_lines {
