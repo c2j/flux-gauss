@@ -1,3 +1,13 @@
+fn infer_select_result_type(var_type: &str, sql: &str) -> String {
+    if matches!(var_type, "Integer" | "Long" | "int" | "long" | "Double" | "Float" | "BigDecimal")
+        && sql.contains("||")
+    {
+        "String".to_string()
+    } else {
+        var_type.to_string()
+    }
+}
+
 use std::collections::HashMap;
 use std::sync::OnceLock;
 use regex::Regex;
@@ -31,11 +41,16 @@ fn out_param_set_expr(var_java: &str, method_id: &str, args: &str, proc: &Proced
 use crate::naming::{snake_to_camel, snake_to_pascal, package_to_classname, java_method_name};
 use crate::type_map::{sql_type_to_jdbc, java_type_to_jdbc};
 
-fn cast_regex() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(r"(?i)\s*::\s*(?:DATE|TIMESTAMP|INTEGER|BIGINT|VARCHAR|TEXT|BOOLEAN|NUMERIC|DECIMAL|FLOAT|DOUBLE|REAL|SMALLINT|BYTEA|JSONB|JSON|UUID)\b").unwrap()
-    })
+ fn cast_regex() -> &'static Regex {
+     static RE: OnceLock<Regex> = OnceLock::new();
+     RE.get_or_init(|| {
+         Regex::new(r"(?i)\s*::\s*(?:VARCHAR2|NVARCHAR2)\b").unwrap()
+     })
+ }
+
+fn strip_sql_comments(sql: &str) -> String {
+    let re = Regex::new(r"--[^\n]*").unwrap();
+    re.replace_all(sql, "").to_string()
 }
 
 fn into_regex() -> &'static Regex {
@@ -176,6 +191,32 @@ fn detect_dml_type(sql: &str) -> Option<DmlType> {
 fn select_capture_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"(?i)^select\s+(.+)$").unwrap())
+}
+
+fn try_parse_inline_var_decl(sql: &str, _proc: &ProcedureInfo) -> Option<(String, String, Option<String>)> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(
+        r"(?i)^(\w+)\s+(number|numeric|integer|int|bigint|varchar2?|text|decimal|date|timestamp|boolean)\s*(?:\([^)]*\))?\s*(?::=\s*(.+?))?\s*;?\s*$"
+    ).unwrap());
+    let caps = re.captures(sql)?;
+    let var_name = caps.get(1)?.as_str().to_string();
+    let sql_type = caps.get(2)?.as_str();
+    let default_expr = caps.get(3).map(|m| {
+        let d = m.as_str().trim();
+        if d.starts_with('\'') && d.ends_with('\'') {
+            format!("\"{}\"", &d[1..d.len()-1])
+        } else if d.parse::<i64>().is_ok() {
+            d.to_string()
+        } else if d.parse::<f64>().is_ok() {
+            d.to_string()
+        } else {
+            crate::naming::snake_to_camel(d)
+        }
+    });
+    let java_type = crate::type_map::sql_type_to_java(sql_type)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "Object".to_string());
+    Some((var_name, java_type, default_expr))
 }
 
 fn clean_sql_for_mapper(sql: &str, dml_type: DmlType) -> String {
@@ -333,10 +374,10 @@ fn process_execute_stmt(
     use ogsql_parser::ast::Expr;
     use ogsql_parser::ast::plpgsql::PlUsingMode;
 
-    if let Some(parsed_query) = &execute.parsed_query {
-        let formatter = ogsql_parser::SqlFormatter::new();
-        let sql_text = formatter.format_statement(parsed_query);
-        let upper_sql = sql_text.trim_start().to_uppercase();
+     if let Some(parsed_query) = &execute.parsed_query {
+         let formatter = ogsql_parser::SqlFormatter::new();
+         let sql_text = formatter.format_statement(parsed_query);
+         let upper_sql = sql_text.trim_start().to_uppercase();
 
         if upper_sql.starts_with("SAVEPOINT") {
             let sp_name = sql_text.trim()["SAVEPOINT".len()..].trim();
@@ -493,23 +534,31 @@ fn process_execute_stmt(
                         extra_params: Vec::new(),
                     });
                     push_logic_line(proc, out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc));
-                } else {
-                    let java_type = proc.local_vars.get(var_name)
-                        .cloned()
-                        .unwrap_or_else(|| "Object".to_string());
-                    proc.dml_statements.push(DmlStatement {
-                        sql_type: dml_type,
-                        method_id: method_id.clone(),
-                        sql_text: clean_sql,
-                        result_type: Some(java_type.clone()),
-                        parameter_types: Default::default(),
-                        optional_filters: Vec::new(),
-                        returns_list: false,
-                        extra_params: Vec::new(),
-                    });
-                    push_logic_line(proc, format!("{} = mapper.{}({});", var_java, method_id, args));
-                }
-            } else {
+                 } else {
+                      let declared_type = proc.local_vars.get(var_name)
+                          .cloned()
+                          .unwrap_or_else(|| "Object".to_string());
+                      let java_type = infer_select_result_type(&declared_type, &clean_sql);
+                      proc.dml_statements.push(DmlStatement {
+                          sql_type: dml_type,
+                          method_id: method_id.clone(),
+                          sql_text: clean_sql,
+                          result_type: Some(java_type.clone()),
+                         parameter_types: Default::default(),
+                         optional_filters: Vec::new(),
+                         returns_list: false,
+                         extra_params: Vec::new(),
+                     });
+                     let original_java_type = proc.local_vars.get(var_name).cloned().unwrap_or_default();
+                     push_logic_line(proc, if java_type.contains("Map") {
+                         format!("{{ var _row = mapper.{}({}); if (_row != null) {{ {} = _row; }} }}", method_id, args, var_java)
+                     } else if java_type != original_java_type {
+                         format!("String _{} = mapper.{}({});", var_name, method_id, args)
+                     } else {
+                         format!("{} = mapper.{}({});", var_java, method_id, args)
+                     });
+                 }
+             } else {
                 let var_name = next_select_var_name(proc);
                 proc.dml_statements.push(DmlStatement {
                     sql_type: dml_type,
@@ -575,7 +624,7 @@ fn process_execute_stmt(
     match &execute.string_expr {
         Expr::Literal(ogsql_parser::ast::Literal::String(s)) => {
             let sql_text = s.clone();
-            let dml_type = detect_dml_type(&sql_text);
+        let dml_type = detect_dml_type(&sql_text);
             if let Some(dml_type) = dml_type {
                 let method_id = dml_method_name(
                     match dml_type {
@@ -612,9 +661,10 @@ fn process_execute_stmt(
                             push_logic_line(proc, out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc));
                         } else {
                             let var_java = snake_to_camel(var_name);
-                            let java_type = proc.local_vars.get(var_name)
+                            let declared_type = proc.local_vars.get(var_name)
                                 .cloned()
                                 .unwrap_or_else(|| "Object".to_string());
+                            let java_type = infer_select_result_type(&declared_type, &clean_sql);
                             proc.dml_statements.push(DmlStatement {
                                 sql_type: dml_type,
                                 method_id: method_id.clone(),
@@ -625,7 +675,11 @@ fn process_execute_stmt(
                                 returns_list: false,
                                 extra_params: Vec::new(),
                             });
-                            push_logic_line(proc, format!("{} = mapper.{}({});", var_java, method_id, args));
+                            push_logic_line(proc, if java_type != declared_type {
+                                format!("String _{} = mapper.{}({});", var_name, method_id, args)
+                            } else {
+                                format!("{} = mapper.{}({});", var_java, method_id, args)
+                            });
                         }
                     } else if into_vars_count > 1 {
                         let var_name = next_select_var_name(proc);
@@ -728,11 +782,17 @@ fn process_sql_statement(
                         let line = out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc);
                         ("Object".to_string(), line, String::new())
                     } else {
-                        let java_type = proc.local_vars.get(var_name)
-                            .cloned()
-                            .unwrap_or_else(|| "Object".to_string());
-                        let rt = java_type.clone();
-                        let line = format!("{} = mapper.{}({});", var_java, method_id, args);
+                         let declared_type = proc.local_vars.get(var_name)
+                             .cloned()
+                             .unwrap_or_else(|| "Object".to_string());
+                         let rt = infer_select_result_type(&declared_type, &clean_sql);
+                        let line = if rt.contains("Map") {
+                            format!("{{ var _row = mapper.{}({}); if (_row != null) {{ {} = _row; }} }}", method_id, args, var_java)
+                        } else if rt != declared_type {
+                            format!("String _{} = mapper.{}({});", var_name, method_id, args)
+                        } else {
+                            format!("{} = mapper.{}({});", var_java, method_id, args)
+                        };
                         (rt, line, String::new())
                     }
                 } else {
@@ -948,7 +1008,8 @@ fn process_procedure_call(
             });
         let target_proc = target_summary.and_then(|s| s.find_procedure(func));
 
-        let args: Vec<String> = raw_args.iter().enumerate().map(|(i, raw)| {
+        let target_param_count = target_proc.as_ref().map(|tp| tp.parameters.len()).unwrap_or(0);
+        let mut args: Vec<String> = raw_args.iter().enumerate().map(|(i, raw)| {
             let mut arg = strip_out_param_get(raw, proc);
             if let Some(tp) = &target_proc {
                 if i < tp.parameters.len() {
@@ -966,19 +1027,44 @@ fn process_procedure_call(
                             }
                         }
                     } else {
+                        let arg_trimmed = arg.trim();
+                        let is_atomic_ref = proc.out_local_vars.keys()
+                            .any(|vname| crate::naming::snake_to_camel(vname) == arg_trimmed);
+                        if is_atomic_ref && !arg_trimmed.contains('.') && !arg_trimmed.contains('(') {
+                            arg = format!("{}.get()", arg_trimmed);
+                        }
                         let arg_type_inferred = infer_arg_type(&arg, proc);
                         let target_is_long = target_type == "long" || target_type == "Long";
+                        let target_is_int = target_type == "int" || target_type == "Integer";
                         let target_is_string = target_type == "String";
+                        let arg_has_get = arg.contains(".get(");
                         if target_is_string && arg_type_inferred == "long" {
                             arg = format!("String.valueOf({})", arg);
                         } else if target_is_long && arg_type_inferred == "String" {
                             arg = format!("Long.parseLong(String.valueOf({}))", arg);
+                        } else if target_is_int && arg_has_get {
+                            arg = format!("((Number) {}).intValue()", arg);
+                        } else if target_is_long && arg_has_get {
+                            arg = format!("((Number) {}).longValue()", arg);
                         }
                     }
                 }
             }
             arg
         }).collect();
+
+        // Pad missing args when target has more params than caller provides
+        if let Some(tp) = &target_proc {
+            while args.len() < tp.parameters.len() {
+                let param = &tp.parameters[args.len()];
+                if param.is_out() {
+                    args.push(format!("new AtomicReference<>(null)"));
+                } else {
+                    args.push("null".into());
+                }
+            }
+        }
+
         let args_java = args.join(", ");
 
         if is_self_call {
@@ -1260,8 +1346,8 @@ pub fn process_statement(
                 process_statement(s, proc, ctx)?;
             }
             if let Some(exc_block) = &block_stmt.node.exception_block {
+                push_logic_line(proc, "} catch (Exception e) {".into());
                 for handler in &exc_block.handlers {
-                    push_logic_line(proc, "} catch (Exception e) {".into());
                     for s in &handler.statements {
                         process_statement(s, proc, ctx)?;
                     }
@@ -1303,6 +1389,8 @@ pub fn process_statement(
                 ogsql_parser::ast::plpgsql::PlForKind::Range { low, high, step, reverse } => {
                     let lo = crate::expr::expr_to_java(low, proc);
                     let hi = crate::expr::expr_to_java(high, proc);
+                    let lo_safe = if lo.trim() == "null" { "0".to_string() } else { lo };
+                    let hi_safe = if hi.trim() == "null" { "0".to_string() } else { hi };
                     let iter_var = var.clone();
                     let already_declared = proc.local_vars.contains_key(&for_stmt.node.variable);
                     let step_code = match step {
@@ -1315,23 +1403,23 @@ pub fn process_statement(
                     if already_declared {
                         if *reverse {
                             push_logic_line(proc, format!("{} = {}; while ({} >= {}) {{ {}--;",
-                                iter_var, hi, iter_var, lo, iter_var));
+                                iter_var, hi_safe, iter_var, lo_safe, iter_var));
                         } else {
                             push_logic_line(proc, format!("{} = {}; while ({} <= {}) {{ {};",
-                                iter_var, lo, iter_var, hi, step_code));
+                                iter_var, lo_safe, iter_var, hi_safe, step_code));
                         }
                     } else {
                         if *reverse {
                             push_logic_line(proc, format!("for (int {} = {}; {} >= {}; {}--) {{",
-                                iter_var, hi, iter_var, lo, iter_var));
+                                iter_var, hi_safe, iter_var, lo_safe, iter_var));
                         } else {
                             push_logic_line(proc, format!("for (int {} = {}; {} <= {}; {}) {{",
-                                iter_var, lo, iter_var, hi, step_code));
+                                iter_var, lo_safe, iter_var, hi_safe, step_code));
                         }
                     }
                 }
                 ogsql_parser::ast::plpgsql::PlForKind::Query { query, .. } => {
-                    let clean_sql = query.replace('\n', " ");
+                    let clean_sql = strip_sql_comments(query).replace('\n', " ");
                     push_logic_line(proc, format!("// for {} in query: {}", var, &clean_sql));
                     proc.local_vars.insert(for_stmt.node.variable.clone(), "Map<String, Object>".into());
                     proc.local_var_defaults.remove(&for_stmt.node.variable);
@@ -1353,7 +1441,12 @@ pub fn process_statement(
                         extra_params: Vec::new(),
                     });
 
-                    let list_var = format!("{}List", var);
+                    proc.for_loop_counter += 1;
+                    let list_var = if proc.for_loop_counter <= 1 {
+                        format!("{}List", var)
+                    } else {
+                        format!("{}List{}", var, proc.for_loop_counter)
+                    };
                     push_logic_line(proc, format!("List<Map<String, Object>> {} = mapper.{}({});", list_var, method_id, args));
                     push_logic_line(proc, format!("if ({} == null) {} = new ArrayList<>();", list_var, list_var));
                     push_logic_line(proc, format!("for (Map<String, Object> {} : {}) {{", var, list_var));
@@ -1396,7 +1489,12 @@ pub fn process_statement(
                             extra_params: Vec::new(),
                         });
 
-                        let list_var = format!("{}List", var);
+                        proc.for_loop_counter += 1;
+                        let list_var = if proc.for_loop_counter <= 1 {
+                            format!("{}List", var)
+                        } else {
+                            format!("{}List{}", var, proc.for_loop_counter)
+                        };
                         push_logic_line(proc, format!("List<Map<String, Object>> {} = mapper.{}({});", list_var, method_id, args));
                         push_logic_line(proc, format!("if ({} == null) {} = new ArrayList<>();", list_var, list_var));
                         push_logic_line(proc, format!("for (Map<String, Object> {} : {}) {{", var, list_var));
@@ -1501,7 +1599,7 @@ pub fn process_statement(
                 proc.imports
                     .insert("import org.springframework.transaction.interceptor.TransactionAspectSupport;".into());
                 push_logic_line(proc,
-                    "TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();".into(),
+                    "try { TransactionAspectSupport.currentTransactionStatus().setRollbackOnly(); } catch (Exception _tx) {}".into(),
                 );
             }
             Ok(())
@@ -1547,8 +1645,8 @@ pub fn process_statement(
             process_procedure_call(&call.node, proc, ctx);
             Ok(())
         }
-        PlStatement::Sql(sql_text) => {
-            if let Some(dml_type) = detect_dml_type(sql_text) {
+         PlStatement::Sql(sql_text) => {
+             if let Some(dml_type) = detect_dml_type(sql_text) {
                 let method_id = dml_method_name(
                     match dml_type {
                         DmlType::Select => "select",
@@ -1583,22 +1681,27 @@ pub fn process_statement(
                             });
                             push_logic_line(proc, out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc));
                         } else {
-                            let var_java = snake_to_camel(var_name);
-                            let java_type = proc.local_vars.get(var_name)
-                                .cloned()
-                                .unwrap_or_else(|| "Object".to_string());
+                             let var_java = snake_to_camel(var_name);
+                             let declared_type = proc.local_vars.get(var_name)
+                                 .cloned()
+                                 .unwrap_or_else(|| "Object".to_string());
+                             let java_type = infer_select_result_type(&declared_type, &clean_sql);
 
-                            proc.dml_statements.push(DmlStatement {
-                                sql_type: dml_type,
-                                method_id: method_id.clone(),
-                                sql_text: clean_sql,
-                                result_type: Some(java_type.clone()),
+                             proc.dml_statements.push(DmlStatement {
+                                 sql_type: dml_type,
+                                 method_id: method_id.clone(),
+                                 sql_text: clean_sql,
+                                 result_type: Some(java_type.clone()),
                                 parameter_types: Default::default(),
                                 optional_filters: Vec::new(),
                                 returns_list: false,
                                 extra_params: Vec::new(),
                             });
-                            push_logic_line(proc, format!("{} = mapper.{}({});", var_java, method_id, args));
+                            push_logic_line(proc, if java_type != declared_type {
+                                format!("String _{} = mapper.{}({});", var_name, method_id, args)
+                            } else {
+                                format!("{} = mapper.{}({});", var_java, method_id, args)
+                            });
                         }
                     } else if into_vars_count > 1 {
                         let var_name = next_select_var_name(proc);
@@ -1644,7 +1747,26 @@ pub fn process_statement(
                     push_logic_line(proc, format!("mapper.{}({});", method_id, args));
                 }
             } else {
-                push_logic_line(proc, format!("// SQL: {}", sql_text.replace('\n', " ")));
+                let sql_trimmed = sql_text.trim();
+                if let Some((var_name, java_type, default_java)) = try_parse_inline_var_decl(sql_trimmed, proc) {
+                    proc.local_vars.insert(var_name.clone(), java_type.clone());
+                    if let Some(default) = &default_java {
+                        proc.local_var_defaults.insert(var_name.clone(), default.clone());
+                    } else {
+                        let default_val = match java_type.as_str() {
+                            "int" | "Integer" => "0",
+                            "long" | "Long" => "0",
+                            "java.math.BigDecimal" => "0",
+                            "String" => "null",
+                            "java.sql.Timestamp" => "null",
+                            "java.sql.Date" => "null",
+                            _ => "null",
+                        };
+                        proc.local_var_defaults.insert(var_name.clone(), default_val.to_string());
+                    }
+                } else {
+                    push_logic_line(proc, format!("// SQL: {}", sql_text.replace('\n', " ")));
+                }
             }
             Ok(())
         }

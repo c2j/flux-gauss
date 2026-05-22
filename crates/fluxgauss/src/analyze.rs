@@ -73,6 +73,7 @@ pub fn analyze_procedure(
             proc.java_logic_lines.clear();
             proc.dml_statements.clear();
             proc.select_counter = 0;
+            proc.for_loop_counter = 0;
             let rewrite_result = crate::statements::goto::rewrite_with_pattern(
                 &body_inner.body, &analysis, proc, summaries
             );
@@ -86,8 +87,8 @@ pub fn analyze_procedure(
             }
         }
         if let Some(exc_block) = &body_inner.exception_block {
+            proc.java_logic_lines.push("} catch (Exception e) {".into());
             for handler in &exc_block.handlers {
-                proc.java_logic_lines.push("} catch (Exception e) {".into());
                 for s in &handler.statements {
                     if let Err(_) = crate::statement::process_statement(s, proc, &mut stmt_ctx) {
                         break;

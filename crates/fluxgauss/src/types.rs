@@ -186,6 +186,7 @@ pub struct ProcedureInfo {
     pub package_proc_params: HashMap<String, Vec<Vec<Parameter>>>,
 
     pub select_counter: usize,
+    pub for_loop_counter: usize,
 
     pub source_file: String,
     pub source_path: String,
@@ -232,6 +233,7 @@ impl ProcedureInfo {
             goto_analysis: None,
             package_proc_params: HashMap::new(),
             select_counter: 0,
+            for_loop_counter: 0,
             source_file: String::new(),
             source_path: String::new(),
             source_start_line: 0,

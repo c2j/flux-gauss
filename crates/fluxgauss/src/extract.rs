@@ -307,7 +307,8 @@ fn extract_package_item(
                     (raw_sql_type.clone(), jt)
                 }
             } else {
-                let jt = sql_type_to_java(&raw_sql_type)
+                let base_type = raw_sql_type.split('(').next().unwrap_or(&raw_sql_type);
+                let jt = sql_type_to_java(base_type)
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| "Object".into());
                 (raw_sql_type, jt)
@@ -414,7 +415,9 @@ fn recover_constant_type_from_source(var_name: &str, source_file: &str) -> Optio
             continue;
         }
         let after_const = rest["constant".len()..].trim();
-        let sql_type = after_const.split_whitespace().next()?;
+        let type_token = after_const.split_whitespace().next()?;
+        let paren_pos = type_token.find('(').unwrap_or(type_token.len());
+        let sql_type = &type_token[..paren_pos];
         let java_type = sql_type_to_java(sql_type)
             .map(|s| s.to_string())
             .unwrap_or_else(|| "Object".into());
