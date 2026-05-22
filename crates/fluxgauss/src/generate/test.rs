@@ -340,7 +340,13 @@ fn extract_select_columns(sql: &str) -> Vec<String> {
             col_name
         };
         let col_name = col_name.trim().trim_matches('"').trim_matches('\'');
-        if !col_name.is_empty() && col_name != "*" {
+        let col_name = if let Some(space_pos) = col_name.find(' ') {
+            &col_name[..space_pos]
+        } else {
+            col_name
+        };
+        let col_name = col_name.replace('"', "");
+        if !col_name.is_empty() && col_name != "*" && !col_name.contains('(') && !col_name.contains(')') {
             cols.push(col_name.to_lowercase());
         }
     }
@@ -348,41 +354,49 @@ fn extract_select_columns(sql: &str) -> Vec<String> {
 }
 
 fn column_mock_value(col_name: &str) -> String {
-    let nl = col_name.to_lowercase();
-    if nl.ends_with("_id") || nl.ends_with("_no") || nl == "id" {
+    column_mock_value_for_key(&crate::naming::snake_to_camel(col_name))
+}
+
+fn column_mock_value_for_key(camel_key: &str) -> String {
+    let nl = camel_key.to_lowercase();
+    if nl.ends_with("id") || nl.ends_with("no") || nl == "id" {
         return "1L".to_string();
     }
     if nl == "name"
-        || nl.ends_with("_name")
-        || nl.ends_with("_code")
-        || nl.ends_with("_type")
-        || nl.ends_with("_status")
-        || nl.ends_with("_desc")
-        || nl.ends_with("_text")
-        || nl.ends_with("_memo")
+        || nl.ends_with("name")
+        || nl.ends_with("code")
+        || nl.ends_with("type")
+        || nl.ends_with("status")
+        || nl.ends_with("desc")
+        || nl.ends_with("text")
+        || nl.ends_with("memo")
+        || nl.ends_with("reason")
     {
         return "\"test\"".to_string();
     }
     if nl == "salary"
-        || nl.ends_with("_count")
-        || nl.ends_with("_qty")
-        || nl.ends_with("_num")
-        || nl.ends_with("_amount")
-        || nl.ends_with("_total")
-        || nl.ends_with("_price")
-        || nl.ends_with("_salary")
-        || nl.ends_with("_fee")
-        || nl.ends_with("_rate")
+        || nl.ends_with("salary")
+        || nl.ends_with("count")
+        || nl.ends_with("qty")
+        || nl.ends_with("num")
+        || nl.ends_with("amount")
+        || nl.ends_with("total")
+        || nl.ends_with("price")
+        || nl.ends_with("fee")
+        || nl.ends_with("rate")
+        || nl.ends_with("pct")
+        || nl.ends_with("bonus")
+        || nl.ends_with("balance")
     {
         return "java.math.BigDecimal.TEN".to_string();
     }
-    if nl.ends_with("_date") || nl.ends_with("_time") {
+    if nl.ends_with("date") || nl.ends_with("time") {
         return "java.sql.Date.valueOf(\"2024-01-01\")".to_string();
     }
-    if nl.ends_with("_flag") || nl.starts_with("is_") {
+    if nl.ends_with("flag") || nl.starts_with("is") {
         return "true".to_string();
     }
-    if nl == "age" || nl.ends_with("_age") || nl == "year" || nl.ends_with("_year") || nl == "month" || nl.ends_with("_month") || nl == "day" || nl.ends_with("_day") {
+    if nl == "age" || nl.ends_with("age") || nl == "year" || nl.ends_with("year") || nl == "month" || nl.ends_with("month") || nl == "day" || nl.ends_with("day") {
         return "1".to_string();
     }
     "1L".to_string()
@@ -392,14 +406,34 @@ fn build_map_mock(cols: &[String]) -> String {
     let mut s = "{ var m = new java.util.HashMap<String,Object>(); ".to_string();
     for col in cols {
         let val = column_mock_value(col);
-        // MyBatis returns snake_case keys for resultType="map" (column aliases from DB)
-        s.push_str(&format!("m.put(\"{}\", {}); ", col, val));
+        let camel_key = crate::naming::snake_to_camel(col);
+        s.push_str(&format!("m.put(\"{}\", {}); ", camel_key, val));
     }
     s
 }
 
+/// Scan all procedures in the package for `.get("key")` patterns in logic lines,
+/// returning camelCase keys that the service code accesses on Map results.
+fn extract_map_access_keys(pkg: &PackageInfo) -> Vec<String> {
+    let mut keys = std::collections::HashSet::new();
+    let re = regex::Regex::new(r#"\.get\("(\w+)"\)"#).unwrap_or_else(|_| regex::Regex::new(r#""#).unwrap());
+    for proc in &pkg.procedures {
+        for line in &proc.java_logic_lines {
+            for cap in re.captures_iter(line) {
+                if let Some(k) = cap.get(1) {
+                    keys.insert(k.as_str().to_string());
+                }
+            }
+        }
+    }
+    let mut result: Vec<String> = keys.into_iter().collect();
+    result.sort();
+    result
+}
+
  fn mock_all_mapper_methods(mapper_name: &str, pkg: &PackageInfo) -> Vec<String> {
-     let mut all_dmls: Vec<(String, DmlType, usize, bool, Option<String>, String)> = Vec::new();
+      let extra_keys = extract_map_access_keys(pkg);
+      let mut all_dmls: Vec<(String, DmlType, usize, bool, Option<String>, String)> = Vec::new();
      for proc in &pkg.procedures {
          for dml in &proc.dml_statements {
              let in_param_count = proc.parameters.iter().filter(|p| !p.is_out()).count();
@@ -444,10 +478,10 @@ fn build_map_mock(cols: &[String]) -> String {
                 if *returns_list {
                     let cols = extract_select_columns(sql_text);
                     if cols.is_empty() {
-                        lines.push(format!(
-                            "        {{ var m = new java.util.HashMap<String,Object>(); m.put(\"id\", 1L); when({}.{}({})).thenReturn(java.util.List.of(m)); }}",
-                            mapper_name, method_id, any_args
-                        ));
+                        let mut mock = build_map_mock(&extra_keys);
+                        if extra_keys.is_empty() { mock.push_str("m.put(\"id\", 1L); "); }
+                        mock.push_str(&format!("when({}.{}({})).thenReturn(java.util.List.of(m)); }}", mapper_name, method_id, any_args));
+                        lines.push(format!("        {}", mock));
                     } else {
                         let mut mock = build_map_mock(&cols);
                         mock.push_str(&format!("when({}.{}({})).thenReturn(java.util.List.of(m)); }}", mapper_name, method_id, any_args));
@@ -467,12 +501,17 @@ fn build_map_mock(cols: &[String]) -> String {
                 } else {
                     let cols = extract_select_columns(sql_text);
                     if cols.is_empty() {
-                        lines.push(format!(
-                            "        {{ var m = new java.util.HashMap<String,Object>(); m.put(\"id\", 1L); when({}.{}({})).thenReturn(m); }}",
-                            mapper_name, method_id, any_args
-                        ));
+                        let mut mock = build_map_mock(&extra_keys);
+                        if extra_keys.is_empty() { mock.push_str("m.put(\"id\", 1L); "); }
+                        mock.push_str(&format!("when({}.{}({})).thenReturn(m); }}", mapper_name, method_id, any_args));
+                        lines.push(format!("        {}", mock));
                     } else {
                         let mut mock = build_map_mock(&cols);
+                        for k in &extra_keys {
+                            if !cols.iter().any(|c| crate::naming::snake_to_camel(c) == *k) {
+                                mock.push_str(&format!("m.put(\"{}\", {}); ", k, column_mock_value_for_key(k)));
+                            }
+                        }
                         mock.push_str(&format!("when({}.{}({})).thenReturn(m); }}", mapper_name, method_id, any_args));
                         lines.push(format!("        {}", mock));
                     }
@@ -507,6 +546,7 @@ fn default_test_value(java_type: &str, param_name: &str) -> String {
     if tl.contains("timestamp") { return "java.sql.Timestamp.valueOf(\"2024-01-01 00:00:00\")".to_string(); }
     if tl.contains("date") { return "java.sql.Date.valueOf(\"2024-01-01\")".to_string(); }
     if tl.contains("map") { return "new java.util.HashMap<>()".to_string(); }
+    if tl == "object" { return "java.util.Arrays.asList(\"a\", \"b\")".to_string(); }
     format!("\"test_{}\"", param_name)
 }
 
