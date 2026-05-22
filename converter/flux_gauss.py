@@ -1100,20 +1100,52 @@ def _read_sql_file(path: str) -> tuple[str, str]:
 def _format_validate_error(err) -> str:
     if isinstance(err, dict):
         for err_type, details in err.items():
-            if isinstance(details, dict) and "location" in details:
+            if not isinstance(details, dict):
+                return f"error: {err_type} — {details}"
+
+            if err_type == "TokenizerError":
+                return _format_tokenizer_error(details)
+
+            if "location" in details:
                 loc = details["location"]
                 line = loc.get("line", "?")
                 col = loc.get("column", "?")
                 if err_type == "UnexpectedToken":
                     return (f"error at line {line}, col {col}: "
                             f"expected {details.get('expected', '?')}, got {details.get('got', '?')}")
+                hint = details.get("hint", "")
+                syntax = details.get("syntax", "")
+                msg = details.get("message", "")
+                if syntax and hint:
+                    desc = f"{syntax} ({hint})"
+                elif hint or msg:
+                    desc = hint or msg
+                elif syntax:
+                    desc = syntax
                 else:
-                    return f"error at line {line}, col {col}: {err_type}"
-            elif isinstance(details, dict):
-                inner = next(iter(details), "")
-                return f"error: {err_type} ({inner}: {details[inner]})" if inner else f"error: {err_type}"
-            return f"error: {err_type} — {details}"
+                    desc = err_type
+                return f"error at line {line}, col {col}: {desc}"
+
+            inner = next(iter(details), "")
+            return f"error: {err_type} ({inner}: {details[inner]})" if inner else f"error: {err_type}"
     return str(err)
+
+
+def _format_tokenizer_error(details: dict) -> str:
+    for sub_type, value in details.items():
+        msg = _TOKENIZER_ERROR_MESSAGES.get(sub_type)
+        if msg:
+            return f"tokenizer error: {msg.format(value)}"
+        label = re.sub(r'([A-Z])', r' \1', sub_type).strip().lower()
+        return f"tokenizer error: {label}: {value}"
+    return "tokenizer error: unknown"
+
+
+_TOKENIZER_ERROR_MESSAGES = {
+    "UnterminatedDollarString": "unterminated dollar-quoted string at position {}",
+    "UnterminatedString": "unterminated string at position {}",
+    "UnexpectedToken": "unexpected token '{}'",
+}
 
 
 def validate_sql_file(sql_path: str) -> dict:
@@ -12303,16 +12335,20 @@ def main():
                 for sql_file in _files_to_validate:
                     basename = os.path.basename(sql_file)
                     vresult = _batch_results.get(sql_file, {"error_count": 1, "warning_count": 0, "errors": [{"ValidationError": {"message": "Missing batch result"}}], "warnings": []})
-                    ec = vresult.get("error_count", 0)
-                    wc = vresult.get("warning_count", 0)
-                    if ec > 0:
-                        _log(f"    ❌ {basename}: {ec} error(s), {wc} warning(s)", to_stdout=False)
-                        _validate_errors[basename] = vresult.get("errors", [])
-                        if wc > 0:
-                            _validate_warnings[basename] = vresult.get("warnings", [])
-                    elif wc > 0:
-                        _log(f"    ⚠ {basename}: {wc} warning(s)", to_stdout=False)
-                        _validate_warnings[basename] = vresult.get("warnings", [])
+                    raw_errors = vresult.get("errors", [])
+                    real_errors = [e for e in raw_errors if not _is_parse_warning(e)]
+                    warnings_in_errors = [e for e in raw_errors if _is_parse_warning(e)]
+                    raw_warnings = vresult.get("warnings", [])
+                    all_warnings = raw_warnings + warnings_in_errors
+
+                    if real_errors:
+                        _log(f"    ❌ {basename}: {len(real_errors)} error(s), {len(all_warnings)} warning(s)", to_stdout=False)
+                        _validate_errors[basename] = real_errors
+                        if all_warnings:
+                            _validate_warnings[basename] = all_warnings
+                    elif all_warnings:
+                        _log(f"    ⚠ {basename}: {len(all_warnings)} warning(s)", to_stdout=False)
+                        _validate_warnings[basename] = all_warnings
                     else:
                         _log(f"    ✅ {basename} OK", to_stdout=False)
             except Exception as e:
