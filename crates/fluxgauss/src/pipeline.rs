@@ -8,6 +8,26 @@ use crate::types::{
     AnalyzedPackages, ConversionError, PackageSummary, ParsedPackages,
 };
 
+pub struct FileValidateResult {
+    pub basename: String,
+    pub errors: Vec<ogsql_parser::ParserError>,
+    pub warnings: Vec<ogsql_parser::ParserError>,
+    pub package_consistency_errors: Vec<ogsql_parser::PackageConsistencyError>,
+    pub undefined_variables: Vec<ogsql_parser::UndefinedVariableError>,
+}
+
+pub struct ValidateResult {
+    pub file_results: Vec<FileValidateResult>,
+    pub error_file_count: usize,
+    pub warning_file_count: usize,
+}
+
+impl ValidateResult {
+    pub fn has_errors(&self) -> bool {
+        self.error_file_count > 0
+    }
+}
+
 pub struct PipelineResult {
     pub packages: Vec<crate::types::PackageInfo>,
     pub generated_files: Vec<String>,
@@ -21,6 +41,227 @@ pub struct PipelineResult {
     pub itest_file_count: usize,
     pub total_dml: usize,
     pub total_cross_calls: usize,
+}
+
+pub fn phase0_validate(sql_files: &[PathBuf]) -> ValidateResult {
+    let total = sql_files.len();
+    let mut file_results = Vec::new();
+    let mut all_defined_funcs: Vec<String> = Vec::new();
+
+    for (idx, sql_file) in sql_files.iter().enumerate() {
+        let basename = sql_file.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        crate::progress::progress_bar("Validate", idx + 1, total, &format!("Validating {}", basename));
+
+        let content = match std::fs::read(sql_file) {
+            Ok(bytes) => match ogsql_parser::token::decode_sql_file(&bytes) {
+                Ok((s, _enc)) => s,
+                Err(e) => {
+                    file_results.push(FileValidateResult {
+                        basename,
+                        errors: vec![ogsql_parser::ParserError::Warning {
+                            message: format!("encoding detection failed: {}", e),
+                            location: ogsql_parser::SourceLocation::default(),
+                        }],
+                        warnings: Vec::new(),
+                        package_consistency_errors: Vec::new(),
+                        undefined_variables: Vec::new(),
+                    });
+                    continue;
+                }
+            },
+            Err(e) => {
+                file_results.push(FileValidateResult {
+                    basename,
+                    errors: vec![ogsql_parser::ParserError::Warning {
+                        message: format!("cannot read file: {}", e),
+                        location: ogsql_parser::SourceLocation::default(),
+                    }],
+                    warnings: Vec::new(),
+                    package_consistency_errors: Vec::new(),
+                    undefined_variables: Vec::new(),
+                });
+                continue;
+            }
+        };
+
+        let tokens = match ogsql_parser::Tokenizer::new(&content).tokenize() {
+            Ok(t) => t,
+            Err(e) => {
+                file_results.push(FileValidateResult {
+                    basename,
+                    errors: vec![ogsql_parser::ParserError::TokenizerError(e)],
+                    warnings: Vec::new(),
+                    package_consistency_errors: Vec::new(),
+                    undefined_variables: Vec::new(),
+                });
+                continue;
+            }
+        };
+
+        let mut parser = ogsql_parser::Parser::new(tokens);
+        let stmts = parser.parse_with_text();
+        let parse_errors = parser.errors().to_vec();
+
+        let pkg_errors = ogsql_parser::validate_package_consistency(&stmts);
+        let own_funcs = collect_defined_routine_names(&stmts);
+        all_defined_funcs.extend(own_funcs);
+
+        let mut errors = Vec::new();
+        let mut warnings = Vec::new();
+        for err in &parse_errors {
+            if is_warning(err) {
+                warnings.push(err.clone());
+            } else {
+                errors.push(err.clone());
+            }
+        }
+
+        let var_errors = validate_pl_variables_from_stmts(&stmts, &all_defined_funcs);
+        for ve in &var_errors {
+            warnings.push(ogsql_parser::ParserError::Warning {
+                message: format_undefined_var_error(ve),
+                location: ogsql_parser::SourceLocation::default(),
+            });
+        }
+
+        file_results.push(FileValidateResult {
+            basename,
+            errors,
+            warnings,
+            package_consistency_errors: pkg_errors,
+            undefined_variables: var_errors,
+        });
+    }
+
+    crate::progress::progress_done("Validate", total);
+
+    let error_file_count = file_results.iter().filter(|r| r.errors.iter().any(|e| !is_warning(e))).count();
+    let warning_file_count = file_results.iter().filter(|r| {
+        r.errors.iter().all(|e| is_warning(e)) && !r.warnings.is_empty()
+    }).count();
+
+    ValidateResult {
+        file_results,
+        error_file_count,
+        warning_file_count,
+    }
+}
+
+fn collect_defined_routine_names(stmts: &[ogsql_parser::StatementInfo]) -> Vec<String> {
+    use ogsql_parser::ast::Statement;
+    let mut names = Vec::new();
+    for si in stmts {
+        match &si.statement {
+            Statement::CreateProcedure(p) => {
+                names.push(p.name.iter().map(|s| s.to_lowercase()).collect::<Vec<_>>().join("."));
+            }
+            Statement::CreateFunction(f) => {
+                names.push(f.name.iter().map(|s| s.to_lowercase()).collect::<Vec<_>>().join("."));
+            }
+            Statement::CreatePackageBody(b) => {
+                for item in &b.items {
+                    match item {
+                        ogsql_parser::ast::PackageItem::Procedure(p) => {
+                            names.push(p.name.iter().map(|s| s.to_lowercase()).collect::<Vec<_>>().join("."));
+                        }
+                        ogsql_parser::ast::PackageItem::Function(f) => {
+                            names.push(f.name.iter().map(|s| s.to_lowercase()).collect::<Vec<_>>().join("."));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn validate_pl_variables_from_stmts(
+    stmts: &[ogsql_parser::StatementInfo],
+    known_funcs: &[String],
+) -> Vec<ogsql_parser::UndefinedVariableError> {
+    use ogsql_parser::ast::Statement;
+    let mut warnings = Vec::new();
+    let funcs_str: Vec<&str> = known_funcs.iter().map(|s| s.as_str()).collect();
+    for si in stmts {
+        match &si.statement {
+            Statement::CreateProcedure(proc) => {
+                if let Some(ref block) = proc.block {
+                    let vars = ogsql_parser::validate_pl_variables_with_extra_vars_and_funcs(
+                        block, &proc.parameters, &[], &funcs_str,
+                    );
+                    warnings.extend(vars);
+                }
+            }
+            Statement::CreateFunction(func) => {
+                if let Some(ref block) = func.block {
+                    let vars = ogsql_parser::validate_pl_variables_with_extra_vars_and_funcs(
+                        block, &func.parameters, &[], &funcs_str,
+                    );
+                    warnings.extend(vars);
+                }
+            }
+            Statement::Do(do_stmt) => {
+                if let Some(ref block) = do_stmt.block {
+                    let vars = ogsql_parser::validate_pl_variables_with_extra_vars_and_funcs(
+                        block, &[], &[], &funcs_str,
+                    );
+                    warnings.extend(vars);
+                }
+            }
+            Statement::CreatePackageBody(body) => {
+                let pkg_vars: Vec<&str> = body.items.iter()
+                    .filter_map(|item| match item {
+                        ogsql_parser::ast::PackageItem::Variable(v) => Some(v.name.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                for item in &body.items {
+                    match item {
+                        ogsql_parser::ast::PackageItem::Procedure(proc) => {
+                            if let Some(ref block) = proc.block {
+                                let vars = ogsql_parser::validate_pl_variables_with_extra_vars_and_funcs(
+                                    block, &proc.parameters, &pkg_vars, &funcs_str,
+                                );
+                                warnings.extend(vars);
+                            }
+                        }
+                        ogsql_parser::ast::PackageItem::Function(func) => {
+                            if let Some(ref block) = func.block {
+                                let vars = ogsql_parser::validate_pl_variables_with_extra_vars_and_funcs(
+                                    block, &func.parameters, &pkg_vars, &funcs_str,
+                                );
+                                warnings.extend(vars);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    warnings
+}
+
+fn is_warning(e: &ogsql_parser::ParserError) -> bool {
+    matches!(
+        e,
+        ogsql_parser::ParserError::Warning { .. }
+            | ogsql_parser::ParserError::ReservedKeywordAsIdentifier { .. }
+    )
+}
+
+fn format_undefined_var_error(ve: &ogsql_parser::UndefinedVariableError) -> String {
+    let line_info = ve.location.as_ref()
+        .map(|sp| format!(":{}", sp.start.line))
+        .unwrap_or_default();
+    format!("undefined variable '{}' in {}{}", ve.variable_name, ve.context, line_info)
 }
 
 pub fn run_pipeline(

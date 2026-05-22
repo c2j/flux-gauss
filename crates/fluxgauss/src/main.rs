@@ -1,3 +1,4 @@
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -41,6 +42,9 @@ struct Cli {
 
     #[arg(long = "report")]
     report: Option<PathBuf>,
+
+    #[arg(long = "skip-validate", default_value_t = false)]
+    skip_validate: bool,
 }
 
 fn main() {
@@ -82,6 +86,67 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     log.log(&format!("Output: {}", output_dir));
     log.log(&format!("Config: {}", config_path_str));
     log.log(&format!("Input: {} SQL file(s)", sql_files.len()));
+
+    // ── Phase 0: Validate SQL syntax ──
+    if !cli.skip_validate {
+        let validate_result = pipeline::phase0_validate(&sql_files);
+        log.log(&format!("Validate: {} error(s), {} warning(s) across {} file(s)",
+            validate_result.error_file_count, validate_result.warning_file_count, sql_files.len()));
+
+        for file_result in &validate_result.file_results {
+            if !file_result.errors.is_empty() {
+                log.log(&format!("  ❌ {} — {} error(s)", file_result.basename, file_result.errors.len()));
+            } else if !file_result.warnings.is_empty() {
+                log.log(&format!("  ⚠ {} — {} warning(s)", file_result.basename, file_result.warnings.len()));
+            } else {
+                log.log(&format!("  ✅ {} OK", file_result.basename));
+            }
+        }
+
+        if validate_result.has_errors() {
+            println!();
+            println!("  ⚠ {} file(s) have syntax errors:", validate_result.error_file_count);
+            for file_result in &validate_result.file_results {
+                if file_result.errors.is_empty() {
+                    continue;
+                }
+                println!("    📄 {} — {} error(s):", file_result.basename, file_result.errors.len());
+                for err in file_result.errors.iter().take(10) {
+                    println!("       {}", format_validate_error(err));
+                }
+                if file_result.errors.len() > 10 {
+                    println!("       ... and {} more", file_result.errors.len() - 10);
+                }
+            }
+            println!();
+
+            if std::io::stdin().is_terminal() {
+                print!("  是否继续转换？语法错误可能导致转换结果不准确。[y/N] ");
+                let _ = std::io::stdout().flush();
+                let mut answer = String::new();
+                match std::io::stdin().read_line(&mut answer) {
+                    Ok(_) => {
+                        let ans = answer.trim().to_lowercase();
+                        if ans != "y" && ans != "yes" {
+                            println!("  用户取消转换。请修复语法错误后重试。");
+                            let _ = log.close();
+                            std::process::exit(1);
+                        }
+                        log.log("  用户选择继续转换（忽略语法错误）");
+                    }
+                    Err(_) => {
+                        println!("  用户取消转换。");
+                        let _ = log.close();
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                println!("  ❌ 非交互模式检测到语法错误，自动中止。使用 --skip-validate 跳过校验。");
+                let _ = log.close();
+                std::process::exit(1);
+            }
+        }
+    }
 
     let result = pipeline::run_pipeline(&sql_files, &config, &mut incremental);
 
@@ -166,6 +231,29 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n  Output: {}", abs_output);
 
     Ok(())
+}
+
+fn format_validate_error(err: &ogsql_parser::ParserError) -> String {
+    match err {
+        ogsql_parser::ParserError::UnexpectedToken { location, expected, got } => {
+            format!("error at line {}, col {}: expected {}, got {}", location.line, location.column, expected, got)
+        }
+        ogsql_parser::ParserError::UnexpectedEof { expected, location } => {
+            format!("error at line {}, col {}: unexpected end of input, expected {}", location.line, location.column, expected)
+        }
+        ogsql_parser::ParserError::ReservedKeywordAsIdentifier { keyword, location } => {
+            format!("error at line {}, col {}: reserved keyword '{}' cannot be used as identifier", location.line, location.column, keyword)
+        }
+        ogsql_parser::ParserError::UnsupportedSyntax { location, syntax, hint } => {
+            format!("error at line {}, col {}: {} ({})", location.line, location.column, syntax, hint)
+        }
+        ogsql_parser::ParserError::Warning { message, .. } => {
+            format!("warning: {}", message)
+        }
+        ogsql_parser::ParserError::TokenizerError(e) => {
+            format!("tokenizer error: {}", e)
+        }
+    }
 }
 
 fn resolve_inputs(cli: &Cli) -> Result<(config::AppConfig, Vec<PathBuf>, String), Box<dyn std::error::Error>> {
