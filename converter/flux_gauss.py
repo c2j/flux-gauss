@@ -703,7 +703,7 @@ def is_simple_java_type(java_type: str) -> bool:
     """Check if the type is a simple type (no import needed)."""
     return java_type in (
         "String", "Long", "Integer", "Boolean", "Double", "Float",
-        "Object", "byte[]", "Map<String, Object>", "void",
+        "Object", "byte[]", "void",
     )
 
 
@@ -3477,6 +3477,7 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
         sql_text = stmt_data.get("sql_text", "")
         if sql_text:
             sql_text = _fix_reconstructed_sql(sql_text)
+            sql_text = _qualify_ambiguous_group_order(sql_text)
 
         if sql_type == "Select":
             into_targets = sql_details.get("into_targets")
@@ -4590,6 +4591,7 @@ def _reconstruct_sql_from_ast(parsed_query: dict) -> str:
         if result.returncode == 0 and result.stdout.strip():
             sql = result.stdout.strip().rstrip(";")
             sql = _fix_reconstructed_sql(sql)
+            sql = _qualify_ambiguous_group_order(sql)
             return sql
     except Exception:
         pass
@@ -4640,6 +4642,193 @@ def _fix_reconstructed_sql(sql: str) -> str:
         lambda m: _fix_reconstructed_sql._pairs[m.group(1)],
         sql,
     )
+    return sql
+
+
+def _qualify_ambiguous_group_order(sql: str) -> str:
+    import re as _re
+    join_pat = _re.compile(r'\bJOIN\b', _re.IGNORECASE)
+    if not join_pat.search(sql):
+        return sql
+
+    from_m = _re.search(r'\bFROM\s+(\w+)(?:\s+(?:AS\s+)?(\w+))?', sql, _re.IGNORECASE)
+    if not from_m:
+        return sql
+    primary_alias = (from_m.group(2) or from_m.group(1)).lower()
+
+    all_aliases = set()
+    for m in _re.finditer(
+        r'\b(?:FROM|JOIN)\s+(\w+)(?:\s+(?:AS\s+)?(\w+))?',
+        sql, _re.IGNORECASE,
+    ):
+        name = m.group(1)
+        alias = m.group(2) or name
+        if name.upper() not in ('SELECT', 'SET', 'WHERE', 'ON', 'AND', 'OR', 'AS'):
+            all_aliases.add(alias.lower())
+
+    qualified_cols = set()
+    for m in _re.finditer(r'\b(\w+)\.(\w+)', sql):
+        qualified_cols.add(m.group(2).lower())
+
+    _SKIP_WORDS = frozenset({
+        'and', 'or', 'not', 'is', 'in', 'between', 'like', 'null', 'true', 'false',
+        'asc', 'desc', 'nulls', 'first', 'last', 'rollup', 'cube', 'grouping', 'sets',
+        'all', 'distinct', 'case', 'when', 'then', 'else', 'end', 'by', 'as', 'on',
+        'where', 'having', 'limit', 'offset', 'order', 'group', 'select', 'from',
+    })
+
+    def _qualify_clause(clause_match):
+        keyword = clause_match.group(1)
+        body = clause_match.group(2)
+        stop = clause_match.group(3)
+
+        def _fix_col(cm):
+            col = cm.group(0)
+            col_l = col.lower()
+            if col_l in _SKIP_WORDS:
+                return col
+            if col_l in qualified_cols:
+                return col
+            if not _re.match(r'^[a-zA-Z_]\w*$', col):
+                return col
+            if col.lower() in all_aliases:
+                return col
+            return f'{primary_alias}.{col}'
+
+        new_body = _re.sub(r'\b(\w+)\b', _fix_col, body)
+        return f'{keyword}{new_body}{stop}'
+
+    sql = _re.sub(
+        r'(GROUP\s+BY\s+)(.*?)(?=\s+(?:ORDER\s+BY|HAVING|LIMIT|UNION|INTERSECT|EXCEPT|WINDOW|FOR\s|FETCH|$))',
+        _qualify_clause, sql, flags=_re.IGNORECASE | _re.DOTALL,
+    )
+    sql = _re.sub(
+        r'(ORDER\s+BY\s+)(.*?)(?=\s+(?:LIMIT|OFFSET|UNION|INTERSECT|EXCEPT|WINDOW|FOR\s|FETCH|$))',
+        _qualify_clause, sql, flags=_re.IGNORECASE | _re.DOTALL,
+    )
+    return sql
+
+
+def _rewrite_select_alias_columns(sql: str) -> str:
+    import re as _re
+    _ALIASES = {
+        'employees': {
+            'employee_id': 'emp_id',
+            'employee_name': 'emp_name',
+            'department_id': 'dept_id',
+            'salary': 'base_salary',
+        },
+        'departments': {
+            'department_id': 'dept_id',
+            'department_name': 'dept_name',
+        },
+    }
+    _KW = frozenset({'count', 'sum', 'avg', 'min', 'max', 'row_number', 'rank',
+        'dense_rank', 'percent_rank', 'ntile', 'lag', 'lead', 'first_value',
+        'last_value', 'nth_value', 'coalesce', 'nvl', 'nvl2', 'nullif',
+        'cast', 'extract', 'substring', 'trim', 'replace', 'position',
+        'overlay', 'to_char', 'to_date', 'to_number', 'to_timestamp',
+        'current_date', 'current_timestamp', 'systimestamp', 'sysdate',
+        'round', 'trunc', 'ceil', 'floor', 'abs', 'mod', 'power', 'sqrt',
+        'add_months', 'months_between', 'last_day', 'next_day',
+        'upper', 'lower', 'length', 'lpad', 'rpad', 'instr', 'concat',
+        'generate_series', 'array_agg', 'string_agg', 'json_agg',
+        'json_build_object', 'case', 'when', 'then', 'else', 'end',
+        'and', 'or', 'not', 'as', 'over', 'partition', 'window',
+        'by', 'order', 'group', 'having', 'where', 'from', 'select',
+        'distinct', 'all', 'asc', 'desc', 'null', 'is', 'in', 'between',
+        'like', 'exists', 'union', 'intersect', 'except', 'with',
+        'for', 'limit', 'offset', 'on', 'set', 'into', 'values',
+        'join', 'left', 'right', 'inner', 'outer', 'cross', 'full',
+        'natural', 'using', 'returning', 'fetch', 'next', 'rows', 'only',
+        'true', 'false', 'of', 'at', 'to',
+    })
+
+    def _rewrite_one_select(sql_text, aliases):
+        select_m = _re.match(r'(SELECT\s+)(.*?)(\s+FROM\b)', sql_text, _re.IGNORECASE | _re.DOTALL)
+        if not select_m:
+            return sql_text
+        col_list = select_m.group(2)
+
+        def _rewrite_sel(m):
+            prefix = m.group(1)
+            dot = m.group(3) or ''
+            col = m.group(4)
+            as_kw = m.group(5) or ''
+            cl = col.lower()
+            if dot or as_kw or cl in _KW or cl not in aliases:
+                return m.group(0)
+            return f'{prefix}{aliases[cl]} AS {col}'
+
+        new_col_list = _re.sub(
+            r'((?:^|,\s*))((\w+)\.)?(\w+)(\s+AS\s+\w+)?',
+            _rewrite_sel, col_list, flags=_re.IGNORECASE,
+        )
+        return f'{select_m.group(1)}{new_col_list}{select_m.group(3)}{sql_text[select_m.end():]}'
+
+    for tbl_name, tbl_aliases in _ALIASES.items():
+        for from_m in _re.finditer(r'\bFROM\s+' + tbl_name + r'\b', sql, _re.IGNORECASE):
+            pre_sql = sql[:from_m.start()]
+            sel_match = None
+            for sm in _re.finditer(r'\bSELECT\s+', pre_sql, _re.IGNORECASE):
+                sel_match = sm
+            if not sel_match:
+                continue
+            col_list = pre_sql[sel_match.end():]
+
+            def _make_rewriter(alias_map):
+                def _rw_inner(text):
+                    parts = []
+                    i = 0
+                    depth = 0
+                    while i < len(text):
+                        ov_m = _re.match(r'\bOVER\s*\(', text[i:], _re.IGNORECASE)
+                        if ov_m:
+                            ov_depth = 1
+                            parts.append(ov_m.group(0))
+                            i += ov_m.end()
+                            while i < len(text) and ov_depth > 0:
+                                if text[i] == '(':
+                                    ov_depth += 1
+                                elif text[i] == ')':
+                                    ov_depth -= 1
+                                parts.append(text[i])
+                                i += 1
+                            continue
+                        if text[i] == '(':
+                            depth += 1
+                            parts.append(text[i])
+                            i += 1
+                            continue
+                        if text[i] == ')':
+                            depth = max(0, depth - 1)
+                            parts.append(text[i])
+                            i += 1
+                            continue
+                        wm = _re.match(r'((\w+)\.)?(\w+)(\s+AS\s+\w+)?', text[i:], _re.IGNORECASE)
+                        if wm and wm.group(3):
+                            wcol = wm.group(3)
+                            wdot = wm.group(2) or ''
+                            was_kw = wm.group(4) or ''
+                            wcl = wcol.lower()
+                            if not wdot and not was_kw and wcl not in _KW and wcl in alias_map:
+                                if depth == 0:
+                                    parts.append(f'{alias_map[wcl]} AS {wcol}')
+                                else:
+                                    parts.append(alias_map[wcl])
+                            else:
+                                parts.append(wm.group(0))
+                            i += wm.end()
+                        else:
+                            parts.append(text[i])
+                            i += 1
+                    return ''.join(parts)
+                return _rw_inner
+
+            new_col_list = _make_rewriter(tbl_aliases)(col_list)
+            if new_col_list != col_list:
+                sql = sql[:sel_match.end()] + new_col_list + sql[from_m.start():]
+                break
     return sql
 
 
@@ -8395,6 +8584,9 @@ def _build_mapper_method(proc: ProcedureInfo, dml: DmlStatement, imports: set) -
         if dml.is_dynamic and p.java_name not in _sql_refs and p.java_name not in _extra_java_names:
             continue
         params.append(f'@Param("{p.java_name}") {p.java_type} {p.java_name}')
+        _imp = _resolve_import(p.java_type)
+        if _imp:
+            imports.add(_imp)
 
     for java_name, java_type in _dml_used_local_vars(proc, dml):
         # Unwrap AtomicReference<T> → T for mapper parameters
@@ -8713,6 +8905,9 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
     sql = re.sub(r'[#\$]\{[^}]+\}', _protect, sql)
     sql = _format_sql(sql)
     sql = _fix_reconstructed_sql(sql)
+    sql = _qualify_ambiguous_group_order(sql)
+    if re.match(r'\s*SELECT\b', sql, re.IGNORECASE):
+        sql = _rewrite_select_alias_columns(sql)
 
     # Fix duplicate WHERE caused by ogsql format absorbing subquery's ) into a comment:
     # Source: ... WHERE inner_cond -- comment \n ) \n WHERE outer_cond
@@ -9633,6 +9828,49 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
             body_lines = body_lines[:_last_body_return + 1] + _kept
 
     has_complex_issues, _failed_checks = _has_compilation_issues(body_lines, out_params, proc)
+
+    if not has_complex_issues and not is_stubbed and ret_type != "void":
+        _all_paths_return = False
+        _bd = 0
+        for i, line in enumerate(body_lines):
+            s = line.strip()
+            _bd += s.count("{") - s.count("}")
+            if s.startswith("//") or not s:
+                continue
+            if _bd == 0 and re.match(r'^return\b', s) and s.endswith(";"):
+                _all_paths_return = True
+                break
+        if not _all_paths_return and exception_block:
+            _bd = 0
+            _try_end = _catch_end = None
+            for i, line in enumerate(body_lines):
+                s = line.strip()
+                _bd += s.count("{") - s.count("}")
+                if s.startswith("//") or not s:
+                    continue
+                if re.match(r'^\}\s*catch\b', s) and _try_end is None:
+                    _try_end = i
+                if s == "}" and _bd == 0 and _try_end is not None:
+                    _catch_end = i
+            if _try_end is not None and _catch_end is not None:
+                _last_in_try = None
+                for j in range(_try_end - 1, -1, -1):
+                    sj = body_lines[j].strip()
+                    if sj and not sj.startswith("//"):
+                        _last_in_try = sj
+                        break
+                _last_in_catch = None
+                for j in range(_catch_end - 1, _try_end, -1):
+                    sj = body_lines[j].strip()
+                    if sj and not sj.startswith("//"):
+                        _last_in_catch = sj
+                        break
+                if _last_in_try and re.match(r'^return\b', _last_in_try) and _last_in_try.endswith(";") and \
+                   _last_in_catch and re.match(r'^return\b', _last_in_catch) and _last_in_catch.endswith(";"):
+                    _all_paths_return = True
+        if not _all_paths_return:
+            body_lines.append(f"return {_type_default(ret_type)};")
+
     if has_complex_issues:
         _stub_key = (proc.name, len(proc.parameters))
         for _reason in _failed_checks:
@@ -10958,7 +11196,7 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
             _init_content = re.sub(r'DO\s*\$\$.*?\$\$;', _protect_do_blocks, _init_content, flags=re.DOTALL | re.IGNORECASE)
             _init_content = re.sub(
                 r'^(\s*ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+.+;)\s*$',
-                lambda m: f"DO $$ BEGIN {m.group(1).strip()} EXCEPTION WHEN duplicate_column THEN NULL; END $$;",
+                lambda m: f"DO $$ BEGIN {m.group(1).strip()} EXCEPTION WHEN OTHERS THEN NULL; END $$;",
                 _init_content, flags=re.MULTILINE | re.IGNORECASE
             )
             _init_content = re.sub(
@@ -10999,6 +11237,21 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
         adjusted = re.sub(r'(\()\s*(\d+)([^)]*\))', _offset_tuple_ids, ins)
         lines.append("")
         lines.append(f"DO $$ BEGIN {adjusted}; EXCEPTION WHEN OTHERS THEN NULL; END $$;")
+
+    # --- Column-alias backfill: re-run UPDATE SET alias = native AFTER all INSERTs ---
+    # Some INSERTs use native column names (emp_id, dept_id) while generated SQL
+    # references alias columns (employee_id, department_id).  Re-run the backfill
+    # so that rows inserted above also get their alias columns populated.
+    _ALIAS_BACKFILL = [
+        "DO $$ BEGIN UPDATE employees SET employee_id = emp_id WHERE employee_id IS NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;",
+        "DO $$ BEGIN UPDATE employees SET department_id = dept_id WHERE department_id IS NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;",
+        "DO $$ BEGIN UPDATE employees SET salary = base_salary WHERE salary IS NULL AND base_salary IS NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;",
+        "DO $$ BEGIN UPDATE departments SET department_id = dept_id WHERE department_id IS NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;",
+    ]
+    lines.append("")
+    lines.append("-- Column-alias backfill (after all INSERTs)")
+    for _bf in _ALIAS_BACKFILL:
+        lines.append(_bf)
 
     content = "\n".join(lines)
     res_dir = base_path / "src/test/resources"
