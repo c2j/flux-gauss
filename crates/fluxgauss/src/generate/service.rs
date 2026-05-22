@@ -276,6 +276,12 @@ fn default_for_type(t: &str) -> &'static str {
 fn coerce_default_value(java_type: &str, default_val: &str) -> String {
     let trimmed = default_val.trim();
     let tl = java_type.to_lowercase();
+    if tl.contains("list") || tl.contains("array") {
+        if trimmed.starts_with('"') {
+            return "new java.util.ArrayList<>()".to_string();
+        }
+        return default_val.to_string();
+    }
     if tl.contains("bigdecimal") {
         if trimmed == "0" {
             return "java.math.BigDecimal.ZERO".to_string();
@@ -346,6 +352,14 @@ pub(crate) fn should_stub_procedure(proc: &crate::types::ProcedureInfo, _object_
 
     let broken_defaults = proc.local_var_defaults.values().any(|v| v.contains("((Object)") || v.contains(">>") || v.contains("-> ") || v.contains("(Object[])"));
     if broken_defaults {
+        return true;
+    }
+
+    let has_dynamic_sql = lines.iter().any(|l| {
+        let t = l.trim();
+        t.contains("execute immediate") || t.contains("EXECUTE IMMEDIATE")
+    });
+    if has_dynamic_sql {
         return true;
     }
 
@@ -427,7 +441,17 @@ fn build_service_method(
                         .cloned()
                         .unwrap_or_else(|| default_for_type(var_type).to_string());
                     let coerced = coerce_default_value(var_type, &default_val);
-                    body_lines.push(format!("{} {} = {};", var_type, var_java, coerced));
+                    let is_object_used_as_map = var_type == "Object" && proc.java_logic_lines.iter()
+                        .any(|l| l.contains(&format!("((java.util.Map<String, Object>) {}).put(", var_java)));
+                    let is_object_used_as_list = var_type == "Object" && proc.java_logic_lines.iter()
+                        .any(|l| l.contains(&format!("((java.util.List<?>) {})", var_java)));
+                    if is_object_used_as_map {
+                        body_lines.push(format!("java.util.Map<String, Object> {} = new java.util.HashMap<>();", var_java));
+                    } else if is_object_used_as_list {
+                        body_lines.push(format!("java.util.List<Object> {} = new java.util.ArrayList<>();", var_java));
+                    } else {
+                        body_lines.push(format!("{} {} = {};", var_type, var_java, coerced));
+                    }
                 }
             }
         }
@@ -795,18 +819,36 @@ mod tests {
 fn is_if_else_all_return(lines: &[String]) -> bool {
     let lines_trimmed: Vec<&str> = lines.iter().map(|l| l.trim()).collect();
     let n = lines_trimmed.len();
-    if n < 5 { return false; }
+    if n < 3 { return false; }
     if lines_trimmed[n-1] != "}" { return false; }
-    if !lines_trimmed[n-2].starts_with("return ") { return false; }
-    if lines_trimmed[n-3] != "} else {" { return false; }
-    let mut found_if_return = false;
-    for i in (0..n-3).rev() {
-        if lines_trimmed[i].starts_with("return ") {
-            found_if_return = true;
-        } else if lines_trimmed[i].starts_with("if ") || lines_trimmed[i].starts_with("if(") {
-            return found_if_return;
-        } else if lines_trimmed[i].starts_with("}") {
+
+    let mut depth: i32 = 0;
+    let mut found_return_in_branch = false;
+    let mut all_return = true;
+
+    for i in (0..n).rev() {
+        let line = lines_trimmed[i];
+        for ch in line.chars() {
+            match ch {
+                '}' => depth += 1,
+                '{' => depth -= 1,
+                _ => {}
+            }
+        }
+        if depth == 0 && (line.starts_with("if ") || line.starts_with("if(")) {
+            return all_return && found_return_in_branch;
+        }
+        if depth == 0 && line.starts_with("}") && !line.contains("else") {
             break;
+        }
+        if line.starts_with("return ") || line == "return;" || line.starts_with("return;") {
+            found_return_in_branch = true;
+        }
+        if line.starts_with("}") && line.contains("else") && !line.contains("if") {
+            if !found_return_in_branch {
+                all_return = false;
+            }
+            found_return_in_branch = false;
         }
     }
     false
