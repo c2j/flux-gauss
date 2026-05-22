@@ -86,6 +86,10 @@ pub fn sql_type_to_java(sql_type: &str) -> Option<&'static str> {
     let normalized = sql_type.to_lowercase();
     let base = normalized.trim();
 
+    if base.ends_with("[]") {
+        return Some("java.util.List<String>");
+    }
+
     SQL_TO_JAVA
         .iter()
         .find(|(k, _)| *k == base)

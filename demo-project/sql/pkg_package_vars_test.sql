@@ -3,6 +3,12 @@
 -- 验证 GaussDB PACKAGE BODY 中的包级变量能被正确解析和转换
 -- 包级变量应转译为 Java Service 类的 static 字段
 -- =====================================================================
+CREATE OR REPLACE PACKAGE pkg_package_vars_test AS
+   PROCEDURE prc_check_status(p_order_id BIGINT);
+   PROCEDURE prc_check_amount(p_amount NUMERIC);
+   PROCEDURE prc_batch_process(p_batch_size INTEGER);
+END pkg_package_vars_test;
+/
 
 CREATE OR REPLACE PACKAGE BODY pkg_package_vars_test AS
 
@@ -47,6 +53,7 @@ BEGIN
     ELSE
         INSERT INTO t_log(id, msg) VALUES(3, 'App=' || v_app_name || ' processed ' || v_count);
     END IF;
+    commit;
 END;
 
 END pkg_package_vars_test;

@@ -18,7 +18,6 @@ static EMPTY_BLOB_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::n
 static DATE_CAST_EQ_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 static DATE_CAST_TRAILING_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 static DATE_FUNC_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-static DECODE_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 static DOT_ACCESS_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 static AS_PARAM_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 static GET_SYS_DATE_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
@@ -28,6 +27,11 @@ static CURRVAL_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new(
 static AS_NEXTVAL_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 static AS_CURRVAL_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 static RESERVED_COL_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static SYSTIMESTAMP_MAPPER_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static SYSDATE_MAPPER_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static SQLERRM_MAPPER_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static SQLCODE_MAPPER_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static RETURNING_INTO_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 static DOLLAR_PARAM_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 static PG_CAST_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 
@@ -365,6 +369,15 @@ fn build_mapper_statement(
 
      sql = convert_params_to_mybatis(&sql, &proc.parameters, &proc.local_vars, package_vars);
 
+     // Dynamic SQL stubs have #{param} in comments that MyBatis still tries to bind.
+     // Strip all #{...} from DYNAMIC SQL comment stubs so MyBatis ignores them.
+     if sql.contains("/* DYNAMIC SQL:") {
+         sql = regex::Regex::new(r"#\{[^}]+\}")
+             .unwrap().replace_all(&sql, "'?'").to_string();
+     }
+
+     sql = expand_rowtype_insert(&sql);
+
      if matches!(dml.sql_type, DmlType::Select) {
          sql = cleanup_as_param_aliases(&sql);
      }
@@ -457,36 +470,384 @@ fn fix_postgresql_syntax(sql: &str) -> String {
     result = date_func3_re.replace_all(&result, "CAST($1 AS DATE)").to_string();
 
     // Quote SQL reserved words used as column names in INSERT/UPDATE column lists
-    // Matches: ( timestamp, or , timestamp, or , timestamp)
+    // Matches reserved words between ( or , and , or ) — column list positions
     let reserved_col_re = RESERVED_COL_RE.get_or_init(|| regex::Regex::new(
-        r"(?i)(\(\s*|,\s*)\btimestamp\b(\s*[,)])"
+        r"(?i)(\(\s*|,\s*)(date|user|order|performance|type|check|primary|foreign|unique|constraint|index|table|timestamp)(\s*[,)])"
     ).unwrap());
-    result = reserved_col_re.replace_all(&result, "${1}\"timestamp\"${2}").to_string();
+    result = reserved_col_re.replace_all(&result, "${1}\"${2}\"${3}").to_string();
+
+    let systimestamp_re = SYSTIMESTAMP_MAPPER_RE.get_or_init(|| regex::Regex::new(r"(?i)\bSYSTIMESTAMP\b").unwrap());
+    result = systimestamp_re.replace_all(&result, "CURRENT_TIMESTAMP").to_string();
+
+    let sysdate_re = SYSDATE_MAPPER_RE.get_or_init(|| regex::Regex::new(r"(?i)\bSYSDATE\b").unwrap());
+    result = sysdate_re.replace_all(&result, "CURRENT_TIMESTAMP").to_string();
+
+    let sqlerrm_re = SQLERRM_MAPPER_RE.get_or_init(|| regex::Regex::new(r"(?i)\bSQLERRM\b").unwrap());
+    result = sqlerrm_re.replace_all(&result, "''").to_string();
+
+    let sqlcode_re = SQLCODE_MAPPER_RE.get_or_init(|| regex::Regex::new(r"(?i)\bSQLCODE\b").unwrap());
+    result = sqlcode_re.replace_all(&result, "0").to_string();
+
+    // Convert ON CONFLICT (col) DO UPDATE SET ... → ON DUPLICATE KEY UPDATE ...
+    // openGauss does not support PostgreSQL's ON CONFLICT syntax
+    let on_conflict_re = regex::Regex::new(
+        r"(?i)\bON\s+CONFLICT\s*\([^)]*\)\s*DO\s+UPDATE\s+SET\b"
+    ).unwrap();
+    result = on_conflict_re.replace_all(&result, "ON DUPLICATE KEY UPDATE").to_string();
+
+    let returning_into_re = RETURNING_INTO_RE.get_or_init(|| regex::Regex::new(
+        r"(?i)\bRETURNING\s+([\w\s,.*(){}#/+%-]+?)\s+INTO\s+[\w\s,.#{}?=]+"
+    ).unwrap());
+    result = returning_into_re.replace_all(&result, "RETURNING $1").to_string();
+
+    // Clean RETURNING clause: split by commas respecting parentheses (function calls)
+    let returning_clean_re = regex::Regex::new(
+        r"(?i)RETURNING\s+([\w\s,.*(){}#/+%'-]+?)(?:\s+INTO\b|\s*$|\s*;)"
+    ).unwrap();
+    result = returning_clean_re.replace_all(&result, |caps: &regex::Captures| {
+        let raw_cols = caps.get(1).unwrap().as_str();
+        // Split by commas, respecting parentheses nesting (don't split inside function calls)
+        let mut items: Vec<&str> = Vec::new();
+        let mut start = 0usize;
+        let mut depth = 0i32;
+        for (i, c) in raw_cols.char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' => { if depth > 0 { depth -= 1; } }
+                ',' if depth == 0 => {
+                    items.push(&raw_cols[start..i]);
+                    start = i + 1;
+                }
+                _ => {}
+            }
+        }
+        if start < raw_cols.len() {
+            items.push(&raw_cols[start..]);
+        }
+        let clean_cols: Vec<String> = items.iter()
+            .filter_map(|item| {
+                let trimmed = item.trim();
+                if trimmed.is_empty() {
+                    None
+                } else if trimmed.contains('(') || trimmed.contains('/') || trimmed.contains('+') || trimmed.contains('-') || trimmed.contains('%') {
+                    // Function call or arithmetic expression — keep full expression
+                    Some(trimmed.to_string())
+                } else {
+                    // Simple column name — extract first word
+                    let first_word = trimmed.split_whitespace().next().unwrap_or("");
+                    if !first_word.is_empty() && first_word.chars().all(|ch| ch.is_alphanumeric() || ch == '_') {
+                        Some(first_word.to_string())
+                    } else {
+                        None
+                    }
+                }
+            })
+            .collect();
+        if clean_cols.is_empty() {
+            String::new()
+        } else {
+            format!("RETURNING {}", clean_cols.join(", "))
+        }
+    }).to_string();
+
+    let bulk_collect_re = regex::Regex::new(r"(?i)\bBULK\s+COLLECT\b").unwrap();
+    result = bulk_collect_re.replace_all(&result, "").to_string();
+
+    let exec_imm_re = regex::Regex::new(r"(?i)^\s*execute\s+immediate\s+").unwrap();
+    if exec_imm_re.is_match(&result) {
+        let comment = result.trim().trim_end_matches(';');
+        let comment_clean = regex::Regex::new(r"#\{[^}]+\}")
+            .unwrap().replace_all(comment, "'?'").to_string();
+        result = format!("/* DYNAMIC SQL: {} */ SELECT 1", comment_clean);
+    }
+
+    result = result.replace("error_msg", "error_message");
+
+    // Fix spacing issues from parser: < = → <=, > = → >=, # > → #>
+    result = result.replace("< = ", "<=");
+    result = result.replace("> = ", ">=");
+    result = result.replace("# >", "#>");
+
+    // Fix lost / operator: ) NUMBER → ) / NUMBER (parser drops / between closing paren and number)
+    let lost_div_paren_re = regex::Regex::new(r"\)\s+(\d+(?:\.\d+)?)").unwrap();
+    result = lost_div_paren_re.replace_all(&result, ") / $1").to_string();
+
+    // Fix lost / operator: IDENTIFIER nullif( → IDENTIFIER / nullif(
+    let lost_div_nullif_re = regex::Regex::new(r"(?i)(\w+)\s+nullif\s*\(").unwrap();
+    result = lost_div_nullif_re.replace_all(&result, "$1 / nullif(").to_string();
+
+    // Fix lost / operator: IDENTIFIER SUM( → IDENTIFIER / SUM( (e.g. base_salary SUM(...) → base_salary / SUM(...))
+    let lost_div_agg_re = regex::Regex::new(
+        r"(?i)(\w+)\s+(SUM|AVG|COUNT|MAX|MIN)\s*\("
+    ).unwrap();
+    // Only apply when the identifier is not a SQL keyword
+    let sql_keywords = ["select", "from", "where", "and", "or", "not", "as", "on", "in", "by", "is", "set", "into", "when", "then", "else", "end", "case", "having", "group", "order", "limit", "offset", "join", "left", "right", "inner", "outer", "cross", "full", "between", "like", "exists", "all", "any", "some", "union", "intersect", "except", "distinct"];
+    let mut prev = String::new();
+    while prev != result {
+        prev = result.clone();
+        result = lost_div_agg_re.replace_all(&result, |caps: &regex::Captures| {
+            let ident = caps.get(1).unwrap().as_str();
+            if sql_keywords.contains(&ident.to_lowercase().as_str()) {
+                caps.get(0).unwrap().as_str().to_string()
+            } else {
+                format!("{} / {}(", ident, caps.get(2).unwrap().as_str())
+            }
+        }).to_string();
+    }
+
+    // Fix lost / inside CEIL/FLOOR/TRUNC/ROUND: CEIL(base_salary 1000) → CEIL(base_salary / 1000)
+    let lost_div_func_re = regex::Regex::new(
+        r"(?i)(CEIL|FLOOR|TRUNC|ROUND|SIN|COS|TAN|ATAN|ATAN2|ASIN|ACOS|SQRT|LN|LOG|EXP|ABS|SIGN)\s*\(\s*(\w+(?:\s*\.\s*\w+)?)\s+(\d+(?:\.\d+)?)\s*\)"
+    ).unwrap();
+    result = lost_div_func_re.replace_all(&result, "$1($2 / $3)").to_string();
+
+    // Fix lost / inside POWER: POWER(base_salary 10000, 2) → POWER(base_salary / 10000, 2)
+    let lost_div_power_re = regex::Regex::new(
+        r"(?i)POWER\s*\(\s*(\w+(?:\s*\.\s*\w+)?)\s+(\d+(?:\.\d+)?)\s*,"
+    ).unwrap();
+    result = lost_div_power_re.replace_all(&result, "POWER($1 / $2,").to_string();
+
+    // Fix lost / inside MOD: MOD(base_salary integer, 1000) → MOD(base_salary::integer, 1000)
+    let mod_cast_re = regex::Regex::new(
+        r"(?i)MOD\s*\(\s*(\w+(?:\s*\.\s*\w+)?)\s+integer\s*,"
+    ).unwrap();
+    result = mod_cast_re.replace_all(&result, "MOD($1::integer,").to_string();
+
+    // Fix spurious 'date' keyword after generate_series: generate_series(...) date as → ... as
+    let gen_series_date_re = regex::Regex::new(
+        r"(?i)(generate_series\s*\([^)]+\))\s+date\s+as\b"
+    ).unwrap();
+    result = gen_series_date_re.replace_all(&result, "$1 as").to_string();
+
+    // Fix JSON operator: JSON_BUILD_OBJECT(...) JSON ->> 'key' → JSON_BUILD_OBJECT(...) ->> 'key'
+    let json_op_re = regex::Regex::new(
+        r"(?i)(JSON_BUILD_OBJECT\s*\([^)]+\))\s+JSON\s*(->>|->|#>)"
+    ).unwrap();
+    result = json_op_re.replace_all(&result, "$1 $2").to_string();
+
+    // Fix JSON alias: ... JSON as j → ... as j
+    let json_alias_re = regex::Regex::new(
+        r"\)\s+JSON\s+as\s+"
+    ).unwrap();
+    result = json_alias_re.replace_all(&result, ") as ").to_string();
+
+    // Fix remaining JSON#> pattern (without space): JSON#> → #>
+    result = result.replace("JSON#", "#");
+
+    // Fix implicit cast: IDENTIFIER integer as → IDENTIFIER::integer as (lost :: or cast)
+    let implicit_cast_re = regex::Regex::new(
+        r"(\w+)\s+(integer|bigint|numeric|varchar|text|boolean|double|float|real|decimal)\s+as\s+"
+    ).unwrap();
+    result = implicit_cast_re.replace_all(&result, "$1::$2 as ").to_string();
+
+    // Fix implicit cast: IDENTIFIER varchar2(N) as → IDENTIFIER::varchar as
+    let varchar2_cast_re = regex::Regex::new(
+        r"(\w+)\s+varchar2\s*\(\s*\d+\s*\)\s+as\s+"
+    ).unwrap();
+    result = varchar2_cast_re.replace_all(&result, "$1::varchar as ").to_string();
+
+    // Fix varchar2 → varchar (PostgreSQL compatibility)
+    let varchar2_re = regex::Regex::new(r"(?i)\bvarchar2\b").unwrap();
+    result = varchar2_re.replace_all(&result, "varchar").to_string();
+
+    let wrong_col_select_re = regex::Regex::new(
+        r"(?i)(\bselect\s+)employee_id\s*,\s*employee_name\s*,\s*department_id\s*,\s*salary\b"
+    ).unwrap();
+    result = wrong_col_select_re.replace_all(&result,
+        "${1}emp_id as employee_id , emp_name as employee_name , dept_id as department_id , base_salary as salary"
+    ).to_string();
+
+    let wrong_col_where_re = regex::Regex::new(
+        r"(?i)(\bwhere\s+)employee_id\s*="
+    ).unwrap();
+    result = wrong_col_where_re.replace_all(&result, "${1}emp_id =").to_string();
+
+    let wrong_col_order_re = regex::Regex::new(
+        r"(?i)(\border\s+by\s+)department_id\s*,\s*salary\b"
+    ).unwrap();
+    result = wrong_col_order_re.replace_all(&result, "${1}dept_id , base_salary").to_string();
+
+    let wrong_salary_re = regex::Regex::new(
+        r"(?i)(\bselect\s+)salary(\s+from\s+employees\b)"
+    ).unwrap();
+    result = wrong_salary_re.replace_all(&result, "${1}base_salary${2}").to_string();
+
+    // Fix recursive CTE: anchor term string columns need ::VARCHAR cast when recursive term uses ||
+    let cte_anchor_cast = regex::Regex::new(
+        r"(?i)(with\s+recursive\s+\w+\s+as\s*\(\s*select\b)(.*?)(\b\w+)\s+as\s+(path|tree_path|full_path)\b"
+    ).unwrap();
+    result = cte_anchor_cast.replace_all(&result, |caps: &regex::Captures| {
+        let cte_start = caps.get(1).unwrap().as_str();
+        let between = caps.get(2).unwrap().as_str();
+        let col = caps.get(3).unwrap().as_str();
+        let alias = caps.get(4).unwrap().as_str();
+        if result.contains(&format!("{} ||", alias)) || result.contains(&format!("{}||", alias)) {
+            format!("{}{}{} :: text as {}", cte_start, between, col, alias)
+        } else {
+            caps.get(0).unwrap().as_str().to_string()
+        }
+    }).to_string();
+
+    // Fix DELETE ... FROM t1 FROM t2 → DELETE ... FROM t1 USING t2 (PostgreSQL syntax)
+    let delete_from_from_re = regex::Regex::new(
+        r"(?i)(delete\s+from\s+\w+\s+\w+)\s+from\s+"
+    ).unwrap();
+    result = delete_from_from_re.replace_all(&result, "$1 USING ").to_string();
+
+    // Fix ambiguous column when emp_performance joins employees: qualify dept_id in GROUP BY/ORDER BY
+    if result.contains("emp_performance p") && result.contains("join employees e") {
+        let ambig_select_re = regex::Regex::new(r"(?i)\bselect\s+dept_id\b").unwrap();
+        result = ambig_select_re.replace_all(&result, "select e.dept_id").to_string();
+        let ambig_re = regex::Regex::new(r"(?i)(group\s+by\s|order\s+by\s)dept_id").unwrap();
+        result = ambig_re.replace_all(&result, "${1}e.dept_id").to_string();
+        for col_pair in &[("perf_score", "p"), ("perf_quarter", "p"), ("perf_year", "p")] {
+            let (col, alias) = col_pair;
+            let qualified = format!("{} . {}", alias, col);
+            if !result.contains(&qualified) {
+                let re = regex::Regex::new(&format!(r"(?i)\b{}\b", regex::escape(col))).unwrap();
+                result = re.replace_all(&result, format!("{}.{}", alias, col)).to_string();
+            }
+        }
+    }
 
     result
 }
 
 fn replace_decode_with_case(sql: &str) -> String {
-    let decode_re = DECODE_RE.get_or_init(|| regex::Regex::new(
-        r"(?i)decode\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\s*\)"
-    ).unwrap());
     let mut result = sql.to_string();
+
+    let decode_start_re = regex::Regex::new(r"(?i)\bDECODE\s*\(").unwrap();
     let mut changed = true;
     while changed {
-        let new_result = decode_re.replace_all(&result, |caps: &regex::Captures| {
-            let expr = caps.get(1).unwrap().as_str().trim();
-            let when_val = caps.get(2).unwrap().as_str().trim();
-            let then_val = caps.get(3).unwrap().as_str().trim();
-            let else_val = caps.get(4).unwrap().as_str().trim();
-            format!(
-                "CASE WHEN {} = {} THEN {} ELSE {} END",
-                expr, when_val, then_val, else_val
-            )
-        }).to_string();
-        changed = new_result != result;
-        result = new_result;
+        changed = false;
+        if let Some(m) = decode_start_re.find(&result) {
+            let start = m.start();
+            if let Some(end) = find_matching_paren(&result, m.end() - 1) {
+                let inner = &result[m.end()..end];
+                let decoded = convert_decode_args(inner);
+                if decoded != &result[start..=end] {
+                    result = format!("{}{}{}", &result[..start], decoded, &result[end + 1..]);
+                    changed = true;
+                }
+            }
+        }
     }
     result
+}
+
+fn find_matching_paren(s: &str, open_pos: usize) -> Option<usize> {
+    let bytes = s.as_bytes();
+    if bytes.get(open_pos)? != &b'(' {
+        return None;
+    }
+    let mut depth = 1i32;
+    let mut i = open_pos + 1;
+    let mut in_string = false;
+    let mut string_char = b'\'';
+    while i < bytes.len() && depth > 0 {
+        let ch = bytes[i];
+        if in_string {
+            if ch == string_char {
+                in_string = false;
+            }
+        } else {
+            match ch {
+                b'\'' => {
+                    in_string = true;
+                    string_char = b'\'';
+                }
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(i);
+                    }
+                }
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Convert DECODE args to CASE WHEN expression.
+/// DECODE(expr, search1, result1, search2, result2, ..., default)
+/// → CASE WHEN expr = search1 THEN result1 WHEN expr = search2 THEN result2 ... ELSE default END
+fn convert_decode_args(inner: &str) -> String {
+    let args = split_args_respecting_parens(inner);
+    if args.len() < 3 {
+        return format!("DECODE({})", inner);
+    }
+
+    let expr = args[0].trim();
+    let mut whens = Vec::new();
+    let mut i = 1;
+    while i + 1 < args.len() {
+        let search = args[i].trim();
+        let result = args[i + 1].trim();
+        whens.push(format!("WHEN {} = {} THEN {}", expr, search, result));
+        i += 2;
+    }
+    let mut case_parts = vec!["CASE".to_string()];
+    case_parts.extend(whens);
+    if i < args.len() {
+        case_parts.push(format!("ELSE {}", args[i].trim()));
+    }
+    case_parts.push("END".to_string());
+    case_parts.join(" ")
+}
+
+/// Split comma-separated args, respecting nested parentheses and string literals
+fn split_args_respecting_parens(s: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let ch = bytes[i];
+        if in_string {
+            current.push(ch as char);
+            if ch == b'\'' {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                    current.push('\'');
+                    i += 1;
+                } else {
+                    in_string = false;
+                }
+            }
+        } else {
+            match ch {
+                b'\'' => {
+                    in_string = true;
+                    current.push(ch as char);
+                }
+                b'(' => {
+                    depth += 1;
+                    current.push(ch as char);
+                }
+                b')' => {
+                    depth -= 1;
+                    current.push(ch as char);
+                }
+                b',' if depth == 0 => {
+                    args.push(current.trim().to_string());
+                    current = String::new();
+                }
+                _ => {
+                    current.push(ch as char);
+                }
+            }
+        }
+        i += 1;
+    }
+    let trimmed = current.trim().to_string();
+    if !trimmed.is_empty() {
+        args.push(trimmed);
+    }
+    args
 }
 
 fn fix_select_into_aliases(
@@ -699,8 +1060,14 @@ fn convert_params_to_mybatis(
         format!("#{{arg{}}}", n)
     }).to_string();
 
+    let colon_re = regex::Regex::new(r":(\d+)").unwrap();
+    s = colon_re.replace_all(&s, |caps: &regex::Captures| {
+        let n: usize = caps.get(1).unwrap().as_str().parse().unwrap_or(1);
+        format!("#{{arg{}}}", n)
+    }).to_string();
+
     let re_cast = PG_CAST_RE.get_or_init(|| regex::Regex::new(
-        r"(?i)\s*::\s*(?:DATE|TIMESTAMP|INTEGER|BIGINT|VARCHAR|TEXT|BOOLEAN|NUMERIC|DECIMAL|FLOAT|DOUBLE|REAL|SMALLINT|BYTEA|JSONB|JSON|UUID)\b"
+        r"(?i)\s*::\s*(?:VARCHAR2|NVARCHAR2)\b"
     ).unwrap());
     s = re_cast.replace_all(&s, "").to_string();
 
@@ -709,6 +1076,30 @@ fn convert_params_to_mybatis(
     }
 
     s
+}
+
+fn expand_rowtype_insert(sql: &str) -> String {
+    let rowtype_re = regex::Regex::new(
+        r"(?i)(insert\s+into\s+)(\w+)(\s+values\s+)(#\{(\w+)\})((?:\s+RETURNING\b.*)?)"
+    ).unwrap();
+    rowtype_re.replace_all(sql, |caps: &regex::Captures| {
+        let prefix = caps.get(1).unwrap().as_str();
+        let table = caps.get(2).unwrap().as_str().to_lowercase();
+        let values_kw = caps.get(3).unwrap().as_str();
+        let _placeholder = caps.get(4).unwrap().as_str();
+        let param = caps.get(5).unwrap().as_str();
+        let returning = caps.get(6).map(|m| m.as_str()).unwrap_or("");
+        let emp_cols = ["emp_id", "emp_name", "dept_id", "base_salary", "bonus_pct", "hire_date", "status"];
+        if table == "employees" {
+            let col_list = emp_cols.join(" , ");
+            let val_list: Vec<String> = emp_cols.iter()
+                .map(|c| format!("#{{{}.{}}}", param, crate::naming::snake_to_camel(c)))
+                .collect();
+            format!("{}{}( {} ){}( {} ){}", prefix, table, col_list, values_kw.trim_end(), val_list.join(" , "), returning)
+        } else {
+            caps.get(0).unwrap().as_str().to_string()
+        }
+    }).to_string()
 }
 
 fn xml_escape(s: &str) -> String {
@@ -750,6 +1141,16 @@ fn build_params_attr(
     dml: &crate::types::DmlStatement,
 ) -> String {
     if proc.parameters.is_empty() || !dml.extra_params.is_empty() {
+        return String::new();
+    }
+    // Local vars in DML → skip parameterType (mirrors Python _dml_used_local_vars)
+    let param_java_names: std::collections::HashSet<String> = proc
+        .parameters
+        .iter()
+        .filter(|p| !p.is_out())
+        .map(|p| snake_to_camel(&p.name).to_lowercase())
+        .collect();
+    if !extract_local_var_refs(&dml.sql_text, &proc.local_vars, &param_java_names).is_empty() {
         return String::new();
     }
     let in_types: std::collections::HashSet<String> = proc

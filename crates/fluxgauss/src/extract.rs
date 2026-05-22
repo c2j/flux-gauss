@@ -281,10 +281,38 @@ fn extract_package_item(
             procedures.push(proc_info);
         }
         PackageItem::Variable(var_decl) => {
-            let sql_type = format_pl_data_type(&var_decl.data_type);
-            let java_type = sql_type_to_java(&sql_type)
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "Object".into());
+            let raw_sql_type = format_pl_data_type(&var_decl.data_type);
+            let is_constant_workaround = raw_sql_type.to_lowercase() == "constant";
+            let (sql_type, java_type) = if is_constant_workaround {
+                let recovered = recover_constant_type_from_source(
+                    &var_decl.name, source_file,
+                );
+                if let Some((ref svt, ref jvt)) = recovered {
+                    (svt.clone(), jvt.clone())
+                } else {
+                    let inferred_java = var_decl.default.as_ref().and_then(|expr| {
+                        use ogsql_parser::ast::Expr;
+                        match expr {
+                            Expr::Literal(lit) => match lit {
+                                ogsql_parser::ast::Literal::Integer(_) => Some("Integer".to_string()),
+                                ogsql_parser::ast::Literal::Float(_) => Some("java.math.BigDecimal".to_string()),
+                                ogsql_parser::ast::Literal::String(_) => Some("String".to_string()),
+                                ogsql_parser::ast::Literal::Boolean(_) => Some("Boolean".to_string()),
+                                _ => None,
+                            },
+                            _ => None,
+                        }
+                    });
+                    let jt = inferred_java.unwrap_or_else(|| "Object".into());
+                    (raw_sql_type.clone(), jt)
+                }
+            } else {
+                let base_type = raw_sql_type.split('(').next().unwrap_or(&raw_sql_type);
+                let jt = sql_type_to_java(base_type)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "Object".into());
+                (raw_sql_type, jt)
+            };
             let default_value = var_decl.default.as_ref().and_then(|expr| {
                 use ogsql_parser::ast::Expr;
                 match expr {
@@ -306,7 +334,7 @@ fn extract_package_item(
                     java_type,
                     sql_type,
                     default_value,
-                    is_constant: var_decl.constant,
+                    is_constant: var_decl.constant || is_constant_workaround,
                 },
             );
         }
@@ -373,6 +401,31 @@ fn extract_package_item(
     }
 }
 
+fn recover_constant_type_from_source(var_name: &str, source_file: &str) -> Option<(String, String)> {
+    use std::fs;
+    let content = fs::read_to_string(source_file).ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim().to_lowercase();
+        let var_lower = var_name.to_lowercase();
+        if !trimmed.starts_with(&var_lower) {
+            continue;
+        }
+        let rest = trimmed[var_lower.len()..].trim();
+        if !rest.starts_with("constant") {
+            continue;
+        }
+        let after_const = rest["constant".len()..].trim();
+        let type_token = after_const.split_whitespace().next()?;
+        let paren_pos = type_token.find('(').unwrap_or(type_token.len());
+        let sql_type = &type_token[..paren_pos];
+        let java_type = sql_type_to_java(sql_type)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "Object".into());
+        return Some((sql_type.to_uppercase(), java_type));
+    }
+    None
+}
+
 pub fn format_pl_data_type(dt: &ogsql_parser::ast::plpgsql::PlDataType) -> String {
     use ogsql_parser::ast::plpgsql::PlDataType;
     match dt {
@@ -430,24 +483,47 @@ fn convert_params(params: &[RoutineParam]) -> Vec<Parameter> {
     params
         .iter()
         .map(|p| {
-            let mode = parse_param_mode(p.mode.as_deref());
-            let sql_type = normalize_sql_type(&p.data_type);
+            let (name, sql_type_raw, mode) = recover_param_info(&p.name, &p.data_type, p.mode.as_deref());
+            let sql_type = normalize_sql_type(&sql_type_raw);
             let sql_type_lower = sql_type.to_lowercase();
-            let java_type = if sql_type_lower.contains("%rowtype") || sql_type_lower.contains("%type") {
+            let java_type = if sql_type_lower.contains("%rowtype") {
                 "Map<String, Object>".into()
+            } else if sql_type_lower.contains("%type") {
+                "String".into()
             } else {
                 sql_type_to_java(&sql_type)
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| "Object".into())
             };
             Parameter {
-                name: p.name.clone(),
+                name,
                 java_type,
                 sql_type,
                 mode,
             }
         })
         .collect()
+}
+
+fn recover_param_info(name: &str, data_type: &str, mode: Option<&str>) -> (String, String, Option<ParamMode>) {
+    let name_lower = name.to_lowercase();
+    let is_mode_keyword = matches!(name_lower.as_str(), "out" | "in" | "inout" | "in out");
+    if is_mode_keyword && mode.is_none() {
+        let detected_mode = match name_lower.as_str() {
+            "out" => Some(ParamMode::Out),
+            "in" => Some(ParamMode::In),
+            "inout" | "in out" => Some(ParamMode::InOut),
+            _ => Some(ParamMode::In),
+        };
+        let parts: Vec<&str> = data_type.trim().splitn(2, |c: char| c.is_ascii_whitespace()).collect();
+        if parts.len() >= 2 {
+            let real_name = parts[0].to_string();
+            let real_type = parts[1..].join(" ");
+            return (real_name, real_type, detected_mode);
+        }
+    }
+    let mode = parse_param_mode(mode);
+    (name.to_string(), data_type.to_string(), mode)
 }
 
 fn parse_param_mode(mode: Option<&str>) -> Option<ParamMode> {

@@ -8,14 +8,13 @@ CREATE TABLE IF NOT EXISTS t_mapper_order (
     order_id    BIGSERIAL PRIMARY KEY,
     customer_id BIGINT NOT NULL,
     product_id  BIGINT NOT NULL,
-    qty         NUMERIC NOT NULL,
-    price       NUMERIC(18,4) NOT NULL,
+    quantity     INT NOT NULL,
+    unit_price   NUMERIC(18,4) NOT NULL,
     discount    NUMERIC(18,4) DEFAULT 0,
     total_amount NUMERIC(18,4),
     order_status VARCHAR(20) DEFAULT 'NEW',
     remark      VARCHAR(500),
     created_by  VARCHAR(50),
-    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at  TIMESTAMP
 );
 
@@ -26,7 +25,7 @@ CREATE TABLE IF NOT EXISTS t_mapper_order_item (
     line_no     INT NOT NULL,
     product_name VARCHAR(200),
     qty         INT NOT NULL,
-    price       NUMERIC(18,4) NOT NULL,
+    unit_price   NUMERIC(18,4) NOT NULL,
     line_amount NUMERIC(18,4)
 );
 

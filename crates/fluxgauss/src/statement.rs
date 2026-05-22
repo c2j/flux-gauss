@@ -1,3 +1,13 @@
+fn infer_select_result_type(var_type: &str, sql: &str) -> String {
+    if matches!(var_type, "Integer" | "Long" | "int" | "long" | "Double" | "Float" | "BigDecimal")
+        && sql.contains("||")
+    {
+        "String".to_string()
+    } else {
+        var_type.to_string()
+    }
+}
+
 use std::collections::HashMap;
 use std::sync::OnceLock;
 use regex::Regex;
@@ -31,11 +41,16 @@ fn out_param_set_expr(var_java: &str, method_id: &str, args: &str, proc: &Proced
 use crate::naming::{snake_to_camel, snake_to_pascal, package_to_classname, java_method_name};
 use crate::type_map::{sql_type_to_jdbc, java_type_to_jdbc};
 
-fn cast_regex() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(r"(?i)\s*::\s*(?:DATE|TIMESTAMP|INTEGER|BIGINT|VARCHAR|TEXT|BOOLEAN|NUMERIC|DECIMAL|FLOAT|DOUBLE|REAL|SMALLINT|BYTEA|JSONB|JSON|UUID)\b").unwrap()
-    })
+ fn cast_regex() -> &'static Regex {
+     static RE: OnceLock<Regex> = OnceLock::new();
+     RE.get_or_init(|| {
+         Regex::new(r"(?i)\s*::\s*(?:VARCHAR2|NVARCHAR2)\b").unwrap()
+     })
+ }
+
+fn strip_sql_comments(sql: &str) -> String {
+    let re = Regex::new(r"--[^\n]*").unwrap();
+    re.replace_all(sql, "").to_string()
 }
 
 fn into_regex() -> &'static Regex {
@@ -60,13 +75,14 @@ fn is_terminal_statement(line: &str) -> bool {
 }
 
 fn is_unreachable_after_terminal(java_logic_lines: &[String]) -> bool {
-    // Scan backward from the end. Typical case is O(1) since the first
-    // return/throw at the current block depth terminates the search.
     let mut depth: i32 = 0;
     for line in java_logic_lines.iter().rev() {
         let t = line.trim_start();
         if t.starts_with("//") || t.is_empty() {
             continue;
+        }
+        if t.starts_with("} else") {
+            return false;
         }
         let opens = t.chars().filter(|&c| c == '{').count() as i32;
         let closes = t.chars().filter(|&c| c == '}').count() as i32;
@@ -124,6 +140,19 @@ fn push_logic_line(proc: &mut ProcedureInfo, line: String) {
     proc.java_logic_lines.push(line);
 }
 
+fn strip_out_param_get(java: &str, proc: &ProcedureInfo) -> String {
+    if java.ends_with(".get()") {
+        let base = &java[..java.len() - 6];
+        let camel = crate::naming::snake_to_camel;
+        for p in &proc.parameters {
+            if p.is_out() && camel(&p.name) == base {
+                return base.to_string();
+            }
+        }
+    }
+    java.to_string()
+}
+
 fn dml_method_name(dml_type: &str, proc_name: &str, counter: &mut HashMap<String, usize>) -> String {
     let key = format!("{}_{}", dml_type, proc_name);
     let n = counter.entry(key.clone()).or_insert(0);
@@ -162,6 +191,32 @@ fn detect_dml_type(sql: &str) -> Option<DmlType> {
 fn select_capture_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"(?i)^select\s+(.+)$").unwrap())
+}
+
+fn try_parse_inline_var_decl(sql: &str, _proc: &ProcedureInfo) -> Option<(String, String, Option<String>)> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(
+        r"(?i)^(\w+)\s+(number|numeric|integer|int|bigint|varchar2?|text|decimal|date|timestamp|boolean)\s*(?:\([^)]*\))?\s*(?::=\s*(.+?))?\s*;?\s*$"
+    ).unwrap());
+    let caps = re.captures(sql)?;
+    let var_name = caps.get(1)?.as_str().to_string();
+    let sql_type = caps.get(2)?.as_str();
+    let default_expr = caps.get(3).map(|m| {
+        let d = m.as_str().trim();
+        if d.starts_with('\'') && d.ends_with('\'') {
+            format!("\"{}\"", &d[1..d.len()-1])
+        } else if d.parse::<i64>().is_ok() {
+            d.to_string()
+        } else if d.parse::<f64>().is_ok() {
+            d.to_string()
+        } else {
+            crate::naming::snake_to_camel(d)
+        }
+    });
+    let java_type = crate::type_map::sql_type_to_java(sql_type)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "Object".to_string());
+    Some((var_name, java_type, default_expr))
 }
 
 fn clean_sql_for_mapper(sql: &str, dml_type: DmlType) -> String {
@@ -319,10 +374,10 @@ fn process_execute_stmt(
     use ogsql_parser::ast::Expr;
     use ogsql_parser::ast::plpgsql::PlUsingMode;
 
-    if let Some(parsed_query) = &execute.parsed_query {
-        let formatter = ogsql_parser::SqlFormatter::new();
-        let sql_text = formatter.format_statement(parsed_query);
-        let upper_sql = sql_text.trim_start().to_uppercase();
+     if let Some(parsed_query) = &execute.parsed_query {
+         let formatter = ogsql_parser::SqlFormatter::new();
+         let sql_text = formatter.format_statement(parsed_query);
+         let upper_sql = sql_text.trim_start().to_uppercase();
 
         if upper_sql.starts_with("SAVEPOINT") {
             let sp_name = sql_text.trim()["SAVEPOINT".len()..].trim();
@@ -479,23 +534,31 @@ fn process_execute_stmt(
                         extra_params: Vec::new(),
                     });
                     push_logic_line(proc, out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc));
-                } else {
-                    let java_type = proc.local_vars.get(var_name)
-                        .cloned()
-                        .unwrap_or_else(|| "Object".to_string());
-                    proc.dml_statements.push(DmlStatement {
-                        sql_type: dml_type,
-                        method_id: method_id.clone(),
-                        sql_text: clean_sql,
-                        result_type: Some(java_type.clone()),
-                        parameter_types: Default::default(),
-                        optional_filters: Vec::new(),
-                        returns_list: false,
-                        extra_params: Vec::new(),
-                    });
-                    push_logic_line(proc, format!("{} = mapper.{}({});", var_java, method_id, args));
-                }
-            } else {
+                 } else {
+                      let declared_type = proc.local_vars.get(var_name)
+                          .cloned()
+                          .unwrap_or_else(|| "Object".to_string());
+                      let java_type = infer_select_result_type(&declared_type, &clean_sql);
+                      proc.dml_statements.push(DmlStatement {
+                          sql_type: dml_type,
+                          method_id: method_id.clone(),
+                          sql_text: clean_sql,
+                          result_type: Some(java_type.clone()),
+                         parameter_types: Default::default(),
+                         optional_filters: Vec::new(),
+                         returns_list: false,
+                         extra_params: Vec::new(),
+                     });
+                     let original_java_type = proc.local_vars.get(var_name).cloned().unwrap_or_default();
+                     push_logic_line(proc, if java_type.contains("Map") {
+                         format!("{{ var _row = mapper.{}({}); if (_row != null) {{ {} = _row; }} }}", method_id, args, var_java)
+                     } else if java_type != original_java_type {
+                         format!("String _{} = mapper.{}({});", var_name, method_id, args)
+                     } else {
+                         format!("{} = mapper.{}({});", var_java, method_id, args)
+                     });
+                 }
+             } else {
                 let var_name = next_select_var_name(proc);
                 proc.dml_statements.push(DmlStatement {
                     sql_type: dml_type,
@@ -561,7 +624,7 @@ fn process_execute_stmt(
     match &execute.string_expr {
         Expr::Literal(ogsql_parser::ast::Literal::String(s)) => {
             let sql_text = s.clone();
-            let dml_type = detect_dml_type(&sql_text);
+        let dml_type = detect_dml_type(&sql_text);
             if let Some(dml_type) = dml_type {
                 let method_id = dml_method_name(
                     match dml_type {
@@ -598,9 +661,10 @@ fn process_execute_stmt(
                             push_logic_line(proc, out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc));
                         } else {
                             let var_java = snake_to_camel(var_name);
-                            let java_type = proc.local_vars.get(var_name)
+                            let declared_type = proc.local_vars.get(var_name)
                                 .cloned()
                                 .unwrap_or_else(|| "Object".to_string());
+                            let java_type = infer_select_result_type(&declared_type, &clean_sql);
                             proc.dml_statements.push(DmlStatement {
                                 sql_type: dml_type,
                                 method_id: method_id.clone(),
@@ -611,7 +675,11 @@ fn process_execute_stmt(
                                 returns_list: false,
                                 extra_params: Vec::new(),
                             });
-                            push_logic_line(proc, format!("{} = mapper.{}({});", var_java, method_id, args));
+                            push_logic_line(proc, if java_type != declared_type {
+                                format!("String _{} = mapper.{}({});", var_name, method_id, args)
+                            } else {
+                                format!("{} = mapper.{}({});", var_java, method_id, args)
+                            });
                         }
                     } else if into_vars_count > 1 {
                         let var_name = next_select_var_name(proc);
@@ -714,11 +782,17 @@ fn process_sql_statement(
                         let line = out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc);
                         ("Object".to_string(), line, String::new())
                     } else {
-                        let java_type = proc.local_vars.get(var_name)
-                            .cloned()
-                            .unwrap_or_else(|| "Object".to_string());
-                        let rt = java_type.clone();
-                        let line = format!("{} = mapper.{}({});", var_java, method_id, args);
+                         let declared_type = proc.local_vars.get(var_name)
+                             .cloned()
+                             .unwrap_or_else(|| "Object".to_string());
+                         let rt = infer_select_result_type(&declared_type, &clean_sql);
+                        let line = if rt.contains("Map") {
+                            format!("{{ var _row = mapper.{}({}); if (_row != null) {{ {} = _row; }} }}", method_id, args, var_java)
+                        } else if rt != declared_type {
+                            format!("String _{} = mapper.{}({});", var_name, method_id, args)
+                        } else {
+                            format!("{} = mapper.{}({});", var_java, method_id, args)
+                        };
                         (rt, line, String::new())
                     }
                 } else {
@@ -824,6 +898,48 @@ fn process_sql_statement(
     }
 }
 
+fn infer_arg_type(arg: &str, proc: &ProcedureInfo) -> &'static str {
+    let trimmed = arg.trim();
+    if trimmed.starts_with('"') || trimmed.starts_with("String.valueOf(") {
+        return "String";
+    }
+    if trimmed.starts_with("Long.parseLong(") || trimmed == "null" {
+        return "unknown";
+    }
+    // List element access like vAccntIdList.get((int)(i) - 1)
+    if trimmed.contains(".get(") && !trimmed.starts_with("AtomicReference") {
+        for (_, vtype) in &proc.local_vars {
+            if vtype.starts_with("List<") {
+                return "String";
+            }
+        }
+    }
+    for (vname, vtype) in &proc.local_vars {
+        let camel = crate::naming::snake_to_camel(vname);
+        if trimmed == camel {
+            return match vtype.as_str() {
+                "long" | "Long" => "long",
+                "String" => "String",
+                t if t.starts_with("AtomicReference") => "AtomicReference",
+                t if t.contains("BigDecimal") => "BigDecimal",
+                t if t.starts_with("List<") => "String",
+                _ => "unknown",
+            };
+        }
+    }
+    for p in &proc.parameters {
+        let camel = crate::naming::snake_to_camel(&p.name);
+        if trimmed == camel {
+            return match p.java_type.as_str() {
+                "long" | "Long" => "long",
+                "String" => "String",
+                _ => "unknown",
+            };
+        }
+    }
+    "unknown"
+}
+
 fn process_procedure_call(
     call: &ogsql_parser::ast::plpgsql::PlProcedureCall,
     proc: &mut ProcedureInfo,
@@ -844,10 +960,9 @@ fn process_procedure_call(
     };
 
     let method = java_method_name(func);
-    let args: Vec<String> = call.arguments.iter()
+    let raw_args: Vec<String> = call.arguments.iter()
         .map(|a| crate::expr::expr_to_java(a, proc))
         .collect();
-    let args_java = args.join(", ");
 
     // Try to resolve package from the hint
     let mut matched_pkg = resolve_package_name(pkg_hint, ctx.summaries);
@@ -873,9 +988,9 @@ fn process_procedure_call(
         }
     }
 
-    if let Some(matched_pkg) = matched_pkg {
+    if let Some(ref matched_pkg_name) = matched_pkg {
         let svc_name = format!("{}Service", {
-            let cn = package_to_classname(&matched_pkg);
+            let cn = package_to_classname(matched_pkg_name);
             let mut c = cn.chars();
             match c.next() {
                 Some(f) => f.to_ascii_lowercase().to_string() + c.as_str(),
@@ -883,7 +998,74 @@ fn process_procedure_call(
             }
         });
 
-        let is_self_call = matched_pkg.to_lowercase() == proc.package.to_lowercase();
+        let is_self_call = matched_pkg_name.to_lowercase() == proc.package.to_lowercase();
+
+        // Look up target procedure for type coercion
+        let target_summary = ctx.summaries.get(matched_pkg_name)
+            .or_else(|| {
+                let lower = matched_pkg_name.to_lowercase();
+                ctx.summaries.iter().find(|(k, _)| k.to_lowercase() == lower).map(|(_, v)| v)
+            });
+        let target_proc = target_summary.and_then(|s| s.find_procedure(func));
+
+        let target_param_count = target_proc.as_ref().map(|tp| tp.parameters.len()).unwrap_or(0);
+        let mut args: Vec<String> = raw_args.iter().enumerate().map(|(i, raw)| {
+            let mut arg = strip_out_param_get(raw, proc);
+            if let Some(tp) = &target_proc {
+                if i < tp.parameters.len() {
+                    let param = &tp.parameters[i];
+                    let target_type = &param.java_type;
+                    if param.is_out() {
+                        let arg_trimmed = arg.trim();
+                        if !arg_trimmed.contains('.') && !arg_trimmed.contains('(') {
+                            for (vname, _) in &proc.local_vars {
+                                let vname_camel = crate::naming::snake_to_camel(vname);
+                                if vname_camel == arg_trimmed {
+                                    proc.out_local_vars.insert(vname.clone(), target_type.clone());
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        let arg_trimmed = arg.trim();
+                        let is_atomic_ref = proc.out_local_vars.keys()
+                            .any(|vname| crate::naming::snake_to_camel(vname) == arg_trimmed);
+                        if is_atomic_ref && !arg_trimmed.contains('.') && !arg_trimmed.contains('(') {
+                            arg = format!("{}.get()", arg_trimmed);
+                        }
+                        let arg_type_inferred = infer_arg_type(&arg, proc);
+                        let target_is_long = target_type == "long" || target_type == "Long";
+                        let target_is_int = target_type == "int" || target_type == "Integer";
+                        let target_is_string = target_type == "String";
+                        let arg_has_get = arg.contains(".get(");
+                        if target_is_string && arg_type_inferred == "long" {
+                            arg = format!("String.valueOf({})", arg);
+                        } else if target_is_long && arg_type_inferred == "String" {
+                            arg = format!("Long.parseLong(String.valueOf({}))", arg);
+                        } else if target_is_int && arg_has_get {
+                            arg = format!("((Number) {}).intValue()", arg);
+                        } else if target_is_long && arg_has_get {
+                            arg = format!("((Number) {}).longValue()", arg);
+                        }
+                    }
+                }
+            }
+            arg
+        }).collect();
+
+        // Pad missing args when target has more params than caller provides
+        if let Some(tp) = &target_proc {
+            while args.len() < tp.parameters.len() {
+                let param = &tp.parameters[args.len()];
+                if param.is_out() {
+                    args.push(format!("new AtomicReference<>(null)"));
+                } else {
+                    args.push("null".into());
+                }
+            }
+        }
+
+        let args_java = args.join(", ");
 
         if is_self_call {
             let found = ctx.summaries.get(&proc.package)
@@ -903,13 +1085,16 @@ fn process_procedure_call(
                 service_name: svc_name.clone(),
                 method_name: method.clone(),
                 args: Vec::new(),
-                package_name: matched_pkg,
+                package_name: matched_pkg_name.clone(),
             });
             push_logic_line(proc, format!("{}.{}({});", svc_name, method, args_java));
         }
     } else {
+        let args_fallback: Vec<String> = call.arguments.iter()
+            .map(|a| crate::expr::expr_to_java(a, proc))
+            .collect();
         let full_name = name_parts.join(".");
-        push_logic_line(proc, format!("// CALL {}({})", full_name, args_java));
+        push_logic_line(proc, format!("// CALL {}({})", full_name, args_fallback.join(", ")));
     }
 }
 
@@ -932,7 +1117,10 @@ fn try_resolve_perform_call(
 
             let method = java_method_name(func_name);
             let args: Vec<String> = args.iter()
-                .map(|a| crate::expr::expr_to_java(a, proc))
+                .map(|a| {
+                    let java = crate::expr::expr_to_java(a, proc);
+                    strip_out_param_get(&java, proc)
+                })
                 .collect();
             let args_java = args.join(", ");
 
@@ -965,6 +1153,32 @@ fn try_resolve_perform_call(
         }
         _ => false,
     }
+}
+
+fn is_primitive_selector(sel: &str, proc: &ProcedureInfo) -> bool {
+    let sel_var = sel.trim();
+    let primitive_types: &[&str] = &["int", "long", "double", "float", "short", "byte", "char", "boolean"];
+    if let Some(ty) = proc.local_vars.get(sel_var) {
+        return primitive_types.contains(&ty.as_str());
+    }
+    for p in &proc.parameters {
+        let name = crate::naming::snake_to_camel(&p.name);
+        if name == sel_var {
+            let prim: &str = match p.java_type.as_str() {
+                "Integer" => "int",
+                "Long" => "long",
+                "Double" => "double",
+                "Float" => "float",
+                "Short" => "short",
+                "Byte" => "byte",
+                "Character" => "char",
+                "Boolean" => "boolean",
+                other => other,
+            };
+            return primitive_types.contains(&prim);
+        }
+    }
+    false
 }
 
 pub fn process_statement(
@@ -1029,22 +1243,35 @@ pub fn process_statement(
                 Some(ogsql_parser::ast::plpgsql::RaiseLevel::Warning) => "warning",
                 None => "info",
             };
-            let msg = raise_stmt.node.message.as_deref().unwrap_or("");
+            let raw_msg = raise_stmt.node.message.as_deref().unwrap_or("");
+            let formatted_msg = raw_msg.replace('%', "{}");
+            let params_java: Vec<String> = raise_stmt.node.params.iter()
+                .map(|p| crate::expr::expr_to_java(p, proc))
+                .collect();
+            let params_str = if params_java.is_empty() {
+                String::new()
+            } else {
+                format!(", {}", params_java.join(", "))
+            };
             match level_str {
                 "exception" => {
-                    push_logic_line(proc, format!("throw new BusinessException(\"{}\");", msg));
+                    if params_java.is_empty() {
+                        push_logic_line(proc, format!("throw new BusinessException(\"{}\");", formatted_msg));
+                    } else {
+                        push_logic_line(proc, format!("throw new BusinessException(String.format(\"{}\"{}));", formatted_msg, params_str));
+                    }
                 }
                 "notice" | "info" => {
-                    push_logic_line(proc, format!("log.info(\"{}\");", msg));
+                    push_logic_line(proc, format!("log.info(\"{}\"{});", formatted_msg, params_str));
                 }
                 "debug" => {
-                    push_logic_line(proc, format!("log.debug(\"{}\");", msg));
+                    push_logic_line(proc, format!("log.debug(\"{}\"{});", formatted_msg, params_str));
                 }
                 "warning" => {
-                    push_logic_line(proc, format!("log.warn(\"{}\");", msg));
+                    push_logic_line(proc, format!("log.warn(\"{}\"{});", formatted_msg, params_str));
                 }
                 _ => {
-                    push_logic_line(proc, format!("log.info(\"{}\");", msg));
+                    push_logic_line(proc, format!("log.info(\"{}\"{});", formatted_msg, params_str));
                 }
             }
             Ok(())
@@ -1072,12 +1299,23 @@ pub fn process_statement(
             Ok(())
         }
         PlStatement::Case(case_stmt) => {
-            if let Some(expr) = &case_stmt.node.expression {
-                let case_expr = crate::expr::expr_to_java(expr, proc);
-                push_logic_line(proc, format!("// case {}:", case_expr));
+            let selector_java = case_stmt.node.expression.as_ref()
+                .map(|expr| crate::expr::expr_to_java(expr, proc));
+            if let Some(ref sel) = selector_java {
+                push_logic_line(proc, format!("// case {}:", sel));
             }
             for (i, when) in case_stmt.node.whens.iter().enumerate() {
-                let cond = crate::expr::expr_to_java(&when.condition, proc);
+                let cond = if let Some(ref sel) = selector_java {
+                    let when_val = crate::expr::expr_to_java(&when.condition, proc);
+                    let sel_primitive = is_primitive_selector(sel, proc);
+                    if sel_primitive {
+                        format!("{} == {}", sel, when_val)
+                    } else {
+                        format!("{}.equals({})", sel, when_val)
+                    }
+                } else {
+                    crate::expr::expr_to_java(&when.condition, proc)
+                };
                 let prefix = if i == 0 { "if" } else { "} else if" };
                 push_logic_line(proc, format!("{} ({}) {{", prefix, cond));
                 for s in &when.stmts {
@@ -1108,8 +1346,8 @@ pub fn process_statement(
                 process_statement(s, proc, ctx)?;
             }
             if let Some(exc_block) = &block_stmt.node.exception_block {
+                push_logic_line(proc, "} catch (Exception e) {".into());
                 for handler in &exc_block.handlers {
-                    push_logic_line(proc, "} catch (Exception e) {".into());
                     for s in &handler.statements {
                         process_statement(s, proc, ctx)?;
                     }
@@ -1151,6 +1389,8 @@ pub fn process_statement(
                 ogsql_parser::ast::plpgsql::PlForKind::Range { low, high, step, reverse } => {
                     let lo = crate::expr::expr_to_java(low, proc);
                     let hi = crate::expr::expr_to_java(high, proc);
+                    let lo_safe = if lo.trim() == "null" { "0".to_string() } else { lo };
+                    let hi_safe = if hi.trim() == "null" { "0".to_string() } else { hi };
                     let iter_var = var.clone();
                     let already_declared = proc.local_vars.contains_key(&for_stmt.node.variable);
                     let step_code = match step {
@@ -1163,23 +1403,23 @@ pub fn process_statement(
                     if already_declared {
                         if *reverse {
                             push_logic_line(proc, format!("{} = {}; while ({} >= {}) {{ {}--;",
-                                iter_var, hi, iter_var, lo, iter_var));
+                                iter_var, hi_safe, iter_var, lo_safe, iter_var));
                         } else {
                             push_logic_line(proc, format!("{} = {}; while ({} <= {}) {{ {};",
-                                iter_var, lo, iter_var, hi, step_code));
+                                iter_var, lo_safe, iter_var, hi_safe, step_code));
                         }
                     } else {
                         if *reverse {
                             push_logic_line(proc, format!("for (int {} = {}; {} >= {}; {}--) {{",
-                                iter_var, hi, iter_var, lo, iter_var));
+                                iter_var, hi_safe, iter_var, lo_safe, iter_var));
                         } else {
                             push_logic_line(proc, format!("for (int {} = {}; {} <= {}; {}) {{",
-                                iter_var, lo, iter_var, hi, step_code));
+                                iter_var, lo_safe, iter_var, hi_safe, step_code));
                         }
                     }
                 }
                 ogsql_parser::ast::plpgsql::PlForKind::Query { query, .. } => {
-                    let clean_sql = query.replace('\n', " ");
+                    let clean_sql = strip_sql_comments(query).replace('\n', " ");
                     push_logic_line(proc, format!("// for {} in query: {}", var, &clean_sql));
                     proc.local_vars.insert(for_stmt.node.variable.clone(), "Map<String, Object>".into());
                     proc.local_var_defaults.remove(&for_stmt.node.variable);
@@ -1201,7 +1441,12 @@ pub fn process_statement(
                         extra_params: Vec::new(),
                     });
 
-                    let list_var = format!("{}List", var);
+                    proc.for_loop_counter += 1;
+                    let list_var = if proc.for_loop_counter <= 1 {
+                        format!("{}List", var)
+                    } else {
+                        format!("{}List{}", var, proc.for_loop_counter)
+                    };
                     push_logic_line(proc, format!("List<Map<String, Object>> {} = mapper.{}({});", list_var, method_id, args));
                     push_logic_line(proc, format!("if ({} == null) {} = new ArrayList<>();", list_var, list_var));
                     push_logic_line(proc, format!("for (Map<String, Object> {} : {}) {{", var, list_var));
@@ -1244,7 +1489,12 @@ pub fn process_statement(
                             extra_params: Vec::new(),
                         });
 
-                        let list_var = format!("{}List", var);
+                        proc.for_loop_counter += 1;
+                        let list_var = if proc.for_loop_counter <= 1 {
+                            format!("{}List", var)
+                        } else {
+                            format!("{}List{}", var, proc.for_loop_counter)
+                        };
                         push_logic_line(proc, format!("List<Map<String, Object>> {} = mapper.{}({});", list_var, method_id, args));
                         push_logic_line(proc, format!("if ({} == null) {} = new ArrayList<>();", list_var, list_var));
                         push_logic_line(proc, format!("for (Map<String, Object> {} : {}) {{", var, list_var));
@@ -1270,39 +1520,48 @@ pub fn process_statement(
             Ok(())
         }
         PlStatement::Exit { label, condition } => {
-            match (label, condition) {
-                (Some(l), Some(c)) => {
-                    let cond = crate::expr::bool_expr_to_java(c, proc);
-                    push_logic_line(proc, format!("if ({}) {{ break {}; }}", cond, l));
-                }
-                (Some(l), None) => {
-                    push_logic_line(proc, format!("break {};", l));
-                }
-                (None, Some(c)) => {
-                    let cond = crate::expr::bool_expr_to_java(c, proc);
-                    push_logic_line(proc, format!("if ({}) {{ break; }}", cond));
-                }
-                (None, None) => {
-                    push_logic_line(proc, "break;".into());
+            if ctx.sm_enum_name.is_some() {
+                push_logic_line(proc, "running = false;".into());
+                push_logic_line(proc, "break;".into());
+            } else {
+                match (label, condition) {
+                    (Some(l), Some(c)) => {
+                        let cond = crate::expr::bool_expr_to_java(c, proc);
+                        push_logic_line(proc, format!("if ({}) {{ break {}; }}", cond, l));
+                    }
+                    (Some(l), None) => {
+                        push_logic_line(proc, format!("break {};", l));
+                    }
+                    (None, Some(c)) => {
+                        let cond = crate::expr::bool_expr_to_java(c, proc);
+                        push_logic_line(proc, format!("if ({}) {{ break; }}", cond));
+                    }
+                    (None, None) => {
+                        push_logic_line(proc, "break;".into());
+                    }
                 }
             }
             Ok(())
         }
         PlStatement::Continue { label, condition } => {
-            match (label, condition) {
-                (Some(l), Some(c)) => {
-                    let cond = crate::expr::bool_expr_to_java(c, proc);
-                    push_logic_line(proc, format!("if ({}) {{ continue {}; }}", cond, l));
-                }
-                (Some(l), None) => {
-                    push_logic_line(proc, format!("continue {};", l));
-                }
-                (None, Some(c)) => {
-                    let cond = crate::expr::bool_expr_to_java(c, proc);
-                    push_logic_line(proc, format!("if ({}) {{ continue; }}", cond));
-                }
-                (None, None) => {
-                    push_logic_line(proc, "continue;".into());
+            if ctx.sm_enum_name.is_some() {
+                push_logic_line(proc, "break;".into());
+            } else {
+                match (label, condition) {
+                    (Some(l), Some(c)) => {
+                        let cond = crate::expr::bool_expr_to_java(c, proc);
+                        push_logic_line(proc, format!("if ({}) {{ continue {}; }}", cond, l));
+                    }
+                    (Some(l), None) => {
+                        push_logic_line(proc, format!("continue {};", l));
+                    }
+                    (None, Some(c)) => {
+                        let cond = crate::expr::bool_expr_to_java(c, proc);
+                        push_logic_line(proc, format!("if ({}) {{ continue; }}", cond));
+                    }
+                    (None, None) => {
+                        push_logic_line(proc, "continue;".into());
+                    }
                 }
             }
             Ok(())
@@ -1340,7 +1599,7 @@ pub fn process_statement(
                 proc.imports
                     .insert("import org.springframework.transaction.interceptor.TransactionAspectSupport;".into());
                 push_logic_line(proc,
-                    "TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();".into(),
+                    "try { TransactionAspectSupport.currentTransactionStatus().setRollbackOnly(); } catch (Exception _tx) {}".into(),
                 );
             }
             Ok(())
@@ -1357,8 +1616,25 @@ pub fn process_statement(
             push_logic_line(proc, "// SET TRANSACTION;".into());
             Ok(())
         }
+        PlStatement::VariableSet(_) => {
+            push_logic_line(proc, "// SET variable;".into());
+            Ok(())
+        }
+        PlStatement::VariableReset(_) => {
+            push_logic_line(proc, "// RESET variable;".into());
+            Ok(())
+        }
         PlStatement::Goto { label } => {
-            push_logic_line(proc, format!("// GOTO {} — will be rewritten by pattern analysis", label));
+            if let Some(ref enum_name) = ctx.sm_enum_name {
+                if ctx.sm_labels.contains(label) {
+                    let goto_state = crate::naming::snake_to_pascal(label);
+                    push_logic_line(proc, format!("currentState = {}.{};", enum_name, goto_state));
+                } else {
+                    push_logic_line(proc, "running = false;".into());
+                }
+            } else {
+                push_logic_line(proc, format!("// GOTO {} — will be rewritten by pattern analysis", label));
+            }
             Ok(())
         }
         PlStatement::Execute(execute) => {
@@ -1369,8 +1645,8 @@ pub fn process_statement(
             process_procedure_call(&call.node, proc, ctx);
             Ok(())
         }
-        PlStatement::Sql(sql_text) => {
-            if let Some(dml_type) = detect_dml_type(sql_text) {
+         PlStatement::Sql(sql_text) => {
+             if let Some(dml_type) = detect_dml_type(sql_text) {
                 let method_id = dml_method_name(
                     match dml_type {
                         DmlType::Select => "select",
@@ -1405,22 +1681,27 @@ pub fn process_statement(
                             });
                             push_logic_line(proc, out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc));
                         } else {
-                            let var_java = snake_to_camel(var_name);
-                            let java_type = proc.local_vars.get(var_name)
-                                .cloned()
-                                .unwrap_or_else(|| "Object".to_string());
+                             let var_java = snake_to_camel(var_name);
+                             let declared_type = proc.local_vars.get(var_name)
+                                 .cloned()
+                                 .unwrap_or_else(|| "Object".to_string());
+                             let java_type = infer_select_result_type(&declared_type, &clean_sql);
 
-                            proc.dml_statements.push(DmlStatement {
-                                sql_type: dml_type,
-                                method_id: method_id.clone(),
-                                sql_text: clean_sql,
-                                result_type: Some(java_type.clone()),
+                             proc.dml_statements.push(DmlStatement {
+                                 sql_type: dml_type,
+                                 method_id: method_id.clone(),
+                                 sql_text: clean_sql,
+                                 result_type: Some(java_type.clone()),
                                 parameter_types: Default::default(),
                                 optional_filters: Vec::new(),
                                 returns_list: false,
                                 extra_params: Vec::new(),
                             });
-                            push_logic_line(proc, format!("{} = mapper.{}({});", var_java, method_id, args));
+                            push_logic_line(proc, if java_type != declared_type {
+                                format!("String _{} = mapper.{}({});", var_name, method_id, args)
+                            } else {
+                                format!("{} = mapper.{}({});", var_java, method_id, args)
+                            });
                         }
                     } else if into_vars_count > 1 {
                         let var_name = next_select_var_name(proc);
@@ -1466,7 +1747,26 @@ pub fn process_statement(
                     push_logic_line(proc, format!("mapper.{}({});", method_id, args));
                 }
             } else {
-                push_logic_line(proc, format!("// SQL: {}", sql_text.replace('\n', " ")));
+                let sql_trimmed = sql_text.trim();
+                if let Some((var_name, java_type, default_java)) = try_parse_inline_var_decl(sql_trimmed, proc) {
+                    proc.local_vars.insert(var_name.clone(), java_type.clone());
+                    if let Some(default) = &default_java {
+                        proc.local_var_defaults.insert(var_name.clone(), default.clone());
+                    } else {
+                        let default_val = match java_type.as_str() {
+                            "int" | "Integer" => "0",
+                            "long" | "Long" => "0",
+                            "java.math.BigDecimal" => "0",
+                            "String" => "null",
+                            "java.sql.Timestamp" => "null",
+                            "java.sql.Date" => "null",
+                            _ => "null",
+                        };
+                        proc.local_var_defaults.insert(var_name.clone(), default_val.to_string());
+                    }
+                } else {
+                    push_logic_line(proc, format!("// SQL: {}", sql_text.replace('\n', " ")));
+                }
             }
             Ok(())
         }

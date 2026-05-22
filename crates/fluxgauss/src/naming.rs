@@ -89,6 +89,21 @@ pub fn java_method_name(proc_name: &str) -> String {
     java_safe_identifier(&snake_to_camel(stripped))
 }
 
+pub fn java_method_to_snake(method_name: &str) -> String {
+    let mut result = String::new();
+    for (i, c) in method_name.char_indices() {
+        if c.is_uppercase() {
+            if i > 0 {
+                result.push('_');
+            }
+            result.extend(c.to_lowercase());
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
