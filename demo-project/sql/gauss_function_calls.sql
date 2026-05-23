@@ -565,8 +565,10 @@ CREATE OR REPLACE PACKAGE BODY pkg_function_calls AS
             UPDATE SET
                 bonus_amount = fn_calc_bonus(src.base_salary, src.bonus_pct,
                     fn_calc_years_of_service(src.hire_date)),
-                calc_date = CURRENT_TIMESTAMP,
-                calc_method = 'MERGE_UPDATE: years=' || fn_calc_years_of_service(src.hire_date)
+                calc_date = CURRENT_TIMESTAMP
+                -- 高斯不支持所更新的字段同时也是ON的匹配条件
+                --,
+                --calc_method = 'MERGE_UPDATE: years=' || fn_calc_years_of_service(src.hire_date)
         WHEN NOT MATCHED THEN
             INSERT (bonus_id, emp_id, bonus_amount, calc_date, calc_method)
             VALUES (

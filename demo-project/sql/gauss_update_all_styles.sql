@@ -476,7 +476,7 @@ CREATE OR REPLACE PACKAGE BODY pkg_update_styles AS
         WHEN MATCHED THEN
             UPDATE SET old_salary = h.new_salary,
                       new_salary = e.base_salary,
-                      change_date = CURRENT_TIMESTAMP,
+                      -- change_date = CURRENT_TIMESTAMP,
                       change_reason = 'MERGE update'
         WHEN NOT MATCHED THEN
             INSERT (history_id, emp_id, old_salary, new_salary, change_date, change_reason)

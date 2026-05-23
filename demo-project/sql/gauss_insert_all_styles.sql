@@ -448,7 +448,8 @@ CREATE OR REPLACE PACKAGE BODY pkg_insert_styles AS
         DBE_OUTPUT.PRINT_LINE('--- Demo 12: MERGE INTO (INSERT when not matched) ---');
 
         MERGE INTO employees tgt
-        USING (SELECT 1070 AS emp_id, 'MergeNew' AS name, 20 AS dept, 22000 AS sal FROM DUAL) src
+        -- 高斯不支持dual表
+        USING (SELECT 1070 AS emp_id, 'MergeNew' AS name, 20 AS dept, 22000 AS sal FROM sys_dummy) src
         ON (tgt.emp_id = src.emp_id)
         WHEN NOT MATCHED THEN
             INSERT (emp_id, emp_name, dept_id, base_salary, update_reason)
@@ -469,7 +470,7 @@ CREATE OR REPLACE PACKAGE BODY pkg_insert_styles AS
         -- 再插入相同主键，触发 ON CONFLICT
         INSERT INTO employees (emp_id, emp_name, dept_id, base_salary, update_reason)
         VALUES (1080, 'UpsertSecond', 20, 12000, 'Upsert update')
-        ON CONFLICT (emp_id) DO UPDATE SET
+        ON duplicate key UPDATE
             emp_name = EXCLUDED.emp_name,
             dept_id = EXCLUDED.dept_id,
             base_salary = EXCLUDED.base_salary,

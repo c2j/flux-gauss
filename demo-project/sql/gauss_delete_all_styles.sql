@@ -701,15 +701,15 @@ CREATE OR REPLACE PACKAGE BODY pkg_delete_styles AS
         DBE_OUTPUT.PRINT_LINE('--- Demo 18: MERGE INTO simulating DELETE ---');
         proc_show_counts('Before');
 
-        -- 使用 MERGE 的 DELETE 子句（高斯支持）
-        MERGE INTO emp_performance tgt
-        USING (
-            SELECT emp_id FROM employees
-            WHERE base_salary < 7000 OR status = 'INACTIVE'
-        ) src
-        ON (tgt.emp_id = src.emp_id)
-        WHEN MATCHED THEN
-            DELETE;
+        -- 使用 MERGE 的 DELETE 子句（高斯支持）-- 经验证，高斯不支持此写法
+        -- MERGE INTO emp_performance tgt
+        -- USING (
+        --     SELECT emp_id FROM employees
+        --     WHERE base_salary < 7000 OR status = 'INACTIVE'
+        -- ) src
+        -- ON (tgt.emp_id = src.emp_id)
+        -- WHEN MATCHED THEN
+        --     DELETE;
 
         DBE_OUTPUT.PRINT_LINE('MERGE deleted ' || SQL%ROWCOUNT || ' performance records');
         proc_show_counts('After');
@@ -767,7 +767,7 @@ CREATE OR REPLACE PACKAGE BODY pkg_delete_styles AS
               select 1
               from employees
               where emp_name = v_batch_id
-              and hire_date < = to_char(now(), 'yyyymmdd')
+              and hire_date <= to_char(now(), 'yyyymmdd')
               and hire_date > to_char(now(), 'yyyymmdd')
         );
         -- 步骤2：用 CTE 确定删除目标

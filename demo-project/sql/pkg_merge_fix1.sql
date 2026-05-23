@@ -566,17 +566,17 @@ CREATE OR REPLACE PACKAGE BODY pkg_merge_sales AS
 
         -- 5. 全量模式：软删除目标表中不在源表的数据
         IF p_merge_mode = 'FULL' THEN
-            UPDATE dw_sales_fact
-            SET is_current = 0,
-                expiry_date = CURRENT_DATE - INTERVAL '1' DAY,
-                dw_update_time = SYSTIMESTAMP,
-                dw_updated_by = CURRENT_USER
-            WHERE is_current = 1
-              AND bk_transaction_id NOT IN (
-                  SELECT transaction_id FROM ' || v_temp_table || ' WHERE reject_reason IS NULL
-              );
+            -- UPDATE dw_sales_fact
+            -- SET is_current = 0,
+            --     expiry_date = CURRENT_DATE - INTERVAL '1' DAY,
+            --     dw_update_time = SYSTIMESTAMP,
+            --     dw_updated_by = CURRENT_USER
+            -- WHERE is_current = 1
+            --   AND bk_transaction_id NOT IN (
+            --       SELECT transaction_id FROM ' || v_temp_table || ' WHERE reject_reason IS NULL
+            --   );
 
-            v_deleted_rows := SQL%ROWCOUNT;
+            -- v_deleted_rows := SQL%ROWCOUNT;
 
             -- 记录CDC删除（修复：使用游标遍历）
             OPEN v_del_cursor FOR
@@ -671,9 +671,9 @@ CREATE OR REPLACE PACKAGE BODY pkg_merge_sales AS
                 delivery_status = src.delivery_status,
                 dw_update_time = SYSTIMESTAMP,
                 dw_updated_by = CURRENT_USER,
-                is_current = CASE
-                    WHEN p_enable_scd2 = 1 AND tgt.record_hash != src.record_hash THEN 0
-                    ELSE tgt.is_current END,
+                -- is_current = CASE
+                --     WHEN p_enable_scd2 = 1 AND tgt.record_hash != src.record_hash THEN 0
+                --     ELSE tgt.is_current END,
                 expiry_date = CASE
                     WHEN p_enable_scd2 = 1 AND tgt.record_hash != src.record_hash THEN src.sales_date - INTERVAL '1' DAY
                     ELSE tgt.expiry_date END

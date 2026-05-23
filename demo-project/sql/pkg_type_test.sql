@@ -194,8 +194,8 @@ $$ LANGUAGE plpgsql;
 
 -- 测试3: %ROWTYPE 锚定到表行
 CREATE OR REPLACE PROCEDURE pkg_type_test.test_rowtype(p_emp_id BIGINT)
-IS
--- AS $$
+-- IS
+AS $$
 -- DECLARE
     -- %ROWTYPE — 期望转译为 Map<String, Object>
     v_emp  t_employees%ROWTYPE;
