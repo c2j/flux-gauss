@@ -11632,6 +11632,16 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
                                 dml_tables[tbl][wcol] = 'TEXT'
                     continue
 
+    for pkg in packages:
+        for proc in pkg.procedures:
+            for dml in proc.dml_statements:
+                raw = getattr(dml, 'raw_sql_for_params', '') or getattr(dml, 'sql_text', '')
+                if not raw:
+                    continue
+                for jt in _itest_extract_join_tables(raw.lower()):
+                    if jt not in dml_tables and re.match(r'^[a-zA-Z_]', jt):
+                        dml_tables[jt] = {}
+
     # Merge DML-inferred tables into schema_map (only tables not already there)
     for tbl in sorted(dml_tables.keys()):
         if tbl in schema_map:
@@ -11715,34 +11725,34 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
                 continue
             lines.append(f'DROP TABLE IF EXISTS {table} CASCADE;')
     lines.append("")
-    if not is_remote:
-        for table, columns in sorted(schema_map.items()):
-            if table.lower() in _SYSTEM_OBJECTS:
+    for table, columns in sorted(schema_map.items()):
+        if table.lower() in _SYSTEM_OBJECTS:
+            continue
+        col_defs = []
+        for col, sql_type in sorted(columns.items()):
+            sql_stripped = sql_type.strip()
+            col_lower = col.lower()
+            if col_lower.startswith("constraint") or col_lower.startswith("check") or col_lower.startswith("primary") or col_lower.startswith("foreign") or col_lower.startswith("unique") or col_lower.startswith("index") or col_lower == "like":
                 continue
-            col_defs = []
-            for col, sql_type in sorted(columns.items()):
-                sql_stripped = sql_type.strip()
-                col_lower = col.lower()
-                if col_lower.startswith("constraint") or col_lower.startswith("check") or col_lower.startswith("primary") or col_lower.startswith("foreign") or col_lower.startswith("unique") or col_lower.startswith("index") or col_lower == "like":
-                    continue
-                if "GENERATED ALWAYS" in sql_stripped.upper():
-                    continue
-                if not re.match(r'^[a-zA-Z_]\w*$', col):
-                    continue
-                effective_type = sql_stripped
-                if col_lower == "id" and sql_stripped.upper().strip() == "BIGINT" and table in auto_id_tables:
-                    effective_type = "BIGSERIAL"
-                effective_type = re.sub(r'\bvarchar2\b', 'varchar', effective_type, flags=re.IGNORECASE)
-                m_width = re.match(r'varchar\((\d+)\)', effective_type, re.IGNORECASE)
-                if m_width and int(m_width.group(1)) > 8000:
-                    effective_type = "TEXT"
-                col_defs.append(f'    "{col}" {effective_type}')
-            if not col_defs:
+            if "GENERATED ALWAYS" in sql_stripped.upper():
                 continue
-            lines.append(f'CREATE TABLE "{table}" (')
-            lines.append(",\n".join(col_defs))
-            lines.append(");")
-            lines.append("")
+            if not re.match(r'^[a-zA-Z_]\w*$', col):
+                continue
+            effective_type = sql_stripped
+            if col_lower == "id" and sql_stripped.upper().strip() == "BIGINT" and table in auto_id_tables:
+                effective_type = "BIGSERIAL"
+            effective_type = re.sub(r'\bvarchar2\b', 'varchar', effective_type, flags=re.IGNORECASE)
+            m_width = re.match(r'varchar\((\d+)\)', effective_type, re.IGNORECASE)
+            if m_width and int(m_width.group(1)) > 8000:
+                effective_type = "TEXT"
+            col_defs.append(f'    "{col}" {effective_type}')
+        if not col_defs:
+            continue
+        _create_kw = "CREATE TABLE IF NOT EXISTS" if is_remote else "CREATE TABLE"
+        lines.append(f'{_create_kw} "{table}" (')
+        lines.append(",\n".join(col_defs))
+        lines.append(");")
+        lines.append("")
 
     _fixture_tables = set(schema_map.keys())
     _source_files_seen = set()
@@ -12098,6 +12108,13 @@ def _itest_extract_table_from_update_delete(sql: str) -> str:
     return m.group(1).lower() if m else ""
 
 
+def _itest_extract_join_tables(sql: str) -> list:
+    tables = []
+    for m in re.finditer(r'\bJOIN\s+(?:\w+\.)?(\w+)', sql, re.IGNORECASE):
+        tables.append(m.group(1).lower())
+    return tables
+
+
 def _itest_generate_test_value(col_name: str, sql_type: str) -> str:
     lower_type = (sql_type or "").lower()
     lower_col = col_name.lower()
@@ -12167,6 +12184,9 @@ def _itest_infer_test_data(proc: ProcedureInfo, pkg: PackageInfo, schema_map: di
                     needed[tbl].update(cols)
                 else:
                     needed[tbl] = cols
+        for jt in _itest_extract_join_tables(sql):
+            if jt not in handled and jt in schema_map and jt not in needed:
+                needed[jt] = schema_map[jt]
     if all_packages is None:
         return needed
     _itest_add_transitive_tables(proc, pkg, schema_map, handled, needed, all_packages)
@@ -12260,6 +12280,9 @@ def _itest_add_transitive_tables(proc, pkg, schema_map, handled, needed, all_pac
                 tbl = _itest_extract_table_from_update_delete(sql)
                 if tbl and tbl not in handled:
                     needed[tbl] = _itest_extract_columns_from_update(sql_lower, tbl, schema_map)
+            for jt in _itest_extract_join_tables(sql):
+                if jt not in handled and jt in schema_map and jt not in needed:
+                    needed[jt] = schema_map[jt]
 
     for line in proc.java_logic_lines:
         # Same-package: this.methodName(
