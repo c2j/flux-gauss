@@ -1607,6 +1607,26 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
                         block = item_data.get("block", {})
                         sql_text = item_data.get("sql_text", "")
 
+                        proc_custom_types = dict(custom_types)
+                        # Extract procedure-local Type declarations (TableOf/VarrayOf)
+                        # for variable type resolution in analyze_procedure()
+                        for decl in block.get("declarations", []):
+                            for decl_type, decl_data in decl.items():
+                                if decl_type == "Type":
+                                    _type_name = ""
+                                    _type_info = {}
+                                    for tk, tv in decl_data.items():
+                                        if tk == "TableOf":
+                                            _type_name = tv.get("name", "")
+                                            _elem_java = sql_type_to_java(tv.get("elem_type", {}))
+                                            _type_info = {"kind": "table", "elem_type": _elem_java}
+                                        elif tk == "VarrayOf":
+                                            _type_name = tv.get("name", "")
+                                            _elem_java = sql_type_to_java(tv.get("elem_type", {}))
+                                            _type_info = {"kind": "varray", "elem_type": _elem_java, "size": tv.get("size")}
+                                    if _type_name and _type_info:
+                                        proc_custom_types[_type_name] = _type_info
+
                         proc = ProcedureInfo(
                             name=full_name,
                             package=package_name,
@@ -1620,7 +1640,7 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
                             source_file=source_file,
                             source_start_line=item_data.get("start_line", 0),
                             source_end_line=item_data.get("end_line", 0),
-                            custom_types=custom_types,
+                            custom_types=proc_custom_types,
                         )
                         procedures.append(proc)
     return procedures, package_vars, custom_types
@@ -2125,7 +2145,25 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
     if not block:
         return
 
-    # Process declarations
+    # First pass: extract procedure-local Type declarations so variables can resolve them
+    for decl in block.get("declarations", []):
+        for decl_type, decl_data in decl.items():
+            if decl_type == "Type":
+                _type_name = ""
+                _type_info = {}
+                for tk, tv in decl_data.items():
+                    if tk == "TableOf":
+                        _type_name = tv.get("name", "")
+                        _elem_java = sql_type_to_java(tv.get("elem_type", {}))
+                        _type_info = {"kind": "table", "elem_type": _elem_java}
+                    elif tk == "VarrayOf":
+                        _type_name = tv.get("name", "")
+                        _elem_java = sql_type_to_java(tv.get("elem_type", {}))
+                        _type_info = {"kind": "varray", "elem_type": _elem_java, "size": tv.get("size")}
+                if _type_name and _type_info:
+                    proc.custom_types[_type_name] = _type_info
+
+    # Second pass: process variable/record/cursor declarations
     for decl in block.get("declarations", []):
         for decl_type, decl_data in decl.items():
             if decl_type == "Variable":
@@ -2148,8 +2186,10 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
                 if default_ast is not None:
                     try:
                         default_java = _expr_to_java(default_ast, proc)
-                        if java_type.startswith("java.util.List<"):
+                        if java_type.startswith("java.util.List<") and not default_java.startswith("java.util.Arrays.asList("):
                             default_java = f"new java.util.ArrayList<>(java.util.Arrays.asList({default_java}))"
+                        elif java_type.startswith("java.util.List<"):
+                            default_java = f"new java.util.ArrayList<>({default_java})"
                         proc.local_var_defaults[var_name] = default_java
                     except Exception:
                         pass
@@ -2463,8 +2503,10 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
                         if default_ast is not None:
                             try:
                                 default_java = _expr_to_java(default_ast, proc)
-                                if java_type.startswith("java.util.List<"):
+                                if java_type.startswith("java.util.List<") and not default_java.startswith("java.util.Arrays.asList("):
                                     default_java = f"new java.util.ArrayList<>(java.util.Arrays.asList({default_java}))"
+                                elif java_type.startswith("java.util.List<"):
+                                    default_java = f"new java.util.ArrayList<>({default_java})"
                                 proc.local_var_defaults[var_name] = default_java
                             except Exception:
                                 pass
@@ -3923,7 +3965,7 @@ def _process_forall(forall_data: dict, proc: ProcedureInfo, all_packages: dict, 
     mapper_method = _dml_method_name(dml_type, proc.proc_name, dml_counter)
 
     array_refs = re.findall(r'(\w+)\s*\(\s*' + re.escape(index_var) + r'\s*\)', dml_sql, re.IGNORECASE)
-    param_args = []
+    _forall_param_map = {}
     seen = set()
     _has_map_array = False
     for arr_name in array_refs:
@@ -3934,7 +3976,7 @@ def _process_forall(forall_data: dict, proc: ProcedureInfo, all_packages: dict, 
             if arr_type == "Map<String, Object>":
                 _has_map_array = True
             else:
-                param_args.append(f'{arr_java}.get({index_var} - 1)')
+                _forall_param_map[arr_java] = f'{arr_java}.get({index_var} - 1)'
 
     if _has_map_array:
         proc.java_logic_lines.append(f'// TODO: FORALL — bulk operation with TABLE-type variables requires manual implementation')
@@ -3948,7 +3990,7 @@ def _process_forall(forall_data: dict, proc: ProcedureInfo, all_packages: dict, 
         _lvn_java = snake_to_camel(_lvn)
         if _lvn_java not in seen:
             seen.add(_lvn_java)
-            param_args.append(_lvn_java)
+            _forall_param_map[_lvn_java] = _lvn_java
 
     for p in proc.parameters:
         if p.mode and p.mode.upper() == "OUT":
@@ -3956,20 +3998,54 @@ def _process_forall(forall_data: dict, proc: ProcedureInfo, all_packages: dict, 
         pj = p.java_name
         if pj not in seen:
             seen.add(pj)
-            param_args.append(pj)
+            _forall_param_map[pj] = pj
+
+    # Order param_args to match mapper method signature (local_vars order + params order)
+    param_args = []
+    _ordered_names = [snake_to_camel(v) for v in proc.local_vars] + [p.java_name for p in proc.parameters if not (p.mode and p.mode.upper() == "OUT")]
+    for _n in _ordered_names:
+        if _n in _forall_param_map:
+            param_args.append(_forall_param_map.pop(_n))
+    param_args.extend(_forall_param_map.values())
+
+    # If the DML SQL references the index variable standalone (e.g., '|| i'), pass it to mapper
+    _index_var_java = f"_{index_var}"
+    if re.search(r'\b' + re.escape(index_var) + r'\b', dml_sql) and index_var not in {a.split('.')[0] for a in param_args}:
+        param_args.append(index_var)
 
     args_str = ", ".join(param_args)
     mybatis_sql = re.sub(
         r'(\w+)\s*\(\s*' + re.escape(index_var) + r'\s*\)',
-        lambda m: f'#{{{snake_to_camel(m.group(1))}.get({index_var} - 1)}}',
+        lambda m: f'#{{{snake_to_camel(m.group(1))}}}',
         dml_sql
     )
+    # Replace standalone index variable references (e.g., '|| i' in SQL) with parameter
+    mybatis_sql = re.sub(
+        r'\b' + re.escape(index_var) + r'\b',
+        f'#{{_{index_var}}}',
+        mybatis_sql
+    )
     mybatis_sql = _convert_params_to_mybatis(mybatis_sql, proc.parameters, proc.local_vars)
+
+    # Add index variable as extra param for mapper method signature
+    _index_var_java = f"_{index_var}"
+    _forall_extra_params = [(_index_var_java, "Integer")]
+
+    # Store FORALL array variable element types as extra_params so
+    # _dml_used_local_vars unwraps List<T> → T for mapper method signature
+    for arr_name in array_refs:
+        if arr_name.lower() in {a.lower() for a in array_refs} and arr_name.lower() != index_var.lower():
+            arr_java = snake_to_camel(arr_name)
+            arr_type = proc.local_vars.get(arr_name, "Object")
+            m = re.match(r'java\.util\.List<(.+)>', arr_type)
+            if m:
+                _forall_extra_params.append((arr_java, m.group(1)))
 
     proc.dml_statements.append(DmlStatement(
         sql_type=dml_type,
         method_id=mapper_method,
         sql_text=mybatis_sql,
+        extra_params=_forall_extra_params,
     ))
 
     proc.java_logic_lines.append(f'{loop_start} {{')
@@ -5030,7 +5106,10 @@ def _fix_reconstructed_sql(sql: str) -> str:
 
 
 def _qualify_ambiguous_group_order(sql: str) -> str:
+    return sql
     import re as _re
+    if sql.strip().upper().startswith("WITH"):
+        return sql
     join_pat = _re.compile(r'\bJOIN\b', _re.IGNORECASE)
     if not join_pat.search(sql):
         return sql
@@ -5064,7 +5143,7 @@ def _qualify_ambiguous_group_order(sql: str) -> str:
     def _qualify_clause(clause_match):
         keyword = clause_match.group(1)
         body = clause_match.group(2)
-        stop = clause_match.group(3)
+        stop = clause_match.group(3) if clause_match.lastindex and clause_match.lastindex >= 3 else ""
 
         def _fix_col(cm):
             col = cm.group(0)
@@ -5076,6 +5155,11 @@ def _qualify_ambiguous_group_order(sql: str) -> str:
             if not _re.match(r'^[a-zA-Z_]\w*$', col):
                 return col
             if col.lower() in all_aliases:
+                return col
+            start = cm.start()
+            if start > 0 and body[start - 1] == '.':
+                return col
+            if cm.end() < len(body) and body[cm.end()] == '.':
                 return col
             return f'{primary_alias}.{col}'
 
@@ -6694,13 +6778,13 @@ SQL_FUNCTION_MAP = {
     "current_timestamp": "__EXPR__new java.sql.Timestamp(System.currentTimeMillis())",
     "current_date": "__EXPR__new java.sql.Date(System.currentTimeMillis())",
     "now": "__EXPR__new java.sql.Timestamp(System.currentTimeMillis())",
-    "concat": "String.format",
+    "concat": "__HANDLER__",
     "substr": "String.valueOf({args0}).substring({args1})",
     "substrb": "String.valueOf({args0}).substring({args1})",
     "substring": "String.valueOf({args0}).substring({args1})",
     "replace": "String.valueOf({args0}).replace({args1}, {args2})",
-    "lpad": "__EXPR__String.format(\"%" + "%1$\" + ({args1}) + \"s\", {args0}).replace(\" \", {args2})",
-    "rpad": "__EXPR__String.format(\"%" + "%1$-\" + ({args1}) + \"s\", {args0}).replace(\" \", {args2})",
+    "lpad": "__HANDLER__",
+    "rpad": "__HANDLER__",
     "nvl": "__EXPR__({args0} != null ? {args0} : {args1})",
     "nvl2": "__EXPR__({args0} != null ? {args1} : {args2})",
     "decode": "__HANDLER__",
@@ -7292,6 +7376,25 @@ def _handle_function(func_name, args_java, proc):
         if args_java:
             return f"String.valueOf({args_java[0]})"
         return "null"
+
+    elif func_name == "concat":
+        if len(args_java) < 2:
+            return args_java[0] if args_java else '""'
+        return " + ".join(f"String.valueOf({a})" for a in args_java)
+
+    elif func_name == "lpad":
+        if len(args_java) >= 3:
+            return f"String.format(\"%\" + ({args_java[1]}) + \"s\", {args_java[0]}).replace(\" \", {args_java[2]})"
+        elif len(args_java) == 2:
+            return f"String.format(\"%\" + ({args_java[1]}) + \"s\", {args_java[0]}).replace(\" \", \" \")"
+        return args_java[0] if args_java else '""'
+
+    elif func_name == "rpad":
+        if len(args_java) >= 3:
+            return f"String.format(\"%-\" + ({args_java[1]}) + \"s\", {args_java[0]}).replace(\" \", {args_java[2]})"
+        elif len(args_java) == 2:
+            return f"String.format(\"%-\" + ({args_java[1]}) + \"s\", {args_java[0]})"
+        return args_java[0] if args_java else '""'
 
     return f"/* TODO: {func_name} */ null"
 
@@ -7934,6 +8037,13 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     _type_key = {k.lower(): k for k in proc.custom_types}[func_name_lower]
                     _ct = proc.custom_types[_type_key]
                     if _ct.get("kind") in ("table", "varray") and len(args_java) > 1:
+                        elem_type = _ct.get("elem_type", "Object")
+                        if elem_type == "java.math.BigDecimal":
+                            args_java = [f"java.math.BigDecimal.valueOf({a})" for a in args_java]
+                            args_str = ", ".join(args_java)
+                        elif elem_type == "Long":
+                            args_java = [f"Long.valueOf({a})" for a in args_java]
+                            args_str = ", ".join(args_java)
                         return f"java.util.Arrays.asList({args_str})"
                 for p in proc.parameters:
                     if p.name.lower() == func_name_lower and p.java_type.startswith("List<"):
@@ -8949,6 +9059,7 @@ def _write_mapper_interface(base_path: Path, pkg: PackageInfo):
 def _dml_used_local_vars(proc: ProcedureInfo, dml: DmlStatement) -> list:
     sql_raw = dml.sql_text or ""
     mybatis_placeholders = set(re.findall(r'[#\$]\{(\w+)', sql_raw))
+    forall_elem_names = {name for name, _ in dml.extra_params} if dml.extra_params else set()
     used = []
     param_names_lower = {p.name.lower() for p in proc.parameters if not p.is_out}
     param_java_lower = {p.java_name.lower() for p in proc.parameters if not p.is_out}
@@ -8957,7 +9068,12 @@ def _dml_used_local_vars(proc: ProcedureInfo, dml: DmlStatement) -> list:
         if var_name.lower() in param_names_lower or java_name.lower() in param_java_lower:
             continue
         if java_name in mybatis_placeholders or re.search(rf'\b{re.escape(var_name)}\b', sql_raw, re.IGNORECASE):
-            used.append((java_name, var_java_type))
+            mapper_type = var_java_type
+            if java_name in forall_elem_names:
+                m = re.match(r'java\.util\.List<(.+)>', mapper_type)
+                if m:
+                    mapper_type = m.group(1)
+            used.append((java_name, mapper_type))
     return used
 
 
@@ -10820,8 +10936,9 @@ def _collect_all_dmls(pkg: PackageInfo) -> dict:
         in_param_count = sum(1 for param in p.parameters if not (param.mode and param.mode.upper() == "OUT"))
         for dml in p.dml_statements:
             if dml.method_id not in all_dmls:
-                local_var_count = len(_dml_used_local_vars(p, dml))
-                extra_param_count = len(dml.extra_params)
+                local_var_names = {jn for jn, _ in _dml_used_local_vars(p, dml)}
+                extra_param_count = sum(1 for jn, _ in dml.extra_params if jn not in local_var_names)
+                local_var_count = len(local_var_names)
                 if dml.is_dynamic:
                     sql_raw = dml.sql_text or ""
                     sql_refs = set(re.findall(r'[#\$]\{(\w+)', sql_raw))
