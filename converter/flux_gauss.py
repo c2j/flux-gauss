@@ -444,6 +444,30 @@ TYPE_OVERRIDES = {
     # ("db_log", "step_no"): "integer",
 }
 
+_TABLE_DDL_SOURCE: dict = {}
+
+
+def _lookup_table_columns(table_name: str, source_file: str = "") -> list:
+    cols = []
+    if not table_name:
+        return cols
+    table_lower = table_name.lower()
+    if source_file:
+        src_norm = os.path.basename(source_file)
+        for (tbl, col) in TYPE_OVERRIDES:
+            if tbl.lower() == table_lower:
+                src = _TABLE_DDL_SOURCE.get((tbl, col), "")
+                if os.path.basename(src) == src_norm:
+                    cols.append(col)
+        if cols:
+            return sorted(set(cols))
+    for (tbl, col) in TYPE_OVERRIDES:
+        if tbl.lower() == table_lower:
+            cols.append(col)
+    if not cols:
+        return []
+    return sorted(set(cols))
+
 UNRESOLVED_CALLS = []
 STUB_PROCEDURES = []
 STUB_REASONS: dict[tuple, list[str]] = {}  # key=(proc.name, param_count) → list of human-readable stub reasons
@@ -874,6 +898,8 @@ class DmlStatement:
     returns_list: bool = False
     extra_params: list = field(default_factory=list)
     is_dynamic: bool = False  # True for EXECUTE IMMEDIATE — filters proc params to only those in SQL
+    returning_cols: list = field(default_factory=list)       # column names from RETURNING clause
+    returning_into_vars: list = field(default_factory=list)  # variable names from INTO targets
 
 
 @dataclass
@@ -2105,13 +2131,25 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
             if decl_type == "Variable":
                 var_name = decl_data.get("name", "")
                 raw_type = decl_data.get("data_type", "varchar")
-                # Handle dict types (PercentType, Record, etc.)
-                java_type = sql_type_to_java(raw_type)
+                if isinstance(raw_type, dict) and "TypeName" in raw_type:
+                    tn = raw_type["TypeName"]
+                    if tn in proc.custom_types:
+                        ct = proc.custom_types[tn]
+                        if ct.get("kind") in ("table", "varray"):
+                            java_type = f"java.util.List<{ct['elem_type']}>"
+                        else:
+                            java_type = sql_type_to_java(raw_type)
+                    else:
+                        java_type = sql_type_to_java(raw_type)
+                else:
+                    java_type = sql_type_to_java(raw_type)
                 proc.local_vars[var_name] = java_type
                 default_ast = decl_data.get("default")
                 if default_ast is not None:
                     try:
                         default_java = _expr_to_java(default_ast, proc)
+                        if java_type.startswith("java.util.List<"):
+                            default_java = f"new java.util.ArrayList<>(java.util.Arrays.asList({default_java}))"
                         proc.local_var_defaults[var_name] = default_java
                     except Exception:
                         pass
@@ -2407,16 +2445,43 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
                     if decl_type == "Variable":
                         var_name = decl_data.get("name", "")
                         raw_type = decl_data.get("data_type", "varchar")
-                        java_type = sql_type_to_java(raw_type)
+                        if isinstance(raw_type, dict) and "TypeName" in raw_type:
+                            tn = raw_type["TypeName"]
+                            if tn in proc.custom_types:
+                                ct = proc.custom_types[tn]
+                                if ct.get("kind") in ("table", "varray"):
+                                    java_type = f"java.util.List<{ct['elem_type']}>"
+                                else:
+                                    java_type = sql_type_to_java(raw_type)
+                            else:
+                                java_type = sql_type_to_java(raw_type)
+                        else:
+                            java_type = sql_type_to_java(raw_type)
                         if var_name not in proc.local_vars:
                             proc.local_vars[var_name] = java_type
                         default_ast = decl_data.get("default")
                         if default_ast is not None:
                             try:
                                 default_java = _expr_to_java(default_ast, proc)
+                                if java_type.startswith("java.util.List<"):
+                                    default_java = f"new java.util.ArrayList<>(java.util.Arrays.asList({default_java}))"
                                 proc.local_var_defaults[var_name] = default_java
                             except Exception:
                                 pass
+                    elif decl_type == "Type":
+                        _type_name = ""
+                        _type_info = {}
+                        for tk, tv in decl_data.items():
+                            if tk == "TableOf":
+                                _type_name = tv.get("name", "")
+                                _elem_java = sql_type_to_java(tv.get("elem_type", {}))
+                                _type_info = {"kind": "table", "elem_type": _elem_java}
+                            elif tk == "VarrayOf":
+                                _type_name = tv.get("name", "")
+                                _elem_java = sql_type_to_java(tv.get("elem_type", {}))
+                                _type_info = {"kind": "varray", "elem_type": _elem_java, "size": tv.get("size")}
+                        if _type_name and _type_info:
+                            proc.custom_types[_type_name] = _type_info
                     elif decl_type == "Record":
                         var_name = decl_data.get("name", "")
                         if var_name and var_name not in proc.local_vars:
@@ -2459,6 +2524,8 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
                         proc.local_var_defaults[_vn] = _def_java
                     except Exception:
                         proc.local_var_defaults.setdefault(_vn, _default_for_type(_vt))
+                elif re.match(r'^\s*TRUNCATE\s+', sql, re.IGNORECASE):
+                    _process_raw_dml(sql, proc, dml_counter)
                 elif "call " in sql.lower():
                     _process_call_text(sql, proc, all_packages)
         elif stmt_type == "Continue":
@@ -2497,8 +2564,7 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
         elif stmt_type == "GetDiagnostics":
             _process_get_diagnostics(stmt_data, proc)
         elif stmt_type == "ForAll":
-            proc.java_logic_lines.append(f"// TODO: FORALL — bulk operation requires manual implementation")
-            _record_todo("FORALL", proc, "bulk DML")
+            _process_forall(stmt_data, proc, all_packages, dml_counter)
         else:
             proc.java_logic_lines.append(f"// TODO: unhandled PL/pgSQL statement type: {stmt_type}")
             _record_todo("UNHANDLED_STMT", proc, str(stmt_type))
@@ -2847,6 +2913,14 @@ def _generate_loop_goto(proc, analysis, body_stmts, all_packages, dml_counter):
             _process_statement(stmt, proc, all_packages, dml_counter)
     if not any(l.strip().startswith("} while (") for l in proc.java_logic_lines):
         proc.java_logic_lines.append("} while (true);")
+    # Process statements AFTER the do-while loop body (e.g., final OUT param assignments)
+    _post_start = source_idx + 1
+    for stmt in body_stmts[_post_start:]:
+        if isinstance(stmt, dict):
+            # Skip any lingering Goto statements that belong to the loop pattern
+            if any(k == "Goto" for k in stmt):
+                continue
+            _process_statement(stmt, proc, all_packages, dml_counter)
 
 
 def _invert_condition(java_cond: str) -> str:
@@ -2921,11 +2995,14 @@ def _generate_skip_goto(proc, analysis, body_stmts, all_packages, dml_counter):
         proc.java_logic_lines.append("}")
         for stmt in body_stmts[target_idx:]:
             if isinstance(stmt, dict):
+                _handled = False
                 for st, sd in stmt.items():
                     if st == "Block" and sd.get("label") == label_name:
                         _stmt_list_to_java(sd.get("body", []), proc, all_packages, dml_counter, indent=1)
-                        continue
-                _process_statement(stmt, proc, all_packages, dml_counter)
+                        _handled = True
+                        break
+                if not _handled:
+                    _process_statement(stmt, proc, all_packages, dml_counter)
     else:
         for stmt in body_stmts:
             if isinstance(stmt, dict):
@@ -3046,13 +3123,15 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
                         proc.java_logic_lines.append(f"for ({var_java} = {high}; {var_java} >= {low}; {var_java}--) {{")
                     else:
                         proc.java_logic_lines.append(f"for ({var_java} = {low}; {var_java} <= {high}; {var_java}++) {{")
+                    if _needs_dispatch:
+                        proc.java_logic_lines.append(f"    {_goto_target_var} = null;")
                     for s in _iter_statements(body):
                         _process_with_goto_replace(s)
                     _indent_last_lines(proc, 1)
                     if _needs_dispatch:
                         if proc.java_logic_lines and proc.java_logic_lines[-1].strip() == "continue;":
                             proc.java_logic_lines.pop()
-                        proc.java_logic_lines.append(f"if ({_goto_target_var} != null) break;")
+                        proc.java_logic_lines.append(f"if ({_goto_target_var} != null) continue;")
                     proc.java_logic_lines.append("}")
                     return
                 elif "Query" in kind:
@@ -3081,13 +3160,15 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
                             proc.local_vars[variable] = "Map<String, Object>"
                             proc._loop_vars = getattr(proc, '_loop_vars', set())
                             proc._loop_vars.add(variable)
+                            if _needs_dispatch:
+                                proc.java_logic_lines.append(f"    {_goto_target_var} = null;")
                             for s in _iter_statements(body):
                                 _process_with_goto_replace(s)
                             _indent_last_lines(proc, 1)
                             if _needs_dispatch:
                                 if proc.java_logic_lines and proc.java_logic_lines[-1].strip() == "continue;":
                                     proc.java_logic_lines.pop()
-                                proc.java_logic_lines.append(f"if ({_goto_target_var} != null) break;")
+                                proc.java_logic_lines.append(f"if ({_goto_target_var} != null) continue;")
                             proc.java_logic_lines.append("}")
                             return
                 proc.java_logic_lines.append(f"// TODO: nested breakout loop — manual extraction recommended")
@@ -3097,13 +3178,15 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
                 if stmt_type == "While" and "condition" in stmt_data:
                     condition = _coerce_condition(_expr_to_java(stmt_data["condition"], proc, all_packages=all_packages))
                 proc.java_logic_lines.append(f"while ({condition}) {{")
+                if _needs_dispatch:
+                    proc.java_logic_lines.append(f"    {_goto_target_var} = null;")
                 for s in _iter_statements(stmt_data.get("body", [])):
                     _process_with_goto_replace(s)
                 _indent_last_lines(proc, 1)
                 if _needs_dispatch:
                     if proc.java_logic_lines and proc.java_logic_lines[-1].strip() == "continue;":
                         proc.java_logic_lines.pop()
-                    proc.java_logic_lines.append(f"if ({_goto_target_var} != null) break;")
+                    proc.java_logic_lines.append(f"if ({_goto_target_var} != null) continue;")
                 proc.java_logic_lines.append("}")
                 return
         _process_statement(stmt, proc, all_packages, dml_counter)
@@ -3401,11 +3484,10 @@ def _generate_state_machine_goto(proc, analysis, body_stmts, all_packages, dml_c
         # Detect terminal state: no currentState assignment means no outgoing transition
         has_transition = any("currentState = " in line for line in proc.java_logic_lines[case_line_offset:])
         has_running_false = any("running = false" in line for line in proc.java_logic_lines[case_line_offset:])
-        already_terminal = last_stripped.startswith("throw ") or last_stripped.startswith("return") or last_stripped == "break;"
+        already_terminal = last_stripped in ("break;", "}") or last_stripped.startswith("throw ") or last_stripped.startswith("return")
         if not has_transition and not has_running_false and not already_terminal:
             proc.java_logic_lines.append("            running = false;")
-        # Add break to prevent fallthrough, unless the case already terminates on all paths.
-        if not already_terminal and not _case_is_fully_terminated(proc, len(proc.java_logic_lines)):
+        if not already_terminal:
             proc.java_logic_lines.append("            break;")
 
     proc.java_logic_lines.append("        default:")
@@ -3440,32 +3522,78 @@ def _strip_into_clause(sql: str) -> str:
 def _rewrite_select_for_into(sql: str, into_targets: list) -> str:
     if not into_targets:
         return _strip_into_clause(sql)
-    into_fields = _extract_all_into_targets(into_targets)
-    if not into_fields:
-        return _strip_into_clause(sql)
-    field_names = [fn for fn, _ in into_fields]
     stripped = re.sub(r'\s+into\s+.*?(?=\s+from\b)', ' ', sql, flags=re.IGNORECASE | re.DOTALL)
     if stripped == sql:
         stripped = re.sub(r'\s+into\s+\w+(\s*,\s*\w+)*\s+(?=from\b)', ' ', sql, flags=re.IGNORECASE)
     # Handle SELECT without FROM (e.g., SELECT nextval() INTO var)
     if stripped == sql:
         stripped = re.sub(r'\s+into\s+.*$', ' ', sql, flags=re.IGNORECASE | re.DOTALL)
-    m = re.match(r'(select\s+)(.*?)(\s+from\b)', stripped, re.IGNORECASE | re.DOTALL)
-    if not m:
-        return stripped.strip()
-    col_clause = m.group(2).strip()
-    cols = [c.strip() for c in re.split(r',\s*', col_clause)]
-    if len(cols) != len(field_names):
-        return stripped
-    new_cols = []
-    for col, alias in zip(cols, field_names):
-        col_lower = col.lower().strip()
-        alias_lower = alias.lower().strip()
-        if col_lower == alias_lower:
-            new_cols.append(col)
+    return stripped.strip()
+
+
+def _extract_returning_cols(returning_ast: list) -> list:
+    cols = []
+    for item in (returning_ast or []):
+        expr = item.get("Expr", [])
+        if expr and isinstance(expr, list):
+            node = expr[0]
+            if isinstance(node, dict):
+                if "ColumnRef" in node:
+                    parts = node["ColumnRef"]
+                    cols.append(".".join(parts) if isinstance(parts, list) else str(parts))
+                elif "BinaryOp" in node:
+                    left = node["BinaryOp"].get("left", {})
+                    if isinstance(left, dict) and "ColumnRef" in left:
+                        parts = left["ColumnRef"]
+                        col = ".".join(parts) if isinstance(parts, list) else str(parts)
+                        cols.append(col)
+                    else:
+                        cols.append(f"expr{len(cols)}")
+                else:
+                    cols.append(f"expr{len(cols)}")
+            else:
+                cols.append(str(node))
         else:
-            new_cols.append(f"{col} AS {alias}")
-    return f"{m.group(1)}{', '.join(new_cols)}{m.group(3)}" + stripped[m.end():]
+            cols.append(f"expr{len(cols)}")
+    return cols
+
+
+def _extract_returning_into_targets(into_targets_ast: list) -> list:
+    results = []
+    for item in (into_targets_ast or []):
+        expr = item.get("Expr", [])
+        if expr and isinstance(expr, list):
+            node = expr[0]
+            if isinstance(node, dict):
+                if "PlVariable" in node:
+                    parts = node["PlVariable"]
+                    results.append((parts[-1] if isinstance(parts, list) and parts else str(parts), parts if isinstance(parts, list) else [str(parts)]))
+                elif "ColumnRef" in node:
+                    parts = node["ColumnRef"]
+                    results.append((parts[-1] if isinstance(parts, list) and parts else str(parts), parts if isinstance(parts, list) else [str(parts)]))
+                else:
+                    results.append((f"_retVar{len(results)}", [f"_retVar{len(results)}"]))
+            else:
+                results.append((f"_retVar{len(results)}", [f"_retVar{len(results)}"]))
+        else:
+            results.append((f"_retVar{len(results)}", [f"_retVar{len(results)}"]))
+    return results
+
+
+def _process_raw_dml(sql: str, proc: ProcedureInfo, dml_counter: dict):
+    sql_upper = sql.strip().upper()
+    if sql_upper.startswith("TRUNCATE"):
+        mapper_method = _dml_method_name("truncate", proc.proc_name, dml_counter)
+        sql_fmt = _fix_reconstructed_sql(sql.strip().rstrip(";"))
+        proc.dml_statements.append(DmlStatement(
+            sql_type="update",
+            method_id=mapper_method,
+            sql_text=sql_fmt,
+        ))
+        proc.java_logic_lines.append(f"mapper.{mapper_method}();")
+    else:
+        proc.java_logic_lines.append(f"// TODO: unhandled raw SQL: {sql[:80]}")
+        _record_todo("RAW_DML", proc, f"unhandled: {sql[:40]}")
 
 
 def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: dict):
@@ -3498,19 +3626,35 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                     if len(var_names) > 1:
                         result_type = "Map<String, Object>"
                         _emit_row_decl(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})')
+                        select_cols = _extract_select_columns(sql_text)
                         into_targets_full = _extract_all_into_targets(into_targets)
-                        for field_name, full_parts in into_targets_full:
+                        for idx, (field_name, full_parts) in enumerate(into_targets_full):
+                            col_key = select_cols[idx] if idx < len(select_cols) else field_name
                             if len(full_parts) >= 2:
                                 map_var = snake_to_camel(full_parts[0])
                                 vn_java = snake_to_camel(field_name)
                                 var_type = _java_type_from_field_name(field_name) if _java_type_from_field_name(field_name) != "Object" else "Object"
-                                _get_expr = f'_row.get("{field_name}")'
+                                _get_expr = f'_row.get("{col_key}")'
                                 cast_expr = _safe_map_cast(var_type, _get_expr) if var_type != "Object" else _get_expr
                                 _emit_assignment(proc, f'__MAP_PUT__{map_var}__{field_name}', cast_expr)
                             else:
-                                var_type = proc.local_vars.get(field_name, "Object")
+                                var_type = proc.local_vars.get(field_name)
+                                if var_type is None:
+                                    for p in proc.parameters:
+                                        if p.name.lower() == field_name.lower():
+                                            var_type = p.java_type
+                                            break
+                                if var_type is None:
+                                    var_type = "Object"
                                 vn_java = snake_to_camel(field_name)
-                                _emit_assignment(proc, vn_java, _safe_map_cast(var_type, f'_row.get("{field_name}")'))
+                                if var_type == "Map<String, Object>":
+                                    proc.java_logic_lines.append(f'// TODO: BULK COLLECT extraction for {vn_java} requires manual implementation')
+                                elif var_type.startswith("java.util.List<"):
+                                    _elem = var_type[len("java.util.List<"):-1]
+                                    _val_expr = _safe_map_cast(_elem, f'_row.get("{col_key}")')
+                                    proc.java_logic_lines.append(f'{vn_java}.add({_val_expr});')
+                                else:
+                                    _emit_assignment(proc, vn_java, _safe_map_cast(var_type, f'_row.get("{col_key}")'))
                     else:
                         into_targets_full = _extract_all_into_targets(into_targets)
                         if into_targets_full and len(into_targets_full[0][1]) >= 2:
@@ -3519,7 +3663,7 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                             result_type = "Map<String, Object>"
                             col_name = _extract_select_column(sql_text, 0)
                             _emit_row_decl(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})')
-                            _emit_assignment(proc, f'__MAP_PUT__{map_var}__{first_var}', f'_row.get("{first_var}")')
+                            _emit_assignment(proc, f'__MAP_PUT__{map_var}__{first_var}', f'_row.get("{col_name}")')
                         else:
                             _assign_expr = f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})'
                             _emit_assignment(proc, var_java, _assign_expr)
@@ -3549,23 +3693,79 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                     returns_list=True,
                 ))
                 proc.java_logic_lines.append(
-                    f'List<Map<String, Object>> _result = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});'
+                    f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});'
                 )
-
+        elif sql_type == "Merge":
+            if not sql_text:
+                sql_text = stmt_data.get("sql_text", "")
+            if sql_text:
+                sql_text = _fix_reconstructed_sql(sql_text)
+                sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
+            else:
+                sql_text = _reconstruct_merge_sql(sql_details)
+                if sql_text:
+                    sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
+            if sql_text:
+                mapper_method = _dml_method_name("update", proc.proc_name, dml_counter)
+                proc.dml_statements.append(DmlStatement(
+                    sql_type="update",
+                    method_id=mapper_method,
+                    sql_text=sql_text,
+                ))
+                proc.java_logic_lines.append(
+                    f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});'
+                )
+            else:
+                proc.java_logic_lines.append(f"// TODO: MERGE INTO — SQL reconstruction failed")
+                _record_todo("MERGE", proc, "sql reconstruction failed")
         elif sql_type == "Insert":
             from_tables = _extract_table_names_from_insert(sql_details)
             for t in from_tables:
                 proc.table_refs.add(t)
 
             mapper_method = _dml_method_name("insert", proc.proc_name, dml_counter)
-            proc.dml_statements.append(DmlStatement(
-                sql_type="insert",
-                method_id=mapper_method,
-                sql_text=sql_text,
-            ))
-            proc.java_logic_lines.append(
-                f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});'
-            )
+            _ret_cols = _extract_returning_cols(sql_details.get("returning"))
+            _into_targets = _extract_returning_into_targets(sql_details.get("into_targets"))
+            _into_vars = [v for v, _ in _into_targets]
+            _is_bulk = sql_details.get("bulk_collect", False)
+
+            if _ret_cols and _into_vars and not _is_bulk:
+                proc.dml_statements.append(DmlStatement(
+                    sql_type="insert",
+                    method_id=mapper_method,
+                    sql_text=sql_text,
+                    returning_cols=_ret_cols,
+                    returning_into_vars=_into_vars,
+                ))
+                _emit_row_decl(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})')
+                for _rc, (_fn, _fp) in zip(_ret_cols, _into_targets):
+                    if len(_fp) >= 2:
+                        _map_var = snake_to_camel(_fp[0])
+                        _cast_expr = _safe_map_cast(_java_type_from_field_name(_fn) if _java_type_from_field_name(_fn) != "Object" else "Object", f'_row.get("{_rc}")')
+                        _emit_assignment(proc, f'__MAP_PUT__{_map_var}__{_fn}', _cast_expr if _java_type_from_field_name(_fn) != "Object" else f'_row.get("{_rc}")')
+                    else:
+                        _vtype = proc.local_vars.get(_fn, "Object")
+                        if _vtype is None:
+                            for p in proc.parameters:
+                                if p.name.lower() == _fn.lower():
+                                    _vtype = p.java_type
+                                    break
+                        if _vtype is None:
+                            _vtype = "Object"
+                        _vn_java = snake_to_camel(_fn)
+                        if _vtype == "Map<String, Object>":
+                            proc.java_logic_lines.append(f'// TODO: BULK COLLECT extraction for {_vn_java} requires manual implementation')
+                        else:
+                            _emit_assignment(proc, _vn_java, _safe_map_cast(_vtype, f'_row.get("{_rc}")'))
+            else:
+                proc.dml_statements.append(DmlStatement(
+                    sql_type="insert",
+                    method_id=mapper_method,
+                    sql_text=sql_text,
+                ))
+                proc.java_logic_lines.append(
+                    f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});'
+                )
 
         elif sql_type == "Update":
             from_tables = _extract_table_names_from_update(sql_details)
@@ -3573,28 +3773,212 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                 proc.table_refs.add(t)
 
             mapper_method = _dml_method_name("update", proc.proc_name, dml_counter)
-            proc.dml_statements.append(DmlStatement(
-                sql_type="update",
-                method_id=mapper_method,
-                sql_text=sql_text,
-            ))
-            proc.java_logic_lines.append(
-                f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});'
-            )
+            _ret_cols = _extract_returning_cols(sql_details.get("returning"))
+            _into_targets = _extract_returning_into_targets(sql_details.get("into_targets"))
+            _into_vars = [v for v, _ in _into_targets]
+            _is_bulk = sql_details.get("bulk_collect", False)
+
+            if _ret_cols and _into_vars and not _is_bulk:
+                proc.dml_statements.append(DmlStatement(
+                    sql_type="update",
+                    method_id=mapper_method,
+                    sql_text=sql_text,
+                    returning_cols=_ret_cols,
+                    returning_into_vars=_into_vars,
+                ))
+                _emit_row_decl(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})')
+                for _rc, (_fn, _fp) in zip(_ret_cols, _into_targets):
+                    if len(_fp) >= 2:
+                        _map_var = snake_to_camel(_fp[0])
+                        _emit_assignment(proc, f'__MAP_PUT__{_map_var}__{_fn}', f'_row.get("{_rc}")')
+                    else:
+                        _vtype = proc.local_vars.get(_fn, "Object")
+                        _vn_java = snake_to_camel(_fn)
+                        if _vtype == "Map<String, Object>":
+                            proc.java_logic_lines.append(f'// TODO: BULK COLLECT extraction for {_vn_java}')
+                        else:
+                            _emit_assignment(proc, _vn_java, _safe_map_cast(_vtype, f'_row.get("{_rc}")'))
+            else:
+                proc.dml_statements.append(DmlStatement(
+                    sql_type="update",
+                    method_id=mapper_method,
+                    sql_text=sql_text,
+                ))
+                proc.java_logic_lines.append(
+                    f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});'
+                )
 
         elif sql_type == "Delete":
             table_name = _extract_table_name_from_dml(sql_details)
             proc.table_refs.add(table_name)
 
             mapper_method = _dml_method_name("delete", proc.proc_name, dml_counter)
-            proc.dml_statements.append(DmlStatement(
-                sql_type="delete",
-                method_id=mapper_method,
-                sql_text=sql_text,
-            ))
-            proc.java_logic_lines.append(
-                f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});'
-            )
+            _ret_cols = _extract_returning_cols(sql_details.get("returning"))
+            _into_targets = _extract_returning_into_targets(sql_details.get("into_targets"))
+            _into_vars = [v for v, _ in _into_targets]
+            _is_bulk = sql_details.get("bulk_collect", False)
+
+            if _ret_cols and _into_vars and not _is_bulk:
+                proc.dml_statements.append(DmlStatement(
+                    sql_type="delete",
+                    method_id=mapper_method,
+                    sql_text=sql_text,
+                    returning_cols=_ret_cols,
+                    returning_into_vars=_into_vars,
+                ))
+                _emit_row_decl(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})')
+                for _rc, (_fn, _fp) in zip(_ret_cols, _into_targets):
+                    if len(_fp) >= 2:
+                        _map_var = snake_to_camel(_fp[0])
+                        _emit_assignment(proc, f'__MAP_PUT__{_map_var}__{_fn}', f'_row.get("{_rc}")')
+                    else:
+                        _vtype = proc.local_vars.get(_fn, "Object")
+                        _vn_java = snake_to_camel(_fn)
+                        if _vtype == "Map<String, Object>":
+                            proc.java_logic_lines.append(f'// TODO: BULK COLLECT extraction for {_vn_java}')
+                        else:
+                            _emit_assignment(proc, _vn_java, _safe_map_cast(_vtype, f'_row.get("{_rc}")'))
+            else:
+                proc.dml_statements.append(DmlStatement(
+                    sql_type="delete",
+                    method_id=mapper_method,
+                    sql_text=sql_text,
+                ))
+                proc.java_logic_lines.append(
+                    f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});'
+                )
+
+
+def _reconstruct_merge_sql(merge_data: dict) -> str:
+    parts = []
+    target = merge_data.get("target", {})
+    if "Table" in target:
+        t = target["Table"]
+        tname = ".".join(t["name"]) if isinstance(t.get("name"), list) else str(t.get("name", ""))
+        talias = t.get("alias", "")
+        parts.append(f"MERGE INTO {tname}" + (f" {talias}" if talias else ""))
+    source = merge_data.get("source", {})
+    if "Subquery" in source:
+        sq = source["Subquery"]
+        salias = sq.get("alias", "")
+        sq_sql = _reconstruct_sql_from_ast(sq.get("query", {}))
+        if sq_sql:
+            parts.append(f"USING ({sq_sql}) {salias}")
+    on_cond = merge_data.get("on_condition", {})
+    if on_cond:
+        cond_java = _expr_to_java(on_cond, None, all_packages={})
+        parts.append(f"ON ({cond_java})")
+    for clause in merge_data.get("when_clauses", []):
+        matched = clause.get("matched", False)
+        action = clause.get("action", {})
+        if isinstance(action, dict):
+            if "Insert" in action:
+                ins = action["Insert"]
+                cols = ", ".join(".".join(c) if isinstance(c, list) else str(c) for c in ins.get("columns", []))
+                vals = ", ".join(_expr_to_java(v, None, all_packages={}) for v in ins.get("values", []))
+                parts.append(f"WHEN NOT MATCHED THEN INSERT ({cols}) VALUES ({vals})")
+            elif "Update" in action:
+                upd = action["Update"]
+                sets = ", ".join(
+                    ".".join(s.get("columns", [])) if isinstance(s, dict) else str(s) for s in upd
+                ) if isinstance(upd, list) else str(upd)
+                parts.append(f"WHEN MATCHED THEN UPDATE SET {sets}")
+        elif action == "Delete":
+            parts.append("WHEN MATCHED THEN DELETE")
+    return "\n".join(parts) if len(parts) > 2 else ""
+
+
+def _process_forall(forall_data: dict, proc: ProcedureInfo, all_packages: dict, dml_counter: dict):
+    index_var = forall_data.get("variable", "i")
+    bounds_str = forall_data.get("bounds", "")
+    if not bounds_str.strip():
+        proc.java_logic_lines.append("// TODO: FORALL — empty bounds")
+        _record_todo("FORALL", proc, "empty bounds")
+        return
+
+    dml_match = re.search(r'\b(INSERT|UPDATE|DELETE)\b', bounds_str, re.IGNORECASE)
+    if not dml_match:
+        proc.java_logic_lines.append(f"// TODO: FORALL — cannot parse DML from bounds: {bounds_str[:80]}")
+        _record_todo("FORALL", proc, "unparseable bounds")
+        return
+
+    range_part = bounds_str[:dml_match.start()].strip().rstrip('.')
+    range_part = re.sub(r'\s*\.\.\s*', '..', range_part)
+    dml_sql = bounds_str[dml_match.start():].strip()
+    dml_type = dml_match.group(1).lower()
+
+    _range_match = re.match(r'(\d+)\s*\.\.\s*(\w[\w.]*)\s*\.\s*COUNT', range_part, re.IGNORECASE)
+    if _range_match:
+        _low = _range_match.group(1)
+        _arr_var = _range_match.group(2).replace(' ', '')
+        _arr_java = snake_to_camel(_arr_var.split('.')[0])
+        loop_start = f'for (int {index_var} = {_low}; {index_var} <= {_arr_java}.size(); {index_var}++)'
+    else:
+        _dot_match = re.match(r'(\w+)\s*\.\.\s*(\w+)', range_part)
+        if _dot_match:
+            loop_start = f'for (int {index_var} = {_dot_match.group(1)}; {index_var} <= {_dot_match.group(2)}; {index_var}++)'
+        else:
+            loop_start = f'for (int {index_var} = 1; {index_var} <= {snake_to_camel(range_part)}; {index_var}++)'
+
+    mapper_method = _dml_method_name(dml_type, proc.proc_name, dml_counter)
+
+    array_refs = re.findall(r'(\w+)\s*\(\s*' + re.escape(index_var) + r'\s*\)', dml_sql, re.IGNORECASE)
+    param_args = []
+    seen = set()
+    _has_map_array = False
+    for arr_name in array_refs:
+        if arr_name.lower() not in seen and arr_name.lower() != index_var.lower():
+            seen.add(arr_name.lower())
+            arr_java = snake_to_camel(arr_name)
+            arr_type = proc.local_vars.get(arr_name, "Object")
+            if arr_type == "Map<String, Object>":
+                _has_map_array = True
+            else:
+                param_args.append(f'{arr_java}.get({index_var} - 1)')
+
+    if _has_map_array:
+        proc.java_logic_lines.append(f'// TODO: FORALL — bulk operation with TABLE-type variables requires manual implementation')
+        proc.java_logic_lines.append(f'// {dml_sql[:120]}')
+        _record_todo("FORALL", proc, "TABLE-type array vars")
+        return
+
+    _extra_text = re.sub(r'\b\w+\s*\(\s*' + re.escape(index_var) + r'\s*\)', '?', dml_sql)
+    _dml_local_vars = _sql_local_var_names(proc, _extra_text)
+    for _lvn in _dml_local_vars:
+        _lvn_java = snake_to_camel(_lvn)
+        if _lvn_java not in seen:
+            seen.add(_lvn_java)
+            param_args.append(_lvn_java)
+
+    for p in proc.parameters:
+        if p.mode and p.mode.upper() == "OUT":
+            continue
+        pj = p.java_name
+        if pj not in seen:
+            seen.add(pj)
+            param_args.append(pj)
+
+    args_str = ", ".join(param_args)
+    mybatis_sql = re.sub(
+        r'(\w+)\s*\(\s*' + re.escape(index_var) + r'\s*\)',
+        lambda m: f'#{{{snake_to_camel(m.group(1))}.get({index_var} - 1)}}',
+        dml_sql
+    )
+    mybatis_sql = _convert_params_to_mybatis(mybatis_sql, proc.parameters, proc.local_vars)
+
+    proc.dml_statements.append(DmlStatement(
+        sql_type=dml_type,
+        method_id=mapper_method,
+        sql_text=mybatis_sql,
+    ))
+
+    proc.java_logic_lines.append(f'{loop_start} {{')
+    proc.java_logic_lines.append(f'    mapper.{mapper_method}({args_str});')
+    proc.java_logic_lines.append(f'}}')
+
+    for _tm in re.finditer(r'\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM|DELETE)\s+(\w+)', dml_sql, re.IGNORECASE):
+        if _tm.group(1).upper() not in ('SELECT', 'FROM', 'WHERE', 'SET', 'VALUES'):
+            proc.table_refs.add(_tm.group(1))
 
 
 def _coerce_condition(cond: str) -> str:
@@ -7546,6 +7930,11 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             args_str = ", ".join(args_java)
 
             if proc is not None and func_name_lower not in SQL_FUNCTION_MAP:
+                if proc.custom_types and func_name_lower in {k.lower(): k for k in proc.custom_types}:
+                    _type_key = {k.lower(): k for k in proc.custom_types}[func_name_lower]
+                    _ct = proc.custom_types[_type_key]
+                    if _ct.get("kind") in ("table", "varray") and len(args_java) > 1:
+                        return f"java.util.Arrays.asList({args_str})"
                 for p in proc.parameters:
                     if p.name.lower() == func_name_lower and p.java_type.startswith("List<"):
                         idx_expr = args_java[0] if args_java else "0"
@@ -8105,6 +8494,8 @@ def _extract_all_into_targets(into_targets: list) -> list:
                             if ik in ("PlVariable", "ColumnRef"):
                                 if isinstance(iv, list) and len(iv) >= 2:
                                     result.append((iv[-1], list(iv)))
+                                elif isinstance(iv, list) and len(iv) == 1:
+                                    result.append((iv[0], list(iv)))
                                 elif isinstance(iv, str):
                                     result.append((iv, [iv]))
     return result
@@ -8609,7 +9000,10 @@ def _build_mapper_method(proc: ProcedureInfo, dml: DmlStatement, imports: set) -
     params_str = ", ".join(params) if params else ""
 
     # Determine return type
-    if dml.sql_type == "select":
+    if dml.returning_cols:
+        ret = "Map<String, Object>"
+        imports.add("import java.util.Map;")
+    elif dml.sql_type == "select":
         if dml.returns_list:
             ret = "List<Map<String, Object>>"
             imports.add("import java.util.List;")
@@ -8808,6 +9202,36 @@ def _format_sql(sql: str) -> str:
     return sql
 
 
+def _find_top_level_keyword(sql: str, keyword: str):
+    """Find the position of a keyword at the top level (not inside parens, strings, or comments)."""
+    kw = keyword.upper()
+    kw_len = len(kw)
+    in_string = False
+    depth = 0
+    i = 0
+    while i < len(sql):
+        ch = sql[i]
+        if in_string:
+            if ch == "'" and (i + 1 >= len(sql) or sql[i + 1] != "'"):
+                in_string = False
+            elif ch == "'" and i + 1 < len(sql) and sql[i + 1] == "'":
+                i += 1
+        else:
+            if ch == "'":
+                in_string = True
+            elif ch == '(':
+                depth += 1
+            elif ch == ')':
+                depth -= 1
+            elif depth == 0 and sql[i:i+kw_len].upper() == kw:
+                if i == 0 or not sql[i-1].isalnum() and sql[i-1] != '_':
+                    after_char = sql[i+kw_len:i+kw_len+1] if i+kw_len < len(sql) else ''
+                    if not after_char or not after_char.isalnum() and after_char != '_':
+                        return i
+        i += 1
+    return None
+
+
 def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
     sql = _clean_sql(dml.sql_text.strip())
     if sql.endswith(";"):
@@ -8836,11 +9260,10 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
         _tbl_name = _tbl_match.group(1) if _tbl_match else None
         _param = _row_match.group(1)
         _base = _param[2:-1] if _param.startswith('#{') else snake_to_camel(_param)
-        _emp_cols = ['emp_name', 'dept_id', 'base_salary', 'bonus_pct', 'allowance',
-                      'total_salary', 'status', 'hire_date', 'manager_id', 'last_update',
-                      'update_reason', 'email', 'phone']
-        _set_parts = [f'{c} = #{{{_base}.{c}}}' for c in _emp_cols]
-        sql = sql[:_row_match.start()] + 'SET ' + ', '.join(_set_parts) + sql[_row_match.end():]
+        _row_cols = _lookup_table_columns(_tbl_name, proc._source_path) if _tbl_name else []
+        if _row_cols:
+            _set_parts = [f'{c} = #{{{_base}.{c}}}' for c in _row_cols]
+            sql = sql[:_row_match.start()] + 'SET ' + ', '.join(_set_parts) + sql[_row_match.end():]
 
     _bare_insert = re.match(r'(INSERT\s+INTO\s+(\w+))\s+VALUES\s+(#\{[^}]+\}|\w+)\s*$', sql, re.IGNORECASE | re.DOTALL)
     if _bare_insert:
@@ -8850,10 +9273,8 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
             _base = _raw_param[2:-1]
         else:
             _base = snake_to_camel(_raw_param)
-        if _tbl.lower() == 'employees':
-            _ins_cols = ['emp_id', 'emp_name', 'dept_id', 'base_salary', 'bonus_pct', 'allowance',
-                         'total_salary', 'status', 'hire_date', 'manager_id', 'last_update',
-                         'update_reason', 'email', 'phone']
+        _ins_cols = _lookup_table_columns(_tbl, proc._source_path)
+        if _ins_cols:
             _val_parts = [f'#{{{_base}.{c}}}' for c in _ins_cols]
             sql = f'INSERT INTO {_tbl}({", ".join(_ins_cols)}) VALUES({", ".join(_val_parts)})'
 
@@ -8908,6 +9329,19 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
     sql = _qualify_ambiguous_group_order(sql)
     if re.match(r'\s*SELECT\b', sql, re.IGNORECASE):
         sql = _rewrite_select_alias_columns(sql)
+
+    # Fix UPDATE ... FROM where ogsql places FROM inside SET clause instead of after it
+    # Must run AFTER _format_sql() to avoid being overwritten
+    if re.match(r'\s*UPDATE\b', sql, re.IGNORECASE):
+        _set_pos = _find_top_level_keyword(sql, 'SET')
+        _where_pos = _find_top_level_keyword(sql, 'WHERE')
+        if _set_pos is not None and _where_pos is not None:
+            _from_pos = _find_top_level_keyword(sql, 'FROM')
+            if _from_pos is not None and _set_pos < _from_pos < _where_pos:
+                _from_and_tables = sql[_from_pos:_where_pos].rstrip()
+                _from_and_tables = ' '.join(sql[_from_pos:_where_pos].split())
+                _where_and_rest = ' '.join(sql[_where_pos:].split())
+                sql = sql[:_from_pos].rstrip() + '\n        ' + _from_and_tables + '\n        ' + _where_and_rest
 
     # Fix duplicate WHERE caused by ogsql format absorbing subquery's ) into a comment:
     # Source: ... WHERE inner_cond -- comment \n ) \n WHERE outer_cond
@@ -9047,6 +9481,9 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
             result_type_attr = ' resultType="java.util.LinkedHashMap"'
 
     tag = dml.sql_type
+    if dml.returning_cols:
+        tag = "select"
+        result_type_attr = ' resultType="java.util.LinkedHashMap"'
     params_attrs = ""
     has_local_var_params = len(_dml_used_local_vars(proc, dml)) > 0
     if proc.parameters and not has_local_var_params:
@@ -9774,16 +10211,19 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
         if "__SQLSTATE__" in _bline:
             body_lines[_bli] = _bline.replace("__SQLSTATE__", '"00000"')
 
+    _rc_counter = 0
     for _bli in range(len(body_lines)):
         if "__ROWCOUNT__" in body_lines[_bli]:
             if _bli > 0 and ("mapper." in body_lines[_bli - 1] or f"{mapper_name}." in body_lines[_bli - 1]):
+                _rc_var = f"__rc{_rc_counter}" if _rc_counter > 0 else "__rc"
                 body_lines[_bli - 1] = re.sub(
                     r'((?:mapper|\w+Mapper)\.\w+)\(',
-                    r'int __rc = \1(',
+                    f'int {_rc_var} = \\1(',
                     body_lines[_bli - 1],
                     count=1,
                 )
-                body_lines[_bli] = body_lines[_bli].replace("__ROWCOUNT__", "__rc")
+                body_lines[_bli] = body_lines[_bli].replace("__ROWCOUNT__", _rc_var)
+                _rc_counter += 1
             else:
                 body_lines[_bli] = body_lines[_bli].replace("__ROWCOUNT__", "0")
 
@@ -10389,7 +10829,7 @@ def _collect_all_dmls(pkg: PackageInfo) -> dict:
                     total = dyn_param_count + local_var_count + extra_param_count
                 else:
                     total = in_param_count + local_var_count + extra_param_count
-                all_dmls[dml.method_id] = (dml.method_id, dml.sql_type, dml.result_type, dml.returns_list, total, dml.sql_text)
+                all_dmls[dml.method_id] = (dml.method_id, dml.sql_type, dml.result_type, dml.returns_list, total, dml.sql_text, dml.returning_cols, dml.returning_into_vars)
     return all_dmls
 
 
@@ -10494,6 +10934,34 @@ def _mock_value_for_column(col_name: str) -> str:
     return "1"
 
 
+def _extract_select_columns(sql: str) -> list:
+    """Extract column names from SELECT clause (before FROM). Returns list of column name strings."""
+    if not sql:
+        return []
+    stripped = re.sub(r'--.*$', '', sql, flags=re.MULTILINE)
+    stripped = re.sub(r'/\*.*?\*/', '', stripped, flags=re.DOTALL)
+    stripped = re.sub(r'\bBULK\s+COLLECT\b', '', stripped, flags=re.IGNORECASE)
+    stripped = re.sub(r'\s+into\s+.*?(?=\s+from\b)', ' ', stripped, flags=re.IGNORECASE | re.DOTALL)
+    m = re.match(r'select\s+(.*?)\s+from\b', stripped, re.IGNORECASE | re.DOTALL)
+    if not m:
+        return []
+    col_clause = m.group(1).strip()
+    cols = [c.strip() for c in re.split(r',\s*', col_clause)]
+    result = []
+    for col in cols:
+        col = ' '.join(col.split())  # collapse whitespace/newlines
+        alias_match = re.match(r'.+\s+[Aa][Ss]\s+(\w+)\s*$', col)
+        if alias_match:
+            result.append(alias_match.group(1))
+        else:
+            dot_match = re.match(r'(\w+)\.(\w+)$', col)
+            if dot_match:
+                result.append(dot_match.group(2))
+            else:
+                result.append(col)
+    return result
+
+
 def _extract_select_column(sql_text: str, index: int) -> str:
     if not sql_text:
         return "col"
@@ -10513,8 +10981,22 @@ def _extract_select_column(sql_text: str, index: int) -> str:
     return col
 
 
-def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bool, mapper_name: str, dml_method_id: str, method_any: str, dml_sql_text: str = "") -> str:
+def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bool, mapper_name: str, dml_method_id: str, method_any: str, dml_sql_text: str = "", returning_cols: list = None, returning_into_vars: list = None) -> str:
     if dml_sql_type != "select":
+        if returning_cols:
+            puts_parts = []
+            for _ci, c in enumerate(returning_cols):
+                _var_name = returning_into_vars[_ci] if returning_into_vars and _ci < len(returning_into_vars) else None
+                if 'time' in c.lower() or 'date' in c.lower() or (_var_name and ('time' in _var_name.lower() or 'date' in _var_name.lower())):
+                    puts_parts.append(f'm.put("{_escape_java_string(c)}", new java.sql.Timestamp(System.currentTimeMillis()));')
+                elif 'salary' in c.lower() or 'amount' in c.lower() or 'price' in c.lower() or 'pct' in c.lower() or 'bonus' in c.lower() or (_var_name and ('bonus' in _var_name.lower() or 'salary' in _var_name.lower() or 'amount' in _var_name.lower() or 'pct' in _var_name.lower())):
+                    puts_parts.append(f'm.put("{_escape_java_string(c)}", java.math.BigDecimal.TEN);')
+                elif 'name' in c.lower() or 'reason' in c.lower() or 'fmt' in c.lower() or (_var_name and ('name' in _var_name.lower() or 'fmt' in _var_name.lower() or 'reason' in _var_name.lower())):
+                    puts_parts.append(f'm.put("{_escape_java_string(c)}", "test");')
+                else:
+                    puts_parts.append(f'm.put("{_escape_java_string(c)}", 1);')
+            puts = " ".join(puts_parts)
+            return f"        {{ var m = new java.util.HashMap<String,Object>(); {puts} when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m); }}"
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(1);"
     if dml_returns_list:
         mock_fields = _extract_mock_fields_from_sql(dml_sql_text)
@@ -10544,7 +11026,7 @@ def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bo
 def _mock_all_mapper_methods(mapper_name: str, pkg: PackageInfo, lines: list, error_mode: bool = False):
     all_dmls = _collect_all_dmls(pkg)
     for dml_key, dml_info in all_dmls.items():
-        dml_method_id, dml_sql_type, dml_result_type, dml_returns_list, dml_param_count, dml_sql_text = dml_info
+        dml_method_id, dml_sql_type, dml_result_type, dml_returns_list, dml_param_count, dml_sql_text, dml_returning_cols, dml_returning_into_vars = dml_info
         method_any = ", ".join(["any()"] * dml_param_count) if dml_param_count > 0 else ""
         if error_mode and dml_sql_type == "select":
             if dml_returns_list:
@@ -10560,7 +11042,7 @@ def _mock_all_mapper_methods(mapper_name: str, pkg: PackageInfo, lines: list, er
             else:
                 lines.append(f"        {{ var m = new java.util.HashMap<String,Object>(); m.put(\"id\", 1L); m.put(\"emp_id\", 1L); m.put(\"product_id\", 1L); m.put(\"v_product_id\", 1L); m.put(\"v_qty\", 10); m.put(\"total\", 0); m.put(\"v_total\", 0); m.put(\"stock_qty\", 0); m.put(\"name\", \"\"); m.put(\"emp_name\", \"\"); m.put(\"status\", \"REJECTED\"); m.put(\"v_status\", \"REJECTED\"); m.put(\"v_amount\", java.math.BigDecimal.ZERO); m.put(\"base_salary\", java.math.BigDecimal.ZERO); m.put(\"bonus_pct\", 0.0d); m.put(\"allowance\", 0); m.put(\"count\", 0); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m); }}")
         else:
-            lines.append(_mock_select_return(dml_sql_type, dml_result_type, dml_returns_list, mapper_name, dml_method_id, method_any, dml_sql_text))
+            lines.append(_mock_select_return(dml_sql_type, dml_result_type, dml_returns_list, mapper_name, dml_method_id, method_any, dml_sql_text, dml_returning_cols, dml_returning_into_vars))
 
 
 def _build_any_matchers(proc: ProcedureInfo) -> str:
@@ -12650,6 +13132,7 @@ def main():
             for tbl, cols in schema.items():
                 for col, col_type in cols.items():
                     TYPE_OVERRIDES[(tbl, col)] = col_type
+                    _TABLE_DDL_SOURCE[(tbl, col)] = sql_file
 
     # ── Phase 1: Parse SQL files (use cache for unchanged) ──
     packages = []
