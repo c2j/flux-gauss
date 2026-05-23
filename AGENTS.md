@@ -111,6 +111,10 @@ java_packages:                    # optional: map SQL files to different Java pa
 
 ## When Modifying `converter/flux_gauss.py`
 
+### Prohibitions
+
+- **NEVER hardcode table column names** in the converter code. Table columns must always be looked up dynamically from the table schema cache (`TYPE_OVERRIDES` / `_lookup_table_columns()` / `parse_table_ddl()`). Hardcoded column lists break for any table other than the one they were written for, and silently produce incorrect SQL when table schemas evolve.
+
 - The entire converter is one file (~8500 lines). Key dataclasses:
   - `Parameter` — procedure parameter with SQL/Java type mapping
   - `CommentInfo` — SQL comment (text, line range, type: single-line/block)
