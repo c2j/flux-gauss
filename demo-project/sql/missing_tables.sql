@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS t_orders (
 );
 
 -- 产品表 (referenced by: pkg_product, pkg_inventory, pkg_order, pkg_test_patterns)
-CREATE TABLE IF NOT EXISTS t_products (
+DROP TABLE IF EXISTS t_products CASCADE;
+CREATE TABLE t_products (
     id            BIGSERIAL PRIMARY KEY,
     name          VARCHAR(200),
     price         NUMERIC(18,2),
@@ -628,6 +629,19 @@ ALTER TABLE departments ADD COLUMN is_active      INTEGER DEFAULT 1;
 ALTER TABLE departments ADD COLUMN manager_id     INTEGER;
 ALTER TABLE departments ADD COLUMN dept_name      VARCHAR2(100);
 
+ALTER TABLE emp_salary ADD COLUMN bonus_pct     NUMERIC(5,2) DEFAULT 0;
+ALTER TABLE emp_salary ADD COLUMN allowance     NUMERIC(18,2) DEFAULT 0;
+ALTER TABLE emp_salary ADD COLUMN total_salary  NUMERIC(18,2);
+ALTER TABLE emp_salary ADD COLUMN last_update   TIMESTAMP;
+
+ALTER TABLE t_products ADD COLUMN supplier_id   BIGINT;
+
+-- Test data for inventory/order tests
+INSERT INTO t_products (name, price, stock_qty, category, active) VALUES
+    ('Widget A', 9.99, 1000, 'General', true),
+    ('Widget B', 19.99, 500, 'Premium', true),
+    ('Gadget X', 49.99, 200, 'Electronics', true);
+
 -- db_log table (referenced by AAS dataclear procedures)
 DROP TABLE IF EXISTS db_log CASCADE;
 CREATE TABLE IF NOT EXISTS db_log (
@@ -638,7 +652,7 @@ CREATE TABLE IF NOT EXISTS db_log (
     TIME_STAMP  VARCHAR(20),
     CALL_STACK  TEXT,
     ERR_STACK   TEXT,
-    STEP_NO     INTEGER,
+    STEP_NO     VARCHAR(20),
     SQL_TXT     TEXT,
     SQL_PARAM   TEXT,
     LOG_DATE    VARCHAR(20)
