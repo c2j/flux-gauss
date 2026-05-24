@@ -45,16 +45,7 @@ src/main/resources/mapper/{Name}Mapper.xml      — MyBatis SQL 映射
 src/test/java/ced/service/{Name}ServiceTest.java — 单元测试（可选）
 ```
 
-### 2.3 转换命令
 
-```bash
-# Python 转换器
-python3 converter/flux_gauss.py -c fluxgauss.yaml
-
-# Rust 转换器（假设有类似命令，按实际路径调整）
-```
-
----
 
 ## 3. 对比方法
 
@@ -125,7 +116,7 @@ python3 converter/flux_gauss.py -c fluxgauss.yaml
 
 ## 5. 报告输出格式
 
-保存路径：`docs/sql-java-comparison-report.md`
+保存路径：`docs/sql-java-comparison-report-Vx.md`
 
 ### 报告结构
 
