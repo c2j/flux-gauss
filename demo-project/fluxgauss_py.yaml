@@ -18,28 +18,34 @@ integration_test:
 #   driver: org.postgresql.Driver
 
 sources:
+  #$ find demo-project/ -name "*.sql" -exec echo "  -" {} \;
+  - demo-project/sql/tables.sql
   - demo-project/sql/gauss_delete_all_styles.sql
   - demo-project/sql/gauss_update_select.sql
-  - demo-project/sql/pkg_mapper_param_test_tables.sql
   - demo-project/sql/gauss_update_all_styles.sql
   - demo-project/sql/proc_GOto.sql
   - demo-project/sql/pkg_order.sql
   - demo-project/sql/complex_clearing_pkg.sql
   - demo-project/sql/pkg_test_patterns.sql
-  - demo-project/sql/tables.sql
   - demo-project/sql/pkg_payment.sql
   - demo-project/sql/astro_functions_pkg.sql
   - demo-project/sql/PKG_AAS_DATACLEAR.sql
-  - demo-project/sql/PKG_WARPDRIVER_STRESS_TEST-DDL.sql
   - demo-project/sql/pkg_custom_funcs_test.sql
   - demo-project/sql/DB_LOG.sql
   - demo-project/sql/gauss_complete_examples.sql
+  - demo-project/sql/ddl/05_warpdriver_tables.sql
+  - demo-project/sql/ddl/06_types.sql
+  - demo-project/sql/ddl/01_core_demo_tables.sql
+  - demo-project/sql/ddl/03_bigfund_tables.sql
+  - demo-project/sql/ddl/02_business_tables.sql
+  - demo-project/sql/ddl/04_dw_tables.sql
+  - demo-project/sql/ddl/07_sequences.sql
   - demo-project/sql/PKG_CURSOR.sql
   - demo-project/sql/pkg_cursor_patterns.sql
-  - demo-project/sql/missing_tables.sql
   - demo-project/sql/SWH_ALL_KIND.sql
   - demo-project/sql/pkg_aas_lob_dataclear.sql
   - demo-project/sql/pkg_product.sql
+  - demo-project/sql/pkg_merge_fix1.sql
   - demo-project/sql/gauss_select_all_styles.sql
   - demo-project/sql/PKG_WARPDRIVER_STRESS_TEST.sql
   - demo-project/sql/PKG_RPT_BATCH_DOWNLOAD.sql

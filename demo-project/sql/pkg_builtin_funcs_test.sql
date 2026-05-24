@@ -1,24 +1,5 @@
--- =====================================================================
--- 内置函数转换测试用例
--- 验证 SQL 内置函数 → Java 等价逻辑的转换能力
--- =====================================================================
+-- NOTE: DDL moved to ddl/*.sql
 
--- 依赖的表结构（用于 %TYPE 推断）
-CREATE TABLE IF NOT EXISTS t_test_funcs (
-    id          BIGINT,
-    name        VARCHAR(100),
-    amount      NUMERIC(18, 2),
-    status      VARCHAR(20),
-    created_at  TIMESTAMP,
-    remark      VARCHAR(500)
-);
-
--- =====================================================================
--- 测试存储过程：覆盖各类内置函数
--- ogsql 将函数分为两类 AST 节点：
---   SpecialFunction: substr, substring
---   FunctionCall:    upper, lower, trim, length, nvl, to_char, ...
--- =====================================================================
 CREATE OR REPLACE PROCEDURE pkg_builtin_funcs.test_all_funcs(p_input VARCHAR)
 AS $$
 DECLARE
