@@ -1,34 +1,6 @@
+-- NOTE: DDL moved to ddl/*.sql
 
--- ============================================================
--- 高斯/OpenGauss 包级常量与变量示例
--- ============================================================
 
--- ============================================
--- 第一部分：DDL建表
--- ============================================
-
-DROP TABLE IF EXISTS employees CASCADE;
-CREATE TABLE employees (
-    employee_id     INTEGER PRIMARY KEY,
-    employee_name   VARCHAR2(100) NOT NULL,
-    department_id   INTEGER,
-    salary          NUMERIC(18,2) DEFAULT 0,
-    status          VARCHAR2(20) DEFAULT 'ACTIVE',
-    create_time     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-INSERT INTO employees (employee_id, employee_name, department_id, salary, status) VALUES
-(1, '张三', 10, 85000, 'ACTIVE'),
-(2, '李四', 20, 92000, 'ACTIVE'),
-(3, '王五', 10, 68000, 'INACTIVE'),
-(4, '赵六', 30, 78000, 'ACTIVE'),
-(5, '孙七', 20, 95000, 'ACTIVE');
-
-COMMIT;
-
--- ============================================
--- 第二部分：包定义（包头 + 包体）
--- ============================================
 
 CREATE OR REPLACE PACKAGE pkg_company_constants AS
     -- ========== 包级常量（编译期确定，不可修改）==========

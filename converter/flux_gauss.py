@@ -4161,12 +4161,8 @@ def _safe_map_cast(var_type: str, expr: str) -> str:
 
 
 def _emit_row_decl(proc: ProcedureInfo, mapper_expr: str, indent: str = ""):
-    _row_declared = getattr(proc, '_row_declared', False)
-    if _row_declared:
-        proc.java_logic_lines.append(f'{indent}_row = {mapper_expr};')
-    else:
-        proc.java_logic_lines.append(f'{indent}Map<String, Object> _row = {mapper_expr};')
-        proc._row_declared = True
+    proc._needs_row_var = True
+    proc.java_logic_lines.append(f'{indent}_row = {mapper_expr};')
     proc.java_logic_lines.append(f'{indent}if (_row == null) _row = java.util.Collections.emptyMap();')
 
 
@@ -4174,6 +4170,7 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
     out_param_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out}
     out_string_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out and p.java_type == "String"}
     out_long_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out and p.java_type == "Long"}
+    out_integer_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out and p.java_type == "Integer"}
     out_bigdecimal_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out and "BigDecimal" in p.java_type}
 
     # BigDecimal context: wrap double literals from CASE/ternary into BigDecimal.valueOf()
@@ -4221,6 +4218,15 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
             expr = f"Long.valueOf({expr})"
         elif target in out_long_names and not _is_long_expr(expr):
             expr = f"((Number) {expr}).longValue()"
+        elif target in out_integer_names:
+            if _is_bare_int_literal(expr):
+                expr = f"Integer.valueOf({expr})"
+            elif ".intValue()" not in expr and "_row.get(" in expr:
+                expr = f"({expr} != null ? ((Number) {expr}).intValue() : 0)"
+            elif ".get(" in expr or "mapper." in expr:
+                expr = f"((Number) {expr}).intValue()"
+            elif not _is_long_expr(expr) and "Integer" not in expr:
+                expr = f"Integer.valueOf({expr})"
         elif target in out_bigdecimal_names:
             if _is_bare_int_literal(expr):
                 expr = f"java.math.BigDecimal.valueOf({expr})"
@@ -5273,7 +5279,8 @@ def _process_cursor_fetch(fetch_data: dict, proc: ProcedureInfo):
                 var_names = [_extract_name_from_expr(into_info)]
 
             proc.java_logic_lines.append(f"if (found) {{")
-            proc.java_logic_lines.append(f"    Map<String, Object> _row = {result_var}.get({index_var});")
+            proc._needs_row_var = True
+            proc.java_logic_lines.append(f"    _row = {result_var}.get({index_var});")
             proc.java_logic_lines.append(f"    {index_var}++;")
             for vn in var_names:
                 var_type = proc.local_vars.get(vn, "Object")
@@ -5297,7 +5304,8 @@ def _process_cursor_fetch(fetch_data: dict, proc: ProcedureInfo):
                 var_names = [_extract_name_from_expr(into_info)]
             proc.java_logic_lines.append(f"found = {index_var} < ({result_var} != null ? {result_var}.size() : 0);")
             proc.java_logic_lines.append(f"if (found) {{")
-            proc.java_logic_lines.append(f"    Map<String, Object> _row = {result_var}.get({index_var});")
+            proc._needs_row_var = True
+            proc.java_logic_lines.append(f"    _row = {result_var}.get({index_var});")
             proc.java_logic_lines.append(f"    {index_var}++;")
             for vn in var_names:
                 var_type = proc.local_vars.get(vn, "Object")
@@ -10136,6 +10144,9 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
         needs_found = re.search(r'\bfound\b', logic_text) is not None
         if needs_found:
             body_lines.append("boolean found = false;")
+
+        if getattr(proc, '_needs_row_var', False):
+            body_lines.append("java.util.Map<String, Object> _row = null;")
 
         cursor_vars_to_hoist = set()
         for cursor_name, meta in proc.open_cursors.items():
