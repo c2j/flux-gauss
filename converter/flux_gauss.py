@@ -11360,14 +11360,14 @@ def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bo
                 else:
                     puts_parts.append(f'm.put("{_escape_java_string(c)}", 1);')
             puts = " ".join(puts_parts)
-            return f"        {{ var m = new java.util.HashMap<String,Object>(); {puts} when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m); }}"
+            return f"        {{ var m = new java.util.HashMap<String,Object>(); {puts} when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m).thenReturn(null); }}"
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(1);"
     if dml_returns_list:
         mock_fields = _extract_mock_fields_from_sql(dml_sql_text)
         if mock_fields:
             puts = " ".join(f'm.put("{_escape_java_string(k)}", {v});' for k, v in mock_fields.items())
-            return f"        {{ var m = new java.util.HashMap<String,Object>(); {puts} when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of(m)); }}"
-        return f"        {{ var m = new java.util.HashMap<String,Object>(); m.put(\"id\", 1); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of(m)); }}"
+            return f"        {{ var m = new java.util.HashMap<String,Object>(); {puts} when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }}"
+        return f"        {{ var m = new java.util.HashMap<String,Object>(); m.put(\"id\", 1); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }}"
     if dml_result_type == "Integer":
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(999);"
     if dml_result_type == "Long":
@@ -11383,8 +11383,8 @@ def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bo
     mock_fields = _extract_mock_fields_from_sql(dml_sql_text)
     if mock_fields:
         puts = " ".join(f'm.put("{_escape_java_string(k)}", {v});' for k, v in mock_fields.items())
-        return f"        {{ var m = new java.util.HashMap<String,Object>(); {puts} when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m); }}"
-    return f"        {{ var m = new java.util.HashMap<String,Object>(); m.put(\"id\", 1L); m.put(\"emp_id\", 1L); m.put(\"product_id\", 1L); m.put(\"v_product_id\", 1L); m.put(\"v_qty\", 10); m.put(\"total\", 100); m.put(\"v_total\", 100); m.put(\"stock_qty\", 999); m.put(\"name\", \"test\"); m.put(\"emp_name\", \"test\"); m.put(\"status\", \"ACTIVE\"); m.put(\"v_status\", \"PENDING\"); m.put(\"v_amount\", java.math.BigDecimal.TEN); m.put(\"base_salary\", java.math.BigDecimal.TEN); m.put(\"bonus_pct\", 0.10d); m.put(\"allowance\", 1000); m.put(\"count\", 1); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m); }}"
+        return f"        {{ var m = new java.util.HashMap<String,Object>(); {puts} when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m).thenReturn(null); }}"
+    return f"        {{ var m = new java.util.HashMap<String,Object>(); m.put(\"id\", 1L); m.put(\"emp_id\", 1L); m.put(\"product_id\", 1L); m.put(\"v_product_id\", 1L); m.put(\"v_qty\", 10); m.put(\"total\", 100); m.put(\"v_total\", 100); m.put(\"stock_qty\", 999); m.put(\"name\", \"test\"); m.put(\"emp_name\", \"test\"); m.put(\"status\", \"ACTIVE\"); m.put(\"v_status\", \"PENDING\"); m.put(\"v_amount\", java.math.BigDecimal.TEN); m.put(\"base_salary\", java.math.BigDecimal.TEN); m.put(\"bonus_pct\", 0.10d); m.put(\"allowance\", 1000); m.put(\"count\", 1); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m).thenReturn(null); }}"
 
 
 def _mock_all_mapper_methods(mapper_name: str, pkg: PackageInfo, lines: list, error_mode: bool = False):
@@ -12635,17 +12635,21 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
     if needs_atomic_ref:
         imports.add("import java.util.concurrent.atomic.AtomicReference;")
     has_stubs = any((proc.name, len(proc.parameters)) in STUB_PROCEDURES for proc in pkg.procedures)
-    has_while = any(
-        any("while (" in line or "while(" in line for line in proc.java_logic_lines)
-        for proc in pkg.procedures
-    )
     has_recursive = False
     for proc in pkg.procedures:
         _cn = java_method_name(proc.proc_name)
         if any(f"this.{_cn}(" in line for line in proc.java_logic_lines):
             has_recursive = True
             break
-    if has_stubs or has_while or has_recursive:
+    has_dynamic_sql = any(
+        any(dml.sql_text and re.fullmatch(r'#\{[^}]+\}', dml.sql_text.strip()) for dml in proc.dml_statements)
+        for proc in pkg.procedures
+    )
+    has_itest_while = any(
+        any("while (" in line or "while(" in line for line in proc.java_logic_lines)
+        for proc in pkg.procedures
+    )
+    if has_stubs or has_recursive or has_dynamic_sql or has_itest_while:
         imports.add("import org.junit.jupiter.api.Disabled;")
 
     _all_pkgs = all_packages or {}
@@ -12755,13 +12759,15 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
             lines.append(f"        {od}")
         if proc.is_function:
             lines.append(f"        var result = {svc_var}.{method_name}({args_str});")
-            if is_itest_stubbed or has_while or is_recursive or has_dynamic_sql:
+            if is_itest_stubbed or is_recursive or has_dynamic_sql:
                 lines.append("        // Stub/loop implementation — result may be null")
             else:
                 lines.append("        assertNotNull(result);")
-            lines.append("        // TODO: Add domain-specific assertions")
         else:
             lines.append(f"        {svc_var}.{method_name}({args_str});")
+        if out_args:
+            lines.append("        // TODO: Add domain-specific assertions for OUT parameters")
+        else:
             lines.append("        // TODO: Add domain-specific assertions")
         lines.append("    }")
         test_methods.append("\n".join(lines))
