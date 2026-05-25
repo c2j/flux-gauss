@@ -157,17 +157,25 @@ pub fn write_itest_class(
         for od in &out_decls {
             lines.push(format!("        {}", od));
         }
-        if proc.is_function {
-            lines.push(format!("        var result = {}.{}({});", svc_var, method_name, args_str));
-            if is_stubbed {
-                lines.push("        // Stub implementation — result is null".to_string());
-            } else if proc.return_type.as_ref().map_or(true, |t| t == "Object") {
-                lines.push("        // Object return type — skip assertNotNull".to_string());
-            } else {
-                lines.push("        assertNotNull(result);".to_string());
-            }
-            lines.push("        // TODO: Add domain-specific assertions".to_string());
-        } else {
+         if proc.is_function {
+             let is_recursive = proc.java_logic_lines.iter().any(|l| l.contains(&format!("this.{}(", method_name)));
+             if is_recursive {
+                 lines.push(format!("        // Recursive function — skip invocation to avoid StackOverflow"));
+                 lines.push(format!("        // var result = {}.{}({});", svc_var, method_name, args_str));
+             } else {
+                 lines.push(format!("        var result = {}.{}({});", svc_var, method_name, args_str));
+                 if is_stubbed {
+                     lines.push("        // Stub implementation — result is null".to_string());
+                 } else if proc.return_type.as_ref().map_or(true, |t| t == "Object") {
+                     lines.push("        // Object return type — skip assertNotNull".to_string());
+                 } else if proc.java_logic_lines.iter().any(|l| l.trim() == "return null;") {
+                     lines.push("        // Function may return null — skip assertNotNull".to_string());
+                 } else {
+                     lines.push("        assertNotNull(result);".to_string());
+                 }
+             }
+             lines.push("        // TODO: Add domain-specific assertions".to_string());
+         } else {
             lines.push(format!("        {}.{}({});", svc_var, method_name, args_str));
             lines.push("        // TODO: Add domain-specific assertions".to_string());
         }

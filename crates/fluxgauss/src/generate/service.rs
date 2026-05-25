@@ -469,6 +469,18 @@ fn build_service_method(
             }
         }
 
+        let refcursor_outs: Vec<_> = proc.parameters.iter()
+            .filter(|p| p.is_out() && p.is_refcursor())
+            .collect();
+        for rc_out in &refcursor_outs {
+            let rc_java = snake_to_camel(&rc_out.name);
+            if let Some(cursor_info) = proc.open_cursors.get(&rc_java) {
+                if let Some(ref result_var) = cursor_info.result_var {
+                    body_lines.push(format!("List<Map<String, Object>> {} = null;", result_var));
+                }
+            }
+        }
+
         let logic_text = proc.java_logic_lines.join(" ");
         let needs_found = logic_text.contains(" found ") || logic_text.contains("!found") || logic_text.contains("(found");
         if needs_found {
@@ -515,6 +527,15 @@ fn build_service_method(
                 l = l.replace("null;", "");
             }
             body_lines.push(l);
+        }
+
+        for rc_out in &refcursor_outs {
+            let rc_java = snake_to_camel(&rc_out.name);
+            if let Some(cursor_info) = proc.open_cursors.get(&rc_java) {
+                if let Some(ref result_var) = cursor_info.result_var {
+                    body_lines.push(format!("return {};", result_var));
+                }
+            }
         }
 
         if body_lines.is_empty() {

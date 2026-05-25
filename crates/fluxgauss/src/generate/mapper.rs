@@ -948,6 +948,14 @@ fn replace_sequence_refs(sql: &str) -> String {
     }).to_string()
 }
 
+fn strip_generics(java_type: &str) -> &str {
+    if let Some(pos) = java_type.find('<') {
+        &java_type[..pos]
+    } else {
+        java_type
+    }
+}
+
 fn convert_params_to_mybatis(
     sql: &str,
     params: &[Parameter],
@@ -989,7 +997,7 @@ fn convert_params_to_mybatis(
         let jdbc = crate::type_map::sql_type_to_jdbc(&p.sql_type);
         let java = &p.java_type;
         let placeholder = match (jdbc, java) {
-            (Some(j), jt) if !jt.is_empty() => format!("#{{{}, jdbcType={}, javaType={}}}", jn, j, jt),
+            (Some(j), jt) if !jt.is_empty() => format!("#{{{}, jdbcType={}, javaType={}}}", jn, j, strip_generics(jt)),
             _ => format!("#{{{}}}", jn),
         };
         let re = regex::Regex::new(&format!(r"(?i)\b{}\b", regex::escape(&p.name))).unwrap();
@@ -1016,9 +1024,13 @@ fn convert_params_to_mybatis(
             let bare_re = regex::Regex::new(&format!(r"(?i)\b{}\b", regex::escape(var_name))).unwrap();
             s = bare_re.replace_all(&s, format!("#{{{}}}", jn).as_str()).to_string();
         } else {
+            let is_collection = var_java_type.contains("List<") || var_java_type.contains("Map<");
             let jdbc = java_type_to_jdbc(var_java_type);
-            let placeholder = if !jdbc.is_empty() && !var_java_type.is_empty() {
-                format!("#{{{}, jdbcType={}, javaType={}}}", jn, jdbc, var_java_type)
+            let jt_stripped = strip_generics(var_java_type);
+            let placeholder = if is_collection {
+                format!("#{{{}}}", jn)
+            } else if !jdbc.is_empty() && !jt_stripped.is_empty() {
+                format!("#{{{}, jdbcType={}, javaType={}}}", jn, jdbc, jt_stripped)
             } else {
                 format!("#{{{}}}", jn)
             };
@@ -1038,7 +1050,7 @@ fn convert_params_to_mybatis(
         let jdbc = crate::type_map::sql_type_to_jdbc(&var_info.sql_type);
         let java = &var_info.java_type;
         let placeholder = match (jdbc, java) {
-            (Some(j), jt) if !jt.is_empty() => format!("#{{{}, jdbcType={}, javaType={}}}", jn, j, jt),
+            (Some(j), jt) if !jt.is_empty() => format!("#{{{}, jdbcType={}, javaType={}}}", jn, j, strip_generics(jt)),
             _ => format!("#{{{}}}", jn),
         };
         let re = regex::Regex::new(&format!(r"(?i)\b{}\b", regex::escape(var_name))).unwrap();
