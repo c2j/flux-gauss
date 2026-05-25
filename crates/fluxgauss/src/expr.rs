@@ -112,6 +112,17 @@ fn coerce_for_type(expr: &str, target_type: Option<&str>) -> String {
         }
         return "null".to_string();
     }
+    if trimmed == "\"\"" || trimmed == "''" {
+        if let Some(t) = target_type {
+            if t.contains("Timestamp") {
+                return "new java.sql.Timestamp(0)".to_string();
+            }
+            if t.contains("java.sql.Date") || t == "Date" {
+                return "new java.sql.Date(0)".to_string();
+            }
+        }
+        return trimmed.to_string();
+    }
     match target_type {
         Some(t) if t.contains("BigDecimal") && trimmed.chars().all(|c| c.is_ascii_digit()) => {
             format!("java.math.BigDecimal.valueOf({})", trimmed)
@@ -369,9 +380,10 @@ fn expr_to_java_impl(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> St
                 ogsql_parser::ast::CursorAttributeKind::BulkExceptions => "java.util.Collections.emptyList()".into(),
             }
         }
-        Expr::Default => "null".into(),
-        Expr::Prior(_) => "null".into(),
-        _ => "null".into(),
+         Expr::Default => "null".into(),
+         Expr::Prior(_) => "null".into(),
+         Expr::SysDate => "new java.sql.Timestamp(System.currentTimeMillis())".into(),
+         _ => "null".into(),
     }
 }
 
@@ -411,7 +423,7 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
         "true" => "true".into(),
         "false" => "false".into(),
         "null" => "null".into(),
-        "current_timestamp" | "systimestamp" | "localtimestamp" => "new java.sql.Timestamp(System.currentTimeMillis())".into(),
+        "sysdate" | "current_timestamp" | "systimestamp" | "localtimestamp" => "new java.sql.Timestamp(System.currentTimeMillis())".into(),
         "current_date" => "new java.sql.Date(System.currentTimeMillis())".into(),
         _ => {
             if name.contains('.') {
@@ -550,6 +562,37 @@ fn is_string_var(expr_str: &str, proc: &ProcedureInfo) -> bool {
     false
 }
 
+fn is_timestamp_or_date_var(expr_str: &str, proc: &ProcedureInfo) -> bool {
+    let name = expr_str.trim();
+    let base = name.split(|c: char| c == '.' || c == '(').next().unwrap_or(name);
+    if let Some(ty) = proc.local_vars.get(base) {
+        return ty.contains("Timestamp") || ty.contains("java.sql.Date") || ty == "Date";
+    }
+    let base_lower = base.to_lowercase().replace("_", "");
+    for (var_name, var_type) in &proc.local_vars {
+        let var_lower = var_name.to_lowercase().replace("_", "");
+        if var_lower == base_lower {
+            return var_type.contains("Timestamp") || var_type.contains("java.sql.Date") || var_type == "Date";
+        }
+    }
+    for p in &proc.parameters {
+        let p_lower = p.name.to_lowercase().replace("_", "");
+        if p_lower == base_lower || crate::naming::snake_to_camel(&p.name) == base {
+            return p.java_type.contains("Timestamp") || p.java_type.contains("java.sql.Date") || p.java_type == "Date";
+        }
+    }
+    if name.contains("new java.sql.Timestamp") && !name.contains(" - ") && !name.contains(" + ") && !name.contains(" / ") && !name.contains(" * ") {
+        return true;
+    }
+    if name == "new java.sql.Timestamp(System.currentTimeMillis())" || name.contains("System.currentTimeMillis()") && !name.contains(" - ") && !name.contains(" + ") {
+        return true;
+    }
+    if name.contains("new java.sql.Date") && !name.contains(" - ") && !name.contains(" + ") {
+        return true;
+    }
+    false
+}
+
 fn needs_get_unwrap(expr: &str) -> bool {
     (expr.contains(".get(") || expr.contains(".getOrDefault(")) && !expr.contains(".longValue()") && !expr.contains(".intValue()")
         && !expr.contains(".doubleValue()") && !expr.contains(".floatValue()")
@@ -565,17 +608,57 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
     let mut r = expr_to_java(right, proc);
 
     let is_arith = matches!(op, "*" | "+" | "-" | "/");
+    let l_is_ts = is_timestamp_or_date_var(&l, proc);
+    let r_is_ts = is_timestamp_or_date_var(&r, proc);
     if is_arith {
-        if l == "null" {
+        if op == "-" && (l_is_ts || r_is_ts) {
+            if l_is_ts && r_is_ts {
+                return format!("(({}).getTime() - ({}).getTime()) / (24 * 60 * 60 * 1000)", l, r);
+            }
+            if l_is_ts && !r_is_ts {
+                let r_coerced = if r.contains("concat(String.valueOf(\" days\"))") || r.contains("concat(\" days\")") {
+                    let stripped = r.replace(".concat(String.valueOf(\" days\"))", "").replace(".concat(\" days\")", "");
+                    format!("Long.parseLong(String.valueOf({}))", stripped.trim())
+                } else if r == "null" || r.contains("String.valueOf(") || is_string_var(&r, proc) {
+                    format!("Long.parseLong(String.valueOf({}))", r)
+                } else {
+                    r.clone()
+                };
+                return format!("new java.sql.Timestamp({}.getTime() - (long)({}) * 24 * 60 * 60 * 1000)", l, r_coerced);
+            }
+            return format!("new java.sql.Timestamp({}.getTime() - {}.getTime())", l, r);
+        }
+        if op == "+" && (l_is_ts || r_is_ts) {
+            if l_is_ts && !r_is_ts {
+                let r_coerced = if r.contains("concat(String.valueOf(\" days\"))") || r.contains("concat(\" days\")") {
+                    let stripped = r.replace(".concat(String.valueOf(\" days\"))", "").replace(".concat(\" days\")", "");
+                    format!("Long.parseLong(String.valueOf({}))", stripped.trim())
+                } else if r == "null" || r.contains("String.valueOf(") || is_string_var(&r, proc) {
+                    format!("Long.parseLong(String.valueOf({}))", r)
+                } else {
+                    r.clone()
+                };
+                return format!("new java.sql.Timestamp({}.getTime() + (long)({}) * 24 * 60 * 60 * 1000)", l, r_coerced);
+            }
+            if !l_is_ts && r_is_ts {
+                let l_coerced = if l.contains("concat(String.valueOf(\" days\"))") || l.contains("concat(\" days\")") {
+                    let stripped = l.replace(".concat(String.valueOf(\" days\"))", "").replace(".concat(\" days\")", "");
+                    format!("Long.parseLong(String.valueOf({}))", stripped.trim())
+                } else if l == "null" || l.contains("String.valueOf(") || is_string_var(&l, proc) {
+                    format!("Long.parseLong(String.valueOf({}))", l)
+                } else {
+                    l.clone()
+                };
+                return format!("new java.sql.Timestamp((long)({}) * 24 * 60 * 60 * 1000 + {}.getTime())", l_coerced, r);
+            }
+        }
+        if l == "null" && !l_is_ts {
             l = "0".into();
         }
-        if r == "null" {
+        if r == "null" && !r_is_ts {
             r = "0".into();
         }
 
-        // When arithmetic involves a String-typed operand, the PL/SQL is building
-        // a SQL fragment (e.g. to_char(sysdate-v_date-i,'yyyymmdd')). Fall back to
-        // string concatenation to produce valid Java.
         let l_is_string = (is_string_var(&l, proc) && !l.contains(".length()") && !l.contains(".intValue()") && !l.contains(".longValue()")) || l.starts_with('"');
         let r_is_string = (is_string_var(&r, proc) && !r.contains(".length()") && !r.contains(".intValue()") && !r.contains(".longValue()")) || r.starts_with('"');
         if l_is_string || r_is_string {
@@ -657,6 +740,15 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
                 let l_bd = wrap_bigdecimal(&l, is_bigdecimal_var(&l, proc), proc);
                 let r_bd = wrap_bigdecimal(&r, is_bigdecimal_var(&r, proc), proc);
                 format!("{}.compareTo({}){}", l_bd, r_bd, cmp_method)
+            } else if l_is_ts || r_is_ts {
+                let cmp_method = match op {
+                    ">" => " > 0",
+                    "<" => " < 0",
+                    ">=" => " >= 0",
+                    "<=" => " <= 0",
+                    _ => " != 0",
+                };
+                format!("{}.compareTo({}){}", l, r, cmp_method)
             } else {
                 let has_get_l = needs_get_unwrap(&l);
                 let has_get_r = needs_get_unwrap(&r);
@@ -738,6 +830,9 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
 fn unary_op_to_java(op: &str, operand: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> String {
     let inner = expr_to_java(operand, proc);
     if inner.trim() == "null" || inner.trim().ends_with("null") && !inner.trim().starts_with('"') {
+        if op == "-" && is_timestamp_or_date_var(&inner, proc) {
+            return "null".to_string();
+        }
         return "0".to_string();
     }
     match op {
@@ -839,7 +934,30 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             }
         }
         "SPLIT_PART" if jargs.len() >= 3 => format!("((String[]){}.split({}))[{} - 1]", jargs[0], jargs[1], jargs[2]),
-        "TO_CHAR" => format!("String.valueOf({})", jargs.first().map(|s| s.as_str()).unwrap_or("null")),
+        "TO_CHAR" => {
+            if jargs.len() >= 2 {
+                let arg = jargs.first().map(|s| s.as_str()).unwrap_or("null");
+                let raw_fmt = jargs.get(1).map(|s| s.as_str()).unwrap_or("");
+                let fmt_clean = raw_fmt.trim_matches('"').trim_matches('\'');
+                if fmt_clean.contains("yyyy") || fmt_clean.contains("YYYY") || fmt_clean.contains("yyyymm") {
+                    let java_fmt = fmt_clean.replace("yyyy", "yyyy").replace("YYYY", "yyyy")
+                        .replace("mm", "MM").replace("MM", "MM")
+                        .replace("dd", "dd").replace("DD", "dd")
+                        .replace("hh24", "HH").replace("HH24", "HH")
+                        .replace("mi", "mm").replace("MI", "mm")
+                        .replace("ss", "ss").replace("SS", "ss");
+                    if is_timestamp_or_date_var(arg, proc) || arg.contains("Timestamp") || arg.contains("currentTimeMillis") {
+                        format!("new java.text.SimpleDateFormat(\"{}\").format({})", java_fmt, arg)
+                    } else {
+                        format!("String.valueOf({})", arg)
+                    }
+                } else {
+                    format!("String.valueOf({})", arg)
+                }
+            } else {
+                format!("String.valueOf({})", jargs.first().map(|s| s.as_str()).unwrap_or("null"))
+            }
+        }
         "NULLIF" if jargs.len() >= 2 => format!("(java.util.Objects.equals({}, {}) ? 1 : {})", jargs[0], jargs[1], jargs[0]),
         "ARRAY_LENGTH" | "ARRAY_UPPER" => format!("({}).size()", jargs.first().map(|s| s.as_str()).unwrap_or("null")),
         "ARRAY_APPEND" => format!("/* ARRAY_APPEND */ {}", jargs.first().map(|s| s.as_str()).unwrap_or("null")),
