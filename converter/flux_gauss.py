@@ -900,6 +900,9 @@ class DmlStatement:
     is_dynamic: bool = False  # True for EXECUTE IMMEDIATE — filters proc params to only those in SQL
     returning_cols: list = field(default_factory=list)       # column names from RETURNING clause
     returning_into_vars: list = field(default_factory=list)  # variable names from INTO targets
+    is_forall_batch: bool = False  # True when FORALL is converted to MyBatis batch (<foreach>)
+    forall_batch_list_var: str = ""  # The name of the iteration variable (e.g. "item") in <foreach>
+    forall_batch_arrays: dict = field(default_factory=dict)  # {java_array_name: unwrapped_element_type}
 
 
 @dataclass
@@ -4003,6 +4006,29 @@ def _process_forall(forall_data: dict, proc: ProcedureInfo, all_packages: dict, 
         _record_todo("FORALL", proc, "TABLE-type array vars")
         return
 
+    # Determine if FORALL can be batched: range is 1..arr.COUNT, all arrays are simple typed,
+    # and we have at least one array reference.
+    _can_batch = False
+    _batch_list_var = ""
+    _batch_arrays = {}
+    if _range_match and array_refs and not _has_map_array:
+        _has_standalone_index = bool(re.search(r'\|\|\s*' + re.escape(index_var) + r'\b', dml_sql) or
+                                     re.search(r"'[^']*'\s*\|\|\s*" + re.escape(index_var), dml_sql, re.IGNORECASE))
+        _all_arrays_simple = True
+        _primary_arr_java = snake_to_camel(array_refs[0])
+        for arr_name in array_refs:
+            if arr_name.lower() != index_var.lower():
+                arr_java = snake_to_camel(arr_name)
+                arr_type = proc.local_vars.get(arr_name, "Object")
+                m_list = re.match(r'java\.util\.List<(.+)>', arr_type)
+                if m_list:
+                    _batch_arrays[arr_java] = m_list.group(1)
+                else:
+                    _all_arrays_simple = False
+        if _all_arrays_simple and _batch_arrays:
+            _can_batch = True
+            _batch_list_var = "item"
+
     _extra_text = re.sub(r'\b\w+\s*\(\s*' + re.escape(index_var) + r'\s*\)', '?', dml_sql)
     _dml_local_vars = _sql_local_var_names(proc, _extra_text)
     for _lvn in _dml_local_vars:
@@ -4029,7 +4055,8 @@ def _process_forall(forall_data: dict, proc: ProcedureInfo, all_packages: dict, 
 
     # If the DML SQL references the index variable standalone (e.g., '|| i'), pass it to mapper
     _index_var_java = f"_{index_var}"
-    if re.search(r'\b' + re.escape(index_var) + r'\b', dml_sql) and index_var not in {a.split('.')[0] for a in param_args}:
+    _has_standalone_index_ref = re.search(r'\b' + re.escape(index_var) + r'\b', dml_sql) and index_var not in {a.split('.')[0] for a in param_args}
+    if _has_standalone_index_ref:
         param_args.append(index_var)
 
     args_str = ", ".join(param_args)
@@ -4065,12 +4092,29 @@ def _process_forall(forall_data: dict, proc: ProcedureInfo, all_packages: dict, 
         method_id=mapper_method,
         sql_text=mybatis_sql,
         extra_params=_forall_extra_params,
+        is_forall_batch=_can_batch,
+        forall_batch_list_var=_batch_list_var,
+        forall_batch_arrays=_batch_arrays if _can_batch else {},
     ))
 
-    proc.java_logic_lines.append(f'{loop_start} {{')
-    proc._needs_rowcount_var = True
-    proc.java_logic_lines.append(f'    _sqlRowCount += mapper.{mapper_method}({args_str});')
-    proc.java_logic_lines.append(f'}}')
+    if _can_batch:
+        proc._needs_rowcount_var = True
+        _batch_list_name = f'_batch_{mapper_method}'
+        proc.java_logic_lines.append(f'java.util.List<java.util.Map<String, Object>> {_batch_list_name} = new java.util.ArrayList<>();')
+        proc.java_logic_lines.append(f'for (int _bi = 0; _bi < {_primary_arr_java}.size(); _bi++) {{')
+        proc.java_logic_lines.append(f'    java.util.Map<String, Object> _brow = new java.util.LinkedHashMap<>();')
+        for arr_java in _batch_arrays:
+            proc.java_logic_lines.append(f'    _brow.put("{arr_java}", {arr_java}.get(_bi));')
+        if _has_standalone_index_ref:
+            proc.java_logic_lines.append(f'    _brow.put("_{index_var}", _bi + 1);')
+        proc.java_logic_lines.append(f'    {_batch_list_name}.add(_brow);')
+        proc.java_logic_lines.append(f'}}')
+        proc.java_logic_lines.append(f'_sqlRowCount += mapper.{mapper_method}({_batch_list_name});')
+    else:
+        proc.java_logic_lines.append(f'{loop_start} {{')
+        proc._needs_rowcount_var = True
+        proc.java_logic_lines.append(f'    _sqlRowCount += mapper.{mapper_method}({args_str});')
+        proc.java_logic_lines.append(f'}}')
 
     for _tm in re.finditer(r'\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM|DELETE)\s+(\w+)', dml_sql, re.IGNORECASE):
         if _tm.group(1).upper() not in ('SELECT', 'FROM', 'WHERE', 'SET', 'VALUES'):
@@ -9206,6 +9250,15 @@ def _dml_used_local_vars(proc: ProcedureInfo, dml: DmlStatement) -> list:
 def _build_mapper_method(proc: ProcedureInfo, dml: DmlStatement, imports: set) -> str:
     method_name = dml.method_id
 
+    # FORALL batch: single param accepting the primary array list
+    if dml.is_forall_batch and dml.forall_batch_arrays:
+        _primary_arr = next(iter(dml.forall_batch_arrays))
+        ret = "int"
+        imports.add("import java.util.List;")
+        imports.add("import java.util.Map;")
+        imports.add("import org.apache.ibatis.annotations.Param;")
+        return f"    int {method_name}(@Param(\"list\") java.util.List<java.util.Map<String, Object>> list);"
+
     sql_raw = dml.sql_text or ""
     _sql_refs = set(re.findall(r'[#\$]\{(\w+)', sql_raw))
 
@@ -9778,9 +9831,22 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
             xml_parts.append(f"<!-- {safe_text} -->")
     if filter_line:
         xml_parts.append(filter_line)
-    xml_parts.append(f'<{tag} id="{dml.method_id}"{params_attrs}{result_type_attr}>')
-    xml_parts.append(formatted_sql)
-    xml_parts.append(f'</{tag}>')
+
+    if dml.is_forall_batch and dml.forall_batch_arrays:
+        batch_sql = sql
+        for arr_java in dml.forall_batch_arrays:
+            batch_sql = re.sub(r'#\{' + re.escape(arr_java) + r'\}', f'#{{item.{arr_java}}}', batch_sql)
+        batch_sql = re.sub(r'#\{_(\w+)\}', lambda m: f'#{{item._{m.group(1)}}}', batch_sql)
+        formatted_batch = "\n".join(f"        {line}" for line in batch_sql.split("\n"))
+        xml_parts.append(f'<{tag} id="{dml.method_id}"{result_type_attr}>')
+        xml_parts.append(f'    <foreach collection="list" item="item" separator=";">')
+        xml_parts.append(formatted_batch)
+        xml_parts.append(f'    </foreach>')
+        xml_parts.append(f'</{tag}>')
+    else:
+        xml_parts.append(f'<{tag} id="{dml.method_id}"{params_attrs}{result_type_attr}>')
+        xml_parts.append(formatted_sql)
+        xml_parts.append(f'</{tag}>')
     return "\n".join(xml_parts)
 
 
@@ -10800,7 +10866,7 @@ def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureI
             var_name = m.group(1)
             local_java = {snake_to_camel(v) for v in proc.local_vars.keys()}
             param_java = {p.java_name for p in proc.parameters}
-            if var_name not in local_java and var_name not in param_java and var_name not in ('_row', 'result'):
+            if var_name not in local_java and var_name not in param_java and var_name not in ('_row', 'result', '_brow'):
                 failed.append(f"未声明的包状态变量 '{var_name}' 调用了 .put()")
                 break
 
@@ -11136,6 +11202,24 @@ def _default_test_value(java_type: str, param_name: str, pkg=None) -> str:
     return f"\"test_{param_name}\""
 
 
+def _has_unchecked_null_size(proc: ProcedureInfo) -> bool:
+    result_vars_in_size = set()
+    for line in proc.java_logic_lines:
+        for m in re.finditer(r'(\w+Result)\.size\(\)', line):
+            result_vars_in_size.add(m.group(1))
+    if not result_vars_in_size:
+        return False
+    all_text = "\n".join(proc.java_logic_lines)
+    for rv in result_vars_in_size:
+        has_mapper_init = bool(re.search(rf'\b{re.escape(rv)}\s*=\s*\w+Mapper\.', all_text) or
+                              re.search(rf'\b{re.escape(rv)}\s*=\s*\w+mapper\.', all_text))
+        has_null_guard = bool(re.search(rf'\b{re.escape(rv)}\s*==\s*null\b.*{re.escape(rv)}\s*=\s*new\b', all_text) or
+                             re.search(rf'if\s*\(\s*{re.escape(rv)}\s*==\s*null\s*\)\s*{re.escape(rv)}\s*=\s*new', all_text))
+        if not has_mapper_init and not has_null_guard:
+            return True
+    return False
+
+
 def _build_success_test(proc: ProcedureInfo, mapper_name: str,
                          param_values: list, out_decls: list,
                          args_str: str, service_injections: dict,
@@ -11145,7 +11229,13 @@ def _build_success_test(proc: ProcedureInfo, mapper_name: str,
     has_while = any("while (" in line or "while(" in line for line in proc.java_logic_lines)
     camel_name = java_method_name(proc.proc_name)
     is_recursive = any(f"this.{camel_name}(" in line for line in proc.java_logic_lines)
-    if has_while:
+    has_conditional_while = any(re.search(r'while\s*\(\s*\w+\s*[><=!]', line) for line in proc.java_logic_lines)
+    has_sm_guard = any("_smGuard" in line for line in proc.java_logic_lines)
+    has_do_while = "} while (" in " ".join(proc.java_logic_lines)
+    has_indexed_cursor = any("CursorIdx" in line or "CurIdx" in line or ".get(vCurIdx" in line or ".get(vCursorIdx" in line for line in proc.java_logic_lines)
+    has_unchecked_null_size = _has_unchecked_null_size(proc)
+    is_safe_while = (has_while and has_indexed_cursor and not has_conditional_while and not has_sm_guard and not has_do_while and not has_unchecked_null_size)
+    if has_while and not is_safe_while:
         lines.append("    @org.junit.jupiter.api.Disabled(\"auto-generated mock cannot terminate while loop\")")
     elif is_recursive:
         lines.append("    @org.junit.jupiter.api.Disabled(\"auto-generated mock cannot terminate recursive call\")")
@@ -11193,7 +11283,7 @@ def _collect_all_dmls(pkg: PackageInfo) -> dict:
                     total = dyn_param_count + local_var_count + extra_param_count
                 else:
                     total = in_param_count + local_var_count + extra_param_count
-                all_dmls[dml.method_id] = (dml.method_id, dml.sql_type, dml.result_type, dml.returns_list, total, dml.sql_text, dml.returning_cols, dml.returning_into_vars)
+                all_dmls[dml.method_id] = (dml.method_id, dml.sql_type, dml.result_type, dml.returns_list, total, dml.sql_text, dml.returning_cols, dml.returning_into_vars, dml.is_forall_batch)
     return all_dmls
 
 
@@ -11390,7 +11480,13 @@ def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bo
 def _mock_all_mapper_methods(mapper_name: str, pkg: PackageInfo, lines: list, error_mode: bool = False):
     all_dmls = _collect_all_dmls(pkg)
     for dml_key, dml_info in all_dmls.items():
-        dml_method_id, dml_sql_type, dml_result_type, dml_returns_list, dml_param_count, dml_sql_text, dml_returning_cols, dml_returning_into_vars = dml_info
+        dml_method_id, dml_sql_type, dml_result_type, dml_returns_list, dml_param_count, dml_sql_text, dml_returning_cols, dml_returning_into_vars, dml_is_forall_batch = dml_info
+        if dml_is_forall_batch:
+            if error_mode:
+                lines.append(f"        when({mapper_name}.{dml_method_id}(anyList())).thenReturn(0);")
+            else:
+                lines.append(f"        when({mapper_name}.{dml_method_id}(anyList())).thenReturn(1);")
+            continue
         method_any = ", ".join(["any()"] * dml_param_count) if dml_param_count > 0 else ""
         if error_mode and dml_sql_type == "select":
             if dml_returns_list:
@@ -11422,8 +11518,14 @@ def _build_error_test(proc: ProcedureInfo, mapper_name: str,
                        svc_method_param_counts: dict, pkg: PackageInfo) -> str:
     method_name = java_method_name(proc.proc_name)
     has_while = any("while (" in line or "while(" in line for line in proc.java_logic_lines)
+    has_conditional_while = any(re.search(r'while\s*\(\s*\w+\s*[><=!]', line) for line in proc.java_logic_lines)
+    has_sm_guard = any("_smGuard" in line for line in proc.java_logic_lines)
+    has_do_while = "} while (" in " ".join(proc.java_logic_lines)
+    has_indexed_cursor = any("CursorIdx" in line or "CurIdx" in line or ".get(vCurIdx" in line or ".get(vCursorIdx" in line for line in proc.java_logic_lines)
+    has_unchecked_null_size = _has_unchecked_null_size(proc)
+    is_safe_while = (has_while and has_indexed_cursor and not has_conditional_while and not has_sm_guard and not has_do_while and not has_unchecked_null_size)
     lines = []
-    if has_while:
+    if has_while and not is_safe_while:
         lines.append("    @org.junit.jupiter.api.Disabled(\"auto-generated mock cannot terminate while loop\")")
     lines.append("    @Test")
     lines.append(f"    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)")
@@ -12642,7 +12744,7 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
             has_recursive = True
             break
     has_dynamic_sql = any(
-        any(dml.sql_text and re.fullmatch(r'#\{[^}]+\}', dml.sql_text.strip()) for dml in proc.dml_statements)
+        any(dml.sql_text and (re.fullmatch(r'#\{[^}]+\}', dml.sql_text.strip()) or re.search(r'\$\{[^}]+\}', dml.sql_text)) for dml in proc.dml_statements)
         for proc in pkg.procedures
     )
     has_itest_while = any(
@@ -12721,14 +12823,18 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
 
         is_itest_stubbed = (proc.name, len(proc.parameters)) in STUB_PROCEDURES
         has_while = any("while (" in line or "while(" in line for line in proc.java_logic_lines)
+        has_conditional_while = any(re.search(r'while\s*\(\s*\w+\s*[><=!]', line) for line in proc.java_logic_lines)
+        has_sm_guard = any("_smGuard" in line for line in proc.java_logic_lines)
+        has_do_while = "} while (" in " ".join(proc.java_logic_lines)
+        has_indexed_cursor = any("CursorIdx" in line or "CurIdx" in line or ".get(vCurIdx" in line or ".get(vCursorIdx" in line for line in proc.java_logic_lines)
+        has_unchecked_null_size = _has_unchecked_null_size(proc)
+        is_safe_while = (has_while and has_indexed_cursor and not has_conditional_while and not has_sm_guard and not has_do_while and not has_unchecked_null_size)
         itest_camel_name = java_method_name(proc.proc_name)
         is_recursive = any(f"this.{itest_camel_name}(" in line for line in proc.java_logic_lines)
         has_dynamic_sql = any(
-            dml.sql_text and re.fullmatch(r'#\{[^}]+\}', dml.sql_text.strip())
+            dml.sql_text and (re.fullmatch(r'#\{[^}]+\}', dml.sql_text.strip()) or re.search(r'\$\{[^}]+\}', dml.sql_text))
             for dml in proc.dml_statements
         )
-        # Determine timeout based on procedure complexity
-        # Heuristic: DML count + service calls + logic lines indicate how many DB round-trips occur
         complexity_score = len(proc.dml_statements) + len(proc.service_calls) + len(proc.java_logic_lines) // 10
         if complexity_score > 20:
             timeout_seconds = 30
@@ -12737,13 +12843,17 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
         else:
             timeout_seconds = 10
         lines = []
+        _itest_disabled = False
         if is_itest_stubbed:
             lines.append("    @Disabled(\"Converter stub — complex PL/pgSQL pattern requires manual implementation\")")
-        elif has_while:
+            _itest_disabled = True
+        elif has_while and not is_safe_while:
             lines.append("    @Disabled(\"auto-generated itest cannot terminate while loop\")")
+            _itest_disabled = True
         elif is_recursive:
             lines.append("    @Disabled(\"auto-generated itest cannot terminate recursive call\")")
-        elif has_dynamic_sql:
+            _itest_disabled = True
+        if has_dynamic_sql and not _itest_disabled:
             lines.append("    @Disabled(\"auto-generated itest cannot exercise runtime-constructed dynamic SQL\")")
         if sql_script:
             if itest_cfg.get("mode") == "remote":
