@@ -5856,7 +5856,8 @@ def _process_return_query(rq_data: dict, proc: ProcedureInfo, all_packages: dict
     else:
         dynamic_expr = rq_data.get("dynamic_expr", {})
         var_name = _extract_var_name_from_expr(dynamic_expr)
-        proc.java_logic_lines.append(f"// TODO: RETURN QUERY EXECUTE — dynamic SQL: {var_name}")
+        proc.java_logic_lines.append(f"// TODO: RETURN QUERY EXECUTE — dynamic SQL variable: {var_name}")
+        proc.java_logic_lines.append(f"//       This function returns a dynamic query result. Consider using mapper.selectXxx() with the resolved SQL.")
         _record_todo("RETURN_QUERY_DYNAMIC", proc, f"var={var_name}")
 
 
@@ -6393,7 +6394,9 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                     _mc = f"mapper.{mapper_method}({param_args_str})"
                     _emit_dml_with_rowcount(proc, _mc)
                 return
-        proc.java_logic_lines.append(f"// TODO: EXECUTE {var_name} — could not resolve SQL string")
+        proc.java_logic_lines.append(f"// TODO: EXECUTE IMMEDIATE {var_name} — dynamic SQL could not be resolved at conversion time")
+        proc.java_logic_lines.append(f"//       Manual fix: create a dedicated mapper method with the resolved SQL,")
+        proc.java_logic_lines.append(f"//       or resolve {snake_to_camel(var_name.split('.')[0]) if var_name else var_name} at runtime and use a dynamic query approach")
         _record_todo("EXECUTE_UNRESOLVED", proc, f"var={var_name}")
         return
 
@@ -7932,9 +7935,9 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                         return f'{var_java}.{field_java}.doubleValue()'
                     return f'{var_java}.{field_java}'
                 if len(parts) >= 2 and field_name.upper() == "COUNT":
-                    if var_type.startswith("List<"):
+                    if "List<" in var_type:
                         return f"{var_java}.size()"
-                    if _param_type.startswith("List<"):
+                    if "List<" in _param_type:
                         return f"{var_java}.size()"
                 if var_type in ("Map<String, Object>", "Object") or var_name_raw not in proc.local_vars:
                     field_key = field_name.lower()
@@ -11134,9 +11137,9 @@ def _build_test_methods(proc: ProcedureInfo, mapper_name: str, service_injection
 
     if has_raise:
         results.append(_build_error_test(proc, mapper_name, param_values, out_decls, args_str, service_injections, svc_method_param_counts, pkg))
-        results.append(_build_success_test(proc, mapper_name, param_values, out_decls, args_str, service_injections, svc_method_param_counts, pkg))
+        results.append(_build_success_test(proc, mapper_name, param_values, out_decls, args_str, service_injections, svc_method_param_counts, pkg, out_params))
     else:
-        results.append(_build_success_test(proc, mapper_name, param_values, out_decls, args_str, service_injections, svc_method_param_counts, pkg))
+        results.append(_build_success_test(proc, mapper_name, param_values, out_decls, args_str, service_injections, svc_method_param_counts, pkg, out_params))
 
     return results
 
@@ -11223,7 +11226,8 @@ def _has_unchecked_null_size(proc: ProcedureInfo) -> bool:
 def _build_success_test(proc: ProcedureInfo, mapper_name: str,
                          param_values: list, out_decls: list,
                          args_str: str, service_injections: dict,
-                         svc_method_param_counts: dict, pkg: PackageInfo) -> str:
+                         svc_method_param_counts: dict, pkg: PackageInfo,
+                         out_params: list = None) -> str:
     method_name = java_method_name(proc.proc_name)
     lines = []
     has_while = any("while (" in line or "while(" in line for line in proc.java_logic_lines)
@@ -11262,6 +11266,20 @@ def _build_success_test(proc: ProcedureInfo, mapper_name: str,
             lines.append(f"        assertNotNull(result);")
     else:
         lines.append(f"        service.{method_name}({args_str});")
+
+    all_dmls = _collect_all_dmls(pkg)
+
+    _dml_insert_update_delete = [d for d in proc.dml_statements if d.sql_type in ("insert", "update", "delete")]
+    if _dml_insert_update_delete and not is_stubbed and not has_empty_body and not has_body_error:
+        first_dml = _dml_insert_update_delete[0]
+        dml_info = all_dmls.get(first_dml.method_id)
+        if dml_info:
+            _, _, _, _, dml_param_count, _, _, _, dml_is_forall_batch = dml_info
+            if dml_is_forall_batch:
+                lines.append(f"        verify({mapper_name}, atLeast(0)).{first_dml.method_id}(anyList());")
+            else:
+                method_any = ", ".join(["any()"] * dml_param_count) if dml_param_count > 0 else ""
+                lines.append(f"        verify({mapper_name}, atLeast(0)).{first_dml.method_id}({method_any});")
 
     lines.append("    }")
     return "\n".join(lines)
@@ -12876,9 +12894,14 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
         else:
             lines.append(f"        {svc_var}.{method_name}({args_str});")
         if out_args:
-            lines.append("        // TODO: Add domain-specific assertions for OUT parameters")
-        else:
-            lines.append("        // TODO: Add domain-specific assertions")
+            lines.append("        // TODO: Add assertions for OUT parameters (values depend on test data)")
+            for oa_name in out_args:
+                lines.append(f"        // assertNotNull({oa_name}.get());")
+        if not proc.is_function and not out_args:
+            if proc.dml_statements:
+                lines.append(f"        // Verify: check database state after {java_method_name(proc.proc_name)}")
+            else:
+                lines.append("        // TODO: Add domain-specific assertions")
         lines.append("    }")
         test_methods.append("\n".join(lines))
 
