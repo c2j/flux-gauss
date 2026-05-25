@@ -441,7 +441,8 @@ pub fn build_full_schema_map(
     sql_files: &[std::path::PathBuf],
 ) -> HashMap<String, HashMap<String, String>> {
     let ddl_schemas = parse_table_ddl(sql_files);
-    build_schema_map(all_packages, &ddl_schemas)
+    let result = build_schema_map(all_packages, &ddl_schemas);
+    result
 }
 
 fn is_better_type(new_type: &str, existing_type: &str) -> bool {
@@ -461,7 +462,7 @@ fn maybe_upgrade_type(sql_type: &str, col_name: &str) -> String {
         let lc = col_name.to_lowercase();
         if lc == "id" || lc.ends_with("_id") { return "BIGINT".to_string(); }
         if lc.ends_with("_qty") || lc.ends_with("_count") || lc.ends_with("_no") || lc.ends_with("_num") || lc == "quantity" { return "INT".to_string(); }
-        if lc == "price" || lc == "amount" || lc.ends_with("_amount") || lc.ends_with("_price") || lc.ends_with("_fee") || lc.ends_with("_balance") || lc.ends_with("_rate") || lc.ends_with("_total") { return "NUMERIC(18,2)".to_string(); }
+        if lc == "price" || lc == "amount" || lc.ends_with("_amount") || lc.ends_with("_price") || lc.ends_with("_fee") || lc.ends_with("_balance") || lc.ends_with("_rate") || lc.ends_with("_total") || lc == "salary" || lc.ends_with("_salary") || lc == "budget" || lc.ends_with("_budget") || lc == "bonus" || lc.ends_with("_bonus") || lc.ends_with("_pct") || lc.ends_with("_percent") || lc == "cost" || lc.ends_with("_cost") || lc == "revenue" || lc.ends_with("_revenue") || lc.ends_with("_score") { return "NUMERIC(18,2)".to_string(); }
         if lc.ends_with("_at") || lc.ends_with("_time") || lc.ends_with("_date") || lc == "created_at" || lc == "updated_at" { return "TIMESTAMP".to_string(); }
         if lc == "active" || lc == "processed" || lc == "enabled" || lc.starts_with("is_") || lc.starts_with("has_") { return "BOOLEAN".to_string(); }
     }
@@ -672,7 +673,12 @@ pub fn parse_table_ddl(sql_files: &[std::path::PathBuf]) -> HashMap<String, Hash
             }
 
             if !columns.is_empty() {
-                schema.insert(table_name, columns);
+                let entry = schema.entry(table_name).or_insert_with(HashMap::new);
+                for (col, typ) in columns {
+                    if !entry.contains_key(&col) || is_better_type(&typ, entry.get(&col).unwrap()) {
+                        entry.insert(col, typ);
+                    }
+                }
             }
         }
     }
