@@ -584,10 +584,10 @@ fn is_timestamp_or_date_var(expr_str: &str, proc: &ProcedureInfo) -> bool {
     if name.contains("new java.sql.Timestamp") && !name.contains(" - ") && !name.contains(" + ") && !name.contains(" / ") && !name.contains(" * ") {
         return true;
     }
-    if name == "new java.sql.Timestamp(System.currentTimeMillis())" || name.contains("System.currentTimeMillis()") && !name.contains(" - ") && !name.contains(" + ") {
+    if name == "new java.sql.Timestamp(System.currentTimeMillis())" || (name.contains("System.currentTimeMillis()") && !name.contains(" - ") && !name.contains(" + ") && !name.contains(".getYear()") && !name.contains(".getMonthValue()") && !name.contains(".getDayOfMonth()")) {
         return true;
     }
-    if name.contains("new java.sql.Date") && !name.contains(" - ") && !name.contains(" + ") {
+    if name.contains("new java.sql.Date") && !name.contains(" - ") && !name.contains(" + ") && !name.contains(".getYear()") && !name.contains(".getMonthValue()") && !name.contains(".getDayOfMonth()") {
         return true;
     }
     false
@@ -714,8 +714,8 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
                 let safe_r = if r_null { "0".to_string() } else { r.clone() };
                 return format!("/* unresolved */ {} {} {}", safe_l, op, safe_r);
             }
-            let l_is_str = is_string_var(&l, proc) && !l.contains(".length()") && !l.contains(".intValue()") && !l.contains(".longValue()") && !l.contains(".indexOf(") && !l.contains(".charAt(");
-            let r_is_str = is_string_var(&r, proc) && !r.contains(".length()") && !r.contains(".intValue()") && !r.contains(".longValue()") && !r.contains(".indexOf(") && !r.contains(".charAt(");
+            let l_is_str = (is_string_var(&l, proc) && !l.contains(".length()") && !l.contains(".intValue()") && !l.contains(".longValue()") && !l.contains(".indexOf(") && !l.contains(".charAt(")) || l.starts_with('"');
+            let r_is_str = (is_string_var(&r, proc) && !r.contains(".length()") && !r.contains(".intValue()") && !r.contains(".longValue()") && !r.contains(".indexOf(") && !r.contains(".charAt(")) || r.starts_with('"');
             if l_is_str || r_is_str {
                 let cmp_method = match op {
                     ">" => " > 0",
@@ -981,7 +981,20 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         "REGEXP_REPLACE" if jargs.len() >= 3 => format!("{}.replaceAll({}, {})", jargs[0], jargs[1], jargs[2]),
         "LEFT" if jargs.len() >= 2 => format!("{}.substring(0, Math.min({}.length(), {}))", jargs[0], jargs[0], jargs[1]),
         "RIGHT" if jargs.len() >= 2 => format!("{}.substring(Math.max(0, {}.length() - {}))", jargs[0], jargs[0], jargs[1]),
-        "LPAD" | "RPAD" => format!("/* {} */ {}", upper, jargs.first().map(|s| s.as_str()).unwrap_or("null")),
+        "LPAD" => {
+            match jargs.len() {
+                0 | 1 => jargs.first().map(|s| s.as_str()).unwrap_or("\"\"").to_string(),
+                2 => format!("String.format(\"%\" + ({}) + \"s\", {})", jargs[1], jargs[0]),
+                _ => format!("String.format(\"%\" + ({}) + \"s\", {}).replace(\" \", {})", jargs[1], jargs[0], jargs[2]),
+            }
+        }
+        "RPAD" => {
+            match jargs.len() {
+                0 | 1 => jargs.first().map(|s| s.as_str()).unwrap_or("\"\"").to_string(),
+                2 => format!("String.format(\"%-\" + ({}) + \"s\", {})", jargs[1], jargs[0]),
+                _ => format!("String.format(\"%-\" + ({}) + \"s\", {}).replace(\" \", {})", jargs[1], jargs[0], jargs[2]),
+            }
+        }
         "REPEAT" if jargs.len() >= 2 => format!("{}.repeat({})", jargs[0], jargs[1]),
         "REVERSE" => format!("new StringBuilder({}).reverse().toString()", jargs.first().map(|s| s.as_str()).unwrap_or("null")),
         "CONCAT" | "CONCAT_WS" if !jargs.is_empty() => {
@@ -1090,13 +1103,13 @@ fn special_function_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: 
                 _ => String::new(),
             };
             let ts_expr = expr_to_java(&args[1], proc);
-            match field.as_str() {
-                "year" => format!("({}).toLocalDateTime().toLocalDate().getYear()", ts_expr),
-                "month" => format!("({}).toLocalDateTime().toLocalDate().getMonthValue()", ts_expr),
-                "day" => format!("({}).toLocalDateTime().toLocalDate().getDayOfMonth()", ts_expr),
-                "hour" => format!("({}).toLocalDateTime().getHour()", ts_expr),
-                "minute" => format!("({}).toLocalDateTime().getMinute()", ts_expr),
-                "second" => format!("({}).toLocalDateTime().getSecond()", ts_expr),
+             match field.as_str() {
+                 "year" => format!("java.time.Instant.ofEpochMilli({}.getTime()).atZone(java.time.ZoneId.systemDefault()).toLocalDate().getYear()", ts_expr),
+                 "month" => format!("java.time.Instant.ofEpochMilli({}.getTime()).atZone(java.time.ZoneId.systemDefault()).toLocalDate().getMonthValue()", ts_expr),
+                 "day" => format!("java.time.Instant.ofEpochMilli({}.getTime()).atZone(java.time.ZoneId.systemDefault()).toLocalDate().getDayOfMonth()", ts_expr),
+                 "hour" => format!("java.time.Instant.ofEpochMilli({}.getTime()).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime().getHour()", ts_expr),
+                 "minute" => format!("java.time.Instant.ofEpochMilli({}.getTime()).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime().getMinute()", ts_expr),
+                 "second" => format!("java.time.Instant.ofEpochMilli({}.getTime()).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime().getSecond()", ts_expr),
                 _ => format!("/* EXTRACT({}) */ 0", field),
             }
         }

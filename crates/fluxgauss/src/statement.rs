@@ -102,6 +102,37 @@ fn is_unreachable_after_terminal(java_logic_lines: &[String]) -> bool {
     false
 }
 
+fn resolve_var_type<'a>(proc: &'a ProcedureInfo, var_name: &str) -> (&'a str, bool) {
+    if let Some(t) = proc.local_vars.get(var_name) {
+        return (t.as_str(), false);
+    }
+    for p in &proc.parameters {
+        if p.name == var_name {
+            return (p.java_type.as_str(), p.is_out());
+        }
+    }
+    ("Object", false)
+}
+
+fn row_extraction_expr(row_var: &str, col_name: &str, declared_type: &str) -> (String, bool) {
+    match declared_type {
+        "Long" | "long" => (format!("({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).longValue() : 0L)", row_var, col_name, row_var, col_name), false),
+        "Integer" | "int" => (format!("({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).intValue() : 0)", row_var, col_name, row_var, col_name), false),
+        "String" => (format!("({}.get(\"{}\") instanceof String ? (String) {}.get(\"{}\") : {}.get(\"{}\") != null ? String.valueOf({}.get(\"{}\")) : null)", row_var, col_name, row_var, col_name, row_var, col_name, row_var, col_name), false),
+        t if t.contains("BigDecimal") => (format!("({}.get(\"{}\") instanceof java.math.BigDecimal ? (java.math.BigDecimal) {}.get(\"{}\") : java.math.BigDecimal.ZERO)", row_var, col_name, row_var, col_name), false),
+        "Double" | "double" | "Float" | "float" => (format!("({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).doubleValue() : 0.0)", row_var, col_name, row_var, col_name), false),
+        t if t.contains("Timestamp") => (format!("({}.get(\"{}\") instanceof java.sql.Timestamp ? (java.sql.Timestamp) {}.get(\"{}\") : null)", row_var, col_name, row_var, col_name), false),
+        t if t.contains("java.sql.Date") => (format!("({}.get(\"{}\") instanceof java.sql.Date ? (java.sql.Date) {}.get(\"{}\") : null)", row_var, col_name, row_var, col_name), false),
+        t if t.contains("List<") || t.contains("ArrayList") => (format!("(java.util.List) {}.get(\"{}\")", row_var, col_name), false),
+        t if t.contains("AtomicReference") && t.contains("Integer") => (format!(".set({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).intValue() : 0)", row_var, col_name, row_var, col_name), true),
+        t if t.contains("AtomicReference") && t.contains("Long") => (format!(".set({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).longValue() : 0L)", row_var, col_name, row_var, col_name), true),
+        t if t.contains("AtomicReference") && t.contains("BigDecimal") => (format!(".set({}.get(\"{}\") instanceof java.math.BigDecimal ? (java.math.BigDecimal) {}.get(\"{}\") : java.math.BigDecimal.ZERO)", row_var, col_name, row_var, col_name), true),
+        t if t.contains("AtomicReference") && t.contains("String") => (format!(".set((String) {}.get(\"{}\"))", row_var, col_name), true),
+        "Object" => (String::new(), false),
+        _ => (format!("{}.get(\"{}\")", row_var, col_name), false),
+    }
+}
+
 fn is_control_structure_line(line: &str) -> bool {
     let t = line.trim_start();
     t.starts_with('}')
@@ -262,6 +293,16 @@ fn clean_sql_for_mapper(sql: &str, dml_type: DmlType) -> String {
                 if let Some(sel_caps) = select_capture_regex().captures(before_into) {
                     let select_list = sel_caps.get(1).unwrap().as_str();
                     let columns: Vec<&str> = select_list.split(',').map(|c| c.trim()).collect();
+
+                let into_raw_fields: Vec<&str> = into_text.split(',')
+                    .map(|f| f.trim())
+                    .collect();
+                let has_record_field = into_raw_fields.iter().any(|f| f.contains('.'));
+
+                if columns.len() == 1 && into_fields.len() == 1 && !has_record_field {
+                    s = format!("select {} {}", select_list, from_and_rest);
+                    return s;
+                }
 
                     if columns.len() == into_fields.len() {
                         let needs_alias = columns.iter().zip(into_fields.iter()).any(|(c, f)| c != f);
@@ -786,13 +827,13 @@ fn process_sql_statement(
                              .cloned()
                              .unwrap_or_else(|| "Object".to_string());
                          let rt = infer_select_result_type(&declared_type, &clean_sql);
-                        let line = if rt.contains("Map") {
-                            format!("{{ var _row = mapper.{}({}); if (_row != null) {{ {} = _row; }} }}", method_id, args, var_java)
-                        } else if rt != declared_type {
-                            format!("String _{} = mapper.{}({});", var_name, method_id, args)
-                        } else {
-                            format!("{} = mapper.{}({});", var_java, method_id, args)
-                        };
+                         let line = if rt.contains("Map") {
+                             format!("{{ var _row = mapper.{}({}); if (_row != null) {{ {} = _row; }} }}", method_id, args, var_java)
+                         } else if rt != declared_type {
+                             format!("String _{} = mapper.{}({});", var_name, method_id, args)
+                         } else {
+                             format!("{{ var _val = mapper.{}({}); if (_val != null) {} = _val; }}", method_id, args, var_java)
+                         };
                         (rt, line, String::new())
                     }
                 } else {
@@ -814,6 +855,42 @@ fn process_sql_statement(
                     extra_params: Vec::new(),
                 });
                 push_logic_line(proc, java_line);
+
+                // Extract simple variables from Map result (e.g. SELECT INTO v_product_id, v_qty)
+                if !row_var_name.is_empty() && !var_names.is_empty() {
+                    push_logic_line(proc, format!("if ({} != null) {{", row_var_name));
+                    for var_name in &var_names {
+                        let var_java = snake_to_camel(var_name);
+                        let (type_str, is_out_param) = resolve_var_type(proc, var_name);
+                        let declared_type = type_str.to_string();
+                        let (extraction, is_set_call) = if is_out_param {
+                            let inner = match declared_type.as_str() {
+                                "Long" | "long" => format!(".set({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).longValue() : 0L)", row_var_name, var_name, row_var_name, var_name),
+                                "Integer" | "int" => format!(".set({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).intValue() : 0)", row_var_name, var_name, row_var_name, var_name),
+                                "String" => format!(".set((String) {}.get(\"{}\"))", row_var_name, var_name),
+                                t if t.contains("BigDecimal") => format!(".set({}.get(\"{}\") instanceof java.math.BigDecimal ? (java.math.BigDecimal) {}.get(\"{}\") : java.math.BigDecimal.ZERO)", row_var_name, var_name, row_var_name, var_name),
+                                "Double" | "double" | "Float" | "float" => format!(".set({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).doubleValue() : 0.0)", row_var_name, var_name, row_var_name, var_name),
+                                _ => format!(".set({}.get(\"{}\"))", row_var_name, var_name),
+                            };
+                            (inner, true)
+                        } else {
+                            match declared_type.as_str() {
+                                "Long" | "long" => (format!("({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).longValue() : 0L)", row_var_name, var_name, row_var_name, var_name), false),
+                                 "Integer" | "int" => (format!("({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).intValue() : 0)", row_var_name, var_name, row_var_name, var_name), false),
+                                 "String" => (format!("({}.get(\"{}\") instanceof String ? (String) {}.get(\"{}\") : {}.get(\"{}\") != null ? String.valueOf({}.get(\"{}\")) : null)", row_var_name, var_name, row_var_name, var_name, row_var_name, var_name, row_var_name, var_name), false),
+                                t if t.contains("BigDecimal") => (format!("({}.get(\"{}\") instanceof java.math.BigDecimal ? (java.math.BigDecimal) {}.get(\"{}\") : java.math.BigDecimal.ZERO)", row_var_name, var_name, row_var_name, var_name), false),
+                                "Double" | "double" | "Float" | "float" => (format!("({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).doubleValue() : 0.0)", row_var_name, var_name, row_var_name, var_name), false),
+                                _ => row_extraction_expr(&row_var_name, var_name, &declared_type),
+                            }
+                        };
+                        if is_set_call {
+                            push_logic_line(proc, format!("    {}{};", var_java, extraction));
+                        } else if !extraction.is_empty() {
+                            push_logic_line(proc, format!("    {} = {};", var_java, extraction));
+                        }
+                    }
+                    push_logic_line(proc, "}".to_string());
+                }
 
                 // Handle dotted INTO targets like v_result.emp_id → vResult.put("empId", _row.get("empId"))
                 if var_names.len() != targets.len() && !row_var_name.is_empty() {
@@ -1566,10 +1643,70 @@ pub fn process_statement(
             }
             Ok(())
         }
-        PlStatement::Open(_) => {
-            push_logic_line(proc, "// OPEN cursor;".into());
-            Ok(())
-        }
+         PlStatement::Open(open_stmt) => {
+             let cursor_java = crate::expr::expr_to_java(&open_stmt.node.cursor, proc);
+
+             // Extract raw cursor variable name (without .get() suffix from AtomicReference)
+             use ogsql_parser::ast::Expr;
+             let raw_cursor_java = match &open_stmt.node.cursor {
+                 Expr::ColumnRef(name) | Expr::PlVariable(name) if name.len() == 1 => {
+                     crate::naming::snake_to_camel(&name[0])
+                 }
+                 _ => cursor_java.replace(".get()", ""),
+             };
+
+             let is_out_refcursor = proc.refcursor_out_params.contains(&raw_cursor_java);
+
+             match &open_stmt.node.kind {
+                 ogsql_parser::ast::plpgsql::PlOpenKind::ForQuery { query, .. } => {
+                     let clean_sql = query.trim().trim_end_matches(';');
+
+                     if is_out_refcursor {
+                         let method_id = dml_method_name("select", &proc.proc_name, &mut ctx.dml_counter);
+                         let args = build_mapper_call_args(proc);
+                         let result_var = format!("{}Result", raw_cursor_java);
+
+                         proc.dml_statements.push(DmlStatement {
+                             sql_type: DmlType::Select,
+                             method_id: method_id.clone(),
+                             sql_text: clean_sql.to_string(),
+                             result_type: Some("Map<String, Object>".to_string()),
+                             parameter_types: Default::default(),
+                             optional_filters: Vec::new(),
+                             returns_list: true,
+                             extra_params: Vec::new(),
+                         });
+
+                         push_logic_line(proc, format!("{} = mapper.{}({});", result_var, method_id, args));
+                         push_logic_line(proc, format!("if ({} == null) {} = new java.util.ArrayList<>();", result_var, result_var));
+
+                         proc.open_cursors.insert(raw_cursor_java.clone(), crate::types::CursorInfo {
+                             query: clean_sql.to_string(),
+                             into_vars: Vec::new(),
+                             is_open: true,
+                             result_var: Some(result_var),
+                             index_var: Some(format!("{}Idx", raw_cursor_java)),
+                         });
+                     } else {
+                         let safe_sql = clean_sql.replace('\n', " ").replace("  ", " ").replace("*/", "*\\/");
+                         push_logic_line(proc, format!("/* OPEN {} FOR {} */", cursor_java, safe_sql));
+                     }
+                 }
+                 ogsql_parser::ast::plpgsql::PlOpenKind::ForExecute { query, using_args, .. } => {
+                     let sql_expr = crate::expr::expr_to_java(query, proc);
+                     let using_str = if using_args.is_empty() {
+                         String::new()
+                     } else {
+                         format!(" USING {}", using_args.iter().map(|a| crate::expr::expr_to_java(a, proc)).collect::<Vec<_>>().join(", "))
+                     };
+                     push_logic_line(proc, format!("/* OPEN {} FOR EXECUTE {}{} */", cursor_java, sql_expr.replace("*/", "*\\/"), using_str.replace("*/", "*\\/")));
+                 }
+                 _ => {
+                     push_logic_line(proc, format!("/* OPEN {} */", cursor_java));
+                 }
+             }
+             Ok(())
+         }
         PlStatement::Fetch(_) => {
             push_logic_line(proc, "// FETCH cursor;".into());
             Ok(())
@@ -1624,19 +1761,20 @@ pub fn process_statement(
             push_logic_line(proc, "// RESET variable;".into());
             Ok(())
         }
-        PlStatement::Goto { label } => {
-            if let Some(ref enum_name) = ctx.sm_enum_name {
-                if ctx.sm_labels.contains(label) {
-                    let goto_state = crate::naming::snake_to_pascal(label);
-                    push_logic_line(proc, format!("currentState = {}.{};", enum_name, goto_state));
-                } else {
-                    push_logic_line(proc, "running = false;".into());
-                }
-            } else {
-                push_logic_line(proc, format!("// GOTO {} — will be rewritten by pattern analysis", label));
-            }
-            Ok(())
-        }
+         PlStatement::Goto { label } => {
+             if let Some(ref enum_name) = ctx.sm_enum_name {
+                 if ctx.sm_labels.contains(label) {
+                     let goto_state = crate::naming::snake_to_pascal(label);
+                     push_logic_line(proc, format!("currentState = {}.{};", enum_name, goto_state));
+                 } else {
+                     push_logic_line(proc, "running = false;".into());
+                 }
+                 push_logic_line(proc, "break;".into());
+             } else {
+                 push_logic_line(proc, format!("// GOTO {} — will be rewritten by pattern analysis", label));
+             }
+             Ok(())
+         }
         PlStatement::Execute(execute) => {
             process_execute_stmt(&execute.node, proc, ctx);
             Ok(())
@@ -1717,6 +1855,40 @@ pub fn process_statement(
                         });
                         push_logic_line(proc, format!("Map<String, Object> {} = mapper.{}({});", var_name, method_id, args));
                         proc.imports.insert("import java.util.Map;".to_string());
+                        if let Some(caps) = capture_into_regex().captures(sql_text) {
+                            let into_vars_str = caps.get(1).unwrap().as_str();
+                            let into_var_names: Vec<&str> = into_vars_str.split(',').map(|s| s.trim()).collect();
+                            push_logic_line(proc, format!("if ({} != null) {{", var_name));
+                            for iv in &into_var_names {
+                                 let iv_java = snake_to_camel(iv);
+                                 let (type_str, is_out_param) = resolve_var_type(proc, iv);
+                                 let declared_type = type_str.to_string();
+                                 let (extraction, is_set_call) = if is_out_param {
+                                     let inner = match declared_type.as_str() {
+                                         "Long" | "long" => format!(".set({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).longValue() : 0L)", var_name, iv, var_name, iv),
+                                         "Integer" | "int" => format!(".set({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).intValue() : 0)", var_name, iv, var_name, iv),
+                                         "String" => format!(".set((String) {}.get(\"{}\"))", var_name, iv),
+                                         t if t.contains("BigDecimal") => format!(".set({}.get(\"{}\") instanceof java.math.BigDecimal ? (java.math.BigDecimal) {}.get(\"{}\") : java.math.BigDecimal.ZERO)", var_name, iv, var_name, iv),
+                                         _ => format!(".set({}.get(\"{}\"))", var_name, iv),
+                                     };
+                                     (inner, true)
+                                 } else {
+                                     match declared_type.as_str() {
+                                         "Long" | "long" => (format!("({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).longValue() : 0L)", var_name, iv, var_name, iv), false),
+                                          "Integer" | "int" => (format!("({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).intValue() : 0)", var_name, iv, var_name, iv), false),
+                                          "String" => (format!("({}.get(\"{}\") instanceof String ? (String) {}.get(\"{}\") : {}.get(\"{}\") != null ? String.valueOf({}.get(\"{}\")) : null)", var_name, iv, var_name, iv, var_name, iv, var_name, iv), false),
+                                         t if t.contains("BigDecimal") => (format!("({}.get(\"{}\") instanceof java.math.BigDecimal ? (java.math.BigDecimal) {}.get(\"{}\") : java.math.BigDecimal.ZERO)", var_name, iv, var_name, iv), false),
+                                         _ => row_extraction_expr(&var_name, iv, &declared_type),
+                                     }
+                                 };
+                                 if is_set_call {
+                                     push_logic_line(proc, format!("    {}{};", iv_java, extraction));
+                                 } else if !extraction.is_empty() {
+                                     push_logic_line(proc, format!("    {} = {};", iv_java, extraction));
+                                 }
+                            }
+                            push_logic_line(proc, "}".to_string());
+                        }
                     } else {
                         proc.dml_statements.push(DmlStatement {
                             sql_type: dml_type,
@@ -1728,8 +1900,8 @@ pub fn process_statement(
                             returns_list: true,
                             extra_params: Vec::new(),
                         });
-                        let var_name = next_result_var_name(proc);
-                        push_logic_line(proc, format!("List<Map<String, Object>> {} = mapper.{}({});", var_name, method_id, args));
+                        let rv_name = next_result_var_name(proc);
+                        push_logic_line(proc, format!("List<Map<String, Object>> {} = mapper.{}({});", rv_name, method_id, args));
                         proc.imports.insert("import java.util.List;".to_string());
                         proc.imports.insert("import java.util.Map;".to_string());
                     }
