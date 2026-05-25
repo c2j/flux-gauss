@@ -31,7 +31,7 @@ pub fn extract_from_parse_output(
     let errors = Vec::new();
 
     let mut current_pkg_name = String::new();
-    let mut procedures = Vec::new();
+    let mut procedures: Vec<ProcedureInfo> = Vec::new();
     let mut package_vars: HashMap<String, VarInfo> = HashMap::new();
     let mut custom_types: HashMap<String, CustomTypeInfo> = HashMap::new();
     let mut table_refs = std::collections::HashSet::new();
@@ -56,15 +56,40 @@ pub fn extract_from_parse_output(
             }
             Statement::CreatePackageBody(pkg_body) => {
                 if !current_pkg_name.is_empty() && !procedures.is_empty() {
-                    packages.push(build_package_info(
-                        &current_pkg_name,
-                        procedures.split_off(0),
-                        package_vars.drain().collect(),
-                        custom_types.drain().collect(),
-                        table_refs.drain().collect(),
-                        source_file,
-                        base_package,
-                    ));
+                    let (standalone, owned): (Vec<ProcedureInfo>, Vec<ProcedureInfo>) = procedures.iter().cloned()
+                        .partition(|p| p.package.is_empty());
+                    if !standalone.is_empty() {
+                        let standalone_pkg = std::path::Path::new(source_file)
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("standalone")
+                            .to_string();
+                        packages.push(build_package_info(
+                            &standalone_pkg,
+                            standalone,
+                            std::collections::HashMap::new(),
+                            std::collections::HashMap::new(),
+                            std::collections::HashSet::new(),
+                            source_file,
+                            base_package,
+                        ));
+                    }
+                    if !owned.is_empty() {
+                        packages.push(build_package_info(
+                            &current_pkg_name,
+                            owned,
+                            package_vars.drain().collect(),
+                            custom_types.drain().collect(),
+                            table_refs.drain().collect(),
+                            source_file,
+                            base_package,
+                        ));
+                    } else {
+                        package_vars.drain();
+                        custom_types.drain();
+                        table_refs.drain();
+                    }
+                    procedures.clear();
                 }
                 current_pkg_name = object_name_to_string(&pkg_body.node.name);
 
@@ -281,63 +306,65 @@ fn extract_package_item(
             procedures.push(proc_info);
         }
         PackageItem::Variable(var_decl) => {
-            let raw_sql_type = format_pl_data_type(&var_decl.data_type);
-            let is_constant_workaround = raw_sql_type.to_lowercase() == "constant";
-            let (sql_type, java_type) = if is_constant_workaround {
-                let recovered = recover_constant_type_from_source(
-                    &var_decl.name, source_file,
-                );
-                if let Some((ref svt, ref jvt)) = recovered {
-                    (svt.clone(), jvt.clone())
-                } else {
-                    let inferred_java = var_decl.default.as_ref().and_then(|expr| {
-                        use ogsql_parser::ast::Expr;
-                        match expr {
-                            Expr::Literal(lit) => match lit {
-                                ogsql_parser::ast::Literal::Integer(_) => Some("Integer".to_string()),
-                                ogsql_parser::ast::Literal::Float(_) => Some("java.math.BigDecimal".to_string()),
-                                ogsql_parser::ast::Literal::String(_) => Some("String".to_string()),
-                                ogsql_parser::ast::Literal::Boolean(_) => Some("Boolean".to_string()),
-                                _ => None,
-                            },
-                            _ => None,
-                        }
-                    });
-                    let jt = inferred_java.unwrap_or_else(|| "Object".into());
-                    (raw_sql_type.clone(), jt)
-                }
-            } else {
-                let base_type = raw_sql_type.split('(').next().unwrap_or(&raw_sql_type);
-                let jt = sql_type_to_java(base_type)
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "Object".into());
-                (raw_sql_type, jt)
-            };
-            let default_value = var_decl.default.as_ref().and_then(|expr| {
-                use ogsql_parser::ast::Expr;
-                match expr {
-                    Expr::Literal(lit) => match lit {
-                        ogsql_parser::ast::Literal::Integer(n) => Some(n.to_string()),
-                        ogsql_parser::ast::Literal::Float(f) => Some(f.clone()),
-                        ogsql_parser::ast::Literal::String(s) => Some(format!("\"{}\"", s)),
-                        ogsql_parser::ast::Literal::Boolean(b) => Some(if *b { "true".into() } else { "false".into() }),
-                        ogsql_parser::ast::Literal::Null => Some("null".into()),
-                        _ => None,
-                    },
-                    _ => None,
-                }
-            });
-            package_vars.insert(
-                var_decl.name.clone(),
-                VarInfo {
-                    name: var_decl.name.clone(),
-                    java_type,
-                    sql_type,
-                    default_value,
-                    is_constant: var_decl.constant || is_constant_workaround,
-                },
-            );
-        }
+             let raw_sql_type = format_pl_data_type(&var_decl.data_type);
+             let is_constant_workaround = raw_sql_type.to_lowercase() == "constant";
+             let (sql_type, java_type, recovered_default) = if is_constant_workaround {
+                 let recovered = recover_constant_type_from_source(
+                     &var_decl.name, source_file,
+                 );
+                 if let Some((ref svt, ref jvt, ref dv)) = recovered {
+                     (svt.clone(), jvt.clone(), dv.clone())
+                 } else {
+                     let inferred_java = var_decl.default.as_ref().and_then(|expr| {
+                         use ogsql_parser::ast::Expr;
+                         match expr {
+                             Expr::Literal(lit) => match lit {
+                                 ogsql_parser::ast::Literal::Integer(_) => Some("Integer".to_string()),
+                                 ogsql_parser::ast::Literal::Float(_) => Some("java.math.BigDecimal".to_string()),
+                                 ogsql_parser::ast::Literal::String(_) => Some("String".to_string()),
+                                 ogsql_parser::ast::Literal::Boolean(_) => Some("Boolean".to_string()),
+                                 _ => None,
+                             },
+                             _ => None,
+                         }
+                     });
+                     let jt = inferred_java.unwrap_or_else(|| "Object".into());
+                     (raw_sql_type.clone(), jt, None)
+                 }
+             } else {
+                 let base_type = raw_sql_type.split('(').next().unwrap_or(&raw_sql_type);
+                 let jt = sql_type_to_java(base_type)
+                     .map(|s| s.to_string())
+                     .unwrap_or_else(|| "Object".into());
+                 (raw_sql_type, jt, None)
+             };
+             let default_value = recovered_default.or_else(|| {
+                 var_decl.default.as_ref().and_then(|expr| {
+                     use ogsql_parser::ast::Expr;
+                     match expr {
+                         Expr::Literal(lit) => match lit {
+                             ogsql_parser::ast::Literal::Integer(n) => Some(n.to_string()),
+                             ogsql_parser::ast::Literal::Float(f) => Some(f.clone()),
+                             ogsql_parser::ast::Literal::String(s) => Some(format!("\"{}\"", s)),
+                             ogsql_parser::ast::Literal::Boolean(b) => Some(if *b { "true".into() } else { "false".into() }),
+                             ogsql_parser::ast::Literal::Null => Some("null".into()),
+                             _ => None,
+                         },
+                         _ => None,
+                     }
+                 })
+             });
+             package_vars.insert(
+                 var_decl.name.clone(),
+                 VarInfo {
+                     name: var_decl.name.clone(),
+                     java_type,
+                     sql_type,
+                     default_value,
+                     is_constant: var_decl.constant || is_constant_workaround,
+                 },
+             );
+         }
         PackageItem::Type(type_decl) => {
             use ogsql_parser::ast::plpgsql::PlTypeDecl;
             match type_decl {
@@ -401,27 +428,66 @@ fn extract_package_item(
     }
 }
 
-fn recover_constant_type_from_source(var_name: &str, source_file: &str) -> Option<(String, String)> {
-    use std::fs;
-    let content = fs::read_to_string(source_file).ok()?;
-    for line in content.lines() {
-        let trimmed = line.trim().to_lowercase();
-        let var_lower = var_name.to_lowercase();
-        if !trimmed.starts_with(&var_lower) {
-            continue;
-        }
-        let rest = trimmed[var_lower.len()..].trim();
-        if !rest.starts_with("constant") {
-            continue;
-        }
-        let after_const = rest["constant".len()..].trim();
-        let type_token = after_const.split_whitespace().next()?;
-        let paren_pos = type_token.find('(').unwrap_or(type_token.len());
-        let sql_type = &type_token[..paren_pos];
-        let java_type = sql_type_to_java(sql_type)
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "Object".into());
-        return Some((sql_type.to_uppercase(), java_type));
+ fn recover_constant_type_from_source(var_name: &str, source_file: &str) -> Option<(String, String, Option<String>)> {
+     use std::fs;
+     let content = fs::read_to_string(source_file).ok()?;
+     for line in content.lines() {
+         let trimmed = line.trim();
+         let var_lower = var_name.to_lowercase();
+         if !trimmed.to_lowercase().starts_with(&var_lower) {
+             continue;
+         }
+         let rest = trimmed[var_lower.len()..].trim();
+         if !rest.to_lowercase().starts_with("constant") {
+             continue;
+         }
+         let after_const = rest["constant".len()..].trim();
+         let type_token = after_const.split_whitespace().next()?;
+         let paren_pos = type_token.find('(').unwrap_or(type_token.len());
+         let sql_type = &type_token[..paren_pos];
+         let java_type = sql_type_to_java(sql_type)
+             .map(|s| s.to_string())
+             .unwrap_or_else(|| "Object".into());
+         let default_value = if let Some(eq_pos) = after_const.find(":=") {
+             let raw = after_const[eq_pos + 2..].trim();
+             let val_str = strip_inline_comment(raw).trim().trim_end_matches(';').trim();
+             parse_sql_literal_to_java(val_str)
+         } else {
+             None
+         };
+         return Some((sql_type.to_uppercase(), java_type, default_value));
+     }
+     None
+ }
+
+fn strip_inline_comment(s: &str) -> &str {
+    if let Some(pos) = s.find("--") {
+        &s[..pos]
+    } else {
+        s
+    }
+}
+
+fn parse_sql_literal_to_java(val: &str) -> Option<String> {
+    let val = val.trim();
+    if val.is_empty() || val.eq_ignore_ascii_case("null") {
+        return Some("null".into());
+    }
+    if val.starts_with('\'') && val.ends_with('\'') {
+        let s = &val[1..val.len()-1];
+        return Some(format!("\"{}\"", s));
+    }
+    if let Ok(n) = val.parse::<i64>() {
+        return Some(n.to_string());
+    }
+    if let Ok(f) = val.parse::<f64>() {
+        return Some(format!("new java.math.BigDecimal(\"{}\")", f));
+    }
+    if val.eq_ignore_ascii_case("true") {
+        return Some("true".into());
+    }
+    if val.eq_ignore_ascii_case("false") {
+        return Some("false".into());
     }
     None
 }
@@ -614,6 +680,11 @@ fn build_procedure_info(
     proc.is_function = is_function;
     proc.return_type = return_type;
     proc.parameters = parameters;
+    for p in &proc.parameters {
+        if p.is_out() && p.is_refcursor() {
+            proc.refcursor_out_params.insert(crate::naming::snake_to_camel(&p.name));
+        }
+    }
     proc.sql_text = sql_text.into();
     proc.body = body;
     proc.source_file = source_file.into();

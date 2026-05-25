@@ -98,6 +98,8 @@ pub struct CursorInfo {
     pub query: String,
     pub into_vars: Vec<String>,
     pub is_open: bool,
+    pub result_var: Option<String>,
+    pub index_var: Option<String>,
 }
 
 // ── Custom Types ──
@@ -575,6 +577,8 @@ mod tests {
             query: "SELECT * FROM orders".into(),
             into_vars: vec!["v_id".into(), "v_name".into()],
             is_open: true,
+            result_var: None,
+            index_var: None,
         };
         assert!(ci.is_open);
         assert_eq!(ci.into_vars.len(), 2);
