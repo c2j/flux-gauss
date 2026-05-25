@@ -50,7 +50,7 @@ pub fn write_mapper_interface(
     for proc in &pkg.procedures {
         for dml in &proc.dml_statements {
             let mut dml_mut = dml.clone();
-            promote_out_params_to_mapper(&proc.parameters, &dml.sql_text, &mut dml_mut.extra_params);
+            promote_out_params_to_mapper(&proc.parameters, &dml.sql_text, &mut dml_mut.extra_params, &proc.out_local_vars);
             let method_sig = build_mapper_method(proc, &dml_mut, &mut imports, &pkg.package_vars);
             methods.push(method_sig);
         }
@@ -126,7 +126,7 @@ fn build_mapper_method(
         }
     }
 
-    let local_var_refs = extract_local_var_refs(&dml.sql_text, &proc.local_vars, &param_java_names);
+    let local_var_refs = extract_local_var_refs(&dml.sql_text, &proc.local_vars, &param_java_names, &proc.out_local_vars);
     let mut all_param_names: std::collections::HashSet<String> = param_java_names.clone();
     for (jn, _) in &local_var_refs {
         all_param_names.insert(jn.to_lowercase());
@@ -167,6 +167,7 @@ fn promote_out_params_to_mapper(
     params: &[crate::types::Parameter],
     sql_text: &str,
     extra_params: &mut Vec<(String, String)>,
+    out_local_vars: &std::collections::HashMap<String, String>,
 ) {
     for p in params {
         if !p.is_out() {
@@ -177,7 +178,10 @@ fn promote_out_params_to_mapper(
             let jn = snake_to_camel(&p.name);
             let already = extra_params.iter().any(|(name, _)| name == &jn);
             if !already {
-                extra_params.push((jn, p.java_type.clone()));
+                let java_type = out_local_vars.get(&p.name)
+                    .cloned()
+                    .unwrap_or_else(|| p.java_type.clone());
+                extra_params.push((jn, java_type));
             }
         }
     }
@@ -241,13 +245,13 @@ fn extract_local_var_refs(
     sql_text: &str,
     local_vars: &std::collections::HashMap<String, String>,
     param_java_names: &std::collections::HashSet<String>,
+    out_local_vars: &std::collections::HashMap<String, String>,
 ) -> Vec<(String, String)> {
     let mut result = Vec::new();
     let re = IDENTIFIER_RE.get_or_init(|| regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap());
     for caps in re.captures_iter(sql_text) {
         let word = caps.get(1).unwrap().as_str();
         let lower = word.to_lowercase();
-        // Skip SQL keywords and common non-variable words
         if matches!(lower.as_str(),
             "select" | "from" | "where" | "insert" | "into" | "values" | "update" | "set" |
             "delete" | "and" | "or" | "not" | "null" | "is" | "in" | "between" | "like" |
@@ -263,7 +267,8 @@ fn extract_local_var_refs(
             let jn = snake_to_camel(word);
             let jn_lower = jn.to_lowercase();
             if !param_java_names.iter().any(|pn| pn == &jn_lower) {
-                result.push((jn, java_type.clone()));
+                let resolved_type = out_local_vars.get(word).cloned().unwrap_or_else(|| java_type.clone());
+                result.push((jn, resolved_type));
             }
         }
     }
@@ -1150,7 +1155,7 @@ fn build_params_attr(
         .filter(|p| !p.is_out())
         .map(|p| snake_to_camel(&p.name).to_lowercase())
         .collect();
-    if !extract_local_var_refs(&dml.sql_text, &proc.local_vars, &param_java_names).is_empty() {
+    if !extract_local_var_refs(&dml.sql_text, &proc.local_vars, &param_java_names, &proc.out_local_vars).is_empty() {
         return String::new();
     }
     let in_types: std::collections::HashSet<String> = proc

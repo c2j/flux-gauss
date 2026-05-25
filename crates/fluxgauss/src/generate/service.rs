@@ -389,7 +389,7 @@ fn build_service_method(
 
     let params_str = params.join(", ");
 
-    let ret_type = if proc.is_function {
+    let mut ret_type = if proc.is_function {
         match &proc.return_type {
             Some(rt) => {
                 if rt.chars().next().map_or(false, |c| c.is_uppercase()) || rt.contains('.') {
@@ -409,6 +409,14 @@ fn build_service_method(
             "void".to_string()
         }
     };
+
+    if ret_type == "Object" {
+        let logic_text = proc.java_logic_lines.join(" ");
+        let method_var_patterns = [".put(", ".getOrDefault(", ".get(\""];
+        if method_var_patterns.iter().any(|p| logic_text.contains(p)) {
+            ret_type = "Map<String, Object>".to_string();
+        }
+    }
 
     let method_name = java_method_name(&proc.proc_name);
     let has_dml = proc.dml_statements.iter().any(|d| matches!(d.sql_type, DmlType::Insert | DmlType::Update | DmlType::Delete));
@@ -442,7 +450,12 @@ fn build_service_method(
                         .unwrap_or_else(|| default_for_type(var_type).to_string());
                     let coerced = coerce_default_value(var_type, &default_val);
                     let is_object_used_as_map = var_type == "Object" && proc.java_logic_lines.iter()
-                        .any(|l| l.contains(&format!("((java.util.Map<String, Object>) {}).put(", var_java)));
+                        .any(|l| {
+                            l.contains(&format!("((java.util.Map<String, Object>) {}).put(", var_java)) ||
+                            l.contains(&format!("{}.getOrDefault(", var_java)) ||
+                            l.contains(&format!("{}.put(", var_java)) ||
+                            l.contains(&format!("{}.get(\"", var_java))
+                        });
                     let is_object_used_as_list = var_type == "Object" && proc.java_logic_lines.iter()
                         .any(|l| l.contains(&format!("((java.util.List<?>) {})", var_java)));
                     if is_object_used_as_map {
@@ -603,16 +616,37 @@ fn append_local_vars_to_mapper_calls(
 
         let dml = proc.dml_statements.iter().find(|d| d.method_id == method_name);
         if let Some(dml) = dml {
+            let mut promoted_extra: Vec<(String, String)> = dml.extra_params.clone();
+            for p in out_params.iter() {
+                let re = regex::Regex::new(&format!(r"(?i)\b{}\b", regex::escape(&p.name))).unwrap();
+                if re.is_match(&dml.sql_text) {
+                    let jn = snake_to_camel(&p.name);
+                    if !promoted_extra.iter().any(|(n, _)| n == &jn) {
+                        let jt = proc.out_local_vars.get(&p.name)
+                            .cloned()
+                            .unwrap_or_else(|| p.java_type.clone());
+                        promoted_extra.push((jn, jt));
+                    }
+                }
+            }
+
+            let extra_param_names: std::collections::HashSet<String> = promoted_extra
+                .iter()
+                .map(|(name, _)| name.to_lowercase())
+                .collect();
+
             let mut local_args: Vec<String> = Vec::new();
             let mut pkg_args: Vec<String> = Vec::new();
-            let mut out_args: Vec<String> = Vec::new();
             let word_re = regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap();
+
             for word_caps in word_re.captures_iter(&dml.sql_text) {
                 let word = word_caps.get(1).unwrap().as_str();
                 if proc.local_vars.contains_key(word) {
                     let jn = snake_to_camel(word);
                     let jn_lower = jn.to_lowercase();
-                    if !param_java_names.iter().any(|pn| pn == &jn_lower) {
+                    if !param_java_names.iter().any(|pn| pn == &jn_lower)
+                        && !extra_param_names.contains(&jn_lower)
+                    {
                         local_args.push(jn);
                     }
                 }
@@ -627,6 +661,7 @@ fn append_local_vars_to_mapper_calls(
                     let jn_lower = jn.to_lowercase();
                     if !param_java_names.iter().any(|pn| pn == &jn_lower)
                         && !local_args.iter().any(|a| a.to_lowercase() == jn_lower)
+                        && !extra_param_names.contains(&jn_lower)
                     {
                         pkg_args.push(jn);
                     }
@@ -635,25 +670,21 @@ fn append_local_vars_to_mapper_calls(
             pkg_args.sort();
             pkg_args.dedup();
 
-            for out_p in &out_params {
-                let jn = snake_to_camel(&out_p.name);
-                let jn_lower = jn.to_lowercase();
-                if !param_java_names.iter().any(|pn| pn == &jn_lower)
-                    && !local_args.iter().any(|a| a.to_lowercase() == jn_lower)
-                    && !pkg_args.iter().any(|a| a.to_lowercase() == jn_lower)
-                {
-                    let re = regex::Regex::new(&format!(r"(?i)\b{}\b", regex::escape(&out_p.name))).unwrap();
-                    if re.is_match(&dml.sql_text) {
-                        out_args.push(format!("{}.get()", jn));
+            let mut extra_args: Vec<String> = Vec::new();
+
+            for (name, _) in &promoted_extra {
+                let jn_lower = name.to_lowercase();
+                if !param_java_names.iter().any(|pn| pn == &jn_lower) {
+                    if out_params.iter().any(|p| snake_to_camel(&p.name).to_lowercase() == jn_lower) {
+                        extra_args.push(format!("{}.get()", name));
+                    } else {
+                        extra_args.push(name.clone());
                     }
                 }
             }
-            out_args.sort();
-            out_args.dedup();
 
-            let mut extra_args = local_args;
+            extra_args.extend(local_args);
             extra_args.extend(pkg_args);
-            extra_args.extend(out_args);
 
             if !extra_args.is_empty() {
                 let new_args = if existing_args.is_empty() {
