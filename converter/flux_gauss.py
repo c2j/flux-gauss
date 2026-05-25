@@ -368,9 +368,9 @@ _CUSTOM_TYPE_PRESETS = {
     "obj_type":              "Map<String, Object>",
     "row_type":              "Map<String, Object>",
     # ── Oracle REF CURSOR aliases ────────────────────────────────
-    "sys_refcursor":         "Object",
-    "ref_cursor":            "Object",
-    "refcursor":             "Object",
+    "sys_refcursor":         "List<Map<String, Object>>",
+    "ref_cursor":            "List<Map<String, Object>>",
+    "refcursor":             "List<Map<String, Object>>",
     # ── Common OpenGauss / PostgreSQL custom types ────────────────
     "int4range":             "Object",
     "int8range":             "Object",
@@ -622,7 +622,7 @@ def sql_type_to_java(sql_type) -> str:
         elif "Record" in sql_type:
             return "Map<String, Object>"
         elif "RefCursor" in sql_type or "Cursor" in sql_type:
-            return "Object"
+            return "List<Map<String, Object>>"
         else:
             return "Object"
 
@@ -900,6 +900,9 @@ class DmlStatement:
     is_dynamic: bool = False  # True for EXECUTE IMMEDIATE — filters proc params to only those in SQL
     returning_cols: list = field(default_factory=list)       # column names from RETURNING clause
     returning_into_vars: list = field(default_factory=list)  # variable names from INTO targets
+    is_forall_batch: bool = False  # True when FORALL is converted to MyBatis batch (<foreach>)
+    forall_batch_list_var: str = ""  # The name of the iteration variable (e.g. "item") in <foreach>
+    forall_batch_arrays: dict = field(default_factory=dict)  # {java_array_name: unwrapped_element_type}
 
 
 @dataclass
@@ -2422,27 +2425,11 @@ def _process_get_diagnostics(stmt_data: dict, proc: ProcedureInfo):
         var_java = snake_to_camel(var_name)
 
         if diag_item == "RowCount":
-            captured = False
-            for idx in range(len(proc.java_logic_lines) - 1, -1, -1):
-                line = proc.java_logic_lines[idx]
-                stripped = line.strip()
-                if 'mapper.' in stripped and stripped.endswith(';') and not stripped.startswith('//'):
-                    indent = line[:len(line) - len(line.lstrip())]
-                    proc.java_logic_lines[idx] = f"{indent}int _diag_rowcount = {stripped}"
-                    var_type = proc.local_vars.get(var_name, "Integer")
-                    if var_type == "int":
-                        proc.java_logic_lines.append(f"{indent}{var_java} = _diag_rowcount;")
-                    else:
-                        proc.java_logic_lines.append(f"{indent}{var_java} = Integer.valueOf(_diag_rowcount);")
-                    captured = True
-                    break
-            if not captured:
-                proc.java_logic_lines.append(f"// GET DIAGNOSTICS {var_java} = ROW_COUNT — no preceding mapper call to capture")
-                var_type = proc.local_vars.get(var_name, "Integer")
-                if var_type == "int":
-                    proc.java_logic_lines.append(f"{var_java} = 0;")
-                else:
-                    proc.java_logic_lines.append(f"{var_java} = Integer.valueOf(0);")
+            var_type = proc.local_vars.get(var_name, "Integer")
+            if var_type == "int":
+                proc.java_logic_lines.append(f"{var_java} = _sqlRowCount;")
+            else:
+                proc.java_logic_lines.append(f"{var_java} = Integer.valueOf(_sqlRowCount);")
         else:
             proc.java_logic_lines.append(f"// GET DIAGNOSTICS {var_java} = {diag_item} — manual review needed")
 
@@ -3523,13 +3510,17 @@ def _generate_state_machine_goto(proc, analysis, body_stmts, all_packages, dml_c
 
         _strip_unreachable_in_case(proc, start_offset=len(proc.java_logic_lines))
         last_stripped = proc.java_logic_lines[-1].strip() if proc.java_logic_lines else ""
-        # Detect terminal state: no currentState assignment means no outgoing transition
         has_transition = any("currentState = " in line for line in proc.java_logic_lines[case_line_offset:])
         has_running_false = any("running = false" in line for line in proc.java_logic_lines[case_line_offset:])
-        already_terminal = last_stripped in ("break;", "}") or last_stripped.startswith("throw ") or last_stripped.startswith("return")
-        if not has_transition and not has_running_false and not already_terminal:
+        is_throw_or_return = last_stripped.startswith("throw ") or last_stripped.startswith("return")
+        if not has_transition and not has_running_false and not is_throw_or_return:
             proc.java_logic_lines.append("            running = false;")
-        if not already_terminal:
+        needs_break = not (
+            last_stripped == "break;"
+            or is_throw_or_return
+            or _case_is_fully_terminated(proc, start_offset=len(proc.java_logic_lines))
+        )
+        if needs_break:
             proc.java_logic_lines.append("            break;")
 
     proc.java_logic_lines.append("        default:")
@@ -3632,7 +3623,7 @@ def _process_raw_dml(sql: str, proc: ProcedureInfo, dml_counter: dict):
             method_id=mapper_method,
             sql_text=sql_fmt,
         ))
-        proc.java_logic_lines.append(f"mapper.{mapper_method}();")
+        _emit_dml_with_rowcount(proc, f"mapper.{mapper_method}()")
     else:
         proc.java_logic_lines.append(f"// TODO: unhandled raw SQL: {sql[:80]}")
         _record_todo("RAW_DML", proc, f"unhandled: {sql[:40]}")
@@ -3657,6 +3648,7 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                 proc.table_refs.add(t)
 
             mapper_method = _dml_method_name("select", proc.proc_name, dml_counter)
+            _is_bulk = sql_details.get("bulk_collect", False)
 
             if into_targets:
                 first_var = _extract_into_variable(into_targets)
@@ -3665,7 +3657,44 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                     result_type = proc.local_vars.get(first_var, "Object")
                     var_names = _extract_all_into_variables(into_targets)
 
-                    if len(var_names) > 1:
+                    if _is_bulk:
+                        result_type = "Map<String, Object>"
+                        select_cols = _extract_select_columns(sql_text)
+                        into_targets_full = _extract_all_into_targets(into_targets)
+                        _bulk_var = f"_bulkResult_{dml_counter.get('select', 0)}"
+                        proc.java_logic_lines.append(
+                            f'List<Map<String, Object>> {_bulk_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});'
+                        )
+                        proc.java_logic_lines.append(f'for (Map<String, Object> _bulkRow : {_bulk_var}) {{')
+                        for idx, (field_name, full_parts) in enumerate(into_targets_full):
+                            col_key = select_cols[idx] if idx < len(select_cols) else field_name
+                            if len(full_parts) >= 2:
+                                map_var = snake_to_camel(full_parts[0])
+                                vn_java = snake_to_camel(field_name)
+                                var_type = _java_type_from_field_name(field_name) if _java_type_from_field_name(field_name) != "Object" else "Object"
+                                _get_expr = f'_bulkRow.get("{col_key}")'
+                                cast_expr = _safe_map_cast(var_type, _get_expr) if var_type != "Object" else _get_expr
+                                _emit_assignment(proc, f'__MAP_PUT__{map_var}__{field_name}', cast_expr)
+                            else:
+                                var_type = proc.local_vars.get(field_name)
+                                if var_type is None:
+                                    for p in proc.parameters:
+                                        if p.name.lower() == field_name.lower():
+                                            var_type = p.java_type
+                                            break
+                                if var_type is None:
+                                    var_type = "Object"
+                                vn_java = snake_to_camel(field_name)
+                                if var_type == "Map<String, Object>":
+                                    proc.java_logic_lines.append(f'    // TODO: BULK COLLECT extraction for {vn_java} requires manual implementation')
+                                elif var_type.startswith("java.util.List<"):
+                                    _elem = var_type[len("java.util.List<"):-1]
+                                    _val_expr = _safe_map_cast(_elem, f'_bulkRow.get("{col_key}")')
+                                    proc.java_logic_lines.append(f'    {vn_java}.add({_val_expr});')
+                                else:
+                                    _emit_assignment(proc, vn_java, _safe_map_cast(var_type, f'_bulkRow.get("{col_key}")'))
+                        proc.java_logic_lines.append('}')
+                    elif len(var_names) > 1:
                         result_type = "Map<String, Object>"
                         _emit_row_decl(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})')
                         select_cols = _extract_select_columns(sql_text)
@@ -3725,6 +3754,7 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                         method_id=mapper_method,
                         sql_text=_rewrite_select_for_into(sql_text, into_targets),
                         result_type=result_type,
+                        returns_list=_is_bulk,
                     ))
             else:
                 proc.dml_statements.append(DmlStatement(
@@ -3754,9 +3784,7 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                     method_id=mapper_method,
                     sql_text=sql_text,
                 ))
-                proc.java_logic_lines.append(
-                    f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});'
-                )
+                _emit_dml_with_rowcount(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})')
             else:
                 proc.java_logic_lines.append(f"// TODO: MERGE INTO — SQL reconstruction failed")
                 _record_todo("MERGE", proc, "sql reconstruction failed")
@@ -3805,9 +3833,7 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                     method_id=mapper_method,
                     sql_text=sql_text,
                 ))
-                proc.java_logic_lines.append(
-                    f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});'
-                )
+                _emit_dml_with_rowcount(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})')
 
         elif sql_type == "Update":
             from_tables = _extract_table_names_from_update(sql_details)
@@ -3846,9 +3872,7 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                     method_id=mapper_method,
                     sql_text=sql_text,
                 ))
-                proc.java_logic_lines.append(
-                    f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});'
-                )
+                _emit_dml_with_rowcount(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})')
 
         elif sql_type == "Delete":
             table_name = _extract_table_name_from_dml(sql_details)
@@ -3886,9 +3910,7 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                     method_id=mapper_method,
                     sql_text=sql_text,
                 ))
-                proc.java_logic_lines.append(
-                    f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});'
-                )
+                _emit_dml_with_rowcount(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})')
 
 
 def _reconstruct_merge_sql(merge_data: dict) -> str:
@@ -3984,6 +4006,29 @@ def _process_forall(forall_data: dict, proc: ProcedureInfo, all_packages: dict, 
         _record_todo("FORALL", proc, "TABLE-type array vars")
         return
 
+    # Determine if FORALL can be batched: range is 1..arr.COUNT, all arrays are simple typed,
+    # and we have at least one array reference.
+    _can_batch = False
+    _batch_list_var = ""
+    _batch_arrays = {}
+    if _range_match and array_refs and not _has_map_array:
+        _has_standalone_index = bool(re.search(r'\|\|\s*' + re.escape(index_var) + r'\b', dml_sql) or
+                                     re.search(r"'[^']*'\s*\|\|\s*" + re.escape(index_var), dml_sql, re.IGNORECASE))
+        _all_arrays_simple = True
+        _primary_arr_java = snake_to_camel(array_refs[0])
+        for arr_name in array_refs:
+            if arr_name.lower() != index_var.lower():
+                arr_java = snake_to_camel(arr_name)
+                arr_type = proc.local_vars.get(arr_name, "Object")
+                m_list = re.match(r'java\.util\.List<(.+)>', arr_type)
+                if m_list:
+                    _batch_arrays[arr_java] = m_list.group(1)
+                else:
+                    _all_arrays_simple = False
+        if _all_arrays_simple and _batch_arrays:
+            _can_batch = True
+            _batch_list_var = "item"
+
     _extra_text = re.sub(r'\b\w+\s*\(\s*' + re.escape(index_var) + r'\s*\)', '?', dml_sql)
     _dml_local_vars = _sql_local_var_names(proc, _extra_text)
     for _lvn in _dml_local_vars:
@@ -4010,7 +4055,8 @@ def _process_forall(forall_data: dict, proc: ProcedureInfo, all_packages: dict, 
 
     # If the DML SQL references the index variable standalone (e.g., '|| i'), pass it to mapper
     _index_var_java = f"_{index_var}"
-    if re.search(r'\b' + re.escape(index_var) + r'\b', dml_sql) and index_var not in {a.split('.')[0] for a in param_args}:
+    _has_standalone_index_ref = re.search(r'\b' + re.escape(index_var) + r'\b', dml_sql) and index_var not in {a.split('.')[0] for a in param_args}
+    if _has_standalone_index_ref:
         param_args.append(index_var)
 
     args_str = ", ".join(param_args)
@@ -4046,11 +4092,29 @@ def _process_forall(forall_data: dict, proc: ProcedureInfo, all_packages: dict, 
         method_id=mapper_method,
         sql_text=mybatis_sql,
         extra_params=_forall_extra_params,
+        is_forall_batch=_can_batch,
+        forall_batch_list_var=_batch_list_var,
+        forall_batch_arrays=_batch_arrays if _can_batch else {},
     ))
 
-    proc.java_logic_lines.append(f'{loop_start} {{')
-    proc.java_logic_lines.append(f'    mapper.{mapper_method}({args_str});')
-    proc.java_logic_lines.append(f'}}')
+    if _can_batch:
+        proc._needs_rowcount_var = True
+        _batch_list_name = f'_batch_{mapper_method}'
+        proc.java_logic_lines.append(f'java.util.List<java.util.Map<String, Object>> {_batch_list_name} = new java.util.ArrayList<>();')
+        proc.java_logic_lines.append(f'for (int _bi = 0; _bi < {_primary_arr_java}.size(); _bi++) {{')
+        proc.java_logic_lines.append(f'    java.util.Map<String, Object> _brow = new java.util.LinkedHashMap<>();')
+        for arr_java in _batch_arrays:
+            proc.java_logic_lines.append(f'    _brow.put("{arr_java}", {arr_java}.get(_bi));')
+        if _has_standalone_index_ref:
+            proc.java_logic_lines.append(f'    _brow.put("_{index_var}", _bi + 1);')
+        proc.java_logic_lines.append(f'    {_batch_list_name}.add(_brow);')
+        proc.java_logic_lines.append(f'}}')
+        proc.java_logic_lines.append(f'_sqlRowCount += mapper.{mapper_method}({_batch_list_name});')
+    else:
+        proc.java_logic_lines.append(f'{loop_start} {{')
+        proc._needs_rowcount_var = True
+        proc.java_logic_lines.append(f'    _sqlRowCount += mapper.{mapper_method}({args_str});')
+        proc.java_logic_lines.append(f'}}')
 
     for _tm in re.finditer(r'\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM|DELETE)\s+(\w+)', dml_sql, re.IGNORECASE):
         if _tm.group(1).upper() not in ('SELECT', 'FROM', 'WHERE', 'SET', 'VALUES'):
@@ -4144,15 +4208,15 @@ def _is_bare_long_literal(expr: str) -> bool:
 
 def _safe_map_cast(var_type: str, expr: str) -> str:
     if var_type == "Long":
-        return f"({expr} != null ? ((Number) {expr}).longValue() : 0L)"
+        return f"({expr} != null ? ({expr} instanceof Number ? ((Number) {expr}).longValue() : Long.parseLong(String.valueOf({expr}))) : 0L)"
     if var_type in ("Integer", "int"):
-        return f"({expr} != null ? ((Number) {expr}).intValue() : 0)"
+        return f"({expr} != null ? ({expr} instanceof Number ? ((Number) {expr}).intValue() : Integer.parseInt(String.valueOf({expr}))) : 0)"
     if var_type == "Double":
-        return f"({expr} != null ? ((Number) {expr}).doubleValue() : 0.0d)"
+        return f"({expr} != null ? ({expr} instanceof Number ? ((Number) {expr}).doubleValue() : Double.parseDouble(String.valueOf({expr}))) : 0.0d)"
     if var_type == "String":
         return f"(String) {expr}"
     if "BigDecimal" in var_type:
-        return f"({expr} != null ? (java.math.BigDecimal) {expr} : java.math.BigDecimal.ZERO)"
+        return f"({expr} != null ? ({expr} instanceof java.math.BigDecimal ? (java.math.BigDecimal) {expr} : new java.math.BigDecimal(String.valueOf({expr}))) : java.math.BigDecimal.ZERO)"
     if var_type == "java.sql.Date":
         return f"({expr} instanceof java.sql.Timestamp ? new java.sql.Date(((java.sql.Timestamp) {expr}).getTime()) : (java.sql.Date) {expr})"
     if var_type == "Boolean" or var_type == "boolean":
@@ -4162,8 +4226,15 @@ def _safe_map_cast(var_type: str, expr: str) -> str:
 
 def _emit_row_decl(proc: ProcedureInfo, mapper_expr: str, indent: str = ""):
     proc._needs_row_var = True
+    proc._needs_rowcount_var = True
     proc.java_logic_lines.append(f'{indent}_row = {mapper_expr};')
     proc.java_logic_lines.append(f'{indent}if (_row == null) _row = java.util.Collections.emptyMap();')
+    proc.java_logic_lines.append(f'{indent}_sqlRowCount = (_row != null && !_row.isEmpty()) ? 1 : 0;')
+
+
+def _emit_dml_with_rowcount(proc: ProcedureInfo, mapper_expr: str, indent: str = ""):
+    proc._needs_rowcount_var = True
+    proc.java_logic_lines.append(f'{indent}_sqlRowCount = {mapper_expr};')
 
 
 def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
@@ -5045,6 +5116,133 @@ def _process_cursor_open(open_data: dict, proc: ProcedureInfo, all_packages: dic
     proc.java_logic_lines.append(f"// cursor {cursor_name} opened — managed by mapper query")
 
 
+def _extract_literal_int(node) -> str:
+    """Extract a literal integer/float/string value from an AST node for clause reconstruction."""
+    if not isinstance(node, dict):
+        return str(node)
+    if "Literal" in node:
+        lit = node["Literal"]
+        if isinstance(lit, dict):
+            for k in ("Integer", "Float", "String"):
+                if k in lit:
+                    return str(lit[k])
+        return str(lit)
+    return str(node)
+
+
+def _reconstruct_fetch_clause(fetch_ast: dict) -> str:
+    """Reconstruct FETCH FIRST N ROWS ONLY / WITH TIES from AST."""
+    if not fetch_ast or not isinstance(fetch_ast, dict):
+        return ""
+    count_node = fetch_ast.get("count")
+    if not count_node:
+        return ""
+    count_val = _extract_literal_int(count_node)
+    with_ties = fetch_ast.get("with_ties", False)
+    if with_ties:
+        return f"FETCH FIRST {count_val} ROWS WITH TIES"
+    else:
+        return f"FETCH FIRST {count_val} ROWS ONLY"
+
+
+def _reconstruct_lock_clause(lock_ast) -> str:
+    """Reconstruct FOR UPDATE / FOR SHARE / FOR NO KEY UPDATE / FOR KEY SHARE from AST."""
+    if not lock_ast or not isinstance(lock_ast, dict):
+        return ""
+    if "Update" in lock_ast:
+        upd = lock_ast["Update"]
+        tables = upd.get("tables", []) if isinstance(upd, dict) else []
+        nowait = upd.get("nowait", False) if isinstance(upd, dict) else False
+        skip_locked = upd.get("skip_locked", False) if isinstance(upd, dict) else False
+        wait = upd.get("wait") if isinstance(upd, dict) else None
+        parts = ["FOR UPDATE"]
+        if tables:
+            tbl_names = []
+            for t in tables:
+                if isinstance(t, list):
+                    tbl_names.append(".".join(t))
+                elif isinstance(t, str):
+                    tbl_names.append(t)
+            if tbl_names:
+                parts.append("OF")
+                parts.append(", ".join(tbl_names))
+        if skip_locked:
+            parts.append("SKIP LOCKED")
+        elif nowait:
+            parts.append("NOWAIT")
+        elif wait is not None:
+            parts.append(f"WAIT {wait}")
+        return " ".join(parts)
+    elif "NoKeyUpdate" in lock_ast:
+        nk = lock_ast["NoKeyUpdate"]
+        skip_locked = nk.get("skip_locked", False) if isinstance(nk, dict) else False
+        nowait = nk.get("nowait", False) if isinstance(nk, dict) else False
+        parts = ["FOR NO KEY UPDATE"]
+        if skip_locked:
+            parts.append("SKIP LOCKED")
+        elif nowait:
+            parts.append("NOWAIT")
+        return " ".join(parts)
+    elif "Share" in lock_ast:
+        sh = lock_ast["Share"]
+        skip_locked = sh.get("skip_locked", False) if isinstance(sh, dict) else False
+        nowait = sh.get("nowait", False) if isinstance(sh, dict) else False
+        parts = ["FOR SHARE"]
+        if skip_locked:
+            parts.append("SKIP LOCKED")
+        elif nowait:
+            parts.append("NOWAIT")
+        return " ".join(parts)
+    elif "KeyShare" in lock_ast:
+        ks = lock_ast["KeyShare"]
+        skip_locked = ks.get("skip_locked", False) if isinstance(ks, dict) else False
+        nowait = ks.get("nowait", False) if isinstance(ks, dict) else False
+        parts = ["FOR KEY SHARE"]
+        if skip_locked:
+            parts.append("SKIP LOCKED")
+        elif nowait:
+            parts.append("NOWAIT")
+        return " ".join(parts)
+    return ""
+
+
+def _append_missing_select_clauses(sql: str, inner_ast: dict) -> str:
+    """Append FETCH FIRST, LIMIT, FOR UPDATE clauses that json2sql may have dropped."""
+    if not isinstance(inner_ast, dict):
+        return sql
+    # Only process SELECT statements
+    select_ast = inner_ast.get("Select", inner_ast)
+    if not isinstance(select_ast, dict):
+        return sql
+    sql_upper = sql.upper().strip()
+
+    # Append FETCH FIRST if present in AST but missing from SQL
+    fetch_ast = select_ast.get("fetch")
+    if fetch_ast:
+        fetch_clause = _reconstruct_fetch_clause(fetch_ast)
+        if fetch_clause and "FETCH FIRST" not in sql_upper:
+            sql = sql.rstrip() + " " + fetch_clause
+
+    # Append LIMIT if present in AST but missing from SQL
+    limit_ast = select_ast.get("limit")
+    if limit_ast:
+        limit_val = _extract_literal_int(limit_ast)
+        if limit_val and "LIMIT" not in sql_upper:
+            sql = sql.rstrip() + " LIMIT " + limit_val
+
+    # Append FOR UPDATE / FOR SHARE if present in AST but missing from SQL
+    lock_ast = select_ast.get("lock_clause")
+    if lock_ast:
+        lock_clause = _reconstruct_lock_clause(lock_ast)
+        if lock_clause:
+            sql_upper2 = sql.upper()
+            # Check if FOR UPDATE/FOR SHARE already present
+            if not re.search(r'\bFOR\s+(UPDATE|SHARE|NO\s+KEY\s+UPDATE|KEY\s+SHARE)\b', sql_upper2):
+                sql = sql.rstrip() + " " + lock_clause
+
+    return sql
+
+
 def _reconstruct_sql_from_ast(parsed_query: dict) -> str:
     tmp_path = os.path.join(tempfile.gettempdir(), f"fluxgauss_{os.getpid()}_query.json")
     try:
@@ -5058,6 +5256,7 @@ def _reconstruct_sql_from_ast(parsed_query: dict) -> str:
             sql = result.stdout.strip().rstrip(";")
             sql = _fix_reconstructed_sql(sql)
             sql = _qualify_ambiguous_group_order(sql)
+            sql = _append_missing_select_clauses(sql, parsed_query)
             return sql
     except Exception:
         pass
@@ -5585,7 +5784,8 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
             replacement = "\"00000\"" if in_catch else "\"00000\""
             line = line.replace("__SQLSTATE__", replacement)
         resolved.append(line)
-    return resolved
+
+    return _merge_duplicate_catches(resolved)
 
 
 def _process_exit(exit_data: dict, proc: ProcedureInfo, all_packages: dict = None):
@@ -5874,9 +6074,11 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                     result_type="Map<String, Object>" if sql_type == "select" else None,
                     extra_params=_using_extra,
                 ))
-                proc.java_logic_lines.append(
-                    f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params) + [jn for jn, _ in _using_extra])});'
-                )
+                _mapper_call = f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params) + [jn for jn, _ in _using_extra])})'
+                if sql_type != "select":
+                    _emit_dml_with_rowcount(proc, _mapper_call)
+                else:
+                    proc.java_logic_lines.append(f'{_mapper_call};')
             return
 
     # FALLBACK: existing string tracing logic (keep as-is)
@@ -6027,9 +6229,17 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                         else:
                             _emit_assignment(proc, var_java, f'mapper.{mapper_method}({param_args})')
                     else:
-                        proc.java_logic_lines.append(f'mapper.{mapper_method}({param_args});')
+                        _mc = f'mapper.{mapper_method}({param_args})'
+                        if sql_type != "select":
+                            _emit_dml_with_rowcount(proc, _mc)
+                        else:
+                            proc.java_logic_lines.append(f'{_mc};')
                 else:
-                    proc.java_logic_lines.append(f'mapper.{mapper_method}({param_args});')
+                    _mc = f'mapper.{mapper_method}({param_args})'
+                    if sql_type != "select":
+                        _emit_dml_with_rowcount(proc, _mc)
+                    else:
+                        proc.java_logic_lines.append(f'{_mc};')
                 return
 
     var_name = _extract_var_name_from_expr(string_expr)
@@ -6123,9 +6333,11 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
             extra_params=extra,
             is_dynamic=True,
         ))
-        proc.java_logic_lines.append(
-            f'mapper.{mapper_method}({param_args});'
-        )
+        _mc = f'mapper.{mapper_method}({param_args})'
+        if sql_type != "select":
+            _emit_dml_with_rowcount(proc, _mc)
+        else:
+            proc.java_logic_lines.append(f'{_mc};')
         for inlined_var in proc.inlined_sql_vars:
             var_java = snake_to_camel(inlined_var)
             for idx, line in enumerate(proc.java_logic_lines):
@@ -6175,9 +6387,11 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                         vn_java = snake_to_camel(first_var)
                         _emit_assignment(proc, vn_java, f"mapper.{mapper_method}({param_args_str})")
                     else:
-                        proc.java_logic_lines.append(f"mapper.{mapper_method}({param_args_str});")
+                        _mc = f"mapper.{mapper_method}({param_args_str})"
+                        _emit_dml_with_rowcount(proc, _mc)
                 else:
-                    proc.java_logic_lines.append(f"mapper.{mapper_method}({param_args_str});")
+                    _mc = f"mapper.{mapper_method}({param_args_str})"
+                    _emit_dml_with_rowcount(proc, _mc)
                 return
         proc.java_logic_lines.append(f"// TODO: EXECUTE {var_name} — could not resolve SQL string")
         _record_todo("EXECUTE_UNRESOLVED", proc, f"var={var_name}")
@@ -6232,9 +6446,11 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
             sql_text=sql_text,
             result_type="Map<String, Object>" if sql_type == "select" else None,
         ))
-        proc.java_logic_lines.append(
-            f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});'
-        )
+        _mc = f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))})'
+        if sql_type != "select":
+            _emit_dml_with_rowcount(proc, _mc)
+        else:
+            proc.java_logic_lines.append(f'{_mc};')
 
 
 def _convert_placeholders_to_mybatis(sql: str, proc=None) -> str:
@@ -7089,17 +7305,30 @@ def _handle_function(func_name, args_java, proc):
         return result
 
     elif func_name == "round":
+        def _is_bd_arg(arg_expr):
+            """Check if an expression is BigDecimal-typed."""
+            _bd_ops = (".multiply(", ".add(", ".subtract(", ".divide(", ".setScale(", ".abs()")
+            if "BigDecimal" in arg_expr or "Decimal" in arg_expr or any(op in arg_expr for op in _bd_ops):
+                return True
+            # Look up variable type in proc
+            if proc:
+                for vname, vtype in proc.local_vars.items():
+                    if snake_to_camel(vname) == arg_expr and "BigDecimal" in vtype:
+                        return True
+                for p in proc.parameters:
+                    if p.java_name == arg_expr and "BigDecimal" in p.java_type:
+                        return True
+            return False
+
         if len(args_java) >= 2:
             arg0 = args_java[0]
-            _bd_ops = (".multiply(", ".add(", ".subtract(", ".divide(", ".setScale(", ".abs()")
-            if "BigDecimal" in arg0 or "Decimal" in arg0 or any(op in arg0 for op in _bd_ops):
+            if _is_bd_arg(arg0):
                 return f"({arg0}).setScale((int)({args_java[1]}), java.math.RoundingMode.HALF_UP)"
             # Non-BigDecimal: use Math.round with scale — round(x * 10^n) / 10^n
             return f"(double) Math.round(({arg0}).doubleValue() * Math.pow(10, {args_java[1]})) / Math.pow(10, {args_java[1]})"
         elif len(args_java) == 1:
             arg0 = args_java[0]
-            _bd_ops = (".multiply(", ".add(", ".subtract(", ".divide(", ".setScale(", ".abs()")
-            if "BigDecimal" in arg0 or "Decimal" in arg0 or any(op in arg0 for op in _bd_ops):
+            if _is_bd_arg(arg0):
                 return f"({arg0}).setScale(0, java.math.RoundingMode.HALF_UP)"
             return f"Math.round({arg0})"
         return "null"
@@ -9021,6 +9250,15 @@ def _dml_used_local_vars(proc: ProcedureInfo, dml: DmlStatement) -> list:
 def _build_mapper_method(proc: ProcedureInfo, dml: DmlStatement, imports: set) -> str:
     method_name = dml.method_id
 
+    # FORALL batch: single param accepting the primary array list
+    if dml.is_forall_batch and dml.forall_batch_arrays:
+        _primary_arr = next(iter(dml.forall_batch_arrays))
+        ret = "int"
+        imports.add("import java.util.List;")
+        imports.add("import java.util.Map;")
+        imports.add("import org.apache.ibatis.annotations.Param;")
+        return f"    int {method_name}(@Param(\"list\") java.util.List<java.util.Map<String, Object>> list);"
+
     sql_raw = dml.sql_text or ""
     _sql_refs = set(re.findall(r'[#\$]\{(\w+)', sql_raw))
 
@@ -9245,6 +9483,26 @@ def _format_sql(sql: str) -> str:
         r'\bSUBSTRING\s*\([^)]*?\bFROM\s+\S+\s+FOR\s+\S+\s*\)',
         _stash_substring, sql, flags=re.IGNORECASE,
     )
+    _lock_slots = []
+    def _stash_lock(m):
+        _lock_slots.append(m.group(0))
+        return f"__LOCK_{len(_lock_slots) - 1}__"
+    sql = re.sub(
+        r'\bFOR\s+UPDATE\b(?:\s+OF\s+\w+(?:\s*,\s*\w+)*)?(?:\s+(?:NOWAIT|SKIP\s+LOCKED|WAIT\s+\d+))?',
+        _stash_lock, sql, flags=re.IGNORECASE,
+    )
+    sql = re.sub(
+        r'\bFOR\s+NO\s+KEY\s+UPDATE\b(?:\s+(?:NOWAIT|SKIP\s+LOCKED|WAIT\s+\d+))?',
+        _stash_lock, sql, flags=re.IGNORECASE,
+    )
+    sql = re.sub(
+        r'\bFOR\s+SHARE\b(?:\s+(?:NOWAIT|SKIP\s+LOCKED|WAIT\s+\d+))?',
+        _stash_lock, sql, flags=re.IGNORECASE,
+    )
+    sql = re.sub(
+        r'\bFOR\s+KEY\s+SHARE\b(?:\s+(?:NOWAIT|SKIP\s+LOCKED|WAIT\s+\d+))?',
+        _stash_lock, sql, flags=re.IGNORECASE,
+    )
     try:
         result = subprocess.run(
             [OGSQL_BIN, "format"],
@@ -9256,6 +9514,8 @@ def _format_sql(sql: str) -> str:
         pass
     for i, original in enumerate(_substring_slots):
         sql = sql.replace(f"__SUBSTR_{i}__", original)
+    for i, original in enumerate(_lock_slots):
+        sql = sql.replace(f"__LOCK_{i}__", original)
     return sql
 
 
@@ -9303,9 +9563,11 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
         _early_ret_slots.append(m.group(0))
         return f"__ERETS_{len(_early_ret_slots) - 1}__"
     sql = re.sub(r"'(?:[^'\\]|\\.)*'", _stash_early_ret, sql)
-    # Order matters: full strip FIRST (removes entire RETURNING..INTO), then partial strips (keep RETURNING cols) for remaining
-    sql = re.sub(r'\bRETURNING\b\s+.*?\bINTO\b\s+(?:#\{[^}]+\}|\?|\w+(?:\.\w+)?)(?:\s*,\s*(?:#\{[^}]+\}|\?|\w+(?:\.\w+)?))*', '', sql, flags=re.IGNORECASE | re.DOTALL)
-    sql = re.sub(r'\bRETURNING\s+(\w+(?:\s*,\s*\w+)*)\s+INTO\s+\w+(?:\.\w+)?(?:\s*,\s*\w+(?:\.\w+)?)*', r'RETURNING \1', sql, flags=re.IGNORECASE)
+    if dml.returning_cols:
+        sql = re.sub(r'\bRETURNING\b\s+(.+?)\s+\bINTO\b\s+\w+(?:\.\w+)?(?:\s*,\s*\w+(?:\.\w+)?)*', r'RETURNING \1', sql, flags=re.IGNORECASE)
+    else:
+        sql = re.sub(r'\bRETURNING\b\s+.*?\bINTO\b\s+(?:#\{[^}]+\}|\?|\w+(?:\.\w+)?)(?:\s*,\s*(?:#\{[^}]+\}|\?|\w+(?:\.\w+)?))*', '', sql, flags=re.IGNORECASE | re.DOTALL)
+        sql = re.sub(r'\bRETURNING\s+(\w+(?:\s*,\s*\w+)*)\s+INTO\s+\w+(?:\.\w+)?(?:\s*,\s*\w+(?:\.\w+)?)*', r'RETURNING \1', sql, flags=re.IGNORECASE)
     sql = re.sub(r'\bRETURNING\s+(\w+)\s+INTO\s+#\{[^}]+\}', r'RETURNING \1', sql, flags=re.IGNORECASE)
     sql = re.sub(r'\bRETURNING\s+(\w+)\s+INTO\s+\?', r'RETURNING \1', sql, flags=re.IGNORECASE)
     for _eri, _ers in enumerate(_early_ret_slots):
@@ -9322,10 +9584,11 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
             _set_parts = [f'{c} = #{{{_base}.{c}}}' for c in _row_cols]
             sql = sql[:_row_match.start()] + 'SET ' + ', '.join(_set_parts) + sql[_row_match.end():]
 
-    _bare_insert = re.match(r'(INSERT\s+INTO\s+(\w+))\s+VALUES\s+(#\{[^}]+\}|\w+)\s*$', sql, re.IGNORECASE | re.DOTALL)
+    _bare_insert = re.match(r'(INSERT\s+INTO\s+(\w+))\s+VALUES\s+(#\{[^}]+\}|\w+)\s*(RETURNING\b.*)?$', sql, re.IGNORECASE | re.DOTALL)
     if _bare_insert:
         _tbl = _bare_insert.group(2)
         _raw_param = _bare_insert.group(3)
+        _returning = _bare_insert.group(4)
         if _raw_param.startswith('#{'):
             _base = _raw_param[2:-1]
         else:
@@ -9334,6 +9597,8 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
         if _ins_cols:
             _val_parts = [f'#{{{_base}.{c}}}' for c in _ins_cols]
             sql = f'INSERT INTO {_tbl}({", ".join(_ins_cols)}) VALUES({", ".join(_val_parts)})'
+            if _returning:
+                sql = sql + ' ' + _returning
 
     _SQL_FUNC_REPLACEMENTS = [
         (re.compile(r'\b\w+\.get_sys_date\s*\(\)', re.IGNORECASE), 'CURRENT_TIMESTAMP'),
@@ -9513,7 +9778,7 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
     sql = re.sub(r'([(,])\s*(date|user|order|performance|type)\s*([,)])', r'\1 "\2" \3', sql, flags=re.IGNORECASE)
 
     if dml.sql_type == "select" and not dml.returns_list:
-        if not re.search(r'\bLIMIT\b', sql, re.IGNORECASE):
+        if not re.search(r'\bLIMIT\b', sql, re.IGNORECASE) and not re.search(r'\bFETCH\s+FIRST\b', sql, re.IGNORECASE):
             sql = sql.rstrip() + "\n        LIMIT 1"
 
     sql_raw_for_infer = sql
@@ -9566,9 +9831,22 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
             xml_parts.append(f"<!-- {safe_text} -->")
     if filter_line:
         xml_parts.append(filter_line)
-    xml_parts.append(f'<{tag} id="{dml.method_id}"{params_attrs}{result_type_attr}>')
-    xml_parts.append(formatted_sql)
-    xml_parts.append(f'</{tag}>')
+
+    if dml.is_forall_batch and dml.forall_batch_arrays:
+        batch_sql = sql
+        for arr_java in dml.forall_batch_arrays:
+            batch_sql = re.sub(r'#\{' + re.escape(arr_java) + r'\}', f'#{{item.{arr_java}}}', batch_sql)
+        batch_sql = re.sub(r'#\{_(\w+)\}', lambda m: f'#{{item._{m.group(1)}}}', batch_sql)
+        formatted_batch = "\n".join(f"        {line}" for line in batch_sql.split("\n"))
+        xml_parts.append(f'<{tag} id="{dml.method_id}"{result_type_attr}>')
+        xml_parts.append(f'    <foreach collection="list" item="item" separator=";">')
+        xml_parts.append(formatted_batch)
+        xml_parts.append(f'    </foreach>')
+        xml_parts.append(f'</{tag}>')
+    else:
+        xml_parts.append(f'<{tag} id="{dml.method_id}"{params_attrs}{result_type_attr}>')
+        xml_parts.append(formatted_sql)
+        xml_parts.append(f'</{tag}>')
     return "\n".join(xml_parts)
 
 
@@ -10057,6 +10335,82 @@ def _wrap_default_for_type(default_java: str, java_type: str) -> str:
     return default_java
 
 
+def _merge_duplicate_catches(lines):
+    merged = []
+    i = 0
+    while i < len(lines):
+        s = lines[i].strip()
+        if s.startswith("} catch (Exception e)"):
+            catch_header = lines[i]
+            catch_body = []
+            j = i + 1
+            while j < len(lines):
+                ls = lines[j].strip()
+                if ls == "}" or ls.startswith("} catch"):
+                    break
+                catch_body.append(lines[j])
+                j += 1
+            while j < len(lines) and lines[j].strip().startswith("} catch (Exception e)"):
+                j += 1
+                while j < len(lines):
+                    ls = lines[j].strip()
+                    if ls == "}" or ls.startswith("} catch"):
+                        break
+                    if lines[j] not in catch_body:
+                        catch_body.append(lines[j])
+                    j += 1
+            merged.append(catch_header)
+            merged.extend(catch_body)
+            if j < len(lines):
+                merged.append(lines[j])
+            i = j + 1
+        else:
+            merged.append(lines[i])
+            i += 1
+    return merged
+
+
+def _if_else_all_branches_return(body_lines, closing_idx):
+    """Walk backward from closing_idx to detect if-else chain where all branches return."""
+    branches = []
+    current_returns = False
+    depth = 0
+    has_else = False
+
+    for j in range(closing_idx, -1, -1):
+        s = body_lines[j].strip()
+        if not s or s.startswith("//"):
+            continue
+
+        prev_depth = depth
+        for ch in s:
+            if ch == '}':
+                depth += 1
+            elif ch == '{':
+                depth -= 1
+
+        if depth == 0 and prev_depth == 0:
+            if re.match(r'^if\b', s):
+                branches.append(current_returns)
+                return (all(branches) and has_else) if branches else False
+            break
+        elif prev_depth >= 1 and depth == prev_depth and ('}' in s and '{' in s) and re.search(r'\belse\b', s):
+            branches.append(current_returns)
+            current_returns = False
+            if not re.search(r'\belse\s+if\b', s):
+                has_else = True
+        elif depth == 1 and prev_depth == 1:
+            if re.match(r'^return\b', s) and s.endswith(";"):
+                current_returns = True
+        elif depth == 0 and prev_depth == 1:
+            if re.match(r'^if\b', s):
+                branches.append(current_returns)
+                return (all(branches) and has_else) if branches else False
+            break
+
+    return False
+
+
 def _format_comment_for_java(comment) -> str:
     """Format a SQL CommentInfo as a Java comment line."""
     text = comment.text
@@ -10147,6 +10501,9 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
 
         if getattr(proc, '_needs_row_var', False):
             body_lines.append("java.util.Map<String, Object> _row = null;")
+
+        if getattr(proc, '_needs_rowcount_var', False):
+            body_lines.append("int _sqlRowCount = 0;")
 
         cursor_vars_to_hoist = set()
         for cursor_name, meta in proc.open_cursors.items():
@@ -10271,21 +10628,9 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
         if "__SQLSTATE__" in _bline:
             body_lines[_bli] = _bline.replace("__SQLSTATE__", '"00000"')
 
-    _rc_counter = 0
     for _bli in range(len(body_lines)):
         if "__ROWCOUNT__" in body_lines[_bli]:
-            if _bli > 0 and ("mapper." in body_lines[_bli - 1] or f"{mapper_name}." in body_lines[_bli - 1]):
-                _rc_var = f"__rc{_rc_counter}" if _rc_counter > 0 else "__rc"
-                body_lines[_bli - 1] = re.sub(
-                    r'((?:mapper|\w+Mapper)\.\w+)\(',
-                    f'int {_rc_var} = \\1(',
-                    body_lines[_bli - 1],
-                    count=1,
-                )
-                body_lines[_bli] = body_lines[_bli].replace("__ROWCOUNT__", _rc_var)
-                _rc_counter += 1
-            else:
-                body_lines[_bli] = body_lines[_bli].replace("__ROWCOUNT__", "0")
+            body_lines[_bli] = body_lines[_bli].replace("__ROWCOUNT__", "_sqlRowCount")
 
     body_lines = [line.replace("mapper.", f"{mapper_name}.") for line in body_lines]
 
@@ -10302,30 +10647,6 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
 
     if ret_type != "void":
         body_lines = [line.replace("return;", "return null;") if line.strip() == "return;" else line for line in body_lines]
-
-    # Strip unreachable code after body-level return
-    _last_body_return = -1
-    _bd = 0
-    for i, line in enumerate(body_lines):
-        s = line.strip()
-        _bd += s.count("{") - s.count("}")
-        if not s or s.startswith("//"):
-            continue
-        if _bd == 0 and re.match(r'^return\b', s) and s.endswith(";"):
-            _last_body_return = i
-    if _last_body_return >= 0:
-        _trailing = body_lines[_last_body_return + 1:]
-        _has_unreachable = any(
-            l.strip() and not l.strip().startswith("//") and l.strip() != "}"
-            for l in _trailing
-        )
-        if _has_unreachable:
-            _kept = []
-            for l in _trailing:
-                s = l.strip()
-                if not s or s.startswith("//") or s == "}":
-                    _kept.append(l)
-            body_lines = body_lines[:_last_body_return + 1] + _kept
 
     has_complex_issues, _failed_checks = _has_compilation_issues(body_lines, out_params, proc)
 
@@ -10369,7 +10690,58 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                    _last_in_catch and re.match(r'^return\b', _last_in_catch) and _last_in_catch.endswith(";"):
                     _all_paths_return = True
         if not _all_paths_return:
-            body_lines.append(f"return {_type_default(ret_type)};")
+            # Check if body ends with a } at depth 0 that closes an if-else chain
+            # where all branches return
+            _bd = 0
+            _last_close_at_0 = -1
+            for i, line in enumerate(body_lines):
+                s = line.strip()
+                _bd += s.count("{") - s.count("}")
+                if s == "}" and _bd == 0:
+                    _last_close_at_0 = i
+            if _last_close_at_0 >= 0:
+                _trailing_after = body_lines[_last_close_at_0 + 1:]
+                _only_comments_after = all(
+                    l.strip() == "" or l.strip().startswith("//") for l in _trailing_after
+                )
+                if _only_comments_after and _if_else_all_branches_return(body_lines, _last_close_at_0):
+                    _all_paths_return = True
+        if not _all_paths_return:
+            _default_ret = f"return {_type_default(ret_type)};"
+            _already_has = False
+            for _bl in body_lines:
+                if _bl.strip() == _default_ret:
+                    _already_has = True
+                    break
+            if not _already_has:
+                body_lines.append(_default_ret)
+
+        _last_ret = -1
+        _bd = 0
+        for i, line in enumerate(body_lines):
+            s = line.strip()
+            _bd += s.count("{") - s.count("}")
+            if s.startswith("//") or not s:
+                continue
+            if _bd == 0 and re.match(r'^return\b', s) and s.endswith(";"):
+                _last_ret = i
+        if _last_ret >= 0:
+            _trailing = body_lines[_last_ret + 1:]
+            _has_unreachable = any(
+                l.strip() and not l.strip().startswith("//") and l.strip() != "}"
+                for l in _trailing
+            )
+            if _has_unreachable:
+                _kept = []
+                for l in _trailing:
+                    s = l.strip()
+                    if not s or s.startswith("//") or s == "}":
+                        _kept.append(l)
+                body_lines = body_lines[:_last_ret + 1] + _kept
+
+    has_complex_issues, _failed_checks = _has_compilation_issues(body_lines, out_params, proc)
+
+    body_lines = _merge_duplicate_catches(body_lines)
 
     if has_complex_issues:
         _stub_key = (proc.name, len(proc.parameters))
@@ -10494,7 +10866,7 @@ def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureI
             var_name = m.group(1)
             local_java = {snake_to_camel(v) for v in proc.local_vars.keys()}
             param_java = {p.java_name for p in proc.parameters}
-            if var_name not in local_java and var_name not in param_java and var_name not in ('_row', 'result'):
+            if var_name not in local_java and var_name not in param_java and var_name not in ('_row', 'result', '_brow'):
                 failed.append(f"未声明的包状态变量 '{var_name}' 调用了 .put()")
                 break
 
@@ -10545,7 +10917,6 @@ def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureI
                     break
             break
 
-    # Detect missing return for non-void functions: all returns are inside loops/ifs
     if proc and proc.is_function:
         _bd2 = 0
         _has_top_return = False
@@ -10556,8 +10927,6 @@ def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureI
                 continue
             if _bd2 == 0 and re.match(r'^return\b', s) and s.endswith(";"):
                 _has_top_return = True
-        if not _has_top_return:
-            failed.append("函数缺少顶层 return 语句 (所有 return 在循环/条件内)")
 
     return (len(failed) > 0, failed)
 
@@ -10791,12 +11160,12 @@ def _default_test_value(java_type: str, param_name: str, pkg=None) -> str:
         return "new java.math.BigDecimal(\"99.99\")"
     if "big_decimal" in lower:
         return "new java.math.BigDecimal(\"99.99\")"
+    if "list" in lower:
+        return "new java.util.ArrayList<>()"
     if "map" in lower:
         if any(kw in name_lower for kw in ("rec", "order", "detail", "row")):
             return "new java.util.HashMap<>() {{ put(\"id\", 1L); put(\"order_id\", 1L); put(\"emp_id\", 1L); put(\"status\", \"ACTIVE\"); put(\"total_amount\", java.math.BigDecimal.TEN); put(\"amount\", java.math.BigDecimal.TEN); put(\"qty\", 10); put(\"price\", java.math.BigDecimal.TEN); }}"
         return "new java.util.HashMap<>()"
-    if "list" in lower:
-        return "new java.util.ArrayList<>()"
     if "double" in lower:
         return "1.0d"
     if "float" in lower:
@@ -10833,6 +11202,24 @@ def _default_test_value(java_type: str, param_name: str, pkg=None) -> str:
     return f"\"test_{param_name}\""
 
 
+def _has_unchecked_null_size(proc: ProcedureInfo) -> bool:
+    result_vars_in_size = set()
+    for line in proc.java_logic_lines:
+        for m in re.finditer(r'(\w+Result)\.size\(\)', line):
+            result_vars_in_size.add(m.group(1))
+    if not result_vars_in_size:
+        return False
+    all_text = "\n".join(proc.java_logic_lines)
+    for rv in result_vars_in_size:
+        has_mapper_init = bool(re.search(rf'\b{re.escape(rv)}\s*=\s*\w+Mapper\.', all_text) or
+                              re.search(rf'\b{re.escape(rv)}\s*=\s*\w+mapper\.', all_text))
+        has_null_guard = bool(re.search(rf'\b{re.escape(rv)}\s*==\s*null\b.*{re.escape(rv)}\s*=\s*new\b', all_text) or
+                             re.search(rf'if\s*\(\s*{re.escape(rv)}\s*==\s*null\s*\)\s*{re.escape(rv)}\s*=\s*new', all_text))
+        if not has_mapper_init and not has_null_guard:
+            return True
+    return False
+
+
 def _build_success_test(proc: ProcedureInfo, mapper_name: str,
                          param_values: list, out_decls: list,
                          args_str: str, service_injections: dict,
@@ -10842,7 +11229,13 @@ def _build_success_test(proc: ProcedureInfo, mapper_name: str,
     has_while = any("while (" in line or "while(" in line for line in proc.java_logic_lines)
     camel_name = java_method_name(proc.proc_name)
     is_recursive = any(f"this.{camel_name}(" in line for line in proc.java_logic_lines)
-    if has_while:
+    has_conditional_while = any(re.search(r'while\s*\(\s*\w+\s*[><=!]', line) for line in proc.java_logic_lines)
+    has_sm_guard = any("_smGuard" in line for line in proc.java_logic_lines)
+    has_do_while = "} while (" in " ".join(proc.java_logic_lines)
+    has_indexed_cursor = any("CursorIdx" in line or "CurIdx" in line or ".get(vCurIdx" in line or ".get(vCursorIdx" in line for line in proc.java_logic_lines)
+    has_unchecked_null_size = _has_unchecked_null_size(proc)
+    is_safe_while = (has_while and has_indexed_cursor and not has_conditional_while and not has_sm_guard and not has_do_while and not has_unchecked_null_size)
+    if has_while and not is_safe_while:
         lines.append("    @org.junit.jupiter.api.Disabled(\"auto-generated mock cannot terminate while loop\")")
     elif is_recursive:
         lines.append("    @org.junit.jupiter.api.Disabled(\"auto-generated mock cannot terminate recursive call\")")
@@ -10890,7 +11283,7 @@ def _collect_all_dmls(pkg: PackageInfo) -> dict:
                     total = dyn_param_count + local_var_count + extra_param_count
                 else:
                     total = in_param_count + local_var_count + extra_param_count
-                all_dmls[dml.method_id] = (dml.method_id, dml.sql_type, dml.result_type, dml.returns_list, total, dml.sql_text, dml.returning_cols, dml.returning_into_vars)
+                all_dmls[dml.method_id] = (dml.method_id, dml.sql_type, dml.result_type, dml.returns_list, total, dml.sql_text, dml.returning_cols, dml.returning_into_vars, dml.is_forall_batch)
     return all_dmls
 
 
@@ -11057,14 +11450,14 @@ def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bo
                 else:
                     puts_parts.append(f'm.put("{_escape_java_string(c)}", 1);')
             puts = " ".join(puts_parts)
-            return f"        {{ var m = new java.util.HashMap<String,Object>(); {puts} when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m); }}"
+            return f"        {{ var m = new java.util.HashMap<String,Object>(); {puts} when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m).thenReturn(null); }}"
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(1);"
     if dml_returns_list:
         mock_fields = _extract_mock_fields_from_sql(dml_sql_text)
         if mock_fields:
             puts = " ".join(f'm.put("{_escape_java_string(k)}", {v});' for k, v in mock_fields.items())
-            return f"        {{ var m = new java.util.HashMap<String,Object>(); {puts} when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of(m)); }}"
-        return f"        {{ var m = new java.util.HashMap<String,Object>(); m.put(\"id\", 1); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of(m)); }}"
+            return f"        {{ var m = new java.util.HashMap<String,Object>(); {puts} when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }}"
+        return f"        {{ var m = new java.util.HashMap<String,Object>(); m.put(\"id\", 1); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }}"
     if dml_result_type == "Integer":
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(999);"
     if dml_result_type == "Long":
@@ -11080,14 +11473,20 @@ def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bo
     mock_fields = _extract_mock_fields_from_sql(dml_sql_text)
     if mock_fields:
         puts = " ".join(f'm.put("{_escape_java_string(k)}", {v});' for k, v in mock_fields.items())
-        return f"        {{ var m = new java.util.HashMap<String,Object>(); {puts} when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m); }}"
-    return f"        {{ var m = new java.util.HashMap<String,Object>(); m.put(\"id\", 1L); m.put(\"emp_id\", 1L); m.put(\"product_id\", 1L); m.put(\"v_product_id\", 1L); m.put(\"v_qty\", 10); m.put(\"total\", 100); m.put(\"v_total\", 100); m.put(\"stock_qty\", 999); m.put(\"name\", \"test\"); m.put(\"emp_name\", \"test\"); m.put(\"status\", \"ACTIVE\"); m.put(\"v_status\", \"PENDING\"); m.put(\"v_amount\", java.math.BigDecimal.TEN); m.put(\"base_salary\", java.math.BigDecimal.TEN); m.put(\"bonus_pct\", 0.10d); m.put(\"allowance\", 1000); m.put(\"count\", 1); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m); }}"
+        return f"        {{ var m = new java.util.HashMap<String,Object>(); {puts} when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m).thenReturn(null); }}"
+    return f"        {{ var m = new java.util.HashMap<String,Object>(); m.put(\"id\", 1L); m.put(\"emp_id\", 1L); m.put(\"product_id\", 1L); m.put(\"v_product_id\", 1L); m.put(\"v_qty\", 10); m.put(\"total\", 100); m.put(\"v_total\", 100); m.put(\"stock_qty\", 999); m.put(\"name\", \"test\"); m.put(\"emp_name\", \"test\"); m.put(\"status\", \"ACTIVE\"); m.put(\"v_status\", \"PENDING\"); m.put(\"v_amount\", java.math.BigDecimal.TEN); m.put(\"base_salary\", java.math.BigDecimal.TEN); m.put(\"bonus_pct\", 0.10d); m.put(\"allowance\", 1000); m.put(\"count\", 1); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m).thenReturn(null); }}"
 
 
 def _mock_all_mapper_methods(mapper_name: str, pkg: PackageInfo, lines: list, error_mode: bool = False):
     all_dmls = _collect_all_dmls(pkg)
     for dml_key, dml_info in all_dmls.items():
-        dml_method_id, dml_sql_type, dml_result_type, dml_returns_list, dml_param_count, dml_sql_text, dml_returning_cols, dml_returning_into_vars = dml_info
+        dml_method_id, dml_sql_type, dml_result_type, dml_returns_list, dml_param_count, dml_sql_text, dml_returning_cols, dml_returning_into_vars, dml_is_forall_batch = dml_info
+        if dml_is_forall_batch:
+            if error_mode:
+                lines.append(f"        when({mapper_name}.{dml_method_id}(anyList())).thenReturn(0);")
+            else:
+                lines.append(f"        when({mapper_name}.{dml_method_id}(anyList())).thenReturn(1);")
+            continue
         method_any = ", ".join(["any()"] * dml_param_count) if dml_param_count > 0 else ""
         if error_mode and dml_sql_type == "select":
             if dml_returns_list:
@@ -11119,8 +11518,14 @@ def _build_error_test(proc: ProcedureInfo, mapper_name: str,
                        svc_method_param_counts: dict, pkg: PackageInfo) -> str:
     method_name = java_method_name(proc.proc_name)
     has_while = any("while (" in line or "while(" in line for line in proc.java_logic_lines)
+    has_conditional_while = any(re.search(r'while\s*\(\s*\w+\s*[><=!]', line) for line in proc.java_logic_lines)
+    has_sm_guard = any("_smGuard" in line for line in proc.java_logic_lines)
+    has_do_while = "} while (" in " ".join(proc.java_logic_lines)
+    has_indexed_cursor = any("CursorIdx" in line or "CurIdx" in line or ".get(vCurIdx" in line or ".get(vCursorIdx" in line for line in proc.java_logic_lines)
+    has_unchecked_null_size = _has_unchecked_null_size(proc)
+    is_safe_while = (has_while and has_indexed_cursor and not has_conditional_while and not has_sm_guard and not has_do_while and not has_unchecked_null_size)
     lines = []
-    if has_while:
+    if has_while and not is_safe_while:
         lines.append("    @org.junit.jupiter.api.Disabled(\"auto-generated mock cannot terminate while loop\")")
     lines.append("    @Test")
     lines.append(f"    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)")
@@ -12332,17 +12737,21 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
     if needs_atomic_ref:
         imports.add("import java.util.concurrent.atomic.AtomicReference;")
     has_stubs = any((proc.name, len(proc.parameters)) in STUB_PROCEDURES for proc in pkg.procedures)
-    has_while = any(
-        any("while (" in line or "while(" in line for line in proc.java_logic_lines)
-        for proc in pkg.procedures
-    )
     has_recursive = False
     for proc in pkg.procedures:
         _cn = java_method_name(proc.proc_name)
         if any(f"this.{_cn}(" in line for line in proc.java_logic_lines):
             has_recursive = True
             break
-    if has_stubs or has_while or has_recursive:
+    has_dynamic_sql = any(
+        any(dml.sql_text and (re.fullmatch(r'#\{[^}]+\}', dml.sql_text.strip()) or re.search(r'\$\{[^}]+\}', dml.sql_text)) for dml in proc.dml_statements)
+        for proc in pkg.procedures
+    )
+    has_itest_while = any(
+        any("while (" in line or "while(" in line for line in proc.java_logic_lines)
+        for proc in pkg.procedures
+    )
+    if has_stubs or has_recursive or has_dynamic_sql or has_itest_while:
         imports.add("import org.junit.jupiter.api.Disabled;")
 
     _all_pkgs = all_packages or {}
@@ -12414,14 +12823,18 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
 
         is_itest_stubbed = (proc.name, len(proc.parameters)) in STUB_PROCEDURES
         has_while = any("while (" in line or "while(" in line for line in proc.java_logic_lines)
+        has_conditional_while = any(re.search(r'while\s*\(\s*\w+\s*[><=!]', line) for line in proc.java_logic_lines)
+        has_sm_guard = any("_smGuard" in line for line in proc.java_logic_lines)
+        has_do_while = "} while (" in " ".join(proc.java_logic_lines)
+        has_indexed_cursor = any("CursorIdx" in line or "CurIdx" in line or ".get(vCurIdx" in line or ".get(vCursorIdx" in line for line in proc.java_logic_lines)
+        has_unchecked_null_size = _has_unchecked_null_size(proc)
+        is_safe_while = (has_while and has_indexed_cursor and not has_conditional_while and not has_sm_guard and not has_do_while and not has_unchecked_null_size)
         itest_camel_name = java_method_name(proc.proc_name)
         is_recursive = any(f"this.{itest_camel_name}(" in line for line in proc.java_logic_lines)
         has_dynamic_sql = any(
-            dml.sql_text and re.fullmatch(r'#\{[^}]+\}', dml.sql_text.strip())
+            dml.sql_text and (re.fullmatch(r'#\{[^}]+\}', dml.sql_text.strip()) or re.search(r'\$\{[^}]+\}', dml.sql_text))
             for dml in proc.dml_statements
         )
-        # Determine timeout based on procedure complexity
-        # Heuristic: DML count + service calls + logic lines indicate how many DB round-trips occur
         complexity_score = len(proc.dml_statements) + len(proc.service_calls) + len(proc.java_logic_lines) // 10
         if complexity_score > 20:
             timeout_seconds = 30
@@ -12430,13 +12843,17 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
         else:
             timeout_seconds = 10
         lines = []
+        _itest_disabled = False
         if is_itest_stubbed:
             lines.append("    @Disabled(\"Converter stub — complex PL/pgSQL pattern requires manual implementation\")")
-        elif has_while:
+            _itest_disabled = True
+        elif has_while and not is_safe_while:
             lines.append("    @Disabled(\"auto-generated itest cannot terminate while loop\")")
+            _itest_disabled = True
         elif is_recursive:
             lines.append("    @Disabled(\"auto-generated itest cannot terminate recursive call\")")
-        elif has_dynamic_sql:
+            _itest_disabled = True
+        if has_dynamic_sql and not _itest_disabled:
             lines.append("    @Disabled(\"auto-generated itest cannot exercise runtime-constructed dynamic SQL\")")
         if sql_script:
             if itest_cfg.get("mode") == "remote":
@@ -12452,13 +12869,15 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
             lines.append(f"        {od}")
         if proc.is_function:
             lines.append(f"        var result = {svc_var}.{method_name}({args_str});")
-            if is_itest_stubbed or has_while or is_recursive or has_dynamic_sql:
+            if is_itest_stubbed or is_recursive or has_dynamic_sql:
                 lines.append("        // Stub/loop implementation — result may be null")
             else:
                 lines.append("        assertNotNull(result);")
-            lines.append("        // TODO: Add domain-specific assertions")
         else:
             lines.append(f"        {svc_var}.{method_name}({args_str});")
+        if out_args:
+            lines.append("        // TODO: Add domain-specific assertions for OUT parameters")
+        else:
             lines.append("        // TODO: Add domain-specific assertions")
         lines.append("    }")
         test_methods.append("\n".join(lines))
@@ -13206,7 +13625,14 @@ def main():
             _log(f"  Validation: all files cached, skipping.", to_stdout=False)
 
     # ── Phase 0: Pre-scan for table DDL ──
-    for sql_file in sql_files:
+    _ddl_files = list(sql_files)
+    _init_sql = (config.get("integration_test", {}) if config else {}).get("init_sql", [])
+    if isinstance(_init_sql, str):
+        _init_sql = [_init_sql]
+    for _isf in _init_sql:
+        if os.path.isfile(_isf) and _isf not in _ddl_files:
+            _ddl_files.append(_isf)
+    for sql_file in _ddl_files:
         if sql_file not in changed_files and not full_regen:
             continue
         with open(sql_file, 'r', encoding='utf-8', errors='replace') as _f:
