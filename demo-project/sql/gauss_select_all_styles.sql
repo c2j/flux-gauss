@@ -1402,7 +1402,7 @@ CREATE OR REPLACE PACKAGE BODY pkg_select_styles AS
         -- 行转列：按季度统计各部门平均工资
         FOR r IN (
             SELECT
-                dept_id,
+                e.dept_id,
                 AVG(CASE WHEN perf_quarter = 1 THEN perf_score END) AS q1_avg,
                 AVG(CASE WHEN perf_quarter = 2 THEN perf_score END) AS q2_avg,
                 AVG(CASE WHEN perf_quarter = 3 THEN perf_score END) AS q3_avg,
@@ -1414,8 +1414,8 @@ CREATE OR REPLACE PACKAGE BODY pkg_select_styles AS
             FROM emp_performance p
             JOIN employees e ON p.emp_id = e.emp_id
             WHERE perf_year = 2024
-            GROUP BY dept_id
-            ORDER BY dept_id
+            GROUP BY e.dept_id
+            ORDER BY e.dept_id
         ) LOOP
             DBE_OUTPUT.PRINT_LINE(
                 'Dept ' || r.dept_id ||
