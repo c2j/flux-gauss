@@ -4469,10 +4469,19 @@ def _flush_scheduler_job(proc: ProcedureInfo):
     method = job['target_method']
     task_id_expr = job.get('task_id_expr', 'null')
 
-    # DBE_SCHEDULER jobs cannot be directly translated to Java method calls — generate comment
+    # Generate direct method call (DBE_SCHEDULER dynamic jobs map to synchronous calls in Spring)
     proc.java_logic_lines.append(
-        f'// TODO: Scheduled job — this.{method}({task_id_expr})'
+        f'// Originally: DBE_SCHEDULER job for {method}'
     )
+    if task_id_expr == 'null':
+        # PLSQL_BLOCK pattern — cannot determine arguments, keep as TODO
+        proc.java_logic_lines.append(
+            f'// TODO: Scheduled job — this.{method}(/* args unknown from PLSQL_BLOCK */)'
+        )
+    else:
+        proc.java_logic_lines.append(
+            f'this.{method}(String.valueOf({task_id_expr}));'
+        )
 
     proc._pending_scheduler_job = {}
 
