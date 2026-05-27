@@ -4467,6 +4467,35 @@ def _comment_perform(query: str) -> str:
     return '\n'.join(f"// {l}" if l.strip() else "//" for l in lines)
 
 
+def _flatten_binaryop_concat(node):
+    """Flatten a BinaryOp(||) chain into a flat list of AST segments."""
+    if not isinstance(node, dict):
+        return [node]
+    if "BinaryOp" in node:
+        bo = node["BinaryOp"]
+        if bo.get("op") == "||":
+            return _flatten_binaryop_concat(bo.get("left")) + _flatten_binaryop_concat(bo.get("right"))
+    return [node]
+
+
+def _extract_literal_str(node):
+    """Extract string value from Literal(String), StringLiteral, or SingleQuotedString AST nodes."""
+    if isinstance(node, str):
+        return node.strip("'\"")
+    if not isinstance(node, dict):
+        return None
+    for k, v in node.items():
+        if k == "Literal" and isinstance(v, dict):
+            for lk, lv in v.items():
+                if lk == "String" and isinstance(lv, str):
+                    return lv.strip("'\"")
+        if k == "StringLiteral":
+            return v.strip("'\"") if isinstance(v, str) else str(v)
+        if k == "SingleQuotedString":
+            return v.strip("'")
+    return None
+
+
 def _flush_scheduler_job(proc: ProcedureInfo):
     job = getattr(proc, '_pending_scheduler_job', {})
     if not job or 'target_method' not in job:
@@ -4480,10 +4509,61 @@ def _flush_scheduler_job(proc: ProcedureInfo):
         f'// Originally: DBE_SCHEDULER job for {method}'
     )
     if task_id_expr == 'null':
-        # PLSQL_BLOCK pattern — cannot determine arguments, keep as TODO
-        proc.java_logic_lines.append(
-            f'// TODO: Scheduled job — this.{method}(/* args unknown from PLSQL_BLOCK */)'
-        )
+        job_action_ast = job.get('job_action_ast')
+        if job_action_ast:
+            segments = _flatten_binaryop_concat(job_action_ast)
+            template_parts = []
+            expr_args = []
+            for seg in segments:
+                s = _extract_literal_str(seg)
+                if s is not None:
+                    template_parts.append(s)
+                elif isinstance(seg, dict):
+                    template_parts.append(None)
+                    expr_args.append(seg)
+            full_str = "".join(t if t is not None else "?" for t in template_parts)
+            m_proc = re.search(r'\bCALL\s+\S+\(|BEGIN\s+\S+\(', full_str, re.IGNORECASE)
+            if not m_proc:
+                paren_start = full_str.find('(')
+            else:
+                paren_start = m_proc.end() - 1
+            args_parts = []
+            arg_idx = 0
+            if paren_start >= 0:
+                paren_end = full_str.rfind(')')
+                if paren_end < 0:
+                    paren_end = len(full_str)
+                inner = full_str[paren_start + 1:paren_end]
+                chunks = re.split(r'\s*,\s*', inner)
+                for chunk in chunks:
+                    chunk = chunk.strip()
+                    if chunk == '?':
+                        seg_node = expr_args[arg_idx] if arg_idx < len(expr_args) else None
+                        arg_idx += 1
+                        if seg_node:
+                            for sk, sv in seg_node.items():
+                                if sk == "PlVariable":
+                                    var_name = sv[-1] if isinstance(sv, list) and sv else str(sv)
+                                    args_parts.append(snake_to_camel(var_name))
+                                else:
+                                    args_parts.append(_expr_to_java(seg_node, proc, as_read=True))
+                                break
+                    elif chunk.upper() == 'NULL':
+                        args_parts.append('new java.util.concurrent.atomic.AtomicReference<>()')
+                    elif chunk:
+                        continue
+            if args_parts:
+                proc.java_logic_lines.append(
+                    f'this.{method}({", ".join(args_parts)});'
+                )
+            else:
+                proc.java_logic_lines.append(
+                    f'// TODO: Scheduled job — this.{method}(/* args unknown from PLSQL_BLOCK */)'
+                )
+        else:
+            proc.java_logic_lines.append(
+                f'// TODO: Scheduled job — this.{method}(/* args unknown from PLSQL_BLOCK */)'
+            )
     else:
         proc.java_logic_lines.append(
             f'this.{method}(String.valueOf({task_id_expr}));'
@@ -4508,9 +4588,12 @@ def _process_perform(perform_data: dict, proc: ProcedureInfo, all_packages: dict
 
                     if op == "CREATE_JOB":
                         job_action = None
+                        job_action_ast_node = None
+                        has_named_args = False
                         for arg in raw_args:
                             if isinstance(arg, dict):
                                 if "NamedArgument" in arg:
+                                    has_named_args = True
                                     na = arg["NamedArgument"]
                                     na_name = ""
                                     for nk, nv in na.items():
@@ -4518,13 +4601,40 @@ def _process_perform(perform_data: dict, proc: ProcedureInfo, all_packages: dict
                                             na_name = _extract_name_from_expr(nv).lower() if isinstance(nv, dict) else str(nv).lower()
                                         elif nk == "value" and na_name == "job_action":
                                             job_action = _extract_string_literal(nv)
+                                            if job_action is None and isinstance(nv, dict):
+                                                first_str = _extract_literal_str(nv)
+                                                if first_str is None:
+                                                    segments = _flatten_binaryop_concat(nv)
+                                                    for seg in segments:
+                                                        first_str = _extract_literal_str(seg)
+                                                        if first_str:
+                                                            break
+                                                if first_str:
+                                                    job_action = first_str
+                                                    job_action_ast_node = nv
+                        if not has_named_args:
+                            for arg in raw_args:
+                                if isinstance(arg, dict) and "BinaryOp" in arg:
+                                    segments = _flatten_binaryop_concat(arg)
+                                    first_str = None
+                                    for seg in segments:
+                                        first_str = _extract_literal_str(seg)
+                                        if first_str:
+                                            break
+                                    if first_str and re.search(r'\.\w+\(', first_str):
+                                        job_action = first_str
+                                        job_action_ast_node = arg
+                                        break
                         if job_action:
                             parts = job_action.split('.')
                             if len(parts) >= 2:
                                 target_method = java_method_name(parts[-1])
                             else:
                                 target_method = java_method_name(job_action)
-                            proc._pending_scheduler_job = {"target_method": target_method}
+                            pending = {"target_method": target_method}
+                            if job_action_ast_node:
+                                pending["job_action_ast"] = job_action_ast_node
+                            proc._pending_scheduler_job = pending
                         else:
                             m = re.search(r"job_action\s*=>\s*'([^']+)'", query, re.IGNORECASE)
                             if m:
@@ -5600,6 +5710,19 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
                             if job_action:
                                 aparts = job_action.split('.')
                                 proc._pending_scheduler_job = {"target_method": java_method_name(aparts[-1])}
+                            elif isinstance(nv, dict) and "BinaryOp" in nv:
+                                segments = _flatten_binaryop_concat(nv)
+                                first_str = None
+                                for seg in segments:
+                                    first_str = _extract_literal_str(seg)
+                                    if first_str:
+                                        break
+                                if first_str:
+                                    aparts = first_str.split('.')
+                                    proc._pending_scheduler_job = {
+                                        "target_method": java_method_name(aparts[-1]),
+                                        "job_action_ast": nv,
+                                    }
             return
         elif func.upper() == "SET_JOB_ARGUMENT_VALUE":
             for arg in args:
@@ -8624,10 +8747,72 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             targets = val.get("targets", [])
             from_clause = val.get("from", [])
             where_clause = val.get("where_clause")
-            if where_clause:
-                where_java = _expr_to_java(where_clause, proc, all_packages=all_packages)
-                return f"/* Subquery: WHERE {_flatten_comment(where_java)} */ null"
-            return f"/* Subquery */ null"
+            _subquery_handled = False
+            if (proc is not None and len(from_clause) == 1 and len(targets) == 1
+                    and where_clause is not None):
+                _sq_from = from_clause[0]
+                _sq_table_name = None
+                if isinstance(_sq_from, dict):
+                    for _tfk, _tfv in _sq_from.items():
+                        if _tfk == "Table":
+                            _sq_table_name = "_".join(_tfv.get("name", []))
+                        elif _tfk == "Subquery":
+                            pass
+                        break
+                _sq_target = targets[0]
+                _sq_is_row_star_cast = False
+                if isinstance(_sq_target, dict):
+                    _sq_expr_list = _sq_target.get("Expr")
+                    if isinstance(_sq_expr_list, list) and len(_sq_expr_list) == 2:
+                        _sq_inner = _sq_expr_list[0]
+                        if isinstance(_sq_inner, dict) and "TypeCast" in _sq_inner:
+                            _sq_tc = _sq_inner["TypeCast"]
+                            _sq_tc_expr = _sq_tc.get("expr", {})
+                            if isinstance(_sq_tc_expr, dict) and "FunctionCall" in _sq_tc_expr:
+                                _sq_fc = _sq_tc_expr["FunctionCall"]
+                                _sq_fc_name = "_".join(_sq_fc.get("name", []))
+                                _sq_fc_args = _sq_fc.get("args", [])
+                                if _sq_fc_name.lower() == "row" and len(_sq_fc_args) == 1:
+                                    _sq_arg = _sq_fc_args[0]
+                                    if isinstance(_sq_arg, dict) and "QualifiedStar" in _sq_arg:
+                                        _sq_is_row_star_cast = True
+                _sq_where = where_clause
+                _sq_pk_col = None
+                _sq_where_right = None
+                if isinstance(_sq_where, dict) and "BinaryOp" in _sq_where:
+                    _sq_bop = _sq_where["BinaryOp"]
+                    if _sq_bop.get("op") == "=":
+                        _sq_left = _sq_bop.get("left", {})
+                        _sq_right = _sq_bop.get("right", {})
+                        if isinstance(_sq_left, dict) and "ColumnRef" in _sq_left:
+                            _sq_col_parts = _sq_left["ColumnRef"]
+                            if isinstance(_sq_col_parts, list) and len(_sq_col_parts) == 1:
+                                _sq_pk_col = _sq_col_parts[0]
+                                _sq_where_right = _sq_right
+                if (_sq_is_row_star_cast and _sq_table_name and _sq_pk_col
+                        and _sq_where_right is not None):
+                    _sq_method_name = f"select{snake_to_pascal(_sq_table_name)}By{snake_to_pascal(_sq_pk_col)}"
+                    _sq_pk_param = snake_to_camel(_sq_pk_col)
+                    _sq_sql = f"SELECT * FROM {_sq_table_name} WHERE {_sq_pk_col} = #{{{_sq_pk_param}}}"
+                    _sq_where_java = _expr_to_java(_sq_where_right, proc, all_packages=all_packages)
+                    _existing = [d for d in proc.dml_statements if d.method_id == _sq_method_name]
+                    if not _existing:
+                        proc.dml_statements.append(DmlStatement(
+                            sql_type="select",
+                            method_id=_sq_method_name,
+                            sql_text=_sq_sql,
+                            result_type="Map<String, Object>",
+                            returns_list=False,
+                            is_dynamic=True,
+                            extra_params=[(_sq_pk_param, "Object")],
+                        ))
+                    _subquery_handled = True
+                    return f"mapper.{_sq_method_name}({_sq_where_java})"
+            if not _subquery_handled:
+                if where_clause:
+                    where_java = _expr_to_java(where_clause, proc, all_packages=all_packages)
+                    return f"/* Subquery: WHERE {_flatten_comment(where_java)} */ null"
+                return f"/* Subquery */ null"
         elif key == "Subscript":
             obj_java = _expr_to_java(val.get("object", {}), proc, all_packages=all_packages)
             idx_java = _expr_to_java(val.get("index", {}), proc, all_packages=all_packages)
