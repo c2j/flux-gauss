@@ -6394,9 +6394,30 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                     _mc = f"mapper.{mapper_method}({param_args_str})"
                     _emit_dml_with_rowcount(proc, _mc)
                 return
-        proc.java_logic_lines.append(f"// TODO: EXECUTE IMMEDIATE {var_name} — dynamic SQL could not be resolved at conversion time")
-        proc.java_logic_lines.append(f"//       Manual fix: create a dedicated mapper method with the resolved SQL,")
-        proc.java_logic_lines.append(f"//       or resolve {snake_to_camel(var_name.split('.')[0]) if var_name else var_name} at runtime and use a dynamic query approach")
+        vn_camel = snake_to_camel(var_name.split('.')[0]) if var_name else "unknown"
+        # Extract USING args and INTO targets for the skeleton comment block
+        _using_names = []
+        for arg in using_args:
+            if isinstance(arg, dict):
+                arg_name = _extract_var_name_from_expr(arg.get("argument", {}))
+                if arg_name:
+                    _using_names.append(snake_to_camel(arg_name))
+        _into_names = _extract_all_into_variables(into_targets) if into_targets else []
+        _into_camel = [snake_to_camel(vn) for vn in _into_names]
+        proc.java_logic_lines.append(f"// Dynamic SQL could not be resolved at conversion time")
+        proc.java_logic_lines.append(f"// Original: EXECUTE IMMEDIATE {var_name}" + (f" USING {', '.join(_using_names)}" if _using_names else "") + (f" INTO {', '.join(_into_names)}" if _into_names else ""))
+        proc.java_logic_lines.append(f"// Resolved variables:")
+        proc.java_logic_lines.append(f"//   SQL: {vn_camel} (determined at runtime)")
+        if _using_names:
+            proc.java_logic_lines.append(f"//   USING: {', '.join(_using_names)}")
+        if _into_camel:
+            proc.java_logic_lines.append(f"//   INTO: {', '.join(_into_camel)}")
+        proc.java_logic_lines.append(f"// Manual implementation:")
+        proc.java_logic_lines.append(f"//   1. Resolve the SQL string in {vn_camel} at runtime")
+        proc.java_logic_lines.append(f"//   2. Execute via mapper method or JdbcTemplate")
+        if _into_camel:
+            proc.java_logic_lines.append(f"//   3. Capture result into {', '.join(_into_camel)}")
+        proc.java_logic_lines.append(f"// Example: jdbcTemplate.update({vn_camel}" + (", " + ", ".join(_using_names) if _using_names else "") + ");")
         _record_todo("EXECUTE_UNRESOLVED", proc, f"var={var_name}")
         return
 
@@ -7016,6 +7037,7 @@ SQL_FUNCTION_MAP = {
     "array_append": "__HANDLER__",
     "array_to_string": "__HANDLER__",
     "age": "__HANDLER__",
+    "json": "__HANDLER__",
     "inet_client_addr": "__EXPR__\"127.0.0.1\"",
     "current_setting": "__HANDLER__",
     "pg_backend_pid": "__EXPR__Thread.currentThread().getId()",
@@ -7568,6 +7590,12 @@ def _handle_function(func_name, args_java, proc):
         elif len(args_java) == 2:
             return f"String.format(\"%-\" + ({args_java[1]}) + \"s\", {args_java[0]})"
         return args_java[0] if args_java else '""'
+
+    elif func_name == "json":
+        if args_java:
+            arg0 = args_java[0]
+            return arg0 if (arg0.startswith('"') or arg0.startswith("'")) else f"String.valueOf({arg0})"
+        return '"{}"'
 
     return f"/* TODO: {func_name} */ null"
 
@@ -10464,7 +10492,12 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
     is_stubbed = _stub_key in STUB_PROCEDURES
 
     if is_stubbed:
+        _stub_reasons = STUB_REASONS.get(_stub_key, [])
+        if proc.source_file:
+            body_lines.append(f"// Source SQL: {proc.source_file} (lines {proc.source_start_line}-{proc.source_end_line})")
         body_lines.append("// TODO: Auto-generated stub — complex PL/pgSQL pattern requires manual implementation")
+        for _sr in _stub_reasons:
+            body_lines.append(f"//   Reason: {_sr}")
         if ret_type != "void":
             body_lines.append(f"return {_type_default(ret_type)};")
         exception_block = None
@@ -10961,7 +10994,14 @@ def _type_default(java_type: str) -> str:
 
 def _generate_stub_body(proc: ProcedureInfo, out_params: list) -> list:
     _record_todo("AUTO_STUB", proc, "complex PL/pgSQL pattern → stub body")
-    lines = ["// TODO: Auto-generated stub — complex PL/pgSQL pattern requires manual implementation"]
+    lines = []
+    if proc.source_file:
+        lines.append(f"// Source SQL: {proc.source_file} (lines {proc.source_start_line}-{proc.source_end_line})")
+    lines.append("// TODO: Auto-generated stub — complex PL/pgSQL pattern requires manual implementation")
+    _stub_key = (proc.name, len(proc.parameters))
+    _stub_reasons = STUB_REASONS.get(_stub_key, [])
+    for _sr in _stub_reasons:
+        lines.append(f"//   Reason: {_sr}")
     for p in out_params:
         lines.append(f"{p.java_name}.set(null);")
     if proc.is_function:
