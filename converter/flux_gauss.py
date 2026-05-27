@@ -7037,13 +7037,9 @@ SQL_FUNCTION_MAP = {
     "array_append": "__HANDLER__",
     "array_to_string": "__HANDLER__",
     "age": "__HANDLER__",
-    "json": "__HANDLER__",
     "inet_client_addr": "__EXPR__\"127.0.0.1\"",
     "current_setting": "__HANDLER__",
     "pg_backend_pid": "__EXPR__Thread.currentThread().getId()",
-    "pg_exception_detail": "__HANDLER__",
-    "pg_exception_hint": "__HANDLER__",
-    "pg_exception_context": "__HANDLER__",
     "jsonb_build_array": "__HANDLER__",
     "jsonb_set": "__HANDLER__",
     "string_split": "__EXPR__java.util.Arrays.asList(String.valueOf({args0}).split(java.util.regex.Pattern.quote(String.valueOf({args1}))))",
@@ -7593,19 +7589,6 @@ def _handle_function(func_name, args_java, proc):
         elif len(args_java) == 2:
             return f"String.format(\"%-\" + ({args_java[1]}) + \"s\", {args_java[0]})"
         return args_java[0] if args_java else '""'
-
-    elif func_name == "json":
-        if args_java:
-            arg0 = args_java[0]
-            return arg0 if (arg0.startswith('"') or arg0.startswith("'")) else f"String.valueOf({arg0})"
-        return '"{}"'
-
-    elif func_name == "pg_exception_detail":
-        return 'e.getMessage()'
-    elif func_name == "pg_exception_hint":
-        return '"(see exception hint in stack trace)"'
-    elif func_name == "pg_exception_context":
-        return 'java.util.Arrays.toString(e.getStackTrace())'
 
     return f"/* TODO: {func_name} */ null"
 
@@ -8264,6 +8247,27 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     if var_name.lower() == func_name_lower and var_type.startswith("List<"):
                         idx_expr = args_java[0] if args_java else "0"
                         return f"{snake_to_camel(func_name_lower)}.get((int)({idx_expr}) - 1)"
+
+            # --- Builtin-based semantic function handling (AST builtin field) ---
+            _builtin = val.get("builtin")
+            if _builtin and isinstance(_builtin, dict):
+                _builtin_domain = _builtin.get("domain", "")
+                _builtin_category = _builtin.get("category", "")
+                if _builtin_domain == "ExceptionContext":
+                    if func_name_lower == "pg_exception_detail":
+                        return 'e.getMessage()'
+                    elif func_name_lower == "pg_exception_hint":
+                        return '"(see exception hint in stack trace)"'
+                    elif func_name_lower == "pg_exception_context":
+                        return 'java.util.Arrays.toString(e.getStackTrace())'
+                    else:
+                        # Generic fallback for any future ExceptionContext functions
+                        return f'e.getMessage()'
+                elif _builtin_category == "TypeConstructor":
+                    if args_java:
+                        arg0 = args_java[0]
+                        return arg0 if (arg0.startswith('"') or arg0.startswith("'")) else f"String.valueOf({arg0})"
+                    return '"{}"'
 
             if func_name_lower in SQL_FUNCTION_MAP:
                 mapped = SQL_FUNCTION_MAP[func_name_lower]
