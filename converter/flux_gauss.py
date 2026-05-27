@@ -7041,6 +7041,9 @@ SQL_FUNCTION_MAP = {
     "inet_client_addr": "__EXPR__\"127.0.0.1\"",
     "current_setting": "__HANDLER__",
     "pg_backend_pid": "__EXPR__Thread.currentThread().getId()",
+    "pg_exception_detail": "__HANDLER__",
+    "pg_exception_hint": "__HANDLER__",
+    "pg_exception_context": "__HANDLER__",
     "jsonb_build_array": "__HANDLER__",
     "jsonb_set": "__HANDLER__",
     "string_split": "__EXPR__java.util.Arrays.asList(String.valueOf({args0}).split(java.util.regex.Pattern.quote(String.valueOf({args1}))))",
@@ -7596,6 +7599,13 @@ def _handle_function(func_name, args_java, proc):
             arg0 = args_java[0]
             return arg0 if (arg0.startswith('"') or arg0.startswith("'")) else f"String.valueOf({arg0})"
         return '"{}"'
+
+    elif func_name == "pg_exception_detail":
+        return 'e.getMessage()'
+    elif func_name == "pg_exception_hint":
+        return '"(see exception hint in stack trace)"'
+    elif func_name == "pg_exception_context":
+        return 'java.util.Arrays.toString(e.getStackTrace())'
 
     return f"/* TODO: {func_name} */ null"
 
