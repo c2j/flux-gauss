@@ -13113,7 +13113,11 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
         any("while (" in line or "while(" in line for line in proc.java_logic_lines)
         for proc in pkg.procedures
     )
-    if has_stubs or has_recursive or has_dynamic_sql or has_itest_while:
+    has_gaussdb_only_sql = any(
+        any(dml.sql_text and re.search(r'\b(dblink|pg_sleep|clock_timestamp|dblink_connect|dblink_get_connections)\b', dml.sql_text, re.IGNORECASE) for dml in proc.dml_statements)
+        for proc in pkg.procedures
+    )
+    if has_stubs or has_recursive or has_dynamic_sql or has_itest_while or has_gaussdb_only_sql:
         imports.add("import org.junit.jupiter.api.Disabled;")
 
     _all_pkgs = all_packages or {}
@@ -13197,6 +13201,10 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
             dml.sql_text and (re.fullmatch(r'#\{[^}]+\}', dml.sql_text.strip()) or re.search(r'\$\{[^}]+\}', dml.sql_text))
             for dml in proc.dml_statements
         )
+        has_gaussdb_only_sql = any(
+            dml.sql_text and re.search(r'\b(dblink|pg_sleep|clock_timestamp|dblink_connect|dblink_get_connections)\b', dml.sql_text, re.IGNORECASE)
+            for dml in proc.dml_statements
+        )
         complexity_score = len(proc.dml_statements) + len(proc.service_calls) + len(proc.java_logic_lines) // 10
         if complexity_score > 20:
             timeout_seconds = 30
@@ -13214,6 +13222,9 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
             _itest_disabled = True
         elif is_recursive:
             lines.append("    @Disabled(\"auto-generated itest cannot terminate recursive call\")")
+            _itest_disabled = True
+        elif has_gaussdb_only_sql:
+            lines.append("    @Disabled(\"auto-generated itest skipped — SQL uses GaussDB-only extensions (dblink, pg_sleep, etc.)\")")
             _itest_disabled = True
         if has_dynamic_sql and not _itest_disabled:
             lines.append("    @Disabled(\"auto-generated itest cannot exercise runtime-constructed dynamic SQL\")")
