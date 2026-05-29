@@ -3669,7 +3669,7 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                         into_targets_full = _extract_all_into_targets(into_targets)
                         _bulk_var = f"_bulkResult_{dml_counter.get('select', 0)}"
                         proc.java_logic_lines.append(
-                            f'List<Map<String, Object>> {_bulk_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});'
+                            f'List<Map<String, Object>> {_bulk_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text, is_select=True))});'
                         )
                         proc.java_logic_lines.append(f'for (Map<String, Object> _bulkRow : {_bulk_var}) {{')
                         for idx, (field_name, full_parts) in enumerate(into_targets_full):
@@ -3702,7 +3702,7 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                         proc.java_logic_lines.append('}')
                     elif len(var_names) > 1:
                         result_type = "Map<String, Object>"
-                        _emit_row_decl(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})')
+                        _emit_row_decl(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text, is_select=True))})')
                         select_cols = _extract_select_columns(sql_text)
                         into_targets_full = _extract_all_into_targets(into_targets)
                         for idx, (field_name, full_parts) in enumerate(into_targets_full):
@@ -3739,17 +3739,17 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                             map_var = snake_to_camel(full_parts[0])
                             result_type = "Map<String, Object>"
                             col_name = _extract_select_column(sql_text, 0)
-                            _emit_row_decl(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})')
+                            _emit_row_decl(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text, is_select=True))})')
                             _emit_assignment(proc, f'__MAP_PUT__{map_var}__{first_var}', f'_row.get("{col_name}")')
                         else:
-                            _assign_expr = f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})'
+                            _assign_expr = f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text, is_select=True))})'
                             _emit_assignment(proc, var_java, _assign_expr)
 
                     if '||' in sql_text and result_type not in ("String", "Object", "Map<String, Object>"):
                         result_type = "String"
                         target_type = proc.local_vars.get(first_var, "Object") if first_var else "Object"
                         if target_type in ("Integer", "int", "Long", "long"):
-                            _mc = f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})'
+                            _mc = f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text, is_select=True))})'
                             for i, line in enumerate(proc.java_logic_lines):
                                 if _mc in line and f'{var_java} = ' in line:
                                     proc.java_logic_lines[i] = f'{{ String _strResult = {_mc}; if (_strResult != null) {{ /* concatenated string assigned to {target_type} var */ }} }}'
@@ -3771,7 +3771,7 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                     returns_list=True,
                 ))
                 proc.java_logic_lines.append(
-                    f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});'
+                    f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text, is_select=True))});'
                 )
         elif sql_type == "Merge":
             if not sql_text:
@@ -8815,7 +8815,8 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 return f"/* Subquery */ null"
         elif key == "Subscript":
             obj_java = _expr_to_java(val.get("object", {}), proc, all_packages=all_packages)
-            idx_java = _expr_to_java(val.get("index", {}), proc, all_packages=all_packages)
+            idx_expr = val.get("lower", val.get("index", {}))
+            idx_java = _expr_to_java(idx_expr, proc, all_packages=all_packages)
             return f"((java.util.List)({obj_java})).get((int)({idx_java}) - 1)"
         elif key == "SequenceValue":
             seq_parts = val.get("sequence", [])
@@ -9116,12 +9117,12 @@ def _build_param_args_from_template(proc: ProcedureInfo, template_params: list, 
     return ", ".join(parts)
 
 
-def _sql_local_var_names(proc: ProcedureInfo, sql_text: str) -> list:
+def _sql_local_var_names(proc: ProcedureInfo, sql_text: str, is_select: bool = False) -> list:
     if not sql_text:
         return []
     scan_sql = sql_text
-    upper = sql_text.lstrip().upper()
-    if upper.startswith("SELECT"):
+    # Strip SELECT ... INTO variable (PL/pgSQL), but not INSERT INTO table
+    if is_select:
         into_match = re.search(r'\bINTO\b', sql_text, re.IGNORECASE)
         if into_match:
             after_into = re.search(r'\b(FROM|WHERE|ORDER|GROUP|HAVING|LIMIT)\b', sql_text[into_match.end():], re.IGNORECASE)
