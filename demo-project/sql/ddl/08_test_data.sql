@@ -689,7 +689,7 @@ INSERT INTO src_sales_data (src_batch_id, src_sequence, transaction_id, product_
                      t.interface_seq,
                      decode(t.match_status, '0', 'δƥ��', '1', '��ƥ��') statusname,
                      t.respond_date,
-                     row_number() over(ORDER BY t.account_date DESC, t.account_seqno, t.account_id, t.interface_seq,accno, d.serialno, 
+                     row_number() over(ORDER BY t.account_date DESC, t.account_seqno, t.account_id, t.interface_seq,accno, d.serialno,
                      d.busidate, d.timestmp, d.updtranf, d.revtranf, d.trxcode, d.drcrf, d.amount, d.detailf, d.currtype, d.subcode, d.euoflag) rownm
                 FROM dat_clr_cash_dtl t, dat_trustee_acnt_detail d
                WHERE t.trade_code IN ('2008801001', '2008802001')
@@ -840,13 +840,13 @@ INSERT INTO src_sales_data (src_batch_id, src_sequence, transaction_id, product_
 
 
 -- Source: PKG_2008802001_MGT.sql
-        SELECT MAX(to_char(t.pay_tm, 'yyyymmdd'))
-          INTO out_date
-          FROM tmp_batchpay_submit t \*, tmp_batch_payment_03092_03093 s*\
-         WHERE t.status = '26' --�˿�
-           AND t.send_account = v_accno
-           AND t.inst_date = in_accnt_date
-           AND t.rece_account = v_recipacc;*/
+        -- SELECT MAX(to_char(t.pay_tm, 'yyyymmdd'))
+        --   INTO out_date
+        --   FROM tmp_batchpay_submit t \*, tmp_batch_payment_03092_03093 s*\
+        --  WHERE t.status = '26' --�˿�
+        --    AND t.send_account = v_accno
+        --    AND t.inst_date = in_accnt_date
+        --    AND t.rece_account = v_recipacc;*/
         /*SELECT MAX(to_char(t.pay_tm, 'yyyymmdd'))
           INTO out_date
           FROM tmp_batchpay_submit  t,
@@ -959,7 +959,7 @@ INSERT INTO src_sales_data (src_batch_id, src_sequence, transaction_id, product_
 
 
 -- Source: PKG_CURSOR.sql
-                        SELECT *, :1, :2 FROM ' || p_table_name || ' WHERE id = :3';
+                        -- SELECT *, :1, :2 FROM ' || p_table_name || ' WHERE id = :3';
 
 
 -- Source: PKG_CURSOR.sql
@@ -985,11 +985,11 @@ INSERT INTO src_sales_data (src_batch_id, src_sequence, transaction_id, product_
 
 
 -- Source: PKG_CURSOR.sql
-            SELECT employee_id, employee_name, salary, department_id, hire_date
-            FROM employees
-            WHERE department_id = :1
-            ORDER BY salary DESC
-            USING p_dept_id;
+            -- SELECT employee_id, employee_name, salary, department_id, hire_date
+            -- FROM employees
+            -- WHERE department_id = :1
+            -- ORDER BY salary DESC
+            -- USING p_dept_id;
 
 
 -- Source: PKG_DEPOSIT_ACNT_INFO_INQUIRY.sql
@@ -1247,9 +1247,9 @@ SELECT t.client_acnt_id, t.sys_acnt_id, t.fund_code, t.accno, t.accname,
 
 
 -- Source: PKG_FOR.sql
-        INSERT INTO batch_log(batch_id, batch_type, start_time, status)
-        VALUES (seq_batch_log.NEXTVAL, 'BONUS_CALC', SYSDATE, 'RUNNING')
-        RETURNING batch_id INTO v_log_id;
+        -- INSERT INTO batch_log(batch_id, batch_type, start_time, status)
+        -- VALUES (seq_batch_log.NEXTVAL, 'BONUS_CALC', SYSDATE, 'RUNNING')
+        -- RETURNING batch_id INTO v_log_id;
 
 
 -- Source: PKG_FOR.sql
@@ -1259,19 +1259,19 @@ SELECT t.client_acnt_id, t.sys_acnt_id, t.fund_code, t.accno, t.accname,
 
 
 -- Source: PKG_FOR.sql
-                    INSERT INTO employee_bonus (
-                        bonus_id, emp_id, bonus_amount,
-                        bonus_month, bonus_year, calc_reason, create_time
-                    ) VALUES (
-                        seq_employee_bonus.NEXTVAL,
-                        v_emp.employee_id,
-                        v_bonus_amt,
-                        EXTRACT(MONTH FROM SYSDATE),
-                        EXTRACT(YEAR FROM SYSDATE),
-                        'Q' || TO_CHAR(SYSDATE, 'Q') || ' performance bonus',
-                        SYSDATE
-                    )
-                    RETURNING bonus_id INTO v_insert_id;
+                    -- INSERT INTO employee_bonus (
+                    --     bonus_id, emp_id, bonus_amount,
+                    --     bonus_month, bonus_year, calc_reason, create_time
+                    -- ) VALUES (
+                    --     seq_employee_bonus.NEXTVAL,
+                    --     v_emp.employee_id,
+                    --     v_bonus_amt,
+                    --     EXTRACT(MONTH FROM SYSDATE),
+                    --     EXTRACT(YEAR FROM SYSDATE),
+                    --     'Q' || TO_CHAR(SYSDATE, 'Q') || ' performance bonus',
+                    --     SYSDATE
+                    -- )
+                    -- RETURNING bonus_id INTO v_insert_id;
 
 
 -- Source: PKG_FOR.sql
@@ -1461,45 +1461,45 @@ SELECT t.client_acnt_id, t.sys_acnt_id, t.fund_code, t.accno, t.accname,
 
 
 -- Source: PKG_WARPDRIVER_STRESS_TEST.sql
-      SELECT log_id FROM operation_logs
-      WHERE create_time < v_cutoff
-      LIMIT v_batch
-    );
+    --   SELECT log_id FROM operation_logs
+    --   WHERE create_time < v_cutoff
+    --   LIMIT v_batch
+    -- );
 
 
 -- Source: PKG_WARPDRIVER_STRESS_TEST.sql
-      SELECT region_code,
-             COUNT(*) AS cnt,
-             SUM(settle_amount) AS amt,
-             AVG(fee_rate) AS avg_fee
-      FROM settlement
-      WHERE settle_date = v_date
-      GROUP BY region_code
-      HAVING COUNT(*) > 10
-      ORDER BY amt DESC
-    ) LOOP
-      v_detail := v_detail || rec.region_code || '|' || rec.cnt || '|'
-                  || rec.amt || '|' || rec.avg_fee || CHR(10);
+    --   SELECT region_code,
+    --          COUNT(*) AS cnt,
+    --          SUM(settle_amount) AS amt,
+    --          AVG(fee_rate) AS avg_fee
+    --   FROM settlement
+    --   WHERE settle_date = v_date
+    --   GROUP BY region_code
+    --   HAVING COUNT(*) > 10
+    --   ORDER BY amt DESC
+    -- ) LOOP
+    --   v_detail := v_detail || rec.region_code || '|' || rec.cnt || '|'
+    --               || rec.amt || '|' || rec.avg_fee || CHR(10);
 
 
 -- Source: PKG_WARPDRIVER_STRESS_TEST.sql
-      SELECT '总计:' || COUNT(*) || '笔,金额:' || COALESCE(SUM(settle_amount),0)
-      INTO v_detail
-      FROM settlement WHERE settle_date = v_date;
+      -- SELECT '总计:' || COUNT(*) || '笔,金额:' || COALESCE(SUM(settle_amount),0)
+      -- INTO v_detail
+      -- FROM settlement WHERE settle_date = v_date;
 
 
 -- Source: PKG_WARPDRIVER_STRESS_TEST.sql
-      SELECT order_id, customer_id, order_type
-      FROM bulk_orders
-      WHERE batch_id = p_batch_id AND process_flag = 'N'
-    ) LOOP
-      <<next_order>>
+    --   SELECT order_id, customer_id, order_type
+    --   FROM bulk_orders
+    --   WHERE batch_id = p_batch_id AND process_flag = 'N'
+    -- ) LOOP
+    --   <<next_order>>
 
-      -- 第一层：客户黑名单检查
-      FOR black_rec IN (
-        SELECT 1 FROM black_list WHERE customer_id = main_rec.customer_id AND active = 'Y'
-      ) LOOP
-        v_invalid := v_invalid + 1;
+    --   -- 第一层：客户黑名单检查
+    --   FOR black_rec IN (
+    --     SELECT 1 FROM black_list WHERE customer_id = main_rec.customer_id AND active = 'Y'
+    --   ) LOOP
+    --     v_invalid := v_invalid + 1;
 
 
 -- Source: PKG_WARPDRIVER_STRESS_TEST.sql
@@ -1508,15 +1508,15 @@ SELECT t.client_acnt_id, t.sys_acnt_id, t.fund_code, t.accno, t.accname,
 
 
 -- Source: PKG_WARPDRIVER_STRESS_TEST.sql
-        SELECT rule_id, threshold FROM risk_rules WHERE rule_type = main_rec.order_type
-      ) LOOP
-        DECLARE
-          v_score INT;
+      --   SELECT rule_id, threshold FROM risk_rules WHERE rule_type = main_rec.order_type
+      -- ) LOOP
+      --   DECLARE
+      --     v_score INT;
 
 
 -- Source: PKG_WARPDRIVER_STRESS_TEST.sql
-          SELECT risk_score INTO v_score FROM customer_risk
-          WHERE customer_id = main_rec.customer_id AND rule_id = risk_rec.rule_id;
+          -- SELECT risk_score INTO v_score FROM customer_risk
+          -- WHERE customer_id = main_rec.customer_id AND rule_id = risk_rec.rule_id;
 
 
 -- Source: PKG_WARPDRIVER_STRESS_TEST.sql
@@ -1525,14 +1525,14 @@ SELECT t.client_acnt_id, t.sys_acnt_id, t.fund_code, t.accno, t.accname,
 
 
 -- Source: PKG_WARPDRIVER_STRESS_TEST.sql
-        SELECT product_id, required_qty FROM order_items WHERE order_id = main_rec.order_id
-      ) LOOP
-        DECLARE
-          v_stock INT;
+      --   SELECT product_id, required_qty FROM order_items WHERE order_id = main_rec.order_id
+      -- ) LOOP
+      --   DECLARE
+      --     v_stock INT;
 
 
 -- Source: PKG_WARPDRIVER_STRESS_TEST.sql
-          SELECT available_qty INTO v_stock FROM inventory WHERE product_id = stock_rec.product_id;
+          -- SELECT available_qty INTO v_stock FROM inventory WHERE product_id = stock_rec.product_id;
 
 
 -- Source: PKG_WARPDRIVER_STRESS_TEST.sql
@@ -1676,12 +1676,12 @@ SELECT t.client_acnt_id, t.sys_acnt_id, t.fund_code, t.accno, t.accname,
 
 
 -- Source: astro_functions_pkg.sql
-                SELECT SPLIT_PART(TRIM(name), ' ', 1) as prefix, COUNT(*) as cnt
-                FROM UNNEST(v_array_names) as name
-                GROUP BY SPLIT_PART(TRIM(name), ' ', 1)
-            ) t)::JSONB,
-            TRUE
-        );
+        --         SELECT SPLIT_PART(TRIM(name), ' ', 1) as prefix, COUNT(*) as cnt
+        --         FROM UNNEST(v_array_names) as name
+        --         GROUP BY SPLIT_PART(TRIM(name), ' ', 1)
+        --     ) t)::JSONB,
+        --     TRUE
+        -- );
 
 
 -- Source: astro_functions_pkg.sql
@@ -1995,16 +1995,16 @@ SELECT * FROM audit_log ORDER BY log_id DESC LIMIT 20;
 
 
 -- Source: pkg_mapper_param_test.sql
-        SELECT order_id, customer_id, total_amount, order_status
-        FROM t_mapper_order
-        WHERE total_amount > p_min_amount
-          AND order_status = 'NEW'
-        ORDER BY order_id
-    LOOP
-        -- INSERT 用 v_rec 字段 + p_approver
-        INSERT INTO t_mapper_approval (order_id, approver, action, reason)
-        VALUES (v_rec.order_id, p_approver, 'BATCH_APPROVE',
-                'Auto approved, amount=' || v_rec.total_amount);
+    --     SELECT order_id, customer_id, total_amount, order_status
+    --     FROM t_mapper_order
+    --     WHERE total_amount > p_min_amount
+    --       AND order_status = 'NEW'
+    --     ORDER BY order_id
+    -- LOOP
+    --     -- INSERT 用 v_rec 字段 + p_approver
+    --     INSERT INTO t_mapper_approval (order_id, approver, action, reason)
+    --     VALUES (v_rec.order_id, p_approver, 'BATCH_APPROVE',
+    --             'Auto approved, amount=' || v_rec.total_amount);
 
 
 -- Source: pkg_mapper_param_test.sql
@@ -2024,10 +2024,10 @@ SELECT * FROM audit_log ORDER BY log_id DESC LIMIT 20;
 
 
 -- Source: pkg_mapper_param_test.sql
-    SELECT COUNT(*), COALESCE(SUM(total_amount), 0)
-    INTO p_order_count, p_total_amount
-    FROM t_mapper_order
-    WHERE customer_id = p_customer_id;
+    -- SELECT COUNT(*), COALESCE(SUM(total_amount), 0)
+    -- INTO p_order_count, p_total_amount
+    -- FROM t_mapper_order
+    -- WHERE customer_id = p_customer_id;
 
 
 -- Source: pkg_mapper_param_test.sql
@@ -2243,8 +2243,8 @@ SELECT * FROM audit_log ORDER BY log_id DESC LIMIT 20;
 
 
 -- Source: pkg_test_patterns.sql
-        UPDATE t_tasks SET status = 'PROCESSING', batch_no = v_batch
-        WHERE status = 'PENDING' LIMIT p_threshold;
+        -- UPDATE t_tasks SET status = 'PROCESSING', batch_no = v_batch
+        -- WHERE status = 'PENDING' LIMIT p_threshold;
 
 
 -- Source: pkg_test_patterns.sql
@@ -2273,38 +2273,38 @@ SELECT * FROM audit_log ORDER BY log_id DESC LIMIT 20;
 
 
 -- Source: proc_Five_Gotos.sql
-        SELECT dept_id, SUM(amount) AS amt
-        FROM transactions
-        WHERE tx_date = p_date
-        GROUP BY dept_id
-    ) LOOP
-        v_detail := v_detail || rec.dept_id || ':' || rec.amt || CHR(10);
+    --     SELECT dept_id, SUM(amount) AS amt
+    --     FROM transactions
+    --     WHERE tx_date = p_date
+    --     GROUP BY dept_id
+    -- ) LOOP
+    --     v_detail := v_detail || rec.dept_id || ':' || rec.amt || CHR(10);
 
 
 -- Source: proc_Five_Gotos.sql
-        SELECT order_id, customer_id
-        FROM orders
-        WHERE create_time = p_batch_date
-    ) LOOP
-        <<check_next>>
+    --     SELECT order_id, customer_id
+    --     FROM orders
+    --     WHERE create_time = p_batch_date
+    -- ) LOOP
+    --     <<check_next>>
 
-        -- 检查客户信用
-        FOR credit_rec IN (
-            SELECT credit_level
-            FROM customer_credits
-            WHERE customer_id = order_rec.customer_id
-        ) LOOP
-            IF credit_rec.credit_level < 60 THEN
-                v_invalid := v_invalid + 1;
+    --     -- 检查客户信用
+    --     FOR credit_rec IN (
+    --         SELECT credit_level
+    --         FROM customer_credits
+    --         WHERE customer_id = order_rec.customer_id
+    --     ) LOOP
+    --         IF credit_rec.credit_level < 60 THEN
+    --             v_invalid := v_invalid + 1;
 
 
 -- Source: proc_Five_Gotos.sql
-                SELECT item_status
-                FROM order_items
-                WHERE order_id = order_rec.order_id
-            ) LOOP
-                IF item_rec.item_status = 'BLOCKED' THEN
-                    v_invalid := v_invalid + 1;
+            --     SELECT item_status
+            --     FROM order_items
+            --     WHERE order_id = order_rec.order_id
+            -- ) LOOP
+            --     IF item_rec.item_status = 'BLOCKED' THEN
+            --         v_invalid := v_invalid + 1;
 
 
 -- Source: proc_Five_Gotos.sql
@@ -2350,5 +2350,4 @@ SELECT * FROM audit_log ORDER BY log_id DESC LIMIT 20;
 
 -- Source: proc_GOto.sql
             INSERT INTO tgt_table VALUES (rec.*);
-
-
+END;

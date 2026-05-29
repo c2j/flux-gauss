@@ -150,6 +150,30 @@ pub fn write_service_test(
     Ok(test_class_name)
 }
 
+fn count_mapper_params_for_dml(
+    proc: &crate::types::ProcedureInfo,
+    dml: &crate::types::DmlStatement,
+    pkg: &PackageInfo,
+) -> usize {
+    let in_count = proc.parameters.iter().filter(|p| !p.is_out()).count();
+    let local_count = count_local_var_refs_in_sql(&dml.sql_text, &proc.local_vars, &proc.parameters);
+    let pkg_count = count_package_var_refs_in_sql(&dml.sql_text, &pkg.package_vars, &proc.local_vars, &proc.parameters);
+    let param_java_names: std::collections::HashSet<String> = proc
+        .parameters.iter()
+        .filter(|p| !p.is_out())
+        .map(|p| snake_to_camel(&p.name).to_lowercase())
+        .collect();
+    let out_count = proc.parameters.iter()
+        .filter(|p| p.is_out())
+        .filter(|p| case_insensitive_word_match(&dml.sql_text, &p.name))
+        .filter(|p| {
+            let jn = snake_to_camel(&p.name).to_lowercase();
+            !param_java_names.iter().any(|pn| pn == &jn)
+        })
+        .count();
+    in_count + local_count + pkg_count + out_count
+}
+
 fn build_success_test(
     proc: &crate::types::ProcedureInfo,
     mapper_name: &str,
@@ -200,10 +224,26 @@ fn build_success_test(
     }
 
     let args_str = param_args.join(", ");
-    if proc.is_function {
+    let has_refcursor_out = proc.parameters.iter().any(|p| p.is_out() && p.is_refcursor());
+    if proc.is_function || has_refcursor_out {
         lines.push(format!("        var result = service.{}({});", method_name, args_str));
+        if has_refcursor_out && !proc.open_cursors.is_empty() {
+            lines.push("        assertNotNull(result);".to_string());
+        }
     } else {
         lines.push(format!("        service.{}({});", method_name, args_str));
+    }
+
+    let first_dml = proc.dml_statements.iter()
+        .find(|d| matches!(d.sql_type, DmlType::Insert | DmlType::Update | DmlType::Delete));
+    if let Some(dml) = first_dml {
+        let any_count = count_mapper_params_for_dml(proc, dml, pkg);
+        let any_args = if any_count > 0 {
+            vec!["any()"; any_count].join(", ")
+        } else {
+            String::new()
+        };
+        lines.push(format!("        verify({}, atLeast(0)).{}({});", mapper_name, dml.method_id, any_args));
     }
 
     lines.push("    }".to_string());

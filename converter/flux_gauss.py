@@ -2189,10 +2189,13 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
                 if default_ast is not None:
                     try:
                         default_java = _expr_to_java(default_ast, proc)
-                        if java_type.startswith("java.util.List<") and not default_java.startswith("java.util.Arrays.asList("):
-                            default_java = f"new java.util.ArrayList<>(java.util.Arrays.asList({default_java}))"
-                        elif java_type.startswith("java.util.List<"):
-                            default_java = f"new java.util.ArrayList<>({default_java})"
+                        if java_type.startswith("java.util.List<"):
+                            if default_java in ('"{}"', "'{}'"):
+                                default_java = "new java.util.ArrayList<>()"
+                            elif not default_java.startswith("java.util.Arrays.asList("):
+                                default_java = f"new java.util.ArrayList<>(java.util.Arrays.asList({default_java}))"
+                            else:
+                                default_java = f"new java.util.ArrayList<>({default_java})"
                         proc.local_var_defaults[var_name] = default_java
                     except Exception:
                         pass
@@ -2490,10 +2493,13 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
                         if default_ast is not None:
                             try:
                                 default_java = _expr_to_java(default_ast, proc)
-                                if java_type.startswith("java.util.List<") and not default_java.startswith("java.util.Arrays.asList("):
-                                    default_java = f"new java.util.ArrayList<>(java.util.Arrays.asList({default_java}))"
-                                elif java_type.startswith("java.util.List<"):
-                                    default_java = f"new java.util.ArrayList<>({default_java})"
+                                if java_type.startswith("java.util.List<"):
+                                    if default_java in ('"{}"', "'{}'"):
+                                        default_java = "new java.util.ArrayList<>()"
+                                    elif not default_java.startswith("java.util.Arrays.asList("):
+                                        default_java = f"new java.util.ArrayList<>(java.util.Arrays.asList({default_java}))"
+                                    else:
+                                        default_java = f"new java.util.ArrayList<>({default_java})"
                                 proc.local_var_defaults[var_name] = default_java
                             except Exception:
                                 pass
@@ -4461,6 +4467,35 @@ def _comment_perform(query: str) -> str:
     return '\n'.join(f"// {l}" if l.strip() else "//" for l in lines)
 
 
+def _flatten_binaryop_concat(node):
+    """Flatten a BinaryOp(||) chain into a flat list of AST segments."""
+    if not isinstance(node, dict):
+        return [node]
+    if "BinaryOp" in node:
+        bo = node["BinaryOp"]
+        if bo.get("op") == "||":
+            return _flatten_binaryop_concat(bo.get("left")) + _flatten_binaryop_concat(bo.get("right"))
+    return [node]
+
+
+def _extract_literal_str(node):
+    """Extract string value from Literal(String), StringLiteral, or SingleQuotedString AST nodes."""
+    if isinstance(node, str):
+        return node.strip("'\"")
+    if not isinstance(node, dict):
+        return None
+    for k, v in node.items():
+        if k == "Literal" and isinstance(v, dict):
+            for lk, lv in v.items():
+                if lk == "String" and isinstance(lv, str):
+                    return lv.strip("'\"")
+        if k == "StringLiteral":
+            return v.strip("'\"") if isinstance(v, str) else str(v)
+        if k == "SingleQuotedString":
+            return v.strip("'")
+    return None
+
+
 def _flush_scheduler_job(proc: ProcedureInfo):
     job = getattr(proc, '_pending_scheduler_job', {})
     if not job or 'target_method' not in job:
@@ -4469,10 +4504,70 @@ def _flush_scheduler_job(proc: ProcedureInfo):
     method = job['target_method']
     task_id_expr = job.get('task_id_expr', 'null')
 
-    # DBE_SCHEDULER jobs cannot be directly translated to Java method calls — generate comment
+    # Generate direct method call (DBE_SCHEDULER dynamic jobs map to synchronous calls in Spring)
     proc.java_logic_lines.append(
-        f'// TODO: Scheduled job — this.{method}({task_id_expr})'
+        f'// Originally: DBE_SCHEDULER job for {method}'
     )
+    if task_id_expr == 'null':
+        job_action_ast = job.get('job_action_ast')
+        if job_action_ast:
+            segments = _flatten_binaryop_concat(job_action_ast)
+            template_parts = []
+            expr_args = []
+            for seg in segments:
+                s = _extract_literal_str(seg)
+                if s is not None:
+                    template_parts.append(s)
+                elif isinstance(seg, dict):
+                    template_parts.append(None)
+                    expr_args.append(seg)
+            full_str = "".join(t if t is not None else "?" for t in template_parts)
+            m_proc = re.search(r'\bCALL\s+\S+\(|BEGIN\s+\S+\(', full_str, re.IGNORECASE)
+            if not m_proc:
+                paren_start = full_str.find('(')
+            else:
+                paren_start = m_proc.end() - 1
+            args_parts = []
+            arg_idx = 0
+            if paren_start >= 0:
+                paren_end = full_str.rfind(')')
+                if paren_end < 0:
+                    paren_end = len(full_str)
+                inner = full_str[paren_start + 1:paren_end]
+                chunks = re.split(r'\s*,\s*', inner)
+                for chunk in chunks:
+                    chunk = chunk.strip()
+                    if chunk == '?':
+                        seg_node = expr_args[arg_idx] if arg_idx < len(expr_args) else None
+                        arg_idx += 1
+                        if seg_node:
+                            for sk, sv in seg_node.items():
+                                if sk == "PlVariable":
+                                    var_name = sv[-1] if isinstance(sv, list) and sv else str(sv)
+                                    args_parts.append(snake_to_camel(var_name))
+                                else:
+                                    args_parts.append(_expr_to_java(seg_node, proc, as_read=True))
+                                break
+                    elif chunk.upper() == 'NULL':
+                        args_parts.append('new java.util.concurrent.atomic.AtomicReference<>()')
+                    elif chunk:
+                        continue
+            if args_parts:
+                proc.java_logic_lines.append(
+                    f'this.{method}({", ".join(args_parts)});'
+                )
+            else:
+                proc.java_logic_lines.append(
+                    f'// TODO: Scheduled job — this.{method}(/* args unknown from PLSQL_BLOCK */)'
+                )
+        else:
+            proc.java_logic_lines.append(
+                f'// TODO: Scheduled job — this.{method}(/* args unknown from PLSQL_BLOCK */)'
+            )
+    else:
+        proc.java_logic_lines.append(
+            f'this.{method}(String.valueOf({task_id_expr}));'
+        )
 
     proc._pending_scheduler_job = {}
 
@@ -4493,9 +4588,12 @@ def _process_perform(perform_data: dict, proc: ProcedureInfo, all_packages: dict
 
                     if op == "CREATE_JOB":
                         job_action = None
+                        job_action_ast_node = None
+                        has_named_args = False
                         for arg in raw_args:
                             if isinstance(arg, dict):
                                 if "NamedArgument" in arg:
+                                    has_named_args = True
                                     na = arg["NamedArgument"]
                                     na_name = ""
                                     for nk, nv in na.items():
@@ -4503,13 +4601,40 @@ def _process_perform(perform_data: dict, proc: ProcedureInfo, all_packages: dict
                                             na_name = _extract_name_from_expr(nv).lower() if isinstance(nv, dict) else str(nv).lower()
                                         elif nk == "value" and na_name == "job_action":
                                             job_action = _extract_string_literal(nv)
+                                            if job_action is None and isinstance(nv, dict):
+                                                first_str = _extract_literal_str(nv)
+                                                if first_str is None:
+                                                    segments = _flatten_binaryop_concat(nv)
+                                                    for seg in segments:
+                                                        first_str = _extract_literal_str(seg)
+                                                        if first_str:
+                                                            break
+                                                if first_str:
+                                                    job_action = first_str
+                                                    job_action_ast_node = nv
+                        if not has_named_args:
+                            for arg in raw_args:
+                                if isinstance(arg, dict) and "BinaryOp" in arg:
+                                    segments = _flatten_binaryop_concat(arg)
+                                    first_str = None
+                                    for seg in segments:
+                                        first_str = _extract_literal_str(seg)
+                                        if first_str:
+                                            break
+                                    if first_str and re.search(r'\.\w+\(', first_str):
+                                        job_action = first_str
+                                        job_action_ast_node = arg
+                                        break
                         if job_action:
                             parts = job_action.split('.')
                             if len(parts) >= 2:
                                 target_method = java_method_name(parts[-1])
                             else:
                                 target_method = java_method_name(job_action)
-                            proc._pending_scheduler_job = {"target_method": target_method}
+                            pending = {"target_method": target_method}
+                            if job_action_ast_node:
+                                pending["job_action_ast"] = job_action_ast_node
+                            proc._pending_scheduler_job = pending
                         else:
                             m = re.search(r"job_action\s*=>\s*'([^']+)'", query, re.IGNORECASE)
                             if m:
@@ -5585,6 +5710,19 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
                             if job_action:
                                 aparts = job_action.split('.')
                                 proc._pending_scheduler_job = {"target_method": java_method_name(aparts[-1])}
+                            elif isinstance(nv, dict) and "BinaryOp" in nv:
+                                segments = _flatten_binaryop_concat(nv)
+                                first_str = None
+                                for seg in segments:
+                                    first_str = _extract_literal_str(seg)
+                                    if first_str:
+                                        break
+                                if first_str:
+                                    aparts = first_str.split('.')
+                                    proc._pending_scheduler_job = {
+                                        "target_method": java_method_name(aparts[-1]),
+                                        "job_action_ast": nv,
+                                    }
             return
         elif func.upper() == "SET_JOB_ARGUMENT_VALUE":
             for arg in args:
@@ -6394,9 +6532,30 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                     _mc = f"mapper.{mapper_method}({param_args_str})"
                     _emit_dml_with_rowcount(proc, _mc)
                 return
-        proc.java_logic_lines.append(f"// TODO: EXECUTE IMMEDIATE {var_name} — dynamic SQL could not be resolved at conversion time")
-        proc.java_logic_lines.append(f"//       Manual fix: create a dedicated mapper method with the resolved SQL,")
-        proc.java_logic_lines.append(f"//       or resolve {snake_to_camel(var_name.split('.')[0]) if var_name else var_name} at runtime and use a dynamic query approach")
+        vn_camel = snake_to_camel(var_name.split('.')[0]) if var_name else "unknown"
+        # Extract USING args and INTO targets for the skeleton comment block
+        _using_names = []
+        for arg in using_args:
+            if isinstance(arg, dict):
+                arg_name = _extract_var_name_from_expr(arg.get("argument", {}))
+                if arg_name:
+                    _using_names.append(snake_to_camel(arg_name))
+        _into_names = _extract_all_into_variables(into_targets) if into_targets else []
+        _into_camel = [snake_to_camel(vn) for vn in _into_names]
+        proc.java_logic_lines.append(f"// Dynamic SQL could not be resolved at conversion time")
+        proc.java_logic_lines.append(f"// Original: EXECUTE IMMEDIATE {var_name}" + (f" USING {', '.join(_using_names)}" if _using_names else "") + (f" INTO {', '.join(_into_names)}" if _into_names else ""))
+        proc.java_logic_lines.append(f"// Resolved variables:")
+        proc.java_logic_lines.append(f"//   SQL: {vn_camel} (determined at runtime)")
+        if _using_names:
+            proc.java_logic_lines.append(f"//   USING: {', '.join(_using_names)}")
+        if _into_camel:
+            proc.java_logic_lines.append(f"//   INTO: {', '.join(_into_camel)}")
+        proc.java_logic_lines.append(f"// Manual implementation:")
+        proc.java_logic_lines.append(f"//   1. Resolve the SQL string in {vn_camel} at runtime")
+        proc.java_logic_lines.append(f"//   2. Execute via mapper method or JdbcTemplate")
+        if _into_camel:
+            proc.java_logic_lines.append(f"//   3. Capture result into {', '.join(_into_camel)}")
+        proc.java_logic_lines.append(f"// Example: jdbcTemplate.update({vn_camel}" + (", " + ", ".join(_using_names) if _using_names else "") + ");")
         _record_todo("EXECUTE_UNRESOLVED", proc, f"var={var_name}")
         return
 
@@ -7328,6 +7487,9 @@ def _handle_function(func_name, args_java, proc):
             if _is_bd_arg(arg0):
                 return f"({arg0}).setScale((int)({args_java[1]}), java.math.RoundingMode.HALF_UP)"
             # Non-BigDecimal: use Math.round with scale — round(x * 10^n) / 10^n
+            _is_primitive = any(op in arg0 for op in (" / ", " * ", " + ", " - ")) or arg0.endswith("d") or arg0.endswith("f") or arg0.endswith("D")
+            if _is_primitive:
+                return f"(double) Math.round(({arg0}) * Math.pow(10, {args_java[1]})) / Math.pow(10, {args_java[1]})"
             return f"(double) Math.round(({arg0}).doubleValue() * Math.pow(10, {args_java[1]})) / Math.pow(10, {args_java[1]})"
         elif len(args_java) == 1:
             arg0 = args_java[0]
@@ -7456,8 +7618,8 @@ def _handle_function(func_name, args_java, proc):
 
     elif func_name == "ln":
         if args_java:
-            return f"java.math.BigDecimal.valueOf(Math.log({args_java[0]}.doubleValue()))"
-        return "java.math.BigDecimal.ZERO"
+            return f"Math.log({args_java[0]}.doubleValue())"
+        return "0.0d"
 
     elif func_name == "digest":
         if len(args_java) >= 2:
@@ -7482,8 +7644,19 @@ def _handle_function(func_name, args_java, proc):
 
     elif func_name == "array_append":
         if len(args_java) >= 2:
-            # array_append returns a new array with element appended — for List, create new ArrayList
-            return f"_appendList({args_java[0]}, {args_java[1]})"
+            _list_expr = args_java[0]
+            _elem_expr = args_java[1]
+            # Detect List<Double>/List<Long> and apply explicit cast for generic type safety
+            if proc:
+                _list_var_name = _list_expr.split('.')[0].split('[')[0].strip()
+                _camel_to_snake = lambda s: re.sub(r'(?<=[a-z])(?=[A-Z])', '_', s).lower()
+                _var_key = _camel_to_snake(_list_var_name)
+                _var_type = proc.local_vars.get(_var_key, "")
+                if "List<Double>" in _var_type and not any(x in _elem_expr for x in ("Double.valueOf", "(double)", "doubleValue()")):
+                    _elem_expr = f"Double.valueOf({_elem_expr})"
+                elif "List<Long>" in _var_type and not any(x in _elem_expr for x in ("Long.valueOf", "(long)", "longValue()")):
+                    _elem_expr = f"Long.valueOf({_elem_expr})"
+            return f"_appendList({_list_expr}, {_elem_expr})"
         return "null"
 
     elif func_name == "array_to_string":
@@ -8227,6 +8400,27 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                         idx_expr = args_java[0] if args_java else "0"
                         return f"{snake_to_camel(func_name_lower)}.get((int)({idx_expr}) - 1)"
 
+            # --- Builtin-based semantic function handling (AST builtin field) ---
+            _builtin = val.get("builtin")
+            if _builtin and isinstance(_builtin, dict):
+                _builtin_domain = _builtin.get("domain", "")
+                _builtin_category = _builtin.get("category", "")
+                if _builtin_domain == "ExceptionContext":
+                    if func_name_lower == "pg_exception_detail":
+                        return 'e.getMessage()'
+                    elif func_name_lower == "pg_exception_hint":
+                        return '"(see exception hint in stack trace)"'
+                    elif func_name_lower == "pg_exception_context":
+                        return 'java.util.Arrays.toString(e.getStackTrace())'
+                    else:
+                        # Generic fallback for any future ExceptionContext functions
+                        return f'e.getMessage()'
+                elif _builtin_category == "TypeConstructor":
+                    if args_java:
+                        arg0 = args_java[0]
+                        return arg0 if (arg0.startswith('"') or arg0.startswith("'")) else f"String.valueOf({arg0})"
+                    return '"{}"'
+
             if func_name_lower in SQL_FUNCTION_MAP:
                 mapped = SQL_FUNCTION_MAP[func_name_lower]
                 if func_name_lower == "coalesce" and len(args_java) >= 2:
@@ -8553,10 +8747,72 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             targets = val.get("targets", [])
             from_clause = val.get("from", [])
             where_clause = val.get("where_clause")
-            if where_clause:
-                where_java = _expr_to_java(where_clause, proc, all_packages=all_packages)
-                return f"/* Subquery: WHERE {_flatten_comment(where_java)} */ null"
-            return f"/* Subquery */ null"
+            _subquery_handled = False
+            if (proc is not None and len(from_clause) == 1 and len(targets) == 1
+                    and where_clause is not None):
+                _sq_from = from_clause[0]
+                _sq_table_name = None
+                if isinstance(_sq_from, dict):
+                    for _tfk, _tfv in _sq_from.items():
+                        if _tfk == "Table":
+                            _sq_table_name = "_".join(_tfv.get("name", []))
+                        elif _tfk == "Subquery":
+                            pass
+                        break
+                _sq_target = targets[0]
+                _sq_is_row_star_cast = False
+                if isinstance(_sq_target, dict):
+                    _sq_expr_list = _sq_target.get("Expr")
+                    if isinstance(_sq_expr_list, list) and len(_sq_expr_list) == 2:
+                        _sq_inner = _sq_expr_list[0]
+                        if isinstance(_sq_inner, dict) and "TypeCast" in _sq_inner:
+                            _sq_tc = _sq_inner["TypeCast"]
+                            _sq_tc_expr = _sq_tc.get("expr", {})
+                            if isinstance(_sq_tc_expr, dict) and "FunctionCall" in _sq_tc_expr:
+                                _sq_fc = _sq_tc_expr["FunctionCall"]
+                                _sq_fc_name = "_".join(_sq_fc.get("name", []))
+                                _sq_fc_args = _sq_fc.get("args", [])
+                                if _sq_fc_name.lower() == "row" and len(_sq_fc_args) == 1:
+                                    _sq_arg = _sq_fc_args[0]
+                                    if isinstance(_sq_arg, dict) and "QualifiedStar" in _sq_arg:
+                                        _sq_is_row_star_cast = True
+                _sq_where = where_clause
+                _sq_pk_col = None
+                _sq_where_right = None
+                if isinstance(_sq_where, dict) and "BinaryOp" in _sq_where:
+                    _sq_bop = _sq_where["BinaryOp"]
+                    if _sq_bop.get("op") == "=":
+                        _sq_left = _sq_bop.get("left", {})
+                        _sq_right = _sq_bop.get("right", {})
+                        if isinstance(_sq_left, dict) and "ColumnRef" in _sq_left:
+                            _sq_col_parts = _sq_left["ColumnRef"]
+                            if isinstance(_sq_col_parts, list) and len(_sq_col_parts) == 1:
+                                _sq_pk_col = _sq_col_parts[0]
+                                _sq_where_right = _sq_right
+                if (_sq_is_row_star_cast and _sq_table_name and _sq_pk_col
+                        and _sq_where_right is not None):
+                    _sq_method_name = f"select{snake_to_pascal(_sq_table_name)}By{snake_to_pascal(_sq_pk_col)}"
+                    _sq_pk_param = snake_to_camel(_sq_pk_col)
+                    _sq_sql = f"SELECT * FROM {_sq_table_name} WHERE {_sq_pk_col} = #{{{_sq_pk_param}}}"
+                    _sq_where_java = _expr_to_java(_sq_where_right, proc, all_packages=all_packages)
+                    _existing = [d for d in proc.dml_statements if d.method_id == _sq_method_name]
+                    if not _existing:
+                        proc.dml_statements.append(DmlStatement(
+                            sql_type="select",
+                            method_id=_sq_method_name,
+                            sql_text=_sq_sql,
+                            result_type="Map<String, Object>",
+                            returns_list=False,
+                            is_dynamic=True,
+                            extra_params=[(_sq_pk_param, "Object")],
+                        ))
+                    _subquery_handled = True
+                    return f"mapper.{_sq_method_name}({_sq_where_java})"
+            if not _subquery_handled:
+                if where_clause:
+                    where_java = _expr_to_java(where_clause, proc, all_packages=all_packages)
+                    return f"/* Subquery: WHERE {_flatten_comment(where_java)} */ null"
+                return f"/* Subquery */ null"
         elif key == "Subscript":
             obj_java = _expr_to_java(val.get("object", {}), proc, all_packages=all_packages)
             idx_java = _expr_to_java(val.get("index", {}), proc, all_packages=all_packages)
@@ -10464,7 +10720,12 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
     is_stubbed = _stub_key in STUB_PROCEDURES
 
     if is_stubbed:
+        _stub_reasons = STUB_REASONS.get(_stub_key, [])
+        if proc.source_file:
+            body_lines.append(f"// Source SQL: {proc.source_file} (lines {proc.source_start_line}-{proc.source_end_line})")
         body_lines.append("// TODO: Auto-generated stub — complex PL/pgSQL pattern requires manual implementation")
+        for _sr in _stub_reasons:
+            body_lines.append(f"//   Reason: {_sr}")
         if ret_type != "void":
             body_lines.append(f"return {_type_default(ret_type)};")
         exception_block = None
@@ -10651,6 +10912,30 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
     if ret_type != "void":
         body_lines = [line.replace("return;", "return null;") if line.strip() == "return;" else line for line in body_lines]
 
+    # Pre-pass: strip trailing dead code before stub check
+    _last_ret = -1
+    _bd = 0
+    for i, line in enumerate(body_lines):
+        s = line.strip()
+        _bd += s.count("{") - s.count("}")
+        if s.startswith("//") or not s:
+            continue
+        if _bd == 0 and re.match(r'^return\b', s) and s.endswith(";"):
+            _last_ret = i
+    if _last_ret >= 0:
+        _trailing = body_lines[_last_ret + 1:]
+        _has_unreachable = any(
+            l.strip() and not l.strip().startswith("//") and l.strip() != "}" and not l.strip().startswith("/*")
+            for l in _trailing
+        )
+        if _has_unreachable:
+            _kept = []
+            for l in _trailing:
+                s = l.strip()
+                if not s or s.startswith("//") or s == "}" or s.startswith("/*"):
+                    _kept.append(l)
+            body_lines = body_lines[:_last_ret + 1] + _kept
+
     has_complex_issues, _failed_checks = _has_compilation_issues(body_lines, out_params, proc)
 
     if not has_complex_issues and not is_stubbed and ret_type != "void":
@@ -10741,6 +11026,39 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                     if not s or s.startswith("//") or s == "}":
                         _kept.append(l)
                 body_lines = body_lines[:_last_ret + 1] + _kept
+        else:
+            # Secondary: find try-catch blocks where all paths return/throw
+            _bd2 = 0
+            _try_start = -1
+            for i, line in enumerate(body_lines):
+                s = line.strip()
+                _bd2 += s.count("{") - s.count("}")
+                if s.startswith("//") or not s:
+                    continue
+                if s.startswith("try") and _bd2 == 1:
+                    _try_start = i
+                if _bd2 == 0 and _try_start >= 0 and s == "}":
+                    _block = body_lines[_try_start:i+1]
+                    _try_has_return = any(re.match(r'\s*return\b', l) and ';' in l for l in _block)
+                    _catch_has_terminate = any(
+                        re.match(r'\s*(throw\b|return\b)', l) and ';' in l
+                        for l in _block
+                    )
+                    if _try_has_return and _catch_has_terminate:
+                        _trailing = body_lines[i + 1:]
+                        _has_unreachable = any(
+                            l.strip() and not l.strip().startswith("//") and l.strip() != "}"
+                            for l in _trailing
+                        )
+                        if _has_unreachable:
+                            _kept = []
+                            for l in _trailing:
+                                s2 = l.strip()
+                                if not s2 or s2.startswith("//") or s2 == "}":
+                                    _kept.append(l)
+                            body_lines = body_lines[:i + 1] + _kept
+                    _try_start = -1
+                    break
 
     has_complex_issues, _failed_checks = _has_compilation_issues(body_lines, out_params, proc)
 
@@ -10876,14 +11194,6 @@ def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureI
     if re.search(r'\w+\s*=\s*\d+\.\d+d\b', all_text) and 'BigDecimal' in all_text and 'BigDecimal.valueOf' not in all_text:
         failed.append("BigDecimal 变量被赋值了 double 字面量 (类型不匹配)")
 
-    # Stub procedures with List<Double> + _appendList type mismatch (int vs Double generic inference)
-    if '_appendList(' in all_text and re.search(r'_appendList\([^,]+,\s*\w+\)', all_text):
-        _list_vars = {snake_to_camel(v) for v, t in proc.local_vars.items() if 'List<' in t} if proc else set()
-        for _lv in _list_vars:
-            if f'_appendList({_lv},' in all_text:
-                failed.append(f"List 泛型推断冲突 ({_lv}): array_append(int) 无法匹配 List<Double>")
-                break
-
     # Stub procedures with local AtomicReference passed to OUT param target
     _atomic_local_vars = {snake_to_camel(v) for v, t in proc.local_vars.items() if 'AtomicReference' in t} if proc else set()
     _atomic_out_params = {p.java_name for p in proc.parameters if p.is_out and 'AtomicReference' in p.java_type} if proc else set()
@@ -10907,18 +11217,44 @@ def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureI
                     failed.append(f"基本类型参数 '{p.java_name}' 使用了 .equals() 而非 ==")
 
     _bd = 0
-    for line in body_lines:
+    for _i, line in enumerate(body_lines):
         s = line.strip()
         _bd += s.count("{") - s.count("}")
         if s.startswith("//") or not s:
             continue
         if _bd == 0 and re.match(r'^return\b', s) and s.endswith(";"):
-            for after in body_lines[body_lines.index(line) + 1:]:
+            for after in body_lines[_i + 1:]:
                 a = after.strip()
                 if a and not a.startswith("//") and a != "}":
                     failed.append("return 后仍有可达代码 (死代码)")
                     break
             break
+
+    # Check if try-catch block terminates all paths (for dead code stub trigger suppression)
+    _has_dead_code_flag = any("return 后仍有可达代码" in f for f in failed)
+    if _has_dead_code_flag:
+        _bd3 = 0
+        _try_start = -1
+        _try_end = -1
+        for i, line in enumerate(body_lines):
+            s = line.strip()
+            _bd3 += s.count("{") - s.count("}")
+            if s.startswith("//") or not s:
+                continue
+            if s.startswith("try") and _bd3 == 1:
+                _try_start = i
+            if _bd3 == 0 and _try_start >= 0 and s == "}":
+                _try_end = i
+                break
+        if _try_start >= 0 and _try_end >= 0:
+            _block = body_lines[_try_start:_try_end + 1]
+            _try_has_return = any(re.match(r'\s*return\b', l) and ';' in l for l in _block)
+            _catch_has_terminate = any(
+                re.match(r'\s*(throw\b|return\b)', l) and ';' in l
+                for l in _block
+            )
+            if _try_has_return and _catch_has_terminate:
+                failed = [f for f in failed if "return 后仍有可达代码" not in f]
 
     if proc and proc.is_function:
         _bd2 = 0
@@ -10961,7 +11297,14 @@ def _type_default(java_type: str) -> str:
 
 def _generate_stub_body(proc: ProcedureInfo, out_params: list) -> list:
     _record_todo("AUTO_STUB", proc, "complex PL/pgSQL pattern → stub body")
-    lines = ["// TODO: Auto-generated stub — complex PL/pgSQL pattern requires manual implementation"]
+    lines = []
+    if proc.source_file:
+        lines.append(f"// Source SQL: {proc.source_file} (lines {proc.source_start_line}-{proc.source_end_line})")
+    lines.append("// TODO: Auto-generated stub — complex PL/pgSQL pattern requires manual implementation")
+    _stub_key = (proc.name, len(proc.parameters))
+    _stub_reasons = STUB_REASONS.get(_stub_key, [])
+    for _sr in _stub_reasons:
+        lines.append(f"//   Reason: {_sr}")
     for p in out_params:
         lines.append(f"{p.java_name}.set(null);")
     if proc.is_function:

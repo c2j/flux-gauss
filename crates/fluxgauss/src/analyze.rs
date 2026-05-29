@@ -149,9 +149,14 @@ pub fn process_declaration(
                     } else {
                         let sql_type = crate::extract::normalize_sql_type(&sql_type_raw);
                         let sql_type_lower = sql_type.to_lowercase();
-                        if proc.custom_types.contains_key(&sql_type_lower) || proc.custom_types.contains_key(&sql_type) {
-                            proc.imports.insert("import java.util.Map;".into());
-                            "Map<String, Object>".into()
+                        if let Some(ct) = proc.custom_types.get(&sql_type_lower).or_else(|| proc.custom_types.get(&sql_type)) {
+                            if ct.is_record {
+                                proc.imports.insert("import java.util.Map;".into());
+                                "Map<String, Object>".into()
+                            } else {
+                                proc.imports.insert("import java.util.List;".into());
+                                "java.util.List<Object>".into()
+                            }
                         } else {
                             crate::type_map::sql_type_to_java(&sql_type)
                                 .map(|s| s.to_string())

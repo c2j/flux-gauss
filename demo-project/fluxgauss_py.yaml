@@ -1,3 +1,6 @@
+# $ cd ~/Projects/Desktop_Projects/DB/sp2java/ && rm -rf dest_py && \
+# OGSQL_BIN=../ogsql-parser/target/release/ogsql ~/dev/miniforge3/bin/python converter/flux_gauss.py --config demo-project/fluxgauss_py.yaml && \
+# cd dest_py/ && mvn compile && mvn test && mvn verify -Pintegration
 output_dir: ./dest_py
 base_package: ced
 
@@ -66,3 +69,4 @@ sources:
   - demo-project/sql/DAT_DATACLEAR_CONFIG.sql
   - demo-project/sql/gauss_insert_all_styles.sql
   - demo-project/sql/PACK_LOG.sql
+  - demo-project/sql/terris.sql

@@ -797,6 +797,7 @@ fn generate_state_machine_goto(
 
         for idx in target..end_idx {
             let stmt = &body[idx];
+            let mut hit_goto = false;
             match stmt {
                 PlStatement::Goto { label } => {
                     if analysis.labels.contains_key(label) {
@@ -805,6 +806,8 @@ fn generate_state_machine_goto(
                     } else {
                         proc.java_logic_lines.push("            running = false;".to_string());
                     }
+                    proc.java_logic_lines.push("            break;".to_string());
+                    hit_goto = true;
                 }
                 PlStatement::Block(block) => {
                     for decl in &block.node.declarations {
@@ -821,6 +824,9 @@ fn generate_state_machine_goto(
                 _ => {
                     crate::statement::process_statement(stmt, proc, stmt_ctx)?;
                 }
+            }
+            if hit_goto {
+                break;
             }
         }
         let last_meaningful = proc.java_logic_lines.iter().rev()
