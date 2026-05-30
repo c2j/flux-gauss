@@ -7,7 +7,8 @@ Converts OpenGauss/PostgreSQL stored procedures (PL/pgSQL) into a Spring Boot + 
 ## Key Files
 
 - `converter/flux_gauss.py` — Single-file Python converter (~8500 lines). All logic lives here.
-- `lib/ogsql-parser/` — Rust-based SQL parser (submodule). Produces JSON AST from SQL files.
+- `crates/fluxgauss/` — Rust converter (dual-engine). Uses `ogsql-parser` as a git dependency.
+- `ogsql-parser` — Referenced via git dependency (`https://github.com/c2j/ogsql-parser.git`, branch `main`) in `Cargo.toml`. Not a local submodule.
 - `demo-project/fluxgauss.yaml` — Example config referencing `demo-project/sql/*.sql` sources.
 - `dest/` — Generated output (gitignored). Contains a complete Maven/Spring Boot project.
 - `使用指南.md` — Full user guide (Chinese). Covers config, CLI, and supported PL/pgSQL features.
@@ -45,7 +46,7 @@ cd dest && mvn test      # run generated unit tests
 
 - Python 3.9+
 - Java 17+ (for `mvn compile` verification)
-- `ogsql` binary — resolved automatically from `lib/ogsql-parser/target/{arch}/release/ogsql`, or set `OGSQL_BIN` env var
+- `ogsql` binary — resolved via `OGSQL_BIN` env var, `PATH`, or local fallback paths. Build from source: `git clone https://github.com/c2j/ogsql-parser.git && cd ogsql-parser && cargo build --release --features full`
 
 ## Architecture
 
@@ -129,7 +130,7 @@ java_packages:                    # optional: map SQL files to different Java pa
 - After changes, run: `python3 converter/flux_gauss.py -c fluxgauss.yaml && cd dest && mvn compile`
 - Conversion reports are saved to `dest/.fluxgauss/reports/`.
 - Generation checkpoint is saved to `dest/.fluxgauss/gen-checkpoint.json`.
-- The ogsql-parser Rust binary is a separate build. Prebuilt binaries are in `lib/ogsql-parser/target/`. Do not modify unless intentionally updating the parser.
+- The ogsql-parser Rust binary is a separate build from `https://github.com/c2j/ogsql-parser`. For the Rust engine, it is pulled automatically as a git dependency via `Cargo.toml`. For the Python engine, build the `ogsql` binary and set `OGSQL_BIN` or place it on `PATH`.
 
 ## Key Internal Modules (by line range)
 
@@ -161,5 +162,6 @@ java_packages:                    # optional: map SQL files to different Java pa
 - `ogsql.broken` at root is a broken binary — ignore it.
 - `SQL` file at root is empty — ignore it.
 - `docs/plans/` contains implementation plans for features in progress.
-- No linter, formatter, or CI config exists in this repo.
+- No linter, formatter config exists in this repo.
+- CI: `.github/workflows/release.yml` — builds ogsql + fluxgauss binaries for Linux/Windows/macOS, tests both Python and Rust engines.
 - Dependencies: Python `pyyaml` (optional, for YAML config), no `requirements.txt`.
