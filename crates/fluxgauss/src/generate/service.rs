@@ -73,10 +73,11 @@ pub fn write_service_class(
         }
     });
     let has_map_in_body = all_body.contains("Map<String") || has_list_return;
-    if all_body.contains("List<") || has_list_return {
+    let has_cursor_results = pkg.procedures.iter().any(|p| !p.open_cursors.is_empty());
+    if all_body.contains("List<") || has_list_return || has_cursor_results {
         all_imports.insert("import java.util.List;".to_string());
     }
-    if has_map_in_body {
+    if has_map_in_body || has_cursor_results {
         all_imports.insert("import java.util.Map;".to_string());
     }
     if all_body.contains("HashMap<") || all_body.contains("new HashMap") {
@@ -219,6 +220,16 @@ pub fn write_service_class(
         w.line("    catch (Exception e) { throw new RuntimeException(e); }");
         w.line("}");
     }
+    if all_body.contains("this._md5(") {
+        w.blank();
+        w.line("private String _md5(String input) {");
+        w.line("    try {");
+        w.line("        return String.format(\"%032x\", new java.math.BigInteger(1, java.security.MessageDigest.getInstance(\"MD5\").digest(input.getBytes())));");
+        w.line("    } catch (java.security.NoSuchAlgorithmException e) {");
+        w.line("        throw new RuntimeException(e);");
+        w.line("    }");
+        w.line("}");
+    }
     if all_body.contains("this.jsonbGet(") {
         w.blank();
         w.line("public Object jsonbGet(String jsonb, Object key) {");
@@ -336,12 +347,13 @@ pub(crate) fn should_stub_procedure(proc: &crate::types::ProcedureInfo, _object_
         let t = l.trim();
         t.contains("null ^ ") || t.contains("null > null") || t.contains("null < null")
             || t.contains("if (1)") || t.contains("if (2)") || t.contains("if (3)")
-            || t.contains("Objects.equals(null,") || t.contains("((Object)")
+            || t.contains("Objects.equals(null,")
+            || t.contains("((Object)")
             || t.contains("(Object[])")
             || t.contains("Math.pow(null,")
-            || t.contains("/* ENCODE */") || t.contains("/* MD5 */")
-            || t.contains(".set((-")
-            || (t.contains("Math.abs(") && t.contains(".compareTo("))
+            || t.contains("/* ENCODE */")
+            || (t.contains(".set((-") && t[t.find(".set((-").unwrap() + 7..].chars().next().map_or(false, |c| !c.is_ascii_digit()))
+            || t.contains("Math.abs(") && t.contains(".compareTo(")
             || t.contains(".longValue() / 0")
             || t.contains("Timestamp(System.currentTimeMillis()) - ")
             || t.contains("((Long) ") && t.contains(".get(")
@@ -472,11 +484,37 @@ fn build_service_method(
         let refcursor_outs: Vec<_> = proc.parameters.iter()
             .filter(|p| p.is_out() && p.is_refcursor())
             .collect();
+        let refcursor_names: std::collections::HashSet<String> = refcursor_outs.iter()
+            .map(|p| snake_to_camel(&p.name))
+            .collect();
+        let mut declared_cursor_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut declared_cursor_idxs: std::collections::HashSet<String> = std::collections::HashSet::new();
         for rc_out in &refcursor_outs {
             let rc_java = snake_to_camel(&rc_out.name);
             if let Some(cursor_info) = proc.open_cursors.get(&rc_java) {
                 if let Some(ref result_var) = cursor_info.result_var {
-                    body_lines.push(format!("List<Map<String, Object>> {} = null;", result_var));
+                    if declared_cursor_vars.insert(result_var.clone()) {
+                        body_lines.push(format!("List<Map<String, Object>> {} = null;", result_var));
+                    }
+                }
+            } else {
+                let var_name = format!("{}Result", rc_java);
+                if declared_cursor_vars.insert(var_name.clone()) {
+                    body_lines.push(format!("List<Map<String, Object>> {} = java.util.Collections.emptyList();", var_name));
+                }
+            }
+        }
+        for (cursor_name, cursor_info) in &proc.open_cursors {
+            if !refcursor_names.contains(cursor_name) {
+                if let Some(ref result_var) = cursor_info.result_var {
+                    if declared_cursor_vars.insert(result_var.clone()) {
+                        body_lines.push(format!("List<Map<String, Object>> {} = null;", result_var));
+                    }
+                }
+            }
+            if let Some(ref index_var) = cursor_info.index_var {
+                if declared_cursor_idxs.insert(index_var.clone()) {
+                    body_lines.push(format!("int {} = 0;", index_var));
                 }
             }
         }
@@ -492,7 +530,8 @@ fn build_service_method(
         if logic_text.contains("__SQLCODE__") {
             body_lines.push("int __SQLCODE__ = 0;".to_string());
         }
-        if logic_text.contains("__ROWCOUNT__") {
+        let needs_rowcount = logic_text.contains("__ROWCOUNT__");
+        if needs_rowcount {
             body_lines.push("int __ROWCOUNT__ = 0;".to_string());
         }
 
@@ -526,6 +565,9 @@ fn build_service_method(
             } else if trimmed.starts_with("/*") && trimmed.contains("null;") {
                 l = l.replace("null;", "");
             }
+            if needs_rowcount && l.contains(&format!("{}.", mapper_name)) && l.trim().ends_with(";") && !l.contains("=") && !l.contains("List<") && !l.contains("Map<") {
+                l = l.replace(&format!("{}.", mapper_name), &format!("__ROWCOUNT__ = {}.", mapper_name));
+            }
             body_lines.push(l);
         }
 
@@ -533,8 +575,11 @@ fn build_service_method(
             let rc_java = snake_to_camel(&rc_out.name);
             if let Some(cursor_info) = proc.open_cursors.get(&rc_java) {
                 if let Some(ref result_var) = cursor_info.result_var {
-                    body_lines.push(format!("return {};", result_var));
+                    body_lines.push(format!("if ({} != null) {{ return {}; }}", result_var, result_var));
+                    body_lines.push("return java.util.Collections.emptyList();".to_string());
                 }
+            } else {
+                body_lines.push(format!("return {}Result;", rc_java));
             }
         }
 
@@ -665,7 +710,7 @@ fn append_local_vars_to_mapper_calls(
                 if proc.local_vars.contains_key(word) {
                     let jn = snake_to_camel(word);
                     let jn_lower = jn.to_lowercase();
-                    if !param_java_names.iter().any(|pn| pn == &jn_lower)
+                    if !param_java_names.iter().any(|pn| pn.to_lowercase() == jn_lower)
                         && !extra_param_names.contains(&jn_lower)
                     {
                         local_args.push(jn);
@@ -680,7 +725,7 @@ fn append_local_vars_to_mapper_calls(
                 if let Some(_) = package_vars.get(word) {
                     let jn = snake_to_camel(word);
                     let jn_lower = jn.to_lowercase();
-                    if !param_java_names.iter().any(|pn| pn == &jn_lower)
+                    if !param_java_names.iter().any(|pn| pn.to_lowercase() == jn_lower)
                         && !local_args.iter().any(|a| a.to_lowercase() == jn_lower)
                         && !extra_param_names.contains(&jn_lower)
                     {
@@ -695,7 +740,7 @@ fn append_local_vars_to_mapper_calls(
 
             for (name, _) in &promoted_extra {
                 let jn_lower = name.to_lowercase();
-                if !param_java_names.iter().any(|pn| pn == &jn_lower) {
+                if !param_java_names.iter().any(|pn| pn.to_lowercase() == jn_lower) {
                     if out_params.iter().any(|p| snake_to_camel(&p.name).to_lowercase() == jn_lower) {
                         extra_args.push(format!("{}.get()", name));
                     } else {
@@ -734,10 +779,14 @@ pub fn collect_service_injections(pkg: &PackageInfo) -> std::collections::HashMa
             }
         }
     );
+    let system_svc_prefixes = ["DbeScheduler", "DbmsOutput", "DbmsRandom", "DbmsLob", "DbeOutput", "UtlFile", "DbmsSql", "DbmsJob"];
     let mut services = std::collections::HashMap::new();
     for proc in &pkg.procedures {
         for call in &proc.service_calls {
             if call.service_name == own_svc {
+                continue;
+            }
+            if system_svc_prefixes.iter().any(|sp| call.service_name.starts_with(sp)) {
                 continue;
             }
             if !services.contains_key(&call.service_name) {
