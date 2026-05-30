@@ -124,6 +124,7 @@ fn row_extraction_expr(row_var: &str, col_name: &str, declared_type: &str) -> (S
         t if t.contains("Timestamp") => (format!("({}.get(\"{}\") instanceof java.sql.Timestamp ? (java.sql.Timestamp) {}.get(\"{}\") : null)", row_var, col_name, row_var, col_name), false),
         t if t.contains("java.sql.Date") => (format!("({}.get(\"{}\") instanceof java.sql.Date ? (java.sql.Date) {}.get(\"{}\") : null)", row_var, col_name, row_var, col_name), false),
         t if t.contains("List<") || t.contains("ArrayList") => (format!("(java.util.List) {}.get(\"{}\")", row_var, col_name), false),
+        t if t.contains("Map<String") => (format!("(Map<String, Object>) {}.get(\"{}\")", row_var, col_name), false),
         t if t.contains("AtomicReference") && t.contains("Integer") => (format!(".set({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).intValue() : 0)", row_var, col_name, row_var, col_name), true),
         t if t.contains("AtomicReference") && t.contains("Long") => (format!(".set({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).longValue() : 0L)", row_var, col_name, row_var, col_name), true),
         t if t.contains("AtomicReference") && t.contains("BigDecimal") => (format!(".set({}.get(\"{}\") instanceof java.math.BigDecimal ? (java.math.BigDecimal) {}.get(\"{}\") : java.math.BigDecimal.ZERO)", row_var, col_name, row_var, col_name), true),
@@ -149,6 +150,52 @@ fn is_control_structure_line(line: &str) -> bool {
         || t.starts_with("catch")
         || t.starts_with("switch ")
         || t.starts_with("switch(")
+}
+
+fn preprocess_cursor_sql(sql: &str, using_args: &[ogsql_parser::ast::Expr], proc: &ProcedureInfo) -> String {
+    let mut result = sql.to_string();
+
+    let positional_re = regex::Regex::new(r":\s*(\d+)").unwrap();
+    if !positional_re.is_match(&result) {
+        return result;
+    }
+
+    let arg_names: Vec<String> = if !using_args.is_empty() {
+        using_args.iter().map(|a| {
+            match a {
+                ogsql_parser::ast::Expr::ColumnRef(name) | ogsql_parser::ast::Expr::PlVariable(name) if name.len() == 1 => {
+                    name[0].clone()
+                }
+                _ => crate::expr::expr_to_java(a, proc),
+            }
+        }).collect()
+    } else {
+        proc.parameters.iter()
+            .filter(|p| !p.is_out())
+            .map(|p| p.name.clone())
+            .collect()
+    };
+
+    if arg_names.is_empty() {
+        return result;
+    }
+
+    // Strip USING clause BEFORE positional param replacement, so byte offsets stay valid
+    if let Some(using_pos) = result.to_lowercase().rfind(" using ") {
+        result = result[..using_pos].to_string();
+    }
+
+    result = positional_re.replace_all(&result, |caps: &regex::Captures| {
+        let idx: usize = caps[1].parse().unwrap_or(1);
+        if idx >= 1 && idx <= arg_names.len() {
+            let java_name = crate::naming::snake_to_camel(&arg_names[idx - 1]);
+            format!("#{{{}}}", java_name)
+        } else {
+            format!(":{}", idx)
+        }
+    }).to_string();
+
+    result
 }
 
 fn push_logic_line(proc: &mut ProcedureInfo, line: String) {
@@ -396,6 +443,34 @@ fn extract_var_name_from_expr(expr: &ogsql_parser::ast::Expr) -> Option<String> 
     }
 }
 
+/// Convert a USING arg expression to a SQL literal if it's a built-in function.
+/// Returns Some(sql_text) for known SQL functions, None otherwise.
+fn expr_to_sql_literal(expr: &ogsql_parser::ast::Expr) -> Option<String> {
+    use ogsql_parser::ast::Expr;
+    match expr {
+        Expr::ColumnRef(name) if name.len() == 1 => {
+            match name[0].to_lowercase().as_str() {
+                "systimestamp" | "sysdate" | "current_timestamp" | "localtimestamp" => Some("CURRENT_TIMESTAMP".to_string()),
+                "current_user" | "user" => Some("CURRENT_USER".to_string()),
+                "current_date" => Some("CURRENT_DATE".to_string()),
+                "current_time" => Some("CURRENT_TIME".to_string()),
+                _ => None,
+            }
+        }
+        Expr::FunctionCall { name, args, .. } if args.is_empty() => {
+            let func_name = name.first()?;
+            match func_name.to_lowercase().as_str() {
+                "systimestamp" | "sysdate" | "current_timestamp" | "localtimestamp" => Some("CURRENT_TIMESTAMP".to_string()),
+                "current_user" | "user" => Some("CURRENT_USER".to_string()),
+                "current_date" => Some("CURRENT_DATE".to_string()),
+                "current_time" => Some("CURRENT_TIME".to_string()),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Extract (parent_var, field_name) from dotted expressions like `v_result.emp_id`.
 /// Returns None for non-dotted or unsupported expressions.
 fn extract_dotted_ref_from_expr(expr: &ogsql_parser::ast::Expr) -> Option<(String, String)> {
@@ -404,6 +479,155 @@ fn extract_dotted_ref_from_expr(expr: &ogsql_parser::ast::Expr) -> Option<(Strin
             Some((name[0].clone(), name[1].clone()))
         }
         _ => None
+    }
+}
+
+fn extract_assignment_target_name(target: &ogsql_parser::ast::Expr) -> Option<String> {
+    use ogsql_parser::ast::Expr;
+    match target {
+        Expr::ColumnRef(name) | Expr::PlVariable(name) if name.len() == 1 => Some(name[0].clone()),
+        _ => None,
+    }
+}
+
+/// Flatten a BinaryOp(||) concatenation tree into a SQL template with placeholders.
+/// Returns (sql_template, [(java_name, is_identifier), ...]) or None if the expression
+/// is not a recognizable SQL concatenation pattern.
+fn flatten_concat(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> Option<(String, Vec<(String, bool)>)> {
+    use ogsql_parser::ast::Expr;
+    let mut parts: Vec<String> = Vec::new();
+    let mut params: Vec<(String, bool)> = Vec::new();
+    flatten_concat_inner(expr, proc, &mut parts, &mut params);
+    if parts.is_empty() {
+        return None;
+    }
+    let sql_template = parts.join("");
+    let first_word = sql_template.trim_start().split_whitespace().next()?.to_lowercase();
+    let sql_verbs = ["select", "insert", "update", "delete", "truncate", "alter", "drop", "create", "merge", "savepoint", "rollback"];
+    if !sql_verbs.contains(&first_word.as_str()) {
+        return None;
+    }
+    Some((sql_template, params))
+}
+
+fn flatten_concat_inner(
+    expr: &ogsql_parser::ast::Expr,
+    proc: &ProcedureInfo,
+    parts: &mut Vec<String>,
+    params: &mut Vec<(String, bool)>,
+) {
+    use ogsql_parser::ast::{Expr, Literal};
+    match expr {
+        Expr::BinaryOp { left, op, right } if op == "||" => {
+            flatten_concat_inner(left, proc, parts, params);
+            flatten_concat_inner(right, proc, parts, params);
+        }
+        Expr::Literal(Literal::String(s)) => {
+            parts.push(s.clone());
+        }
+        Expr::Literal(Literal::Integer(n)) => {
+            parts.push(n.to_string());
+        }
+        Expr::Literal(Literal::Float(f)) => {
+            parts.push(f.clone());
+        }
+        Expr::PlVariable(name) | Expr::ColumnRef(name) if name.len() >= 1 => {
+            let var_name = name[name.len() - 1].clone();
+            let java_name = crate::naming::snake_to_camel(&var_name);
+            // Determine if this is an identifier context (table/column name → ${})
+            // Heuristic: if trailing text ends with a quote, it's a value → #{}
+            let is_identifier = parts.last()
+                .map(|last| !last.trim_end().ends_with('\''))
+                .unwrap_or(true);
+            if is_identifier {
+                parts.push(format!("${{{}}}", java_name));
+            } else {
+                parts.push(format!("#{{{}}}", java_name));
+            }
+            params.push((java_name, is_identifier));
+        }
+        _ => {
+            // For any other expression, convert to Java and treat as a value param
+            let java_expr = crate::expr::expr_to_java(expr, proc);
+            let safe_name = format!("expr_{}", params.len());
+            parts.push(format!("#{{{}}}", safe_name));
+            params.push((safe_name, false));
+        }
+    }
+}
+
+fn handle_resolved_execute_sql(
+    proc: &mut ProcedureInfo,
+    sql_template: &str,
+    concat_vars: &[(String, bool)],
+    execute: &ogsql_parser::ast::plpgsql::PlExecuteStmt,
+    ctx: &mut StatementContext,
+) {
+    let mut clean_sql = sql_template.to_string();
+    let dml_type = detect_dml_type(&clean_sql);
+    if let Some(dml_type) = dml_type {
+        for (i, arg) in execute.using_args.iter().enumerate() {
+            let pos = i + 1;
+            let pos_re = regex::Regex::new(&format!(r"(?::|\$){}(\b|[^0-9])", pos)).unwrap();
+            if let Some(sql_literal) = expr_to_sql_literal(&arg.argument) {
+                clean_sql = pos_re.replace_all(&clean_sql, |caps: &regex::Captures| {
+                    format!("{}{}", sql_literal, &caps[1])
+                }).to_string();
+            } else if let Some(arg_name) = extract_var_name_from_expr(&arg.argument) {
+                let java_name = snake_to_camel(&arg_name);
+                clean_sql = pos_re.replace_all(&clean_sql, |caps: &regex::Captures| {
+                    format!("#{{{}}}{}", java_name, &caps[1])
+                }).to_string();
+            }
+        }
+
+        let method_id = dml_method_name(
+            match dml_type {
+                DmlType::Select => "select",
+                DmlType::Insert => "insert",
+                DmlType::Update => "update",
+                DmlType::Delete => "delete",
+            },
+            &proc.proc_name,
+            &mut ctx.dml_counter,
+        );
+
+        let mut extra_params: Vec<(String, String)> = Vec::new();
+        for (java_name, _is_ident) in concat_vars {
+            if java_name.starts_with("expr_") {
+                continue;
+            }
+            let (var_type, _is_out) = resolve_var_type(proc, java_name);
+            if !extra_params.iter().any(|(n, _)| n == java_name) {
+                extra_params.push((java_name.clone(), var_type.to_string()));
+            }
+        }
+        for arg in &execute.using_args {
+            if expr_to_sql_literal(&arg.argument).is_some() {
+                continue;
+            }
+            if let Some(arg_name) = extract_var_name_from_expr(&arg.argument) {
+                let java_name = snake_to_camel(&arg_name);
+                if !extra_params.iter().any(|(n, _)| n == &java_name) {
+                    let (var_type, _is_out) = resolve_var_type(proc, &arg_name);
+                    extra_params.push((java_name, var_type.to_string()));
+                }
+            }
+        }
+
+        proc.dml_statements.push(DmlStatement {
+            sql_type: dml_type,
+            method_id: method_id.clone(),
+            sql_text: clean_sql.clone(),
+            result_type: None,
+            parameter_types: Default::default(),
+            optional_filters: Vec::new(),
+            returns_list: false,
+            extra_params,
+        });
+        push_logic_line(proc, format!("mapper.{}({});", method_id, build_mapper_call_args(proc)));
+    } else {
+        push_logic_line(proc, format!("// SQL: {}", clean_sql.replace('\n', " ")));
     }
 }
 
@@ -771,7 +995,18 @@ fn process_execute_stmt(
         }
         Expr::ColumnRef(name) | Expr::PlVariable(name) if name.len() == 1 => {
             let var_name = &name[0];
-            push_logic_line(proc, format!("// TODO: EXECUTE {} — could not resolve SQL string", var_name));
+            if let Some((sql_template, concat_vars)) = proc.dynamic_sql_templates.get(var_name).cloned() {
+                handle_resolved_execute_sql(proc, &sql_template, &concat_vars, &execute, ctx);
+            } else {
+                push_logic_line(proc, format!("// TODO: EXECUTE {} — could not resolve SQL string", var_name));
+            }
+        }
+        Expr::BinaryOp { op, .. } if op == "||" => {
+            if let Some((sql_template, concat_vars)) = flatten_concat(&execute.string_expr, proc) {
+                handle_resolved_execute_sql(proc, &sql_template, &concat_vars, &execute, ctx);
+                return;
+            }
+            push_logic_line(proc, "// TODO: EXECUTE dynamic SQL — could not resolve SQL string".to_string());
         }
         _ => {
             push_logic_line(proc, "// TODO: EXECUTE dynamic SQL — could not resolve SQL string".to_string());
@@ -1202,6 +1437,13 @@ fn try_resolve_perform_call(
             let args_java = args.join(", ");
 
             if let Some(matched_pkg) = resolve_package_name(pkg, ctx.summaries) {
+                let pkg_lower = matched_pkg.to_lowercase();
+                let is_system_pkg = ["dbe_scheduler", "dbms_output", "dbms_random", "dbms_lob", "dbe_output", "utl_file", "dbms_sql", "dbms_job"]
+                    .iter().any(|sp| pkg_lower.starts_with(sp));
+                if is_system_pkg {
+                    push_logic_line(proc, format!("// {}.{}({}) — system package stub", pkg, func_name, args_java));
+                    return true;
+                }
                 let svc_name = format!("{}Service", {
                     let cn = package_to_classname(&matched_pkg);
                     let mut c = cn.chars();
@@ -1266,6 +1508,15 @@ pub fn process_statement(
     use ogsql_parser::ast::plpgsql::PlStatement;
     match stmt {
         PlStatement::Assignment { target, expression } => {
+            if let Some(var_name) = extract_assignment_target_name(target) {
+                if let Some((sql_template, concat_vars)) = flatten_concat(expression, proc) {
+                    let lower = sql_template.trim().to_lowercase();
+                    let sql_verbs = ["select", "insert", "update", "delete", "truncate", "alter", "drop", "create", "merge", "savepoint", "rollback"];
+                    if sql_verbs.iter().any(|v| lower.starts_with(v)) {
+                        proc.dynamic_sql_templates.insert(var_name, (sql_template, concat_vars));
+                    }
+                }
+            }
             let line = crate::expr::assignment_to_java(target, expression, proc);
             push_logic_line(proc, line);
             Ok(())
@@ -1321,7 +1572,8 @@ pub fn process_statement(
                 None => "info",
             };
             let raw_msg = raise_stmt.node.message.as_deref().unwrap_or("");
-            let formatted_msg = raw_msg.replace('%', "{}");
+            let msg_for_format = raw_msg.replace('%', "%s");
+            let msg_for_slf4j = raw_msg.replace('%', "{}");
             let params_java: Vec<String> = raise_stmt.node.params.iter()
                 .map(|p| crate::expr::expr_to_java(p, proc))
                 .collect();
@@ -1333,22 +1585,22 @@ pub fn process_statement(
             match level_str {
                 "exception" => {
                     if params_java.is_empty() {
-                        push_logic_line(proc, format!("throw new BusinessException(\"{}\");", formatted_msg));
+                        push_logic_line(proc, format!("throw new BusinessException(\"{}\");", msg_for_format));
                     } else {
-                        push_logic_line(proc, format!("throw new BusinessException(String.format(\"{}\"{}));", formatted_msg, params_str));
+                        push_logic_line(proc, format!("throw new BusinessException(String.format(\"{}\"{}));", msg_for_format, params_str));
                     }
                 }
                 "notice" | "info" => {
-                    push_logic_line(proc, format!("log.info(\"{}\"{});", formatted_msg, params_str));
+                    push_logic_line(proc, format!("log.info(\"{}\"{});", msg_for_slf4j, params_str));
                 }
                 "debug" => {
-                    push_logic_line(proc, format!("log.debug(\"{}\"{});", formatted_msg, params_str));
+                    push_logic_line(proc, format!("log.debug(\"{}\"{});", msg_for_slf4j, params_str));
                 }
                 "warning" => {
-                    push_logic_line(proc, format!("log.warn(\"{}\"{});", formatted_msg, params_str));
+                    push_logic_line(proc, format!("log.warn(\"{}\"{});", msg_for_slf4j, params_str));
                 }
                 _ => {
-                    push_logic_line(proc, format!("log.info(\"{}\"{});", formatted_msg, params_str));
+                    push_logic_line(proc, format!("log.info(\"{}\"{});", msg_for_slf4j, params_str));
                 }
             }
             Ok(())
@@ -1646,69 +1898,133 @@ pub fn process_statement(
          PlStatement::Open(open_stmt) => {
              let cursor_java = crate::expr::expr_to_java(&open_stmt.node.cursor, proc);
 
-             // Extract raw cursor variable name (without .get() suffix from AtomicReference)
              use ogsql_parser::ast::Expr;
-             let raw_cursor_java = match &open_stmt.node.cursor {
+             let raw_cursor_name = match &open_stmt.node.cursor {
                  Expr::ColumnRef(name) | Expr::PlVariable(name) if name.len() == 1 => {
-                     crate::naming::snake_to_camel(&name[0])
+                     name[0].clone()
                  }
-                 _ => cursor_java.replace(".get()", ""),
+                 _ => cursor_java.clone(),
              };
+             let raw_cursor_java = crate::naming::snake_to_camel(&raw_cursor_name);
 
              let is_out_refcursor = proc.refcursor_out_params.contains(&raw_cursor_java);
 
-             match &open_stmt.node.kind {
-                 ogsql_parser::ast::plpgsql::PlOpenKind::ForQuery { query, .. } => {
-                     let clean_sql = query.trim().trim_end_matches(';');
-
-                     if is_out_refcursor {
-                         let method_id = dml_method_name("select", &proc.proc_name, &mut ctx.dml_counter);
-                         let args = build_mapper_call_args(proc);
-                         let result_var = format!("{}Result", raw_cursor_java);
-
-                         proc.dml_statements.push(DmlStatement {
-                             sql_type: DmlType::Select,
-                             method_id: method_id.clone(),
-                             sql_text: clean_sql.to_string(),
-                             result_type: Some("Map<String, Object>".to_string()),
-                             parameter_types: Default::default(),
-                             optional_filters: Vec::new(),
-                             returns_list: true,
-                             extra_params: Vec::new(),
-                         });
-
-                         push_logic_line(proc, format!("{} = mapper.{}({});", result_var, method_id, args));
-                         push_logic_line(proc, format!("if ({} == null) {} = new java.util.ArrayList<>();", result_var, result_var));
-
-                         proc.open_cursors.insert(raw_cursor_java.clone(), crate::types::CursorInfo {
-                             query: clean_sql.to_string(),
-                             into_vars: Vec::new(),
-                             is_open: true,
-                             result_var: Some(result_var),
-                             index_var: Some(format!("{}Idx", raw_cursor_java)),
-                         });
-                     } else {
-                         let safe_sql = clean_sql.replace('\n', " ").replace("  ", " ").replace("*/", "*\\/");
-                         push_logic_line(proc, format!("/* OPEN {} FOR {} */", cursor_java, safe_sql));
-                     }
+              let (sql_text_opt, using_args): (Option<String>, Vec<ogsql_parser::ast::Expr>) = match &open_stmt.node.kind {
+                  ogsql_parser::ast::plpgsql::PlOpenKind::ForQuery { query, .. } => {
+                      if query.contains("||") || query.trim().starts_with('\'') {
+                          push_logic_line(proc, format!("/* OPEN {} FOR {} — dynamic SQL, not materializable */", cursor_java, query.replace("*/", "*\\/")));
+                          return Ok(());
+                      }
+                      let clean = query.trim().trim_end_matches(';').to_string();
+                      (Some(clean), Vec::new())
+                  }
+                 ogsql_parser::ast::plpgsql::PlOpenKind::Simple { arguments } => {
+                     let decl_sql = proc.cursor_decls.get(&raw_cursor_name)
+                         .or_else(|| proc.cursor_decls.get(&raw_cursor_name.to_lowercase()))
+                         .cloned();
+                     (decl_sql, arguments.clone())
                  }
-                 ogsql_parser::ast::plpgsql::PlOpenKind::ForExecute { query, using_args, .. } => {
-                     let sql_expr = crate::expr::expr_to_java(query, proc);
+                 ogsql_parser::ast::plpgsql::PlOpenKind::ForExecute { query, using_args } => {
+                     let sql_str = crate::expr::expr_to_java(query, proc);
                      let using_str = if using_args.is_empty() {
                          String::new()
                      } else {
                          format!(" USING {}", using_args.iter().map(|a| crate::expr::expr_to_java(a, proc)).collect::<Vec<_>>().join(", "))
                      };
-                     push_logic_line(proc, format!("/* OPEN {} FOR EXECUTE {}{} */", cursor_java, sql_expr.replace("*/", "*\\/"), using_str.replace("*/", "*\\/")));
+                     push_logic_line(proc, format!("/* OPEN {} FOR EXECUTE {}{} */", cursor_java, sql_str.replace("*/", "*\\/"), using_str.replace("*/", "*\\/")));
+                     return Ok(());
                  }
                  _ => {
                      push_logic_line(proc, format!("/* OPEN {} */", cursor_java));
+                     return Ok(());
                  }
+             };
+
+             if let Some(raw_sql) = sql_text_opt {
+                  let sql_text = preprocess_cursor_sql(&raw_sql, &using_args, proc);
+                 let method_id = dml_method_name("select", &proc.proc_name, &mut ctx.dml_counter);
+                 let result_var = format!("{}Result", raw_cursor_java);
+                  let index_var = format!("{}Idx", raw_cursor_java);
+
+                  proc.dml_statements.push(DmlStatement {
+                     sql_type: DmlType::Select,
+                     method_id: method_id.clone(),
+                     sql_text,
+                     result_type: Some("Map<String, Object>".to_string()),
+                     parameter_types: Default::default(),
+                     optional_filters: Vec::new(),
+                     returns_list: true,
+                     extra_params: Vec::new(),
+                 });
+
+                 let args = build_mapper_call_args(proc);
+                push_logic_line(proc, format!("{} = mapper.{}({});", result_var, method_id, args));
+                push_logic_line(proc, format!("if ({} == null) {} = new java.util.ArrayList<>();", result_var, result_var));
+                if !is_out_refcursor {
+                    push_logic_line(proc, format!("{} = 0;", index_var));
+                }
+
+                 proc.open_cursors.insert(raw_cursor_java.clone(), crate::types::CursorInfo {
+                     query: raw_sql,
+                     into_vars: Vec::new(),
+                     is_open: true,
+                     result_var: Some(result_var),
+                     index_var: Some(index_var),
+                 });
+                 proc.open_cursors.insert(raw_cursor_name.to_lowercase(), crate::types::CursorInfo {
+                     query: String::new(),
+                     into_vars: Vec::new(),
+                     is_open: true,
+                     result_var: Some(format!("{}Result", raw_cursor_java)),
+                     index_var: Some(format!("{}Idx", raw_cursor_java)),
+                 });
              }
              Ok(())
          }
-        PlStatement::Fetch(_) => {
-            push_logic_line(proc, "// FETCH cursor;".into());
+        PlStatement::Fetch(fetch_stmt) => {
+            let cursor_name_str = match &fetch_stmt.node.cursor {
+                ogsql_parser::ast::Expr::ColumnRef(name) | ogsql_parser::ast::Expr::PlVariable(name) if name.len() == 1 => {
+                    name[0].clone()
+                }
+                _ => "cursor".into(),
+            };
+            let cursor_java = crate::naming::snake_to_camel(&cursor_name_str);
+
+            let cursor_info = proc.open_cursors.get(&cursor_java)
+                .or_else(|| proc.open_cursors.get(&cursor_name_str))
+                .or_else(|| proc.open_cursors.get(&cursor_name_str.to_lowercase()))
+                .cloned();
+
+            if let Some(info) = cursor_info {
+                if let (Some(rv), Some(iv)) = (&info.result_var, &info.index_var) {
+                    push_logic_line(proc, format!("found = {} < {}.size();", iv, rv));
+                    let into_exprs = &fetch_stmt.node.into;
+                    if !into_exprs.is_empty() {
+                        push_logic_line(proc, "if (found) {".into());
+                        push_logic_line(proc, format!("    Map<String, Object> _row = {}.get({});", rv, iv));
+                        push_logic_line(proc, format!("    {}++;", iv));
+                        for into_expr in into_exprs {
+                            let var_name = match into_expr {
+                                ogsql_parser::ast::Expr::ColumnRef(name) | ogsql_parser::ast::Expr::PlVariable(name) if name.len() == 1 => {
+                                    name[0].clone()
+                                }
+                                _ => continue,
+                            };
+                            let var_java = crate::naming::snake_to_camel(&var_name);
+                            let (type_str, _) = resolve_var_type(proc, &var_name);
+                            let (cast_expr, is_set_call) = row_extraction_expr("_row", &var_name, &type_str);
+                            if is_set_call {
+                                push_logic_line(proc, format!("    {}{};", var_java, cast_expr));
+                            } else if !cast_expr.is_empty() {
+                                push_logic_line(proc, format!("    {} = {};", var_java, cast_expr));
+                            }
+                        }
+                        push_logic_line(proc, "}".into());
+                    }
+                    return Ok(());
+                }
+            }
+            push_logic_line(proc, format!("found = false; // FETCH {} — cursor not materialized", cursor_java));
             Ok(())
         }
         PlStatement::Close { cursor } => {
