@@ -15,12 +15,11 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  BUILD_FEATURES: "full"
-  BINARY_NAME: ogsql
 
 jobs:
-  build-linux-x86_64:
-    name: Build linux-x86_64 (glibc >= 2.17)
+  # ── ogsql binary (from ogsql-parser repo) ──────────────────────
+  build-ogsql-linux-x86_64:
+    name: Build ogsql linux-x86_64 (glibc >= 2.17)
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout ogsql-parser
@@ -41,15 +40,15 @@ jobs:
         run: cargo install cargo-zigbuild
 
       - name: Build
-        run: cargo zigbuild --release --features ${{ env.BUILD_FEATURES }} --target x86_64-unknown-linux-gnu.2.17
+        run: cargo zigbuild --release --features full --target x86_64-unknown-linux-gnu.2.17
 
       - name: Strip
-        run: strip --strip-unneeded target/x86_64-unknown-linux-gnu/release/${{ env.BINARY_NAME }}
+        run: strip --strip-unneeded target/x86_64-unknown-linux-gnu/release/ogsql
 
       - name: Package
         run: |
           cd target/x86_64-unknown-linux-gnu/release
-          tar czf ${{ github.workspace }}/ogsql-linux-x86_64.tar.gz ${{ env.BINARY_NAME }}
+          tar czf ${{ github.workspace }}/ogsql-linux-x86_64.tar.gz ogsql
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -57,8 +56,8 @@ jobs:
           name: ogsql-linux-x86_64
           path: ogsql-linux-x86_64.tar.gz
 
-  build-linux-arm64:
-    name: Build linux-arm64 (glibc >= 2.17)
+  build-ogsql-linux-arm64:
+    name: Build ogsql linux-arm64 (glibc >= 2.17)
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout ogsql-parser
@@ -81,17 +80,17 @@ jobs:
         run: cargo install cargo-zigbuild
 
       - name: Build
-        run: cargo zigbuild --release --features ${{ env.BUILD_FEATURES }} --target aarch64-unknown-linux-gnu.2.17
+        run: cargo zigbuild --release --features full --target aarch64-unknown-linux-gnu.2.17
 
       - name: Strip
         run: |
           sudo apt-get install -y binutils-aarch64-linux-gnu
-          aarch64-linux-gnu-strip --strip-unneeded target/aarch64-unknown-linux-gnu/release/${{ env.BINARY_NAME }}
+          aarch64-linux-gnu-strip --strip-unneeded target/aarch64-unknown-linux-gnu/release/ogsql
 
       - name: Package
         run: |
           cd target/aarch64-unknown-linux-gnu/release
-          tar czf ${{ github.workspace }}/ogsql-linux-arm64.tar.gz ${{ env.BINARY_NAME }}
+          tar czf ${{ github.workspace }}/ogsql-linux-arm64.tar.gz ogsql
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -99,8 +98,8 @@ jobs:
           name: ogsql-linux-arm64
           path: ogsql-linux-arm64.tar.gz
 
-  build-windows-x86_64:
-    name: Build windows-x86_64
+  build-ogsql-windows-x86_64:
+    name: Build ogsql windows-x86_64
     runs-on: windows-2022
     steps:
       - name: Checkout ogsql-parser
@@ -125,19 +124,19 @@ jobs:
           restore-keys: x86_64-pc-windows-gnu-cargo-
 
       - name: Build
-        run: cargo build --release --features ${{ env.BUILD_FEATURES }} --target x86_64-pc-windows-gnu
+        run: cargo build --release --features full --target x86_64-pc-windows-gnu
         env:
           RUSTFLAGS: "-C target-feature=+crt-static"
 
       - name: Strip
-        run: strip target/x86_64-pc-windows-gnu/release/${{ env.BINARY_NAME }}.exe
+        run: strip target/x86_64-pc-windows-gnu/release/ogsql.exe
         shell: bash
 
       - name: Package
         shell: pwsh
         run: |
           Compress-Archive `
-            -Path "target/x86_64-pc-windows-gnu/release/${{ env.BINARY_NAME }}.exe" `
+            -Path "target/x86_64-pc-windows-gnu/release/ogsql.exe" `
             -DestinationPath "ogsql-windows-x86_64.zip"
 
       - name: Upload artifact
@@ -146,9 +145,255 @@ jobs:
           name: ogsql-windows-x86_64
           path: ogsql-windows-x86_64.zip
 
+  build-ogsql-macos-arm64:
+    name: Build ogsql macos-arm64
+    runs-on: macos-14
+    steps:
+      - name: Checkout ogsql-parser
+        uses: actions/checkout@v4
+        with:
+          repository: c2j/ogsql-parser
+          ref: main
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --release --features full
+
+      - name: Strip
+        run: strip target/release/ogsql
+
+      - name: Package
+        run: |
+          cd target/release
+          tar czf ${{ github.workspace }}/ogsql-macos-arm64.tar.gz ogsql
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ogsql-macos-arm64
+          path: ogsql-macos-arm64.tar.gz
+
+  # ── fluxgauss binary (from this repo, uses ogsql-parser git dep) ─
+  build-fluxgauss-linux-x86_64:
+    name: Build fluxgauss linux-x86_64 (glibc >= 2.17)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout flux-gauss
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: "0.13.0"
+
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild
+
+      - name: Build
+        run: cargo zigbuild --release --bin fluxgauss --target x86_64-unknown-linux-gnu.2.17
+
+      - name: Strip
+        run: strip --strip-unneeded target/x86_64-unknown-linux-gnu/release/fluxgauss
+
+      - name: Package
+        run: |
+          cd target/x86_64-unknown-linux-gnu/release
+          tar czf ${{ github.workspace }}/fluxgauss-linux-x86_64.tar.gz fluxgauss
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fluxgauss-linux-x86_64
+          path: fluxgauss-linux-x86_64.tar.gz
+
+  build-fluxgauss-linux-arm64:
+    name: Build fluxgauss linux-arm64 (glibc >= 2.17)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout flux-gauss
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: "0.13.0"
+
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild
+
+      - name: Build
+        run: cargo zigbuild --release --bin fluxgauss --target aarch64-unknown-linux-gnu.2.17
+
+      - name: Strip
+        run: |
+          sudo apt-get install -y binutils-aarch64-linux-gnu
+          aarch64-linux-gnu-strip --strip-unneeded target/aarch64-unknown-linux-gnu/release/fluxgauss
+
+      - name: Package
+        run: |
+          cd target/aarch64-unknown-linux-gnu/release
+          tar czf ${{ github.workspace }}/fluxgauss-linux-arm64.tar.gz fluxgauss
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fluxgauss-linux-arm64
+          path: fluxgauss-linux-arm64.tar.gz
+
+  build-fluxgauss-windows-x86_64:
+    name: Build fluxgauss windows-x86_64
+    runs-on: windows-2022
+    steps:
+      - name: Checkout flux-gauss
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: fluxgauss-x86_64-pc-windows-gnu-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: fluxgauss-x86_64-pc-windows-gnu-cargo-
+
+      - name: Build
+        run: cargo build --release --bin fluxgauss --target x86_64-pc-windows-gnu
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
+
+      - name: Strip
+        run: strip target/x86_64-pc-windows-gnu/release/fluxgauss.exe
+        shell: bash
+
+      - name: Package
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path "target/x86_64-pc-windows-gnu/release/fluxgauss.exe" `
+            -DestinationPath "fluxgauss-windows-x86_64.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fluxgauss-windows-x86_64
+          path: fluxgauss-windows-x86_64.zip
+
+  build-fluxgauss-macos-arm64:
+    name: Build fluxgauss macos-arm64
+    runs-on: macos-14
+    steps:
+      - name: Checkout flux-gauss
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --release --bin fluxgauss
+
+      - name: Strip
+        run: strip target/release/fluxgauss
+
+      - name: Package
+        run: |
+          cd target/release
+          tar czf ${{ github.workspace }}/fluxgauss-macos-arm64.tar.gz fluxgauss
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fluxgauss-macos-arm64
+          path: fluxgauss-macos-arm64.tar.gz
+
+  # ── Python engine CI ──────────────────────────────────────────
+  test-python-engine:
+    name: Python engine test (Linux x86_64)
+    runs-on: ubuntu-22.04
+    needs: [build-ogsql-linux-x86_64]
+    steps:
+      - name: Checkout flux-gauss
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pyyaml
+        run: pip install pyyaml
+
+      - name: Download ogsql binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ogsql-linux-x86_64
+          path: ogsql-artifact
+
+      - name: Extract and prepare ogsql
+        run: |
+          tar xzf ogsql-artifact/ogsql-linux-x86_64.tar.gz -C ogsql-artifact
+          chmod +x ogsql-artifact/ogsql
+          echo "OGSQL_BIN=$PWD/ogsql-artifact/ogsql" >> "$GITHUB_ENV"
+
+      - name: Run Python converter
+        run: python3 converter/flux_gauss.py -c demo-project/fluxgauss_py.yaml
+
+      - name: Upload Python output
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-engine-output
+          path: dest_py/
+
+  # ── Rust engine CI ────────────────────────────────────────────
+  test-rust-engine:
+    name: Rust engine test (Linux x86_64)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout flux-gauss
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --release --bin fluxgauss
+
+      - name: Run Rust converter
+        run: cargo run --release --bin fluxgauss -- --config demo-project/fluxgauss_ru.yaml
+
+      - name: Upload Rust output
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-engine-output
+          path: dest_ru/
+
+  # ── Release ───────────────────────────────────────────────────
   release:
     name: Create GitHub Release
-    needs: [build-linux-x86_64, build-linux-arm64, build-windows-x86_64]
+    needs:
+      - build-ogsql-linux-x86_64
+      - build-ogsql-linux-arm64
+      - build-ogsql-windows-x86_64
+      - build-ogsql-macos-arm64
+      - build-fluxgauss-linux-x86_64
+      - build-fluxgauss-linux-arm64
+      - build-fluxgauss-windows-x86_64
+      - build-fluxgauss-macos-arm64
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
