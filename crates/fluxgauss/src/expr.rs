@@ -62,6 +62,16 @@ pub fn assignment_to_java(target: &ogsql_parser::ast::Expr, value: &ogsql_parser
                     if val.starts_with("String.valueOf(") {
                         let inner = val.trim_start_matches("String.valueOf(").trim_end_matches(')');
                         format!("((java.math.BigDecimal) {})", inner)
+                    } else if val.starts_with("(-") && val.ends_with(')') {
+                        // Negative numeric literal: (-1) → BigDecimal.valueOf(-1L)
+                        let inner = val.trim_start_matches("(-").trim_end_matches(')');
+                        if inner.chars().all(|c| c.is_ascii_digit()) {
+                            format!("java.math.BigDecimal.valueOf(-{}L)", inner)
+                        } else {
+                            val
+                        }
+                    } else if val.chars().all(|c| c.is_ascii_digit()) {
+                        format!("java.math.BigDecimal.valueOf({}L)", val)
                     } else {
                         val
                     }
@@ -345,8 +355,20 @@ fn expr_to_java_impl(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> St
             let java_items: Vec<String> = items.iter().map(|e| expr_to_java(e, proc)).collect();
             format!("new Object[]{{{}}}", java_items.join(", "))
         }
-        Expr::Subscript { object, index } => {
-            format!("{}.get({})", expr_to_java(object, proc), expr_to_java(index, proc))
+        Expr::Subscript { object, lower, upper, is_slice } => {
+            if *is_slice {
+                // Array slice: obj[lower:upper] — not common in PL/pgSQL→Java
+                let lo = lower.as_ref().map(|e| expr_to_java(e, proc)).unwrap_or_else(|| "0".into());
+                let hi = upper.as_ref().map(|e| expr_to_java(e, proc)).unwrap_or_else(|| "obj.size()".into());
+                format!("{}.subList(({}) - 1, {})", expr_to_java(object, proc), lo, hi)
+            } else {
+                // Single index: obj[i] → obj.get(i)
+                let idx = lower.as_ref()
+                    .or(upper.as_ref())
+                    .map(|e| expr_to_java(e, proc))
+                    .unwrap_or_else(|| "0".into());
+                format!("{}.get({})", expr_to_java(object, proc), idx)
+            }
         }
         Expr::FieldAccess { object, field } => {
             let camel = snake_to_camel(field);
@@ -464,6 +486,15 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
                 }
                 let name_lower_raw = name.to_lowercase();
                 if name_lower_raw.starts_with("func_") || name_lower_raw.starts_with("fn_") {
+                    let method_name = crate::naming::java_method_name(name);
+                    // Check if this function exists as a sibling procedure in the same package
+                    if proc.package_proc_params.contains_key(&method_name) {
+                        return format!("this.{}()", method_name);
+                    }
+                    // Check if it exists in another package (cross-package call)
+                    if let Some(svc_var) = proc.all_proc_params.get(&method_name) {
+                        return format!("{}.{}()", svc_var, method_name);
+                    }
                     return format!("/* TODO: {}() */ \"\"", name);
                 }
                 camel
@@ -594,7 +625,7 @@ fn is_timestamp_or_date_var(expr_str: &str, proc: &ProcedureInfo) -> bool {
 }
 
 fn needs_get_unwrap(expr: &str) -> bool {
-    (expr.contains(".get(") || expr.contains(".getOrDefault(")) && !expr.contains(".longValue()") && !expr.contains(".intValue()")
+    (expr.contains(".get(") || expr.contains(".getOrDefault(")) && !expr.contains(".longValue()") && !expr.contains("::longValue") && !expr.contains(".intValue()")
         && !expr.contains(".doubleValue()") && !expr.contains(".floatValue()")
 }
 
@@ -971,7 +1002,14 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         "GET_BIT" => "/* GET_BIT */ 0".into(),
         "SET_BIT" => "/* SET_BIT */".into(),
         "ENCODE" | "DECODE" => format!("/* {} */ null", upper),
-        "MD5" | "SHA224" | "SHA256" | "SHA384" | "SHA512" => format!("/* {} */ null", upper),
+        "MD5" => {
+            let arg = jargs.first().map(|s| {
+                if s.starts_with('"') || s.starts_with('\'') { s.clone() }
+                else { format!("String.valueOf({})", s) }
+            }).unwrap_or_else(|| "\"\"".to_string());
+            format!("this._md5({})", arg)
+        }
+        "SHA224" | "SHA256" | "SHA384" | "SHA512" => format!("/* {} */ null", upper),
         "HMAC_MD5" | "HMAC_SHA1" | "HMAC_SHA256" => format!("/* {} */ null", upper),
         "PG_SLEEP" => "/* PG_SLEEP */".into(),
         "SET_CONFIG" => "/* SET_CONFIG */ null".into(),
@@ -993,6 +1031,20 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                 0 | 1 => jargs.first().map(|s| s.as_str()).unwrap_or("\"\"").to_string(),
                 2 => format!("String.format(\"%-\" + ({}) + \"s\", {})", jargs[1], jargs[0]),
                 _ => format!("String.format(\"%-\" + ({}) + \"s\", {}).replace(\" \", {})", jargs[1], jargs[0], jargs[2]),
+            }
+        }
+        "LTRIM" => {
+            match jargs.len() {
+                0 => "\"\"".to_string(),
+                1 => format!("{}.replaceAll(\"^\\\\s+\", \"\")", jargs[0]),
+                _ => format!("{}.replaceAll(\"^\" + {} + \"+\", \"\")", jargs[0], jargs[1]),
+            }
+        }
+        "RTRIM" => {
+            match jargs.len() {
+                0 => "\"\"".to_string(),
+                1 => format!("{}.replaceAll(\"\\\\s+$\", \"\")", jargs[0]),
+                _ => format!("{}.replaceAll(\"\" + {} + \"+$\", \"\")", jargs[0], jargs[1]),
             }
         }
         "REPEAT" if jargs.len() >= 2 => format!("{}.repeat({})", jargs[0], jargs[1]),
@@ -1028,9 +1080,16 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                 "java.util.Collections.emptyList()".into()
             }
         }
+        "STRING_SPLIT" => {
+            if jargs.len() >= 2 {
+                format!("java.util.Arrays.asList(String.valueOf({}).split(java.util.regex.Pattern.quote(String.valueOf({}))))", jargs[0], jargs[1])
+            } else {
+                "java.util.Collections.emptyList()".into()
+            }
+        }
         _ => {
             let name_parts: Vec<&str> = name.split('.').collect();
-            let (method, is_self_call) = if name_parts.len() >= 2 {
+            let (method, is_self_call, cross_pkg_svc) = if name_parts.len() >= 2 {
                 let pkg_hint = if name_parts.len() >= 3 {
                     name_parts[name_parts.len() - 2]
                 } else {
@@ -1041,19 +1100,29 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                 let hint_lower = pkg_hint.to_lowercase().replace("_", "");
                 let pkg_no_prefix = pkg_lower.trim_start_matches("pkg_").replace("_", "");
                 if hint_lower == pkg_lower || hint_lower == pkg_no_prefix || hint_lower.ends_with(&pkg_no_prefix) {
-                    (crate::naming::java_method_name(func_name), true)
+                    (crate::naming::java_method_name(func_name), true, String::new())
+                } else if ["dbescheduler", "dbmsoutput", "dbmsrandom", "dbmslob", "dbeoutput", "utlfile", "dbmssql", "dbmsjob"].iter().any(|sp| hint_lower.starts_with(sp)) {
+                    (crate::naming::java_method_name(func_name), false, String::new())
                 } else {
-                    (String::new(), false)
+                    let svc_name = format!("{}Service", {
+                        let cn = crate::naming::package_to_classname(&pkg_hint.to_lowercase());
+                        let mut c = cn.chars();
+                        match c.next() {
+                            Some(f) => f.to_ascii_lowercase().to_string() + c.as_str(),
+                            None => String::new(),
+                        }
+                    });
+                    (crate::naming::java_method_name(func_name), false, svc_name)
                 }
             } else if name_parts.len() == 1 {
                 let method_name = crate::naming::java_method_name(name_parts[0]);
                 if proc.package_proc_params.contains_key(&method_name) {
-                    (method_name, true)
+                    (method_name, true, String::new())
                 } else {
-                    (String::new(), false)
+                    (String::new(), false, String::new())
                 }
             } else {
-                (String::new(), false)
+                (String::new(), false, String::new())
             };
 
             if is_self_call {
@@ -1075,6 +1144,9 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                     jargs
                 };
                 return format!("this.{}({})", method, coerced_args.join(", "));
+            }
+            if !cross_pkg_svc.is_empty() && !method.is_empty() {
+                return format!("{}.{}({})", cross_pkg_svc, method, jargs.join(", "));
             }
             "null".into()
         }
