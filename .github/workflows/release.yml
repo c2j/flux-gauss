@@ -4,112 +4,198 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. v0.5.0)"
+        required: true
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  BUILD_FEATURES: "full"
+  BINARY_NAME: ogsql
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            artifact: ogsql-linux-x86_64.tar.gz
-            build_mode: zigbuild
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            artifact: ogsql-linux-arm64.tar.gz
-            build_mode: zigbuild
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            artifact: ogsql-windows-x86_64.zip
-            build_mode: cargo
-
-    runs-on: ${{ matrix.os }}
+  build-linux-x86_64:
+    name: Build linux-x86_64 (glibc >= 2.17)
+    runs-on: ubuntu-22.04
     steps:
-      - name: Checkout repository
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Checkout ogsql-parser
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          repository: c2j/ogsql-parser
+          ref: main
+          path: lib/ogsql-parser
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
         with:
-          targets: ${{ matrix.target }}
+          version: "0.13.0"
 
       - name: Install cargo-zigbuild
-        if: matrix.build_mode == 'zigbuild'
-        run: pip install cargo-zigbuild
+        run: cargo install cargo-zigbuild
 
-      - name: Build (Linux)
-        if: matrix.build_mode == 'zigbuild'
+      - name: Build
         working-directory: lib/ogsql-parser
-        run: cargo zigbuild --release --features cli --target ${{ matrix.target }} --glibc-version 2.22
+        run: cargo zigbuild --release --features ${{ env.BUILD_FEATURES }} --target x86_64-unknown-linux-gnu.2.17
 
-      # Static CRT: binary runs on Win7+ without requiring Visual C++ Redistributable
-      - name: Build (Windows)
-        if: matrix.build_mode == 'cargo'
-        working-directory: lib/ogsql-parser
-        env:
-          RUSTFLAGS: "-C target-feature=+crt-static"
-        run: cargo build --release --features cli --target ${{ matrix.target }}
+      - name: Strip
+        run: strip --strip-unneeded lib/ogsql-parser/target/x86_64-unknown-linux-gnu/release/${{ env.BINARY_NAME }}
 
-      - name: Strip binary
-        if: matrix.build_mode == 'zigbuild'
-        run: strip lib/ogsql-parser/target/${{ matrix.target }}/release/ogsql
-
-      - name: Package (Linux)
-        if: matrix.build_mode == 'zigbuild'
+      - name: Package
         run: |
-          cd lib/ogsql-parser/target/${{ matrix.target }}/release
-          tar czf "${{ github.workspace }}/${{ matrix.artifact }}" ogsql
-
-      - name: Package (Windows)
-        if: matrix.build_mode == 'cargo'
-        shell: bash
-        run: |
-          cd lib/ogsql-parser/target/${{ matrix.target }}/release
-          7z a "${{ github.workspace }}/${{ matrix.artifact }}" ogsql.exe
+          cd lib/ogsql-parser/target/x86_64-unknown-linux-gnu/release
+          tar czf ${{ github.workspace }}/ogsql-linux-x86_64.tar.gz ${{ env.BINARY_NAME }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}
+          name: ogsql-linux-x86_64
+          path: ogsql-linux-x86_64.tar.gz
+
+  build-linux-arm64:
+    name: Build linux-arm64 (glibc >= 2.17)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Checkout ogsql-parser
+        uses: actions/checkout@v4
+        with:
+          repository: c2j/ogsql-parser
+          ref: main
+          path: lib/ogsql-parser
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: "0.13.0"
+
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild
+
+      - name: Build
+        working-directory: lib/ogsql-parser
+        run: cargo zigbuild --release --features ${{ env.BUILD_FEATURES }} --target aarch64-unknown-linux-gnu.2.17
+
+      - name: Strip
+        run: |
+          sudo apt-get install -y binutils-aarch64-linux-gnu
+          aarch64-linux-gnu-strip --strip-unneeded lib/ogsql-parser/target/aarch64-unknown-linux-gnu/release/${{ env.BINARY_NAME }}
+
+      - name: Package
+        run: |
+          cd lib/ogsql-parser/target/aarch64-unknown-linux-gnu/release
+          tar czf ${{ github.workspace }}/ogsql-linux-arm64.tar.gz ${{ env.BINARY_NAME }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ogsql-linux-arm64
+          path: ogsql-linux-arm64.tar.gz
+
+  build-windows-x86_64:
+    name: Build windows-x86_64
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Checkout ogsql-parser
+        uses: actions/checkout@v4
+        with:
+          repository: c2j/ogsql-parser
+          ref: main
+          path: lib/ogsql-parser
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: x86_64-pc-windows-gnu-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: x86_64-pc-windows-gnu-cargo-
+
+      - name: Build
+        working-directory: lib/ogsql-parser
+        run: cargo build --release --features ${{ env.BUILD_FEATURES }} --target x86_64-pc-windows-gnu
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
+
+      - name: Strip
+        run: strip lib/ogsql-parser/target/x86_64-pc-windows-gnu/release/${{ env.BINARY_NAME }}.exe
+        shell: bash
+
+      - name: Package
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path "lib/ogsql-parser/target/x86_64-pc-windows-gnu/release/${{ env.BINARY_NAME }}.exe" `
+            -DestinationPath "ogsql-windows-x86_64.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ogsql-windows-x86_64
+          path: ogsql-windows-x86_64.zip
 
   release:
-    needs: build
+    name: Create GitHub Release
+    needs: [build-linux-x86_64, build-linux-arm64, build-windows-x86_64]
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: release-artifacts
-          merge-multiple: true
+          path: artifacts
 
-      - name: Generate SHA256 checksums
+      - name: Determine tag
+        id: tag
         run: |
-          cd release-artifacts
-          sha256sum * > ../SHA256SUMS.txt
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ github.event.inputs.version }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          find . -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec sha256sum {} \; > ../SHA256SUMS.txt
           mv ../SHA256SUMS.txt .
 
-      - name: Create GitHub Release
+      - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: release-artifacts/*
+          tag_name: ${{ steps.tag.outputs.tag }}
           generate_release_notes: true
-          body: |
-            ## Binaries
-
-            | File | Platform | Notes |
-            |------|----------|-------|
-            | `ogsql-linux-x86_64.tar.gz` | Linux x86_64 | glibc ≥ 2.22 |
-            | `ogsql-linux-arm64.tar.gz` | Linux ARM64 | glibc ≥ 2.22 |
-            | `ogsql-windows-x86_64.zip` | Windows x86_64 | Windows 7+ |
-
-            See `SHA256SUMS.txt` for checksums.
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.zip
+            artifacts/**/SHA256SUMS.txt
