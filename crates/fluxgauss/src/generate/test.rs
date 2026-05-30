@@ -156,22 +156,67 @@ fn count_mapper_params_for_dml(
     pkg: &PackageInfo,
 ) -> usize {
     let in_count = proc.parameters.iter().filter(|p| !p.is_out()).count();
-    let local_count = count_local_var_refs_in_sql(&dml.sql_text, &proc.local_vars, &proc.parameters);
-    let pkg_count = count_package_var_refs_in_sql(&dml.sql_text, &pkg.package_vars, &proc.local_vars, &proc.parameters);
-    let param_java_names: std::collections::HashSet<String> = proc
+    // Collect all param java names (lowercase) — mirroring mapper.rs logic:
+    //   1. non-out proc params + 2. extra_params + 3. local var refs + 4. pkg var refs + 5. OUT params
+    let mut all_names: std::collections::HashSet<String> = proc
         .parameters.iter()
         .filter(|p| !p.is_out())
         .map(|p| snake_to_camel(&p.name).to_lowercase())
         .collect();
-    let out_count = proc.parameters.iter()
-        .filter(|p| p.is_out())
-        .filter(|p| case_insensitive_word_match(&dml.sql_text, &p.name))
-        .filter(|p| {
-            let jn = snake_to_camel(&p.name).to_lowercase();
-            !param_java_names.iter().any(|pn| pn == &jn)
-        })
-        .count();
-    in_count + local_count + pkg_count + out_count
+
+    // Step 2: dml.extra_params (deduped against proc params)
+    for (jn, _) in &dml.extra_params {
+        all_names.insert(jn.to_lowercase());
+    }
+
+    // Step 3: local vars referenced in SQL text
+    let local_var_refs = count_local_var_refs_in_sql(&dml.sql_text, &proc.local_vars, &proc.parameters);
+    // count_local_var_refs_in_sql already returns count of unique local vars not in proc.params
+    // We need their actual names to prevent double-counting with extra_params.
+    // Re-implement inline to get names:
+    let param_names: std::collections::HashSet<String> = proc
+        .parameters.iter()
+        .filter(|p| !p.is_out())
+        .map(|p| p.name.to_lowercase())
+        .collect();
+    let re = IDENTIFIER_RE.get_or_init(|| regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap());
+    for caps in re.captures_iter(&dml.sql_text) {
+        let word = caps.get(1).unwrap().as_str();
+        if proc.local_vars.contains_key(word) && !param_names.contains(&word.to_lowercase()) {
+            let jn = snake_to_camel(word).to_lowercase();
+            all_names.insert(jn);
+        }
+    }
+
+    // Step 4: package vars referenced in SQL text
+    let pkg_param_names: std::collections::HashSet<String> = proc
+        .parameters.iter()
+        .filter(|p| !p.is_out())
+        .map(|p| p.name.to_lowercase())
+        .collect();
+    for caps in re.captures_iter(&dml.sql_text) {
+        let word = caps.get(1).unwrap().as_str();
+        if pkg.package_vars.contains_key(word)
+            && !proc.local_vars.contains_key(word)
+            && !pkg_param_names.contains(&word.to_lowercase())
+        {
+            let jn = snake_to_camel(word).to_lowercase();
+            all_names.insert(jn);
+        }
+    }
+
+    // Step 5: OUT params in SQL text (already tracked in all_names via step 1 if they exist)
+    // Add OUT params found in SQL text
+    for p in &proc.parameters {
+        if p.is_out() {
+            if case_insensitive_word_match(&dml.sql_text, &p.name) {
+                let jn = snake_to_camel(&p.name).to_lowercase();
+                all_names.insert(jn);
+            }
+        }
+    }
+
+    all_names.len()
 }
 
 fn build_success_test(
@@ -474,29 +519,55 @@ fn extract_map_access_keys(pkg: &PackageInfo) -> Vec<String> {
  fn mock_all_mapper_methods(mapper_name: &str, pkg: &PackageInfo) -> Vec<String> {
       let extra_keys = extract_map_access_keys(pkg);
       let mut all_dmls: Vec<(String, DmlType, usize, bool, Option<String>, String)> = Vec::new();
-     for proc in &pkg.procedures {
-         for dml in &proc.dml_statements {
-             let in_param_count = proc.parameters.iter().filter(|p| !p.is_out()).count();
-             let local_var_count = count_local_var_refs_in_sql(&dml.sql_text, &proc.local_vars, &proc.parameters);
-             let pkg_var_count = count_package_var_refs_in_sql(&dml.sql_text, &pkg.package_vars, &proc.local_vars, &proc.parameters);
+      for proc in &pkg.procedures {
+          for dml in &proc.dml_statements {
+              let in_param_count = proc.parameters.iter().filter(|p| !p.is_out()).count();
+              // Mirror mapper.rs logic to compute total unique params
+              let mut all_names: std::collections::HashSet<String> = proc
+                  .parameters.iter()
+                  .filter(|p| !p.is_out())
+                  .map(|p| crate::naming::snake_to_camel(&p.name).to_lowercase())
+                  .collect();
 
-             let param_java_names: std::collections::HashSet<String> = proc
-                 .parameters.iter()
-                 .filter(|p| !p.is_out())
-                 .map(|p| crate::naming::snake_to_camel(&p.name).to_lowercase())
-                 .collect();
-             let out_param_count = proc.parameters.iter()
-                 .filter(|p| p.is_out())
-                  .filter(|p| {
-                      case_insensitive_word_match(&dml.sql_text, &p.name)
-                  })
-                 .filter(|p| {
-                     let jn = crate::naming::snake_to_camel(&p.name).to_lowercase();
-                     !param_java_names.iter().any(|pn| pn == &jn)
-                 })
-                 .count();
+              // Step 2: dml.extra_params
+              for (jn, _) in &dml.extra_params {
+                  all_names.insert(jn.to_lowercase());
+              }
 
-             let total_params = in_param_count + local_var_count + pkg_var_count + out_param_count;
+              // Step 3: local vars from SQL text
+              let re = IDENTIFIER_RE.get_or_init(|| regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap());
+              let proc_param_names: std::collections::HashSet<String> = proc
+                  .parameters.iter()
+                  .filter(|p| !p.is_out())
+                  .map(|p| p.name.to_lowercase())
+                  .collect();
+              for caps in re.captures_iter(&dml.sql_text) {
+                  let word = caps.get(1).unwrap().as_str();
+                  if proc.local_vars.contains_key(word) && !proc_param_names.contains(&word.to_lowercase()) {
+                      all_names.insert(crate::naming::snake_to_camel(word).to_lowercase());
+                  }
+              }
+
+              // Step 4: package vars from SQL text
+              let local_var_names: std::collections::HashSet<String> = proc.local_vars.keys().cloned().collect();
+              for caps in re.captures_iter(&dml.sql_text) {
+                  let word = caps.get(1).unwrap().as_str();
+                  if pkg.package_vars.contains_key(word)
+                      && !local_var_names.contains(word)
+                      && !proc_param_names.contains(&word.to_lowercase())
+                  {
+                      all_names.insert(crate::naming::snake_to_camel(word).to_lowercase());
+                  }
+              }
+
+              // Step 5: OUT params in SQL text
+              for p in &proc.parameters {
+                  if p.is_out() && case_insensitive_word_match(&dml.sql_text, &p.name) {
+                      all_names.insert(crate::naming::snake_to_camel(&p.name).to_lowercase());
+                  }
+              }
+
+              let total_params = all_names.len();
              if !all_dmls.iter().any(|(id, _, _, _, _, _)| id == &dml.method_id) {
                  all_dmls.push((dml.method_id.clone(), dml.sql_type, total_params, dml.returns_list, dml.result_type.clone(), dml.sql_text.clone()));
              }
