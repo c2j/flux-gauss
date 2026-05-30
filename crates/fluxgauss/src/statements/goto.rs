@@ -782,6 +782,13 @@ fn generate_state_machine_goto(
     proc.java_logic_lines.push("boolean running = true;".to_string());
     proc.java_logic_lines.push("int _smGuard = 0;".to_string());
     proc.java_logic_lines.push("while (running && _smGuard++ < 10000) {".to_string());
+
+    let first_label_idx = ordered_labels.first().map(|(_, idx)| *idx).unwrap_or(0);
+    for idx in 0..first_label_idx {
+        let stmt = &body[idx];
+        crate::statement::process_statement(stmt, proc, stmt_ctx)?;
+    }
+
     proc.java_logic_lines.push("    switch (currentState) {".to_string());
 
     for (label_name, target_idx) in &ordered_labels {

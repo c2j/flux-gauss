@@ -81,6 +81,9 @@ pub fn analyze_procedure(
             if let Err(e) = rewrite_result {
                 proc.java_logic_lines.push("// TODO: GOTO pattern requires manual implementation".into());
                 result = Err(e);
+            } else {
+                // GOTO rewrite succeeded — reset result to clear any Err from normal processing
+                result = Ok(());
             }
             if has_exceptions {
                 proc.java_logic_lines.insert(0, "try {".into());
@@ -140,8 +143,8 @@ pub fn process_declaration(
                 _ => {
                     let sql_type_raw = crate::extract::format_pl_data_type(&var.data_type);
                     let sql_type_lower = sql_type_raw.to_lowercase();
-                    // Detect array-like types (e.g., pkg_param_common.arrytype)
-                    if sql_type_lower.contains("arrytype") || sql_type_lower.contains("array_type") {
+                    // Detect array-like types (e.g., pkg_param_common.arrytype, VARCHAR2_ARRAY)
+                    if sql_type_lower.contains("arrytype") || sql_type_lower.contains("array_type") || sql_type_lower.ends_with("_array") {
                         proc.imports.insert("import java.util.List;".into());
                         proc.imports.insert("import java.util.Collections;".into());
                         proc.has_array_vars = true;
@@ -214,6 +217,66 @@ pub fn promote_out_local_vars(proc: &mut ProcedureInfo) {
         if param.is_out() && !param.is_refcursor() {
             proc.imports
                 .insert("import java.util.concurrent.atomic.AtomicReference;".into());
+        }
+    }
+}
+
+pub fn discover_cross_service_refs(pkg: &mut crate::types::PackageInfo, known_packages: &[String]) {
+    let own_svc = format!(
+        "{}Service",
+        {
+            let cn = crate::naming::package_to_classname(&pkg.package_name);
+            let mut c = cn.chars();
+            match c.next() {
+                Some(f) => f.to_ascii_lowercase().to_string() + c.as_str(),
+                None => String::new(),
+            }
+        }
+    );
+    let existing_calls: std::collections::HashSet<String> = pkg.procedures.iter()
+        .flat_map(|p| p.service_calls.iter().map(|c| c.service_name.clone()))
+        .collect();
+
+    let system_prefixes = ["dbe_scheduler", "dbms_output", "dbms_random", "dbms_lob", "dbe_output", "utl_file", "dbms_sql", "dbms_job"];
+
+    let known_svc_names: std::collections::HashMap<String, String> = known_packages.iter()
+        .filter(|pkg_name| {
+            let lower = pkg_name.to_lowercase();
+            !system_prefixes.iter().any(|sp| lower.starts_with(sp))
+        })
+        .map(|pkg_name| {
+            let cn = crate::naming::package_to_classname(pkg_name);
+            let svc_name = format!("{}Service", {
+                let mut c = cn.chars();
+                match c.next() {
+                    Some(f) => f.to_ascii_lowercase().to_string() + c.as_str(),
+                    None => String::new(),
+                }
+            });
+            (svc_name, pkg_name.clone())
+        })
+        .collect();
+
+    let re = regex::Regex::new(r"(\w+Service)\.").unwrap();
+    for proc in &mut pkg.procedures {
+        for line in &proc.java_logic_lines {
+            if line.trim().starts_with("//") {
+                continue;
+            }
+            for cap in re.captures_iter(line) {
+                let svc_name = cap[1].to_string();
+                if svc_name == own_svc || existing_calls.contains(&svc_name) {
+                    continue;
+                }
+                if let Some(pkg_name) = known_svc_names.get(&svc_name) {
+                    proc.service_calls.push(crate::types::ServiceCall {
+                        service_name: svc_name.clone(),
+                        method_name: String::new(),
+                        args: Vec::new(),
+                        package_name: pkg_name.clone(),
+                    });
+                }
+            }
         }
     }
 }

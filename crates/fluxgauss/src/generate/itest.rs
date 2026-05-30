@@ -133,21 +133,47 @@ pub fn write_itest_class(
             10
         };
 
-        let is_stubbed = super::service::should_stub_procedure(proc, &object_pkg_var_names);
-        let has_while_loop = proc.java_logic_lines.iter().any(|l| {
-            let t = l.trim();
-            t.starts_with("while (true)") || t.starts_with("while (running")
-        });
+          let is_stubbed = super::service::should_stub_procedure(proc, &object_pkg_var_names);
+          let has_while_loop = proc.java_logic_lines.iter().any(|l| {
+              let t = l.trim();
+              t.starts_with("while (true)") || t.starts_with("while (running")
+          });
+          let has_dynamic_sql = proc.dml_statements.iter().any(|dml| {
+              let sql = dml.sql_text.trim();
+              let has_text_subst = sql.contains("${");
+              let has_bind_using = sql.contains("} using ");
+              let is_single_bind = sql.starts_with("#{") && sql.ends_with('}') && !sql[2..sql.len()-1].contains("#{");
+              let starts_with_var_using = {
+                  let lower = sql.to_lowercase();
+                  let looks_like_var = sql.chars().next().map_or(false, |c| c.is_ascii_alphabetic() || c == '_');
+                  let has_using = lower.contains(" using ");
+                  looks_like_var && has_using && !lower.starts_with("select") && !lower.starts_with("insert")
+                      && !lower.starts_with("update") && !lower.starts_with("delete")
+              };
+              let is_just_var = {
+                  let looks_like_var = sql.chars().next().map_or(false, |c| c.is_ascii_alphabetic() || c == '_');
+                  let no_sql_keywords = !sql.to_lowercase().starts_with("select")
+                      && !sql.to_lowercase().starts_with("insert")
+                      && !sql.to_lowercase().starts_with("update")
+                      && !sql.to_lowercase().starts_with("delete")
+                      && !sql.to_lowercase().starts_with("truncate")
+                      && !sql.to_lowercase().starts_with("merge");
+                  looks_like_var && no_sql_keywords && !sql.contains(' ') && !sql.contains('(')
+              };
+              is_single_bind || has_text_subst || has_bind_using || starts_with_var_using || is_just_var
+          });
 
-     let mut lines: Vec<String> = Vec::new();
-        if is_stubbed {
-            lines.push("    @org.junit.jupiter.api.Disabled(\"Converter stub — complex PL/pgSQL pattern requires manual implementation\")".to_string());
-        } else if has_while_loop {
-            lines.push("    @org.junit.jupiter.api.Disabled(\"auto-generated itest cannot terminate while loop\")".to_string());
-        }
-        if !sql_script.is_empty() {
-            lines.push(format!("    @org.springframework.test.context.jdbc.Sql(scripts = \"{}\")", sql_script));
-        }
+       let mut lines: Vec<String> = Vec::new();
+          if is_stubbed {
+              lines.push("    @org.junit.jupiter.api.Disabled(\"Converter stub — complex PL/pgSQL pattern requires manual implementation\")".to_string());
+          } else if has_while_loop {
+              lines.push("    @org.junit.jupiter.api.Disabled(\"auto-generated itest cannot terminate while loop\")".to_string());
+          } else if has_dynamic_sql {
+              lines.push("    @org.junit.jupiter.api.Disabled(\"auto-generated itest cannot exercise runtime-constructed dynamic SQL\")".to_string());
+           }
+         if !sql_script.is_empty() {
+             lines.push(format!("    @org.springframework.test.context.jdbc.Sql(scripts = \"{}\")", sql_script));
+         }
         lines.push("    @Test".to_string());
         lines.push(format!("    @Timeout(value = {}, unit = TimeUnit.SECONDS)", timeout_seconds));
         lines.push(format!("    void {}() {{", test_name));

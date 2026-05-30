@@ -193,7 +193,7 @@ fn validate_pl_variables_from_stmts(
             Statement::CreateProcedure(proc) => {
                 if let Some(ref block) = proc.block {
                     let vars = ogsql_parser::validate_pl_variables_with_extra_vars_and_funcs(
-                        block, &proc.parameters, &[], &funcs_str,
+                        block, &proc.parameters, &[], &funcs_str, false,
                     );
                     warnings.extend(vars);
                 }
@@ -201,7 +201,7 @@ fn validate_pl_variables_from_stmts(
             Statement::CreateFunction(func) => {
                 if let Some(ref block) = func.block {
                     let vars = ogsql_parser::validate_pl_variables_with_extra_vars_and_funcs(
-                        block, &func.parameters, &[], &funcs_str,
+                        block, &func.parameters, &[], &funcs_str, false,
                     );
                     warnings.extend(vars);
                 }
@@ -209,7 +209,7 @@ fn validate_pl_variables_from_stmts(
             Statement::Do(do_stmt) => {
                 if let Some(ref block) = do_stmt.block {
                     let vars = ogsql_parser::validate_pl_variables_with_extra_vars_and_funcs(
-                        block, &[], &[], &funcs_str,
+                        block, &[], &[], &funcs_str, false,
                     );
                     warnings.extend(vars);
                 }
@@ -225,17 +225,17 @@ fn validate_pl_variables_from_stmts(
                     match item {
                         ogsql_parser::ast::PackageItem::Procedure(proc) => {
                             if let Some(ref block) = proc.block {
-                                let vars = ogsql_parser::validate_pl_variables_with_extra_vars_and_funcs(
-                                    block, &proc.parameters, &pkg_vars, &funcs_str,
-                                );
-                                warnings.extend(vars);
-                            }
+                            let vars = ogsql_parser::validate_pl_variables_with_extra_vars_and_funcs(
+                                block, &proc.parameters, &pkg_vars, &funcs_str, false,
+                            );
+                            warnings.extend(vars);
                         }
-                        ogsql_parser::ast::PackageItem::Function(func) => {
-                            if let Some(ref block) = func.block {
-                                let vars = ogsql_parser::validate_pl_variables_with_extra_vars_and_funcs(
-                                    block, &func.parameters, &pkg_vars, &funcs_str,
-                                );
+                    }
+                    ogsql_parser::ast::PackageItem::Function(func) => {
+                        if let Some(ref block) = func.block {
+                            let vars = ogsql_parser::validate_pl_variables_with_extra_vars_and_funcs(
+                                block, &func.parameters, &pkg_vars, &funcs_str, false,
+                            );
                                 warnings.extend(vars);
                             }
                         }
@@ -428,6 +428,28 @@ fn phase2_analyze(
 
     let ddl_schema = crate::generate::itest::parse_table_ddl(sql_files);
 
+    let all_pkg_names: Vec<String> = proc_summaries.keys().cloned().collect();
+
+    // Build a global map: java_method_name → service_variable_name for all procedures
+    let mut global_proc_map: HashMap<String, String> = HashMap::new();
+    for (_summary_name, summary) in &proc_summaries {
+        for proc_in_summary in &summary.procedures {
+            let method_name = crate::naming::java_method_name(&proc_in_summary.proc_name);
+            let svc_pkg = if !proc_in_summary.package.is_empty() {
+                proc_in_summary.package.clone()
+            } else {
+                summary.name.clone()
+            };
+            let class_name = crate::naming::package_to_classname(&svc_pkg);
+            let mut c = class_name.chars();
+            let svc_var = match c.next() {
+                Some(f) => f.to_ascii_lowercase().to_string() + c.as_str(),
+                None => String::new(),
+            };
+            global_proc_map.entry(method_name).or_insert_with(|| format!("{}Service", svc_var));
+        }
+    }
+
     let total: usize = packages.iter().map(|p| p.procedures.len()).sum();
     let mut idx = 0;
 
@@ -445,6 +467,7 @@ fn phase2_analyze(
             proc.custom_types = pkg_custom_types.clone();
             proc.package_vars = pkg_vars.clone();
             proc.package_proc_params = sibling_params.clone();
+            proc.all_proc_params = global_proc_map.clone();
             idx += 1;
             crate::progress::progress_bar("Analyze", idx, total, &proc.name);
 
@@ -455,6 +478,7 @@ fn phase2_analyze(
         for proc in &mut pkg.procedures {
             crate::analyze::promote_out_local_vars(proc);
         }
+        crate::analyze::discover_cross_service_refs(pkg, &all_pkg_names);
     }
 
     crate::progress::progress_done("Analyze", total);
