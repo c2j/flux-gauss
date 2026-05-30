@@ -23,15 +23,11 @@ jobs:
     name: Build linux-x86_64 (glibc >= 2.17)
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Checkout ogsql-parser
         uses: actions/checkout@v4
         with:
           repository: c2j/ogsql-parser
           ref: main
-          path: lib/ogsql-parser
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -45,15 +41,14 @@ jobs:
         run: cargo install cargo-zigbuild
 
       - name: Build
-        working-directory: lib/ogsql-parser
         run: cargo zigbuild --release --features ${{ env.BUILD_FEATURES }} --target x86_64-unknown-linux-gnu.2.17
 
       - name: Strip
-        run: strip --strip-unneeded lib/ogsql-parser/target/x86_64-unknown-linux-gnu/release/${{ env.BINARY_NAME }}
+        run: strip --strip-unneeded target/x86_64-unknown-linux-gnu/release/${{ env.BINARY_NAME }}
 
       - name: Package
         run: |
-          cd lib/ogsql-parser/target/x86_64-unknown-linux-gnu/release
+          cd target/x86_64-unknown-linux-gnu/release
           tar czf ${{ github.workspace }}/ogsql-linux-x86_64.tar.gz ${{ env.BINARY_NAME }}
 
       - name: Upload artifact
@@ -66,15 +61,11 @@ jobs:
     name: Build linux-arm64 (glibc >= 2.17)
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Checkout ogsql-parser
         uses: actions/checkout@v4
         with:
           repository: c2j/ogsql-parser
           ref: main
-          path: lib/ogsql-parser
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -90,17 +81,16 @@ jobs:
         run: cargo install cargo-zigbuild
 
       - name: Build
-        working-directory: lib/ogsql-parser
         run: cargo zigbuild --release --features ${{ env.BUILD_FEATURES }} --target aarch64-unknown-linux-gnu.2.17
 
       - name: Strip
         run: |
           sudo apt-get install -y binutils-aarch64-linux-gnu
-          aarch64-linux-gnu-strip --strip-unneeded lib/ogsql-parser/target/aarch64-unknown-linux-gnu/release/${{ env.BINARY_NAME }}
+          aarch64-linux-gnu-strip --strip-unneeded target/aarch64-unknown-linux-gnu/release/${{ env.BINARY_NAME }}
 
       - name: Package
         run: |
-          cd lib/ogsql-parser/target/aarch64-unknown-linux-gnu/release
+          cd target/aarch64-unknown-linux-gnu/release
           tar czf ${{ github.workspace }}/ogsql-linux-arm64.tar.gz ${{ env.BINARY_NAME }}
 
       - name: Upload artifact
@@ -113,15 +103,11 @@ jobs:
     name: Build windows-x86_64
     runs-on: windows-2022
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Checkout ogsql-parser
         uses: actions/checkout@v4
         with:
           repository: c2j/ogsql-parser
           ref: main
-          path: lib/ogsql-parser
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -139,20 +125,19 @@ jobs:
           restore-keys: x86_64-pc-windows-gnu-cargo-
 
       - name: Build
-        working-directory: lib/ogsql-parser
         run: cargo build --release --features ${{ env.BUILD_FEATURES }} --target x86_64-pc-windows-gnu
         env:
           RUSTFLAGS: "-C target-feature=+crt-static"
 
       - name: Strip
-        run: strip lib/ogsql-parser/target/x86_64-pc-windows-gnu/release/${{ env.BINARY_NAME }}.exe
+        run: strip target/x86_64-pc-windows-gnu/release/${{ env.BINARY_NAME }}.exe
         shell: bash
 
       - name: Package
         shell: pwsh
         run: |
           Compress-Archive `
-            -Path "lib/ogsql-parser/target/x86_64-pc-windows-gnu/release/${{ env.BINARY_NAME }}.exe" `
+            -Path "target/x86_64-pc-windows-gnu/release/${{ env.BINARY_NAME }}.exe" `
             -DestinationPath "ogsql-windows-x86_64.zip"
 
       - name: Upload artifact
