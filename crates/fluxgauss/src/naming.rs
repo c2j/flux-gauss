@@ -104,6 +104,10 @@ pub fn java_method_to_snake(method_name: &str) -> String {
     result
 }
 
+pub fn classname_to_package(class_name: &str) -> String {
+    format!("pkg_{}", java_method_to_snake(class_name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

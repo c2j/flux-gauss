@@ -75,15 +75,52 @@ pub fn extract_from_parse_output(
                         ));
                     }
                     if !owned.is_empty() {
-                        packages.push(build_package_info(
-                            &current_pkg_name,
-                            owned,
-                            package_vars.drain().collect(),
-                            custom_types.drain().collect(),
-                            table_refs.drain().collect(),
-                            source_file,
-                            base_package,
-                        ));
+                        // Group owned procedures by their actual package name.
+                        // Procedures matching current_pkg_name go into the main package with its vars/types.
+                        // Mismatched ones (e.g., boyfriend.func_xxx inside pkg_function_calls file)
+                        // go into their own separate packages (without the current package's vars/types).
+                        let mut by_pkg: std::collections::BTreeMap<String, Vec<ProcedureInfo>> = std::collections::BTreeMap::new();
+                        for p in owned {
+                            let pk = if p.package == current_pkg_name {
+                                current_pkg_name.clone()
+                            } else {
+                                // Mismatched — use the procedure's own package name,
+                                // falling back to source file stem to avoid empty string
+                                if p.package.is_empty() {
+                                    std::path::Path::new(source_file)
+                                        .file_stem()
+                                        .and_then(|s| s.to_str())
+                                        .unwrap_or("standalone")
+                                        .to_string()
+                                } else {
+                                    p.package.clone()
+                                }
+                            };
+                            by_pkg.entry(pk).or_default().push(p);
+                        }
+                        for (pkg_name_for_group, procs) in by_pkg {
+                            if pkg_name_for_group == current_pkg_name {
+                                packages.push(build_package_info(
+                                    &pkg_name_for_group,
+                                    procs,
+                                    package_vars.drain().collect(),
+                                    custom_types.drain().collect(),
+                                    table_refs.drain().collect(),
+                                    source_file,
+                                    base_package,
+                                ));
+                            } else {
+                                packages.push(build_package_info(
+                                    &pkg_name_for_group,
+                                    procs,
+                                    std::collections::HashMap::new(),
+                                    std::collections::HashMap::new(),
+                                    std::collections::HashSet::new(),
+                                    source_file,
+                                    base_package,
+                                ));
+                            }
+                        }
                     } else {
                         package_vars.drain();
                         custom_types.drain();

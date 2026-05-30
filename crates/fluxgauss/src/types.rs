@@ -163,7 +163,7 @@ pub struct ProcedureInfo {
     pub local_var_defaults: HashMap<String, String>,
     pub table_refs: HashSet<String>,
     pub var_assignments: HashMap<String, String>,
-    pub dynamic_sql_templates: HashMap<String, (String, Vec<String>)>,
+    pub dynamic_sql_templates: HashMap<String, (String, Vec<(String, bool)>)>,
     pub is_autonomous: bool,
     pub scheduler_tasks: Vec<SchedulerTask>,
 
@@ -186,6 +186,12 @@ pub struct ProcedureInfo {
     /// Maps java method name → list of parameter lists (one per overload) for sibling procedures.
     /// Populated before analysis phase so function_call_to_java can coerce args.
     pub package_proc_params: HashMap<String, Vec<Vec<Parameter>>>,
+
+    /// Maps java method name → service variable name for ALL procedures across ALL packages.
+    /// Used during expression resolution to find cross-package function references.
+    /// Populated during analysis phase from proc_summaries.
+    /// Example: "funcGetFrameDate" → "boyfriendService"
+    pub all_proc_params: HashMap<String, String>,
 
     pub select_counter: usize,
     pub for_loop_counter: usize,
@@ -234,6 +240,7 @@ impl ProcedureInfo {
             out_local_vars: HashMap::new(),
             goto_analysis: None,
             package_proc_params: HashMap::new(),
+            all_proc_params: HashMap::new(),
             select_counter: 0,
             for_loop_counter: 0,
             source_file: String::new(),
