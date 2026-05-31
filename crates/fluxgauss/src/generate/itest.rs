@@ -1503,15 +1503,17 @@ mod tests {
     fn test_fixture_generation() {
         let mut proc = make_proc("check_stock");
         proc.dml_statements.push(DmlStatement {
-            sql_type: DmlType::Insert,
-            method_id: "insertCheckStock".to_string(),
-            sql_text: "INSERT INTO inventory (id, qty) VALUES (#{id}, #{qty})".to_string(),
-            result_type: None,
-            parameter_types: Default::default(),
-            optional_filters: Vec::new(),
-            returns_list: false,
-            extra_params: Vec::new(),
-        });
+                    sql_type: DmlType::Insert,
+                    method_id: "insertCheckStock".to_string(),
+                    sql_text: "INSERT INTO inventory (id, qty) VALUES (#{id}, #{qty})".to_string(),
+                    result_type: None,
+                    parameter_types: Default::default(),
+                    optional_filters: Vec::new(),
+                    returns_list: false,
+                    extra_params: Vec::new(),
+                    dynamic_conditions: Vec::new(),
+                    base_sql: String::new(),
+                });
         let mut pkg = make_pkg("pkg_inventory", vec![proc]);
         pkg.table_refs.insert("inventory".to_string());
         let dir = tempfile::tempdir().unwrap();
@@ -1528,15 +1530,17 @@ mod tests {
     fn test_schema_sql_generation() {
         let mut proc = make_proc("check_stock");
         proc.dml_statements.push(DmlStatement {
-            sql_type: DmlType::Select,
-            method_id: "selectCheckStock".to_string(),
-            sql_text: "SELECT id, qty FROM inventory WHERE product_id = #{productId}".to_string(),
-            result_type: None,
-            parameter_types: Default::default(),
-            optional_filters: Vec::new(),
-            returns_list: false,
-            extra_params: Vec::new(),
-        });
+                    sql_type: DmlType::Select,
+                    method_id: "selectCheckStock".to_string(),
+                    sql_text: "SELECT id, qty FROM inventory WHERE product_id = #{productId}".to_string(),
+                    result_type: None,
+                    parameter_types: Default::default(),
+                    optional_filters: Vec::new(),
+                    returns_list: false,
+                    extra_params: Vec::new(),
+                    dynamic_conditions: Vec::new(),
+                    base_sql: String::new(),
+                });
         let pkg = make_pkg("pkg_inventory", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
         write_itest_schema_sql(dir.path(), &[pkg], &HashMap::new()).unwrap();
@@ -1604,15 +1608,17 @@ CREATE TABLE BIGFUND.orders (
     fn test_build_schema_map_ddl_priority() {
         let mut proc = make_proc("check_stock");
         proc.dml_statements.push(DmlStatement {
-            sql_type: DmlType::Insert,
-            method_id: "insertCheckStock".to_string(),
-            sql_text: "INSERT INTO inventory (id, qty) VALUES (#{id}, #{qty})".to_string(),
-            result_type: None,
-            parameter_types: Default::default(),
-            optional_filters: Vec::new(),
-            returns_list: false,
-            extra_params: Vec::new(),
-        });
+                    sql_type: DmlType::Insert,
+                    method_id: "insertCheckStock".to_string(),
+                    sql_text: "INSERT INTO inventory (id, qty) VALUES (#{id}, #{qty})".to_string(),
+                    result_type: None,
+                    parameter_types: Default::default(),
+                    optional_filters: Vec::new(),
+                    returns_list: false,
+                    extra_params: Vec::new(),
+                    dynamic_conditions: Vec::new(),
+                    base_sql: String::new(),
+                });
         let pkg = make_pkg("pkg_inventory", vec![proc]);
         let mut ddl_schemas: HashMap<String, HashMap<String, String>> = HashMap::new();
         let mut cols: HashMap<String, String> = HashMap::new();

@@ -727,15 +727,17 @@ mod tests {
     fn test_mock_insert_dml() {
         let mut proc = make_proc("create_order");
         proc.dml_statements.push(DmlStatement {
-            sql_type: DmlType::Insert,
-            method_id: "insertOrder".to_string(),
-            sql_text: "insert into t values(1)".to_string(),
-            result_type: None,
-            parameter_types: Default::default(),
-            optional_filters: Vec::new(),
-            returns_list: false,
-            extra_params: Vec::new(),
-        });
+                    sql_type: DmlType::Insert,
+                    method_id: "insertOrder".to_string(),
+                    sql_text: "insert into t values(1)".to_string(),
+                    result_type: None,
+                    parameter_types: Default::default(),
+                    optional_filters: Vec::new(),
+                    returns_list: false,
+                    extra_params: Vec::new(),
+                    dynamic_conditions: Vec::new(),
+                    base_sql: String::new(),
+                });
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
         write_service_test(dir.path(), &pkg, "com.example.demo", &Default::default()).unwrap();
@@ -749,15 +751,17 @@ mod tests {
     fn test_mock_select_dml() {
         let mut proc = make_proc("get_data");
         proc.dml_statements.push(DmlStatement {
-            sql_type: DmlType::Select,
-            method_id: "selectData".to_string(),
-            sql_text: "select * from t".to_string(),
-            result_type: None,
-            parameter_types: Default::default(),
-            optional_filters: Vec::new(),
-            returns_list: false,
-            extra_params: Vec::new(),
-        });
+                    sql_type: DmlType::Select,
+                    method_id: "selectData".to_string(),
+                    sql_text: "select * from t".to_string(),
+                    result_type: None,
+                    parameter_types: Default::default(),
+                    optional_filters: Vec::new(),
+                    returns_list: false,
+                    extra_params: Vec::new(),
+                    dynamic_conditions: Vec::new(),
+                    base_sql: String::new(),
+                });
         let pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
         write_service_test(dir.path(), &pkg, "com.example.demo", &Default::default()).unwrap();
@@ -772,15 +776,17 @@ mod tests {
     fn test_mock_select_dml_returns_list() {
         let mut proc = make_proc("list_data");
         proc.dml_statements.push(DmlStatement {
-            sql_type: DmlType::Select,
-            method_id: "selectListData".to_string(),
-            sql_text: "select * from t".to_string(),
-            result_type: None,
-            parameter_types: Default::default(),
-            optional_filters: Vec::new(),
-            returns_list: true,
-            extra_params: Vec::new(),
-        });
+                    sql_type: DmlType::Select,
+                    method_id: "selectListData".to_string(),
+                    sql_text: "select * from t".to_string(),
+                    result_type: None,
+                    parameter_types: Default::default(),
+                    optional_filters: Vec::new(),
+                    returns_list: true,
+                    extra_params: Vec::new(),
+                    dynamic_conditions: Vec::new(),
+                    base_sql: String::new(),
+                });
         let pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
         write_service_test(dir.path(), &pkg, "com.example.demo", &Default::default()).unwrap();
@@ -794,15 +800,17 @@ mod tests {
     fn test_mock_select_dml_scalar_integer() {
         let mut proc = make_proc("check_stock");
         proc.dml_statements.push(DmlStatement {
-            sql_type: DmlType::Select,
-            method_id: "selectCheckStock".to_string(),
-            sql_text: "select count(*) into v_count from t".to_string(),
-            result_type: Some("Integer".to_string()),
-            parameter_types: Default::default(),
-            optional_filters: Vec::new(),
-            returns_list: false,
-            extra_params: Vec::new(),
-        });
+                    sql_type: DmlType::Select,
+                    method_id: "selectCheckStock".to_string(),
+                    sql_text: "select count(*) into v_count from t".to_string(),
+                    result_type: Some("Integer".to_string()),
+                    parameter_types: Default::default(),
+                    optional_filters: Vec::new(),
+                    returns_list: false,
+                    extra_params: Vec::new(),
+                    dynamic_conditions: Vec::new(),
+                    base_sql: String::new(),
+                });
         let pkg = make_pkg("pkg_inventory", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
         write_service_test(dir.path(), &pkg, "com.example.demo", &Default::default()).unwrap();
@@ -817,15 +825,17 @@ mod tests {
     fn test_mock_select_dml_scalar_long() {
         let mut proc = make_proc("get_id");
         proc.dml_statements.push(DmlStatement {
-            sql_type: DmlType::Select,
-            method_id: "selectGetId".to_string(),
-            sql_text: "select seq.nextval into v_id from dual".to_string(),
-            result_type: Some("Long".to_string()),
-            parameter_types: Default::default(),
-            optional_filters: Vec::new(),
-            returns_list: false,
-            extra_params: Vec::new(),
-        });
+                    sql_type: DmlType::Select,
+                    method_id: "selectGetId".to_string(),
+                    sql_text: "select seq.nextval into v_id from dual".to_string(),
+                    result_type: Some("Long".to_string()),
+                    parameter_types: Default::default(),
+                    optional_filters: Vec::new(),
+                    returns_list: false,
+                    extra_params: Vec::new(),
+                    dynamic_conditions: Vec::new(),
+                    base_sql: String::new(),
+                });
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
         write_service_test(dir.path(), &pkg, "com.example.demo", &Default::default()).unwrap();
@@ -900,15 +910,17 @@ mod tests {
     fn test_mock_select_with_columns() {
         let mut proc = make_proc("get_data");
         proc.dml_statements.push(DmlStatement {
-            sql_type: DmlType::Select,
-            method_id: "selectData".to_string(),
-            sql_text: "select id, name, salary from t_employees".to_string(),
-            result_type: Some("Map<String, Object>".to_string()),
-            parameter_types: Default::default(),
-            optional_filters: Vec::new(),
-            returns_list: false,
-            extra_params: Vec::new(),
-        });
+                    sql_type: DmlType::Select,
+                    method_id: "selectData".to_string(),
+                    sql_text: "select id, name, salary from t_employees".to_string(),
+                    result_type: Some("Map<String, Object>".to_string()),
+                    parameter_types: Default::default(),
+                    optional_filters: Vec::new(),
+                    returns_list: false,
+                    extra_params: Vec::new(),
+                    dynamic_conditions: Vec::new(),
+                    base_sql: String::new(),
+                });
         let pkg = make_pkg("pkg_data", vec![proc]);
         let lines = mock_all_mapper_methods("dataMapper", &pkg);
         let joined = lines.join("\n");
@@ -922,15 +934,17 @@ mod tests {
     fn test_mock_select_returns_list_with_columns() {
         let mut proc = make_proc("list_data");
         proc.dml_statements.push(DmlStatement {
-            sql_type: DmlType::Select,
-            method_id: "selectListData".to_string(),
-            sql_text: "select id, name from t".to_string(),
-            result_type: None,
-            parameter_types: Default::default(),
-            optional_filters: Vec::new(),
-            returns_list: true,
-            extra_params: Vec::new(),
-        });
+                    sql_type: DmlType::Select,
+                    method_id: "selectListData".to_string(),
+                    sql_text: "select id, name from t".to_string(),
+                    result_type: None,
+                    parameter_types: Default::default(),
+                    optional_filters: Vec::new(),
+                    returns_list: true,
+                    extra_params: Vec::new(),
+                    dynamic_conditions: Vec::new(),
+                    base_sql: String::new(),
+                });
         let pkg = make_pkg("pkg_data", vec![proc]);
         let lines = mock_all_mapper_methods("dataMapper", &pkg);
         let joined = lines.join("\n");
