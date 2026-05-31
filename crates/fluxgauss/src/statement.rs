@@ -552,6 +552,65 @@ fn classify_clause_type(sql_template: &str) -> String {
     }
 }
 
+/// Check if a query string is a PL/pgSQL variable reference rather than actual SQL.
+fn is_variable_reference(query: &str) -> bool {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let upper = trimmed.to_uppercase();
+    let sql_keywords = ["SELECT", "INSERT", "UPDATE", "DELETE", "WITH", "MERGE", "TRUNCATE"];
+    for kw in &sql_keywords {
+        if upper.starts_with(kw) {
+            return false;
+        }
+    }
+    // Single identifier (no spaces) — it's a variable reference
+    !trimmed.contains(' ') && trimmed.chars().all(|c| c.is_alphanumeric() || c == '_')
+}
+
+/// Try to resolve the base SQL text for a dynamic SQL variable.
+/// Checks `dynamic_sql_templates` for the variable name.
+fn resolve_dynamic_sql_text(proc: &ProcedureInfo, var_name: &str) -> Option<String> {
+    if let Some((sql_template, _concat_vars)) = proc.dynamic_sql_templates.get(var_name) {
+        return Some(sql_template.clone());
+    }
+    None
+}
+
+/// Collect dynamic conditions from `sql_concat_chain` for a variable.
+fn collect_dynamic_conditions(proc: &ProcedureInfo, var_name: &str) -> Vec<crate::types::DynamicCondition> {
+    let mut conditions = Vec::new();
+    if let Some(chain) = proc.sql_concat_chain.get(var_name) {
+        for (condition_expr, sql_fragment, clause_type) in chain {
+            conditions.push(crate::types::DynamicCondition {
+                condition_expr: condition_expr.clone(),
+                sql_fragment: sql_fragment.clone(),
+                clause_type: clause_type.clone(),
+                tag_name: String::new(),
+            });
+        }
+    }
+    conditions
+}
+
+/// Build extra_params from the dynamic SQL template's concat variables.
+fn collect_extra_params_from_template(proc: &ProcedureInfo, var_name: &str) -> Vec<(String, String)> {
+    let mut extra_params = Vec::new();
+    if let Some((_, concat_vars)) = proc.dynamic_sql_templates.get(var_name) {
+        for (java_name, _is_ident) in concat_vars {
+            if java_name.starts_with("expr_") {
+                continue;
+            }
+            let (var_type, _) = resolve_var_type(proc, java_name);
+            if !extra_params.iter().any(|(n, _)| n == java_name) {
+                extra_params.push((java_name.clone(), var_type.to_string()));
+            }
+        }
+    }
+    extra_params
+}
+
 fn flatten_concat_inner(
     expr: &ogsql_parser::ast::Expr,
     proc: &ProcedureInfo,
@@ -1841,6 +1900,21 @@ pub fn process_statement(
                 }
                 ogsql_parser::ast::plpgsql::PlForKind::Query { query, .. } => {
                     let clean_sql = strip_sql_comments(query).replace('\n', " ");
+
+                    let (sql_text, dynamic_conditions, extra_params, base_sql) =
+                        if is_variable_reference(&clean_sql) {
+                            let var_name = clean_sql.trim();
+                            if let Some(resolved) = resolve_dynamic_sql_text(proc, var_name) {
+                                let conditions = collect_dynamic_conditions(proc, var_name);
+                                let params = collect_extra_params_from_template(proc, var_name);
+                                (resolved.clone(), conditions, params, resolved)
+                            } else {
+                                (clean_sql.clone(), Vec::new(), Vec::new(), String::new())
+                            }
+                        } else {
+                            (clean_sql.clone(), Vec::new(), Vec::new(), String::new())
+                        };
+
                     push_logic_line(proc, format!("// for {} in query: {}", var, &clean_sql));
                     proc.local_vars.insert(for_stmt.node.variable.clone(), "Map<String, Object>".into());
                     proc.local_var_defaults.remove(&for_stmt.node.variable);
@@ -1854,14 +1928,14 @@ pub fn process_statement(
                     proc.dml_statements.push(DmlStatement {
                                 sql_type: DmlType::Select,
                                 method_id: method_id.clone(),
-                                sql_text: clean_sql,
+                                sql_text,
                                 result_type: Some("Map<String, Object>".to_string()),
                                 parameter_types: Default::default(),
                                 optional_filters: Vec::new(),
                                 returns_list: true,
-                                extra_params: Vec::new(),
-                                dynamic_conditions: Vec::new(),
-                                base_sql: String::new(),
+                                extra_params,
+                                dynamic_conditions,
+                                base_sql,
                             });
 
                     proc.for_loop_counter += 1;
@@ -2005,55 +2079,78 @@ pub fn process_statement(
 
              let is_out_refcursor = proc.refcursor_out_params.contains(&raw_cursor_java);
 
-              let (sql_text_opt, using_args): (Option<String>, Vec<ogsql_parser::ast::Expr>) = match &open_stmt.node.kind {
-                  ogsql_parser::ast::plpgsql::PlOpenKind::ForQuery { query, .. } => {
-                      if query.contains("||") || query.trim().starts_with('\'') {
-                          push_logic_line(proc, format!("/* OPEN {} FOR {} — dynamic SQL, not materializable */", cursor_java, query.replace("*/", "*\\/")));
+               let (sql_text_opt, using_args, dynamic_conditions, extra_params, base_sql): (Option<String>, Vec<ogsql_parser::ast::Expr>, Vec<crate::types::DynamicCondition>, Vec<(String, String)>, String) = match &open_stmt.node.kind {
+                   ogsql_parser::ast::plpgsql::PlOpenKind::ForQuery { query, .. } => {
+                       if query.contains("||") || query.trim().starts_with('\'') {
+                           push_logic_line(proc, format!("/* OPEN {} FOR {} — dynamic SQL, not materializable */", cursor_java, query.replace("*/", "*\\/")));
+                           return Ok(());
+                       }
+                       let clean = query.trim().trim_end_matches(';').to_string();
+                       if is_variable_reference(&clean) {
+                           let var_name = clean.trim();
+                           if let Some(resolved) = resolve_dynamic_sql_text(proc, var_name) {
+                               let conditions = collect_dynamic_conditions(proc, var_name);
+                               let params = collect_extra_params_from_template(proc, var_name);
+                               (Some(resolved.clone()), Vec::new(), conditions, params, resolved)
+                           } else {
+                               (Some(clean), Vec::new(), Vec::new(), Vec::new(), String::new())
+                           }
+                       } else {
+                           (Some(clean), Vec::new(), Vec::new(), Vec::new(), String::new())
+                       }
+                   }
+                  ogsql_parser::ast::plpgsql::PlOpenKind::Simple { arguments } => {
+                      let decl_sql = proc.cursor_decls.get(&raw_cursor_name)
+                          .or_else(|| proc.cursor_decls.get(&raw_cursor_name.to_lowercase()))
+                          .cloned();
+                      (decl_sql, arguments.clone(), Vec::new(), Vec::new(), String::new())
+                  }
+                  ogsql_parser::ast::plpgsql::PlOpenKind::ForExecute { query, using_args } => {
+                      if let Some(var_name) = extract_var_name_from_expr(query) {
+                          if let Some(resolved) = resolve_dynamic_sql_text(proc, &var_name) {
+                              let conditions = collect_dynamic_conditions(proc, &var_name);
+                              let params = collect_extra_params_from_template(proc, &var_name);
+                              (Some(resolved.clone()), using_args.clone(), conditions, params, resolved)
+                          } else {
+                              let sql_str = crate::expr::expr_to_java(query, proc);
+                              push_logic_line(proc, format!("/* OPEN {} FOR EXECUTE {} — could not resolve dynamic SQL */", cursor_java, sql_str.replace("*/", "*\\/")));
+                              return Ok(());
+                          }
+                      } else {
+                          let sql_str = crate::expr::expr_to_java(query, proc);
+                          let using_str = if using_args.is_empty() {
+                              String::new()
+                          } else {
+                              format!(" USING {}", using_args.iter().map(|a| crate::expr::expr_to_java(a, proc)).collect::<Vec<_>>().join(", "))
+                          };
+                          push_logic_line(proc, format!("/* OPEN {} FOR EXECUTE {}{} */", cursor_java, sql_str.replace("*/", "*\\/"), using_str.replace("*/", "*\\/")));
                           return Ok(());
                       }
-                      let clean = query.trim().trim_end_matches(';').to_string();
-                      (Some(clean), Vec::new())
                   }
-                 ogsql_parser::ast::plpgsql::PlOpenKind::Simple { arguments } => {
-                     let decl_sql = proc.cursor_decls.get(&raw_cursor_name)
-                         .or_else(|| proc.cursor_decls.get(&raw_cursor_name.to_lowercase()))
-                         .cloned();
-                     (decl_sql, arguments.clone())
-                 }
-                 ogsql_parser::ast::plpgsql::PlOpenKind::ForExecute { query, using_args } => {
-                     let sql_str = crate::expr::expr_to_java(query, proc);
-                     let using_str = if using_args.is_empty() {
-                         String::new()
-                     } else {
-                         format!(" USING {}", using_args.iter().map(|a| crate::expr::expr_to_java(a, proc)).collect::<Vec<_>>().join(", "))
-                     };
-                     push_logic_line(proc, format!("/* OPEN {} FOR EXECUTE {}{} */", cursor_java, sql_str.replace("*/", "*\\/"), using_str.replace("*/", "*\\/")));
-                     return Ok(());
-                 }
-                 _ => {
-                     push_logic_line(proc, format!("/* OPEN {} */", cursor_java));
-                     return Ok(());
-                 }
-             };
+                  _ => {
+                      push_logic_line(proc, format!("/* OPEN {} */", cursor_java));
+                      return Ok(());
+                  }
+              };
 
-             if let Some(raw_sql) = sql_text_opt {
-                  let sql_text = preprocess_cursor_sql(&raw_sql, &using_args, proc);
-                 let method_id = dml_method_name("select", &proc.proc_name, &mut ctx.dml_counter);
-                 let result_var = format!("{}Result", raw_cursor_java);
-                  let index_var = format!("{}Idx", raw_cursor_java);
+              if let Some(raw_sql) = sql_text_opt {
+                   let sql_text = preprocess_cursor_sql(&raw_sql, &using_args, proc);
+                  let method_id = dml_method_name("select", &proc.proc_name, &mut ctx.dml_counter);
+                  let result_var = format!("{}Result", raw_cursor_java);
+                   let index_var = format!("{}Idx", raw_cursor_java);
 
-                  proc.dml_statements.push(DmlStatement {
-                      sql_type: DmlType::Select,
-                      method_id: method_id.clone(),
-                      sql_text,
-                      result_type: Some("Map<String, Object>".to_string()),
-                      parameter_types: Default::default(),
-                      optional_filters: Vec::new(),
-                      returns_list: true,
-                      extra_params: Vec::new(),
-                      dynamic_conditions: Vec::new(),
-                      base_sql: String::new(),
-                  });
+                   proc.dml_statements.push(DmlStatement {
+                       sql_type: DmlType::Select,
+                       method_id: method_id.clone(),
+                       sql_text,
+                       result_type: Some("Map<String, Object>".to_string()),
+                       parameter_types: Default::default(),
+                       optional_filters: Vec::new(),
+                       returns_list: true,
+                       extra_params,
+                       dynamic_conditions,
+                       base_sql,
+                   });
 
                  let args = build_mapper_call_args(proc);
                 push_logic_line(proc, format!("{} = mapper.{}({});", result_var, method_id, args));
