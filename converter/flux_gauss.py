@@ -4148,22 +4148,40 @@ def _coerce_condition(cond: str) -> str:
 
 def _process_if(if_data: dict, proc: ProcedureInfo, all_packages: dict, dml_counter: dict):
     condition = _coerce_condition(_expr_to_java(if_data.get("condition", {}), proc, all_packages=all_packages))
+
+    then_stmts = list(_iter_statements(if_data.get("then_stmts", [])))
+    elsifs = if_data.get("elsifs", [])
+    else_stmts = if_data.get("else_stmts", [])
+
+    if (
+        len(then_stmts) == 1
+        and not elsifs
+        and not else_stmts
+        and then_stmts[0].get("Assignment")
+    ):
+        concat_result = _detect_sql_concat_append(then_stmts[0]["Assignment"], proc)
+        if concat_result:
+            var_name, sql_fragment, clause_type = concat_result
+            if var_name not in proc.sql_concat_chain:
+                proc.sql_concat_chain[var_name] = []
+            proc.sql_concat_chain[var_name].append((condition, sql_fragment, clause_type))
+
     proc.java_logic_lines.append(f"if ({condition}) {{")
 
-    for s in _iter_statements(if_data.get("then_stmts", [])):
+    for s in then_stmts:
         _process_statement(s, proc, all_packages, dml_counter)
     _indent_last_lines(proc, 1)
 
-    for elsif in if_data.get("elsifs", []):
+    for elsif in elsifs:
         elsif_cond = _coerce_condition(_expr_to_java(elsif.get("condition", {}), proc, all_packages=all_packages))
         proc.java_logic_lines.append(f"}} else if ({elsif_cond}) {{")
         for s in _iter_statements(elsif.get("stmts", [])):
             _process_statement(s, proc, all_packages, dml_counter)
         _indent_last_lines(proc, 1)
 
-    if if_data.get("else_stmts"):
+    if else_stmts:
         proc.java_logic_lines.append("} else {")
-        for s in _iter_statements(if_data["else_stmts"]):
+        for s in _iter_statements(else_stmts):
             _process_statement(s, proc, all_packages, dml_counter)
         _indent_last_lines(proc, 1)
 
@@ -4347,6 +4365,51 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
             proc.java_logic_lines.append(f"if ({target} == null) {target} = {_null_default};")
         elif ("Mapper" in expr or "mapper" in expr) and target_var_type in ("BigDecimal", "java.math.BigDecimal"):
             proc.java_logic_lines.append(f"if ({target} == null) {target} = java.math.BigDecimal.ZERO;")
+
+
+def _detect_sql_concat_append(assign_data: dict, proc: ProcedureInfo):
+    target_expr = assign_data.get("target", {})
+    expression = assign_data.get("expression", {})
+
+    var_name = _extract_var_name_from_expr(target_expr)
+    if not var_name:
+        return None
+
+    if not isinstance(expression, dict):
+        return None
+    binop = expression.get("BinaryOp")
+    if not binop or binop.get("op") != "||":
+        return None
+
+    left = binop.get("left", {})
+    right = binop.get("right", {})
+
+    left_var = _extract_var_name_from_expr(left)
+    if left_var != var_name:
+        return None
+
+    result = _reconstruct_sql_from_concat(right, proc)
+    if not result:
+        return None
+
+    sql_fragment, _ = result
+    if not sql_fragment:
+        return None
+
+    fragment_upper = sql_fragment.strip().upper()
+    clause_type = "OTHER"
+    if fragment_upper.startswith("WHERE"):
+        clause_type = "WHERE"
+    elif fragment_upper.startswith("ORDER BY"):
+        clause_type = "ORDER_BY"
+    elif fragment_upper.startswith("SET"):
+        clause_type = "SET"
+    elif fragment_upper.startswith("HAVING"):
+        clause_type = "HAVING"
+    elif fragment_upper.startswith("AND") or fragment_upper.startswith("OR"):
+        clause_type = "AND"
+
+    return (var_name, sql_fragment, clause_type)
 
 
 def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: dict):
@@ -6475,6 +6538,18 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                                 break
                         extra.append((arg_java, arg_type))
         param_args = _build_param_args_from_template(proc, template_params, extra, sql_text)
+        dynamic_conditions = []
+        base_sql = sql_text
+        if var_name and var_name in proc.sql_concat_chain:
+            for cond_expr, sql_fragment, clause_type in proc.sql_concat_chain[var_name]:
+                dynamic_conditions.append(DynamicCondition(
+                    condition_expr=cond_expr,
+                    sql_fragment=sql_fragment,
+                    clause_type=clause_type,
+                    tag_name="if",
+                ))
+            base_sql = sql_text
+
         proc.dml_statements.append(DmlStatement(
             sql_type=sql_type,
             method_id=mapper_method,
@@ -6482,6 +6557,8 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
             result_type=None,
             extra_params=extra,
             is_dynamic=True,
+            dynamic_conditions=dynamic_conditions,
+            base_sql=base_sql,
         ))
         _mc = f'mapper.{mapper_method}({param_args})'
         if sql_type != "select":
@@ -10103,11 +10180,49 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
     if filter_line:
         xml_parts.append(filter_line)
 
-    if dml.is_forall_batch and dml.forall_batch_arrays:
+    if dml.dynamic_conditions:
+        base_sql = dml.base_sql
+        if base_sql:
+            base_sql = _convert_params_to_mybatis(base_sql, proc.parameters, effective_local_vars)
+            base_sql = base_sql.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            base_sql = base_sql.rstrip()
+            if base_sql.endswith(";"):
+                base_sql = base_sql[:-1]
+        formatted_base = "\n".join(f"    {line}" for line in base_sql.split("\n")) if base_sql else ""
+
+        where_conditions = [dc for dc in dml.dynamic_conditions if dc.clause_type == "WHERE"]
+        order_conditions = [dc for dc in dml.dynamic_conditions if dc.clause_type == "ORDER_BY"]
+        other_conditions = [dc for dc in dml.dynamic_conditions if dc.clause_type not in ("WHERE", "ORDER_BY")]
+
+        xml_parts.append(f'<{tag} id="{dml.method_id}"{params_attrs}{result_type_attr}>')
+        if formatted_base:
+            xml_parts.append(formatted_base)
+        if where_conditions:
+            xml_parts.append("    <where>")
+            for dc in where_conditions:
+                fragment = dc.sql_fragment.strip()
+                if fragment.upper().startswith("WHERE"):
+                    fragment = fragment[5:].strip()
+                if not fragment.upper().startswith("AND") and not fragment.upper().startswith("OR"):
+                    fragment = "AND " + fragment
+                esc_fragment = fragment.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                xml_parts.append(f'        <if test="{dc.condition_expr}">{esc_fragment}</if>')
+            xml_parts.append("    </where>")
+        for dc in order_conditions:
+            fragment = dc.sql_fragment.strip()
+            if fragment.upper().startswith("ORDER BY"):
+                fragment = fragment[8:].strip()
+            esc_fragment = fragment.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            xml_parts.append(f'    <if test="{dc.condition_expr}">ORDER BY {esc_fragment}</if>')
+        for dc in other_conditions:
+            esc_fragment = dc.sql_fragment.strip().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            xml_parts.append(f'    <if test="{dc.condition_expr}">{esc_fragment}</if>')
+        xml_parts.append(f'</{tag}>')
+    elif dml.is_forall_batch and dml.forall_batch_arrays:
         batch_sql = sql
         for arr_java in dml.forall_batch_arrays:
             batch_sql = re.sub(r'#\{' + re.escape(arr_java) + r'\}', f'#{{item.{arr_java}}}', batch_sql)
-        batch_sql = re.sub(r'#\{_(\w+)\}', lambda m: f'#{{item._{m.group(1)}}}', batch_sql)
+        batch_sql = re.sub(r'#\{_\w+\}', lambda m: f'#{{item._{m.group(1)}}}', batch_sql)
         formatted_batch = "\n".join(f"        {line}" for line in batch_sql.split("\n"))
         xml_parts.append(f'<{tag} id="{dml.method_id}"{result_type_attr}>')
         xml_parts.append(f'    <foreach collection="list" item="item" separator=";">')
