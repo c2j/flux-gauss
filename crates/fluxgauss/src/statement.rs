@@ -2385,6 +2385,7 @@ pub fn process_statement(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     fn empty_proc() -> ProcedureInfo {
         ProcedureInfo::new("pkg.test".into(), "pkg".into(), "test".into())
@@ -2394,6 +2395,8 @@ mod tests {
         StatementContext {
             summaries: Box::leak(Box::new(HashMap::new())),
             dml_counter: HashMap::new(),
+            sm_enum_name: None,
+            sm_labels: HashSet::new(),
         }
     }
 

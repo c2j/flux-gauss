@@ -863,6 +863,7 @@ class Parameter:
     java_type: str
     sql_type: str
     mode: Optional[str] = None  # IN, OUT, INOUT
+    default_value: Optional[str] = None
 
     @property
     def java_name(self) -> str:
@@ -1438,6 +1439,20 @@ def _offset_dict_lines(d: dict, offset: int):
                     _offset_dict_lines(item, offset)
 
 
+def _box_primitive(java_type: str) -> str:
+    mapping = {
+        "int": "Integer",
+        "long": "Long",
+        "double": "Double",
+        "float": "Float",
+        "boolean": "Boolean",
+        "short": "Short",
+        "byte": "Byte",
+        "char": "Character",
+    }
+    return mapping.get(java_type, java_type)
+
+
 def extract_parameters(params_list: list) -> list:
     """Extract parameter info from AST parameter list."""
     result = []
@@ -1472,11 +1487,15 @@ def extract_parameters(params_list: list) -> list:
             else:
                 sql_type = "varchar"
         java_type = sql_type_to_java(sql_type)
+        default_value = p.get("default_value")
+        if default_value and default_value.lower() == "null":
+            java_type = _box_primitive(java_type)
         result.append(Parameter(
             name=name,
             java_type=java_type,
             sql_type=sql_type,
             mode=mode,
+            default_value=p.get("default_value"),
         ))
     return result
 
@@ -4153,18 +4172,15 @@ def _process_if(if_data: dict, proc: ProcedureInfo, all_packages: dict, dml_coun
     elsifs = if_data.get("elsifs", [])
     else_stmts = if_data.get("else_stmts", [])
 
-    if (
-        len(then_stmts) == 1
-        and not elsifs
-        and not else_stmts
-        and then_stmts[0].get("Assignment")
-    ):
-        concat_result = _detect_sql_concat_append(then_stmts[0]["Assignment"], proc)
-        if concat_result:
-            var_name, sql_fragment, clause_type = concat_result
-            if var_name not in proc.sql_concat_chain:
-                proc.sql_concat_chain[var_name] = []
-            proc.sql_concat_chain[var_name].append((condition, sql_fragment, clause_type))
+    if not elsifs and not else_stmts:
+        for stmt in then_stmts:
+            if stmt.get("Assignment"):
+                concat_result = _detect_sql_concat_append(stmt["Assignment"], proc)
+                if concat_result:
+                    var_name, sql_fragment, clause_type = concat_result
+                    if var_name not in proc.sql_concat_chain:
+                        proc.sql_concat_chain[var_name] = []
+                    proc.sql_concat_chain[var_name].append((condition, sql_fragment, clause_type))
 
     proc.java_logic_lines.append(f"if ({condition}) {{")
 
@@ -4389,8 +4405,19 @@ def _detect_sql_concat_append(assign_data: dict, proc: ProcedureInfo):
         return None
 
     result = _reconstruct_sql_from_concat(right, proc)
+
     if not result:
-        # Fallback: try to flatten the concat directly without SQL verb validation
+        suffix_expr = _extract_concat_suffix(expression, var_name)
+        if suffix_expr:
+            suffix_parts = []
+            suffix_params = []
+            _flatten_concat(suffix_expr, suffix_parts, suffix_params, proc)
+            if suffix_parts:
+                sql_fragment = "".join(suffix_parts).strip()
+                if sql_fragment:
+                    result = (sql_fragment, suffix_params)
+
+    if not result:
         parts = []
         params = []
         _flatten_concat(right, parts, params, proc)
@@ -4485,6 +4512,12 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
                         result = _reconstruct_sql_from_concat(expression, proc)
                         if result:
                             proc.dynamic_sql_templates[var_name] = result
+                        ref_vars = _extract_all_var_refs_from_expr(expression)
+                        for ref_var in ref_vars:
+                            if ref_var != var_name and ref_var in proc.sql_concat_chain:
+                                if var_name not in proc.sql_concat_chain:
+                                    proc.sql_concat_chain[var_name] = []
+                                proc.sql_concat_chain[var_name].extend(proc.sql_concat_chain[ref_var])
                 else:
                     var_name = _extract_var_name_from_expr(assign_data.get("target", {}))
                     if var_name and var_name in proc.local_vars:
@@ -6090,7 +6123,46 @@ def _extract_var_name_from_expr(expr: dict) -> str:
         if key == "PlVariable":
             parts = val if isinstance(val, list) else [val]
             return parts[-1] if parts else ""
+        if key == "BinaryOp":
+            op = val.get("op", "")
+            if op == "||":
+                left = val.get("left", {})
+                return _extract_var_name_from_expr(left)
     return ""
+
+
+def _extract_all_var_refs_from_expr(expr: dict) -> list:
+    refs = []
+    if not isinstance(expr, dict):
+        return refs
+    for key, val in expr.items():
+        if key == "PlVariable":
+            parts = val if isinstance(val, list) else [val]
+            if parts:
+                refs.append(parts[-1])
+        elif key == "BinaryOp":
+            refs.extend(_extract_all_var_refs_from_expr(val.get("left", {})))
+            refs.extend(_extract_all_var_refs_from_expr(val.get("right", {})))
+    return refs
+
+
+def _extract_concat_suffix(expr: dict, var_name: str):
+    if not isinstance(expr, dict):
+        return None
+    binop = expr.get("BinaryOp")
+    if not binop or binop.get("op") != "||":
+        return None
+    left = binop.get("left", {})
+    right = binop.get("right", {})
+    if isinstance(left, dict) and left.get("PlVariable"):
+        parts = left["PlVariable"] if isinstance(left["PlVariable"], list) else [left["PlVariable"]]
+        if parts and parts[-1] == var_name:
+            return right
+    deeper = _extract_concat_suffix(left, var_name)
+    if deeper is not None:
+        merged = {"BinaryOp": {"left": deeper, "op": "||", "right": right}}
+        return merged
+    return None
 
 
 def _extract_savepoint_from_string_expr(string_expr: dict):
@@ -10200,9 +10272,34 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
                 base_sql = base_sql[:-1]
         formatted_base = "\n".join(f"    {line}" for line in base_sql.split("\n")) if base_sql else ""
 
-        where_conditions = [dc for dc in dml.dynamic_conditions if dc.clause_type == "WHERE"]
-        order_conditions = [dc for dc in dml.dynamic_conditions if dc.clause_type == "ORDER_BY"]
-        other_conditions = [dc for dc in dml.dynamic_conditions if dc.clause_type not in ("WHERE", "ORDER_BY")]
+        local_var_names = {snake_to_camel(v) for v in proc.local_vars}
+        def _is_valid_condition(dc):
+            frag = dc.sql_fragment.strip()
+            if frag == "," or frag == ", ":
+                return False
+            for lv in local_var_names:
+                if re.search(rf'#\{{{lv}\b', frag) or re.search(rf'\$\{{{lv}\b', frag):
+                    return False
+            return True
+
+        def _clean_fragment(frag: str) -> str:
+            frag = frag.strip()
+            frag = re.sub(r"'(#\{[^}]+\})'", r"\1", frag)
+            frag = re.sub(r"'(\$\{[^}]+\})'", r"\1", frag)
+            return frag
+
+        valid_conditions = [dc for dc in dml.dynamic_conditions if _is_valid_condition(dc)]
+        for dc in valid_conditions:
+            dc.sql_fragment = _clean_fragment(dc.sql_fragment)
+        where_conditions = [dc for dc in valid_conditions if dc.clause_type == "WHERE"]
+        order_conditions = [dc for dc in valid_conditions if dc.clause_type == "ORDER_BY"]
+        set_conditions = [dc for dc in valid_conditions if dc.clause_type == "SET"]
+        other_conditions = [dc for dc in valid_conditions if dc.clause_type not in ("WHERE", "ORDER_BY", "SET")]
+        if tag == "update" and other_conditions:
+            set_like = [dc for dc in other_conditions if "=" in dc.sql_fragment]
+            if set_like:
+                set_conditions.extend(set_like)
+                other_conditions = [dc for dc in other_conditions if dc not in set_like]
 
         xml_parts.append(f'<{tag} id="{dml.method_id}"{params_attrs}{result_type_attr}>')
         if formatted_base:
@@ -10218,6 +10315,15 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
                 esc_fragment = fragment.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 xml_parts.append(f'        <if test="{dc.condition_expr}">{esc_fragment}</if>')
             xml_parts.append("    </where>")
+        if set_conditions:
+            xml_parts.append("    <set>")
+            for dc in set_conditions:
+                fragment = dc.sql_fragment.strip()
+                if fragment.upper().startswith("SET"):
+                    fragment = fragment[3:].strip()
+                esc_fragment = fragment.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                xml_parts.append(f'        <if test="{dc.condition_expr}">{esc_fragment}</if>')
+            xml_parts.append("    </set>")
         for dc in order_conditions:
             fragment = dc.sql_fragment.strip()
             if fragment.upper().startswith("ORDER BY"):
@@ -10831,7 +10937,9 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
             out_params.append(p)
             proc.imports.add("import java.util.concurrent.atomic.AtomicReference;")
         else:
-            param_type = _to_primitive_if_boxed(p.java_type)
+            param_type = p.java_type
+            if not (p.default_value and p.default_value.lower() == "null"):
+                param_type = _to_primitive_if_boxed(p.java_type)
             params.append(f"{param_type} {p.java_name}")
 
     params_str = ", ".join(params) if params else ""
