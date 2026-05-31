@@ -615,16 +615,18 @@ fn handle_resolved_execute_sql(
             }
         }
 
-        proc.dml_statements.push(DmlStatement {
-            sql_type: dml_type,
-            method_id: method_id.clone(),
-            sql_text: clean_sql.clone(),
-            result_type: None,
-            parameter_types: Default::default(),
-            optional_filters: Vec::new(),
-            returns_list: false,
-            extra_params,
-        });
+         proc.dml_statements.push(DmlStatement {
+             sql_type: dml_type,
+             method_id: method_id.clone(),
+             sql_text: clean_sql.clone(),
+             result_type: None,
+             parameter_types: Default::default(),
+             optional_filters: Vec::new(),
+             returns_list: false,
+             extra_params,
+             dynamic_conditions: Vec::new(),
+             base_sql: String::new(),
+         });
         push_logic_line(proc, format!("mapper.{}({});", method_id, build_mapper_call_args(proc)));
     } else {
         push_logic_line(proc, format!("// SQL: {}", clean_sql.replace('\n', " ")));
@@ -789,15 +791,17 @@ fn process_execute_stmt(
                 let var_java = snake_to_camel(var_name);
                 if is_out_param(var_name, proc) {
                     proc.dml_statements.push(DmlStatement {
-                        sql_type: dml_type,
-                        method_id: method_id.clone(),
-                        sql_text: clean_sql,
-                        result_type: Some("Object".to_string()),
-                        parameter_types: Default::default(),
-                        optional_filters: Vec::new(),
-                        returns_list: false,
-                        extra_params: Vec::new(),
-                    });
+                                sql_type: dml_type,
+                                method_id: method_id.clone(),
+                                sql_text: clean_sql,
+                                result_type: Some("Object".to_string()),
+                                parameter_types: Default::default(),
+                                optional_filters: Vec::new(),
+                                returns_list: false,
+                                extra_params: Vec::new(),
+                                dynamic_conditions: Vec::new(),
+                                base_sql: String::new(),
+                            });
                     push_logic_line(proc, out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc));
                  } else {
                       let declared_type = proc.local_vars.get(var_name)
@@ -805,15 +809,17 @@ fn process_execute_stmt(
                           .unwrap_or_else(|| "Object".to_string());
                       let java_type = infer_select_result_type(&declared_type, &clean_sql);
                       proc.dml_statements.push(DmlStatement {
-                          sql_type: dml_type,
-                          method_id: method_id.clone(),
-                          sql_text: clean_sql,
-                          result_type: Some(java_type.clone()),
-                         parameter_types: Default::default(),
-                         optional_filters: Vec::new(),
-                         returns_list: false,
-                         extra_params: Vec::new(),
-                     });
+                                  sql_type: dml_type,
+                                  method_id: method_id.clone(),
+                                  sql_text: clean_sql,
+                                  result_type: Some(java_type.clone()),
+                                  parameter_types: Default::default(),
+                                  optional_filters: Vec::new(),
+                                  returns_list: false,
+                                  extra_params: Vec::new(),
+                                  dynamic_conditions: Vec::new(),
+                                  base_sql: String::new(),
+                              });
                      let original_java_type = proc.local_vars.get(var_name).cloned().unwrap_or_default();
                      push_logic_line(proc, if java_type.contains("Map") {
                          format!("{{ var _row = mapper.{}({}); if (_row != null) {{ {} = _row; }} }}", method_id, args, var_java)
@@ -826,15 +832,17 @@ fn process_execute_stmt(
              } else {
                 let var_name = next_select_var_name(proc);
                 proc.dml_statements.push(DmlStatement {
-                    sql_type: dml_type,
-                    method_id: method_id.clone(),
-                    sql_text: clean_sql,
-                    result_type: Some("Map<String, Object>".to_string()),
-                    parameter_types: Default::default(),
-                    optional_filters: Vec::new(),
-                    returns_list: false,
-                    extra_params: Vec::new(),
-                });
+                            sql_type: dml_type,
+                            method_id: method_id.clone(),
+                            sql_text: clean_sql,
+                            result_type: Some("Map<String, Object>".to_string()),
+                            parameter_types: Default::default(),
+                            optional_filters: Vec::new(),
+                            returns_list: false,
+                            extra_params: Vec::new(),
+                            dynamic_conditions: Vec::new(),
+                            base_sql: String::new(),
+                        });
                 push_logic_line(proc, format!("Map<String, Object> {} = mapper.{}({});", var_name, method_id, args));
                 proc.imports.insert("import java.util.Map;".to_string());
 
@@ -880,6 +888,8 @@ fn process_execute_stmt(
                 optional_filters: Vec::new(),
                 returns_list: false,
                 extra_params: Vec::new(),
+                dynamic_conditions: Vec::new(),
+                base_sql: String::new(),
             });
             push_logic_line(proc, format!("mapper.{}({});", method_id, args));
         }
@@ -914,15 +924,17 @@ fn process_execute_stmt(
                         if is_out {
                             let var_java = snake_to_camel(var_name);
                             proc.dml_statements.push(DmlStatement {
-                                sql_type: dml_type,
-                                method_id: method_id.clone(),
-                                sql_text: clean_sql,
-                                result_type: Some("Object".to_string()),
-                                parameter_types: Default::default(),
-                                optional_filters: Vec::new(),
-                                returns_list: false,
-                                extra_params: Vec::new(),
-                            });
+                                        sql_type: dml_type,
+                                        method_id: method_id.clone(),
+                                        sql_text: clean_sql,
+                                        result_type: Some("Object".to_string()),
+                                        parameter_types: Default::default(),
+                                        optional_filters: Vec::new(),
+                                        returns_list: false,
+                                        extra_params: Vec::new(),
+                                        dynamic_conditions: Vec::new(),
+                                        base_sql: String::new(),
+                                    });
                             push_logic_line(proc, out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc));
                         } else {
                             let var_java = snake_to_camel(var_name);
@@ -931,15 +943,17 @@ fn process_execute_stmt(
                                 .unwrap_or_else(|| "Object".to_string());
                             let java_type = infer_select_result_type(&declared_type, &clean_sql);
                             proc.dml_statements.push(DmlStatement {
-                                sql_type: dml_type,
-                                method_id: method_id.clone(),
-                                sql_text: clean_sql,
-                                result_type: Some(java_type.clone()),
-                                parameter_types: Default::default(),
-                                optional_filters: Vec::new(),
-                                returns_list: false,
-                                extra_params: Vec::new(),
-                            });
+                                        sql_type: dml_type,
+                                        method_id: method_id.clone(),
+                                        sql_text: clean_sql,
+                                        result_type: Some(java_type.clone()),
+                                        parameter_types: Default::default(),
+                                        optional_filters: Vec::new(),
+                                        returns_list: false,
+                                        extra_params: Vec::new(),
+                                        dynamic_conditions: Vec::new(),
+                                        base_sql: String::new(),
+                                    });
                             push_logic_line(proc, if java_type != declared_type {
                                 format!("String _{} = mapper.{}({});", var_name, method_id, args)
                             } else {
@@ -949,28 +963,32 @@ fn process_execute_stmt(
                     } else if into_vars_count > 1 {
                         let var_name = next_select_var_name(proc);
                         proc.dml_statements.push(DmlStatement {
-                            sql_type: dml_type,
-                            method_id: method_id.clone(),
-                            sql_text: clean_sql,
-                            result_type: Some("Map<String, Object>".to_string()),
-                            parameter_types: Default::default(),
-                            optional_filters: Vec::new(),
-                            returns_list: false,
-                            extra_params: Vec::new(),
-                        });
+                                    sql_type: dml_type,
+                                    method_id: method_id.clone(),
+                                    sql_text: clean_sql,
+                                    result_type: Some("Map<String, Object>".to_string()),
+                                    parameter_types: Default::default(),
+                                    optional_filters: Vec::new(),
+                                    returns_list: false,
+                                    extra_params: Vec::new(),
+                                    dynamic_conditions: Vec::new(),
+                                    base_sql: String::new(),
+                                });
                         push_logic_line(proc, format!("Map<String, Object> {} = mapper.{}({});", var_name, method_id, args));
                         proc.imports.insert("import java.util.Map;".to_string());
                     } else {
                         proc.dml_statements.push(DmlStatement {
-                            sql_type: dml_type,
-                            method_id: method_id.clone(),
-                            sql_text: clean_sql,
-                            result_type: Some("Map<String, Object>".to_string()),
-                            parameter_types: Default::default(),
-                            optional_filters: Vec::new(),
-                            returns_list: true,
-                            extra_params: Vec::new(),
-                        });
+                                    sql_type: dml_type,
+                                    method_id: method_id.clone(),
+                                    sql_text: clean_sql,
+                                    result_type: Some("Map<String, Object>".to_string()),
+                                    parameter_types: Default::default(),
+                                    optional_filters: Vec::new(),
+                                    returns_list: true,
+                                    extra_params: Vec::new(),
+                                    dynamic_conditions: Vec::new(),
+                                    base_sql: String::new(),
+                                });
                         let var_name = next_result_var_name(proc);
                         push_logic_line(proc, format!("List<Map<String, Object>> {} = mapper.{}({});", var_name, method_id, args));
                         proc.imports.insert("import java.util.List;".to_string());
@@ -978,15 +996,17 @@ fn process_execute_stmt(
                     }
                 } else {
                     proc.dml_statements.push(DmlStatement {
-                        sql_type: dml_type,
-                        method_id: method_id.clone(),
-                        sql_text: clean_sql,
-                        result_type: None,
-                        parameter_types: Default::default(),
-                        optional_filters: Vec::new(),
-                        returns_list: false,
-                        extra_params: Vec::new(),
-                    });
+                                sql_type: dml_type,
+                                method_id: method_id.clone(),
+                                sql_text: clean_sql,
+                                result_type: None,
+                                parameter_types: Default::default(),
+                                optional_filters: Vec::new(),
+                                returns_list: false,
+                                extra_params: Vec::new(),
+                                dynamic_conditions: Vec::new(),
+                                base_sql: String::new(),
+                            });
                     push_logic_line(proc, format!("mapper.{}({});", method_id, args));
                 }
             } else {
@@ -1080,15 +1100,17 @@ fn process_sql_statement(
                 };
 
                 proc.dml_statements.push(DmlStatement {
-                    sql_type: DmlType::Select,
-                    method_id: method_id.clone(),
-                    sql_text: clean_sql,
-                    result_type: Some(result_type),
-                    parameter_types: Default::default(),
-                    optional_filters: Vec::new(),
-                    returns_list: false,
-                    extra_params: Vec::new(),
-                });
+                            sql_type: DmlType::Select,
+                            method_id: method_id.clone(),
+                            sql_text: clean_sql,
+                            result_type: Some(result_type),
+                            parameter_types: Default::default(),
+                            optional_filters: Vec::new(),
+                            returns_list: false,
+                            extra_params: Vec::new(),
+                            dynamic_conditions: Vec::new(),
+                            base_sql: String::new(),
+                        });
                 push_logic_line(proc, java_line);
 
                 // Extract simple variables from Map result (e.g. SELECT INTO v_product_id, v_qty)
@@ -1141,15 +1163,17 @@ fn process_sql_statement(
                 }
             } else {
                 proc.dml_statements.push(DmlStatement {
-                    sql_type: DmlType::Select,
-                    method_id: method_id.clone(),
-                    sql_text: sql_text.to_string(),
-                    result_type: Some("Map<String, Object>".to_string()),
-                    parameter_types: Default::default(),
-                    optional_filters: Vec::new(),
-                    returns_list: true,
-                    extra_params: Vec::new(),
-                });
+                            sql_type: DmlType::Select,
+                            method_id: method_id.clone(),
+                            sql_text: sql_text.to_string(),
+                            result_type: Some("Map<String, Object>".to_string()),
+                            parameter_types: Default::default(),
+                            optional_filters: Vec::new(),
+                            returns_list: true,
+                            extra_params: Vec::new(),
+                            dynamic_conditions: Vec::new(),
+                            base_sql: String::new(),
+                        });
                 let var_name = next_result_var_name(proc);
                 push_logic_line(proc, format!("List<Map<String, Object>> {} = mapper.{}({});", var_name, method_id, args));
                 proc.imports.insert("import java.util.List;".to_string());
@@ -1163,45 +1187,51 @@ fn process_sql_statement(
             let method_id = dml_method_name("insert", &proc.proc_name, &mut ctx.dml_counter);
             let args = build_mapper_call_args(proc);
             proc.dml_statements.push(DmlStatement {
-                sql_type: DmlType::Insert,
-                method_id: method_id.clone(),
-                sql_text: sql_text.to_string(),
-                result_type: None,
-                parameter_types: Default::default(),
-                optional_filters: Vec::new(),
-                returns_list: false,
-                extra_params: Vec::new(),
-            });
+                        sql_type: DmlType::Insert,
+                        method_id: method_id.clone(),
+                        sql_text: sql_text.to_string(),
+                        result_type: None,
+                        parameter_types: Default::default(),
+                        optional_filters: Vec::new(),
+                        returns_list: false,
+                        extra_params: Vec::new(),
+                        dynamic_conditions: Vec::new(),
+                        base_sql: String::new(),
+                    });
             push_logic_line(proc, format!("mapper.{}({});", method_id, args));
         }
         Statement::Update(_update_stmt) => {
             let method_id = dml_method_name("update", &proc.proc_name, &mut ctx.dml_counter);
             let args = build_mapper_call_args(proc);
             proc.dml_statements.push(DmlStatement {
-                sql_type: DmlType::Update,
-                method_id: method_id.clone(),
-                sql_text: sql_text.to_string(),
-                result_type: None,
-                parameter_types: Default::default(),
-                optional_filters: Vec::new(),
-                returns_list: false,
-                extra_params: Vec::new(),
-            });
+                        sql_type: DmlType::Update,
+                        method_id: method_id.clone(),
+                        sql_text: sql_text.to_string(),
+                        result_type: None,
+                        parameter_types: Default::default(),
+                        optional_filters: Vec::new(),
+                        returns_list: false,
+                        extra_params: Vec::new(),
+                        dynamic_conditions: Vec::new(),
+                        base_sql: String::new(),
+                    });
             push_logic_line(proc, format!("mapper.{}({});", method_id, args));
         }
         Statement::Delete(_delete_stmt) => {
             let method_id = dml_method_name("delete", &proc.proc_name, &mut ctx.dml_counter);
             let args = build_mapper_call_args(proc);
             proc.dml_statements.push(DmlStatement {
-                sql_type: DmlType::Delete,
-                method_id: method_id.clone(),
-                sql_text: sql_text.to_string(),
-                result_type: None,
-                parameter_types: Default::default(),
-                optional_filters: Vec::new(),
-                returns_list: false,
-                extra_params: Vec::new(),
-            });
+                        sql_type: DmlType::Delete,
+                        method_id: method_id.clone(),
+                        sql_text: sql_text.to_string(),
+                        result_type: None,
+                        parameter_types: Default::default(),
+                        optional_filters: Vec::new(),
+                        returns_list: false,
+                        extra_params: Vec::new(),
+                        dynamic_conditions: Vec::new(),
+                        base_sql: String::new(),
+                    });
             push_logic_line(proc, format!("mapper.{}({});", method_id, args));
         }
         _ => {
@@ -1760,15 +1790,17 @@ pub fn process_statement(
                     let args = build_mapper_call_args(proc);
 
                     proc.dml_statements.push(DmlStatement {
-                        sql_type: DmlType::Select,
-                        method_id: method_id.clone(),
-                        sql_text: clean_sql,
-                        result_type: Some("Map<String, Object>".to_string()),
-                        parameter_types: Default::default(),
-                        optional_filters: Vec::new(),
-                        returns_list: true,
-                        extra_params: Vec::new(),
-                    });
+                                sql_type: DmlType::Select,
+                                method_id: method_id.clone(),
+                                sql_text: clean_sql,
+                                result_type: Some("Map<String, Object>".to_string()),
+                                parameter_types: Default::default(),
+                                optional_filters: Vec::new(),
+                                returns_list: true,
+                                extra_params: Vec::new(),
+                                dynamic_conditions: Vec::new(),
+                                base_sql: String::new(),
+                            });
 
                     proc.for_loop_counter += 1;
                     let list_var = if proc.for_loop_counter <= 1 {
@@ -1808,15 +1840,17 @@ pub fn process_statement(
                         let args = build_mapper_call_args(proc);
 
                         proc.dml_statements.push(DmlStatement {
-                            sql_type: DmlType::Select,
-                            method_id: method_id.clone(),
-                            sql_text: clean_sql,
-                            result_type: Some("Map<String, Object>".to_string()),
-                            parameter_types: Default::default(),
-                            optional_filters: Vec::new(),
-                            returns_list: true,
-                            extra_params: Vec::new(),
-                        });
+                                    sql_type: DmlType::Select,
+                                    method_id: method_id.clone(),
+                                    sql_text: clean_sql,
+                                    result_type: Some("Map<String, Object>".to_string()),
+                                    parameter_types: Default::default(),
+                                    optional_filters: Vec::new(),
+                                    returns_list: true,
+                                    extra_params: Vec::new(),
+                                    dynamic_conditions: Vec::new(),
+                                    base_sql: String::new(),
+                                });
 
                         proc.for_loop_counter += 1;
                         let list_var = if proc.for_loop_counter <= 1 {
@@ -1947,15 +1981,17 @@ pub fn process_statement(
                   let index_var = format!("{}Idx", raw_cursor_java);
 
                   proc.dml_statements.push(DmlStatement {
-                     sql_type: DmlType::Select,
-                     method_id: method_id.clone(),
-                     sql_text,
-                     result_type: Some("Map<String, Object>".to_string()),
-                     parameter_types: Default::default(),
-                     optional_filters: Vec::new(),
-                     returns_list: true,
-                     extra_params: Vec::new(),
-                 });
+                      sql_type: DmlType::Select,
+                      method_id: method_id.clone(),
+                      sql_text,
+                      result_type: Some("Map<String, Object>".to_string()),
+                      parameter_types: Default::default(),
+                      optional_filters: Vec::new(),
+                      returns_list: true,
+                      extra_params: Vec::new(),
+                      dynamic_conditions: Vec::new(),
+                      base_sql: String::new(),
+                  });
 
                  let args = build_mapper_call_args(proc);
                 push_logic_line(proc, format!("{} = mapper.{}({});", result_var, method_id, args));
@@ -2124,15 +2160,17 @@ pub fn process_statement(
                         if is_out {
                             let var_java = snake_to_camel(var_name);
                             proc.dml_statements.push(DmlStatement {
-                                sql_type: dml_type,
-                                method_id: method_id.clone(),
-                                sql_text: clean_sql,
-                                result_type: Some("Object".to_string()),
-                                parameter_types: Default::default(),
-                                optional_filters: Vec::new(),
-                                returns_list: false,
-                                extra_params: Vec::new(),
-                            });
+                                        sql_type: dml_type,
+                                        method_id: method_id.clone(),
+                                        sql_text: clean_sql,
+                                        result_type: Some("Object".to_string()),
+                                        parameter_types: Default::default(),
+                                        optional_filters: Vec::new(),
+                                        returns_list: false,
+                                        extra_params: Vec::new(),
+                                        dynamic_conditions: Vec::new(),
+                                        base_sql: String::new(),
+                                    });
                             push_logic_line(proc, out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc));
                         } else {
                              let var_java = snake_to_camel(var_name);
@@ -2142,15 +2180,17 @@ pub fn process_statement(
                              let java_type = infer_select_result_type(&declared_type, &clean_sql);
 
                              proc.dml_statements.push(DmlStatement {
-                                 sql_type: dml_type,
-                                 method_id: method_id.clone(),
-                                 sql_text: clean_sql,
-                                 result_type: Some(java_type.clone()),
-                                parameter_types: Default::default(),
-                                optional_filters: Vec::new(),
-                                returns_list: false,
-                                extra_params: Vec::new(),
-                            });
+                                         sql_type: dml_type,
+                                         method_id: method_id.clone(),
+                                         sql_text: clean_sql,
+                                         result_type: Some(java_type.clone()),
+                                         parameter_types: Default::default(),
+                                         optional_filters: Vec::new(),
+                                         returns_list: false,
+                                         extra_params: Vec::new(),
+                                         dynamic_conditions: Vec::new(),
+                                         base_sql: String::new(),
+                                     });
                             push_logic_line(proc, if java_type != declared_type {
                                 format!("String _{} = mapper.{}({});", var_name, method_id, args)
                             } else {
@@ -2160,15 +2200,17 @@ pub fn process_statement(
                     } else if into_vars_count > 1 {
                         let var_name = next_select_var_name(proc);
                         proc.dml_statements.push(DmlStatement {
-                            sql_type: dml_type,
-                            method_id: method_id.clone(),
-                            sql_text: clean_sql,
-                            result_type: Some("Map<String, Object>".to_string()),
-                            parameter_types: Default::default(),
-                            optional_filters: Vec::new(),
-                            returns_list: false,
-                            extra_params: Vec::new(),
-                        });
+                                    sql_type: dml_type,
+                                    method_id: method_id.clone(),
+                                    sql_text: clean_sql,
+                                    result_type: Some("Map<String, Object>".to_string()),
+                                    parameter_types: Default::default(),
+                                    optional_filters: Vec::new(),
+                                    returns_list: false,
+                                    extra_params: Vec::new(),
+                                    dynamic_conditions: Vec::new(),
+                                    base_sql: String::new(),
+                                });
                         push_logic_line(proc, format!("Map<String, Object> {} = mapper.{}({});", var_name, method_id, args));
                         proc.imports.insert("import java.util.Map;".to_string());
                         if let Some(caps) = capture_into_regex().captures(sql_text) {
@@ -2207,15 +2249,17 @@ pub fn process_statement(
                         }
                     } else {
                         proc.dml_statements.push(DmlStatement {
-                            sql_type: dml_type,
-                            method_id: method_id.clone(),
-                            sql_text: clean_sql,
-                            result_type: Some("Map<String, Object>".to_string()),
-                            parameter_types: Default::default(),
-                            optional_filters: Vec::new(),
-                            returns_list: true,
-                            extra_params: Vec::new(),
-                        });
+                                    sql_type: dml_type,
+                                    method_id: method_id.clone(),
+                                    sql_text: clean_sql,
+                                    result_type: Some("Map<String, Object>".to_string()),
+                                    parameter_types: Default::default(),
+                                    optional_filters: Vec::new(),
+                                    returns_list: true,
+                                    extra_params: Vec::new(),
+                                    dynamic_conditions: Vec::new(),
+                                    base_sql: String::new(),
+                                });
                         let rv_name = next_result_var_name(proc);
                         push_logic_line(proc, format!("List<Map<String, Object>> {} = mapper.{}({});", rv_name, method_id, args));
                         proc.imports.insert("import java.util.List;".to_string());
@@ -2223,15 +2267,17 @@ pub fn process_statement(
                     }
                 } else {
                     proc.dml_statements.push(DmlStatement {
-                        sql_type: dml_type,
-                        method_id: method_id.clone(),
-                        sql_text: clean_sql,
-                        result_type: None,
-                        parameter_types: Default::default(),
-                        optional_filters: Vec::new(),
-                        returns_list: false,
-                        extra_params: Vec::new(),
-                    });
+                                sql_type: dml_type,
+                                method_id: method_id.clone(),
+                                sql_text: clean_sql,
+                                result_type: None,
+                                parameter_types: Default::default(),
+                                optional_filters: Vec::new(),
+                                returns_list: false,
+                                extra_params: Vec::new(),
+                                dynamic_conditions: Vec::new(),
+                                base_sql: String::new(),
+                            });
                     push_logic_line(proc, format!("mapper.{}({});", method_id, args));
                 }
             } else {

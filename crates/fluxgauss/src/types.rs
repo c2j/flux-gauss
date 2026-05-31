@@ -70,6 +70,14 @@ pub enum DmlType {
 }
 
 #[derive(Debug, Clone)]
+pub struct DynamicCondition {
+    pub condition_expr: String,
+    pub sql_fragment: String,
+    pub clause_type: String,
+    pub tag_name: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct DmlStatement {
     pub sql_type: DmlType,
     pub method_id: String,
@@ -79,6 +87,8 @@ pub struct DmlStatement {
     pub optional_filters: Vec<String>,
     pub returns_list: bool,
     pub extra_params: Vec<(String, String)>,
+    pub dynamic_conditions: Vec<DynamicCondition>,
+    pub base_sql: String,
 }
 
 // ── Service Calls ──
@@ -164,6 +174,7 @@ pub struct ProcedureInfo {
     pub table_refs: HashSet<String>,
     pub var_assignments: HashMap<String, String>,
     pub dynamic_sql_templates: HashMap<String, (String, Vec<(String, bool)>)>,
+    pub sql_concat_chain: HashMap<String, Vec<(String, String, String)>>,
     pub is_autonomous: bool,
     pub scheduler_tasks: Vec<SchedulerTask>,
 
@@ -228,6 +239,7 @@ impl ProcedureInfo {
             table_refs: HashSet::new(),
             var_assignments: HashMap::new(),
             dynamic_sql_templates: HashMap::new(),
+            sql_concat_chain: HashMap::new(),
             is_autonomous: false,
             scheduler_tasks: Vec::new(),
             open_cursors: HashMap::new(),
@@ -489,15 +501,17 @@ mod tests {
         proc.java_logic_lines
             .push("// TODO: unhandled statement".into());
         proc.dml_statements.push(DmlStatement {
-            sql_type: DmlType::Select,
-            method_id: "selectOrder".into(),
-            sql_text: "SELECT * FROM orders".into(),
-            result_type: None,
-            parameter_types: HashMap::new(),
-            optional_filters: Vec::new(),
-            returns_list: false,
-            extra_params: Vec::new(),
-        });
+                    sql_type: DmlType::Select,
+                    method_id: "selectOrder".into(),
+                    sql_text: "SELECT * FROM orders".into(),
+                    result_type: None,
+                    parameter_types: HashMap::new(),
+                    optional_filters: Vec::new(),
+                    returns_list: false,
+                    extra_params: Vec::new(),
+                    dynamic_conditions: Vec::new(),
+                    base_sql: String::new(),
+                });
         assert!(!proc.is_stub());
     }
 

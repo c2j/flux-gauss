@@ -898,15 +898,17 @@ mod tests {
     fn test_transactional_on_dml() {
         let mut proc = make_proc("create_order");
         proc.dml_statements.push(DmlStatement {
-            sql_type: DmlType::Insert,
-            method_id: "insertOrder".to_string(),
-            sql_text: "insert into t values(1)".to_string(),
-            result_type: None,
-            parameter_types: Default::default(),
-            optional_filters: Vec::new(),
-            returns_list: false,
-            extra_params: Vec::new(),
-        });
+                    sql_type: DmlType::Insert,
+                    method_id: "insertOrder".to_string(),
+                    sql_text: "insert into t values(1)".to_string(),
+                    result_type: None,
+                    parameter_types: Default::default(),
+                    optional_filters: Vec::new(),
+                    returns_list: false,
+                    extra_params: Vec::new(),
+                    dynamic_conditions: Vec::new(),
+                    base_sql: String::new(),
+                });
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
         write_service_class(dir.path(), &pkg, "com.example.demo", &Default::default()).unwrap();
