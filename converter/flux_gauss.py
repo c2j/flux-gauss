@@ -3218,9 +3218,6 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
                                 result_type="Map<String, Object>",
                                 returns_list=True,
                             ))
-                            proc.java_logic_lines.append(
-                                f"List<Map<String, Object>> {list_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});"
-                            )
                             proc.java_logic_lines.append(f"for (Map<String, Object> {var_java} : {list_var}) {{")
                             proc.local_vars[variable] = "Map<String, Object>"
                             proc._loop_vars = getattr(proc, '_loop_vars', set())
@@ -4996,7 +4993,7 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
                         returns_list=True,
                     ))
                     proc.java_logic_lines.append(
-                        f"List<Map<String, Object>> {list_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});"
+                    f"List<Map<String, Object>> {list_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});"
                     )
                     proc.java_logic_lines.append(f"for (Map<String, Object> {var_java} : {list_var}) {{")
                     for s in _iter_statements(body_stmts):
@@ -5326,11 +5323,11 @@ def _process_cursor_open(open_data: dict, proc: ProcedureInfo, all_packages: dic
 
                 if is_out_refcursor:
                     proc.java_logic_lines.append(
-                        f"{result_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});"
+                        f"{result_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});"
                     )
                 else:
                     proc.java_logic_lines.append(
-                        f"{result_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});"
+                        f"{result_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});"
                     )
                     proc.java_logic_lines.append(f"{index_var} = 0;")
                 proc.java_logic_lines.append(f"if ({result_var} == null) {result_var} = new java.util.ArrayList<>();")
