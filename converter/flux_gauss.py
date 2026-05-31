@@ -3218,6 +3218,13 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
                                 result_type="Map<String, Object>",
                                 returns_list=True,
                             ))
+                            proc.imports.add("import java.util.List;")
+                            proc.imports.add("import java.util.Map;")
+                            proc.imports.add("import java.util.ArrayList;")
+                            proc.java_logic_lines.append(
+                                f"List<Map<String, Object>> {list_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});"
+                            )
+                            proc.java_logic_lines.append(f"if ({list_var} == null) {list_var} = new ArrayList<>();")
                             proc.java_logic_lines.append(f"for (Map<String, Object> {var_java} : {list_var}) {{")
                             proc.local_vars[variable] = "Map<String, Object>"
                             proc._loop_vars = getattr(proc, '_loop_vars', set())
