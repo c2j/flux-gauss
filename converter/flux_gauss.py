@@ -10384,7 +10384,7 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
         batch_sql = sql
         for arr_java in dml.forall_batch_arrays:
             batch_sql = re.sub(r'#\{' + re.escape(arr_java) + r'\}', f'#{{item.{arr_java}}}', batch_sql)
-        batch_sql = re.sub(r'#\{_\w+\}', lambda m: f'#{{item._{m.group(1)}}}', batch_sql)
+        batch_sql = re.sub(r'#\{_(\w+)\}', lambda m: f'#{{item._{m.group(1)}}}', batch_sql)
         formatted_batch = "\n".join(f"        {line}" for line in batch_sql.split("\n"))
         xml_parts.append(f'<{tag} id="{dml.method_id}"{result_type_attr}>')
         xml_parts.append(f'    <foreach collection="list" item="item" separator=";">')
