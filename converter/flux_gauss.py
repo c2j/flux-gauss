@@ -4923,8 +4923,19 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
             sql_text, using_arg_names = _parse_dynamic_query_string(query_str, proc)
             if sql_text:
                 raw_sql_for_params = sql_text
-                sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
-                sql_text = _apply_using_args_to_sql(sql_text, using_arg_names, proc)
+                var_name_raw = sql_text.strip().lower() if not _looks_like_sql(sql_text) else ""
+                dynamic_conditions = []
+                resolved_sql = ""
+                if var_name_raw:
+                    dynamic_conditions = _collect_dynamic_conditions(proc, var_name_raw)
+                    resolved_sql = _resolve_dynamic_sql_text(proc, var_name_raw)
+                if resolved_sql:
+                    sql_text = _convert_params_to_mybatis(resolved_sql, proc.parameters, proc.local_vars)
+                    sql_text = _apply_using_args_to_sql(sql_text, using_arg_names, proc)
+                    raw_sql_for_params = resolved_sql
+                else:
+                    sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
+                    sql_text = _apply_using_args_to_sql(sql_text, using_arg_names, proc)
                 mapper_method = _dml_method_name("select", proc.proc_name, dml_counter)
                 proc.dml_statements.append(DmlStatement(
                     sql_type="select",
@@ -4932,6 +4943,8 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
                     sql_text=sql_text,
                     result_type="Map<String, Object>",
                     returns_list=True,
+                    dynamic_conditions=dynamic_conditions,
+                    base_sql=sql_text,
                 ))
                 proc.java_logic_lines.append(
                     f"List<Map<String, Object>> {list_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});"
@@ -5279,8 +5292,19 @@ def _process_cursor_open(open_data: dict, proc: ProcedureInfo, all_packages: dic
             sql_text, using_arg_names = _parse_dynamic_query_string(query_str, proc)
             if sql_text:
                 raw_sql_for_params = sql_text
-                sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
-                sql_text = _apply_using_args_to_sql(sql_text, using_arg_names, proc)
+                var_name_raw = sql_text.strip().lower() if not _looks_like_sql(sql_text) else ""
+                dynamic_conditions = []
+                resolved_sql = ""
+                if var_name_raw:
+                    dynamic_conditions = _collect_dynamic_conditions(proc, var_name_raw)
+                    resolved_sql = _resolve_dynamic_sql_text(proc, var_name_raw)
+                if resolved_sql:
+                    sql_text = _convert_params_to_mybatis(resolved_sql, proc.parameters, proc.local_vars)
+                    sql_text = _apply_using_args_to_sql(sql_text, using_arg_names, proc)
+                    raw_sql_for_params = resolved_sql
+                else:
+                    sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
+                    sql_text = _apply_using_args_to_sql(sql_text, using_arg_names, proc)
                 mapper_method = _dml_method_name("select", proc.proc_name, dml_counter)
                 proc.dml_statements.append(DmlStatement(
                     sql_type="select",
@@ -5288,6 +5312,8 @@ def _process_cursor_open(open_data: dict, proc: ProcedureInfo, all_packages: dic
                     sql_text=sql_text,
                     result_type="Map<String, Object>",
                     returns_list=True,
+                    dynamic_conditions=dynamic_conditions,
+                    base_sql=sql_text,
                 ))
 
                 result_var = f"{snake_to_camel(cursor_name)}Result"
@@ -6213,6 +6239,31 @@ def _extract_savepoint_from_string_expr(string_expr: dict):
     return None
 
 
+def _collect_dynamic_conditions(proc: ProcedureInfo, var_name: str) -> list:
+    if not var_name or var_name not in proc.sql_concat_chain:
+        return []
+    return [
+        DynamicCondition(
+            condition_expr=cond_expr,
+            sql_fragment=sql_fragment,
+            clause_type=clause_type,
+            tag_name="if",
+        )
+        for cond_expr, sql_fragment, clause_type in proc.sql_concat_chain[var_name]
+    ]
+
+
+def _resolve_dynamic_sql_text(proc: ProcedureInfo, var_name: str) -> str:
+    if not var_name:
+        return ""
+    if var_name in proc.var_assignments:
+        return proc.var_assignments[var_name]
+    tmpl = proc.dynamic_sql_templates.get(var_name)
+    if tmpl:
+        return tmpl[0]
+    return ""
+
+
 def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict, dml_counter: dict):
     # NEW: Prefer parsed_query when available (parser already parsed the SQL)
     parsed_query = execute_data.get("parsed_query")
@@ -6620,17 +6671,8 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                                 break
                         extra.append((arg_java, arg_type))
         param_args = _build_param_args_from_template(proc, template_params, extra, sql_text)
-        dynamic_conditions = []
+        dynamic_conditions = _collect_dynamic_conditions(proc, var_name)
         base_sql = sql_text
-        if var_name and var_name in proc.sql_concat_chain:
-            for cond_expr, sql_fragment, clause_type in proc.sql_concat_chain[var_name]:
-                dynamic_conditions.append(DynamicCondition(
-                    condition_expr=cond_expr,
-                    sql_fragment=sql_fragment,
-                    clause_type=clause_type,
-                    tag_name="if",
-                ))
-            base_sql = sql_text
 
         proc.dml_statements.append(DmlStatement(
             sql_type=sql_type,
