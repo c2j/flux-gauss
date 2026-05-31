@@ -4390,6 +4390,16 @@ def _detect_sql_concat_append(assign_data: dict, proc: ProcedureInfo):
 
     result = _reconstruct_sql_from_concat(right, proc)
     if not result:
+        # Fallback: try to flatten the concat directly without SQL verb validation
+        parts = []
+        params = []
+        _flatten_concat(right, parts, params, proc)
+        if parts:
+            sql_fragment = "".join(parts).strip()
+            if sql_fragment:
+                result = (sql_fragment, params)
+
+    if not result:
         return None
 
     sql_fragment, _ = result

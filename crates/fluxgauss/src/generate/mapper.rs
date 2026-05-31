@@ -393,8 +393,6 @@ fn build_mapper_statement(
         }
     }
 
-    sql = xml_escape(&sql);
-
     let tag = dml_type_tag(&dml.sql_type);
     let result_type_attr = build_result_type_attr(dml);
     let params_attrs = build_params_attr(proc, dml);
@@ -408,13 +406,73 @@ fn build_mapper_statement(
         format!("Source: {}.{}", proc.name, dml.method_id)
     };
 
-    let formatted_sql: String = sql.split('\n').map(|l| format!("    {}", l)).collect::<Vec<_>>().join("\n");
-
     let mut parts = Vec::new();
     parts.push(format!("<!-- {} -->", source_info));
-    parts.push(format!("<{} id=\"{}\"{}{}>", tag, dml.method_id, params_attrs, result_type_attr));
-    parts.push(formatted_sql);
-    parts.push(format!("</{}>", tag));
+
+    if !dml.dynamic_conditions.is_empty() {
+        let where_conds: Vec<_> = dml.dynamic_conditions.iter()
+            .filter(|dc| dc.clause_type == "WHERE").collect();
+        let other_conds: Vec<_> = dml.dynamic_conditions.iter()
+            .filter(|dc| dc.clause_type != "WHERE").collect();
+
+        parts.push(format!("<{} id=\"{}\"{}{}>", tag, dml.method_id, params_attrs, result_type_attr));
+
+        let base = if dml.base_sql.is_empty() { &sql } else { &dml.base_sql };
+        let mut base_clean = base.to_string();
+        if base_clean.ends_with(';') {
+            base_clean = base_clean[..base_clean.len() - 1].to_string();
+        }
+        base_clean = replace_cross_package_functions(&base_clean);
+        base_clean = replace_sequence_refs(&base_clean);
+        base_clean = fix_postgresql_syntax(&base_clean);
+        if matches!(dml.sql_type, DmlType::Select) {
+            base_clean = fix_select_into_aliases(&base_clean, &proc.local_vars, package_vars);
+        }
+        base_clean = convert_params_to_mybatis(&base_clean, &proc.parameters, &proc.local_vars, package_vars);
+        if base_clean.contains("/* DYNAMIC SQL:") {
+            base_clean = regex::Regex::new(r"#\{[^}]+\}")
+                .unwrap().replace_all(&base_clean, "'?'").to_string();
+        }
+        base_clean = expand_rowtype_insert(&base_clean);
+        if matches!(dml.sql_type, DmlType::Select) {
+            base_clean = cleanup_as_param_aliases(&base_clean);
+        }
+        base_clean = xml_escape(&base_clean);
+        let formatted_base: String = base_clean.split('\n').map(|l| format!("    {}", l)).collect::<Vec<_>>().join("\n");
+        parts.push(formatted_base);
+
+        if !where_conds.is_empty() {
+            parts.push("    <where>".to_string());
+            for dc in where_conds {
+                let frag = strip_leading_clause(&dc.sql_fragment, "WHERE");
+                parts.push(format!("        <if test=\"{}\">", xml_escape(&dc.condition_expr)));
+                parts.push(format!("            AND {}", xml_escape(&frag)));
+                parts.push("        </if>".to_string());
+            }
+            parts.push("    </where>".to_string());
+        }
+
+        for dc in other_conds {
+            if dc.clause_type == "ORDER_BY" {
+                let frag = strip_leading_clause(&dc.sql_fragment, "ORDER_BY");
+                parts.push(format!("    <if test=\"{}\">", xml_escape(&dc.condition_expr)));
+                parts.push(format!("        ORDER BY {}", xml_escape(&frag)));
+                parts.push("    </if>".to_string());
+            } else {
+                parts.push(format!("    <if test=\"{}\">", xml_escape(&dc.condition_expr)));
+                parts.push(format!("        {}", xml_escape(&dc.sql_fragment)));
+                parts.push("    </if>".to_string());
+            }
+        }
+
+        parts.push(format!("</{}>", tag));
+    } else {
+        sql = xml_escape(&sql);
+        let formatted_sql: String = sql.split('\n').map(|l| format!("    {}", l)).collect::<Vec<_>>().join("\n");
+        parts.push(format!("<{} id=\"{}\"{}{}>", tag, dml.method_id, params_attrs, result_type_attr));
+        parts.push(formatted_sql);
+        parts.push(format!("</{}>", tag));
+    }
     parts.join("\n")
 }
 
@@ -1121,6 +1179,15 @@ fn expand_rowtype_insert(sql: &str) -> String {
 
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+fn strip_leading_clause(sql: &str, clause_type: &str) -> String {
+    match clause_type {
+        "WHERE" => regex::Regex::new(r"(?i)^\s*WHERE\s+").unwrap().replace(sql, "").to_string(),
+        "ORDER_BY" => regex::Regex::new(r"(?i)^\s*ORDER\s+BY\s+").unwrap().replace(sql, "").to_string(),
+        "AND" => regex::Regex::new(r"(?i)^\s*AND\s+").unwrap().replace(sql, "").to_string(),
+        _ => sql.to_string(),
+    }
 }
 
 fn dml_type_tag(dt: &DmlType) -> &'static str {

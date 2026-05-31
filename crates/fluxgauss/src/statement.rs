@@ -510,6 +510,48 @@ fn flatten_concat(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> Optio
     Some((sql_template, params))
 }
 
+fn detect_sql_concat_append(
+    target_name: &str,
+    expression: &ogsql_parser::ast::Expr,
+    proc: &ProcedureInfo,
+) -> Option<(String, String, String)> {
+    use ogsql_parser::ast::Expr;
+    if let Expr::BinaryOp { left, op, right } = expression {
+        if op == "||" {
+            let left_var = match left.as_ref() {
+                Expr::PlVariable(name) | Expr::ColumnRef(name) if name.len() >= 1 => {
+                    name[name.len() - 1].clone()
+                }
+                _ => return None,
+            };
+            if left_var == target_name {
+                let (sql_template, _params) = flatten_concat(right, proc)?;
+                let clause_type = classify_clause_type(&sql_template);
+                return Some((target_name.to_string(), sql_template, clause_type));
+            }
+        }
+    }
+    None
+}
+
+fn classify_clause_type(sql_template: &str) -> String {
+    let trimmed = sql_template.trim_start();
+    let first_word = trimmed.split_whitespace().next().unwrap_or("").to_lowercase();
+    match first_word.as_str() {
+        "where" => "WHERE".to_string(),
+        "order" => "ORDER_BY".to_string(),
+        "and" => "AND".to_string(),
+        "or" => "OR".to_string(),
+        "group" => "GROUP_BY".to_string(),
+        "having" => "HAVING".to_string(),
+        "limit" => "LIMIT".to_string(),
+        "offset" => "OFFSET".to_string(),
+        "for" => "FOR_UPDATE".to_string(),
+        "join" | "inner" | "left" | "right" | "full" | "cross" => "JOIN".to_string(),
+        _ => "OTHER".to_string(),
+    }
+}
+
 fn flatten_concat_inner(
     expr: &ogsql_parser::ast::Expr,
     proc: &ProcedureInfo,
@@ -1637,6 +1679,26 @@ pub fn process_statement(
         }
         PlStatement::If(if_stmt) => {
             let cond = crate::expr::bool_expr_to_java(&if_stmt.node.condition, proc);
+            if if_stmt.node.then_stmts.len() == 1
+                && if_stmt.node.elsifs.is_empty()
+                && if_stmt.node.else_stmts.is_empty()
+            {
+                if let Some(stmt) = if_stmt.node.then_stmts.first() {
+                    if let PlStatement::Assignment { target, expression } = stmt {
+                        if let Some(var_name) = extract_assignment_target_name(target) {
+                            if let Some((target_name, sql_template, clause_type)) =
+                                detect_sql_concat_append(&var_name, expression, proc)
+                            {
+                                proc.sql_concat_chain
+                                    .entry(target_name)
+                                    .or_default()
+                                    .push((cond, sql_template, clause_type));
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+            }
             push_logic_line(proc, format!("if ({}) {{", cond));
             for s in &if_stmt.node.then_stmts {
                 process_statement(s, proc, ctx)?;
