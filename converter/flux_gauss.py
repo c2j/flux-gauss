@@ -888,6 +888,14 @@ class CommentInfo:
 
 
 @dataclass
+class DynamicCondition:
+    condition_expr: str       # Java boolean expression, e.g. "whereClause != null"
+    sql_fragment: str         # SQL fragment, e.g. "WHERE ${whereClause}"
+    clause_type: str          # "WHERE" | "ORDER_BY" | "SET" | "HAVING" | "IN" | "OTHER"
+    tag_name: str             # "if" | "where" | "foreach" | "set" | "trim"
+
+
+@dataclass
 class DmlStatement:
     sql_type: str
     method_id: str
@@ -903,6 +911,8 @@ class DmlStatement:
     is_forall_batch: bool = False  # True when FORALL is converted to MyBatis batch (<foreach>)
     forall_batch_list_var: str = ""  # The name of the iteration variable (e.g. "item") in <foreach>
     forall_batch_arrays: dict = field(default_factory=dict)  # {java_array_name: unwrapped_element_type}
+    dynamic_conditions: list = field(default_factory=list)   # List[DynamicCondition]
+    base_sql: str = ""                                        # Core SQL without dynamic conditions
 
 
 @dataclass
@@ -936,6 +946,7 @@ class ProcedureInfo:
     table_refs: set = field(default_factory=set)
     var_assignments: dict = field(default_factory=dict)
     dynamic_sql_templates: dict = field(default_factory=dict)  # var_name -> (sql_template, param_list)
+    sql_concat_chain: dict = field(default_factory=dict)       # var_name -> [(condition_expr, sql_fragment, clause_type)]
     sql_expr_vars: dict = field(default_factory=dict)  # var_name -> AST node for SQL-expression assignments (e.g. to_char(...))
     inlined_sql_vars: set = field(default_factory=set)  # var_names that were inlined into dynamic SQL templates
     is_autonomous: bool = False
