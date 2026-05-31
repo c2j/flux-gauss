@@ -516,22 +516,71 @@ fn detect_sql_concat_append(
     proc: &ProcedureInfo,
 ) -> Option<(String, String, String)> {
     use ogsql_parser::ast::Expr;
-    if let Expr::BinaryOp { left, op, right } = expression {
-        if op == "||" {
-            let left_var = match left.as_ref() {
-                Expr::PlVariable(name) | Expr::ColumnRef(name) if name.len() >= 1 => {
-                    name[name.len() - 1].clone()
+    if let Expr::BinaryOp { left, op, .. } = expression {
+        if op != "||" {
+            return None;
+        }
+        let left_var = extract_leftmost_var_from_concat(left);
+        if left_var != target_name {
+            return None;
+        }
+        let mut parts: Vec<String> = Vec::new();
+        let mut _params: Vec<(String, bool)> = Vec::new();
+        flatten_suffix_after_var(expression, target_name, proc, &mut parts, &mut _params);
+        if parts.is_empty() {
+            return None;
+        }
+        let sql_fragment = parts.join("").trim().to_string();
+        if sql_fragment.is_empty() {
+            return None;
+        }
+        let clause_type = classify_clause_type(&sql_fragment);
+        Some((target_name.to_string(), sql_fragment, clause_type))
+    } else {
+        None
+    }
+}
+
+fn extract_leftmost_var_from_concat(expr: &ogsql_parser::ast::Expr) -> String {
+    use ogsql_parser::ast::Expr;
+    match expr {
+        Expr::PlVariable(name) | Expr::ColumnRef(name) if name.len() >= 1 => {
+            name[name.len() - 1].clone()
+        }
+        Expr::BinaryOp { left, op, .. } if op == "||" => {
+            extract_leftmost_var_from_concat(left)
+        }
+        _ => String::new(),
+    }
+}
+
+fn flatten_suffix_after_var(
+    expr: &ogsql_parser::ast::Expr,
+    var_name: &str,
+    proc: &ProcedureInfo,
+    parts: &mut Vec<String>,
+    params: &mut Vec<(String, bool)>,
+) -> bool {
+    use ogsql_parser::ast::Expr;
+    if let Expr::BinaryOp { left, op, right } = expr {
+        if op != "||" {
+            return false;
+        }
+        match left.as_ref() {
+            Expr::PlVariable(name) | Expr::ColumnRef(name) if name.len() >= 1 => {
+                if name[name.len() - 1] == var_name {
+                    flatten_concat_inner(right, proc, parts, params);
+                    return true;
                 }
-                _ => return None,
-            };
-            if left_var == target_name {
-                let (sql_template, _params) = flatten_concat(right, proc)?;
-                let clause_type = classify_clause_type(&sql_template);
-                return Some((target_name.to_string(), sql_template, clause_type));
             }
+            _ => {}
+        }
+        if flatten_suffix_after_var(left, var_name, proc, parts, params) {
+            flatten_concat_inner(right, proc, parts, params);
+            return true;
         }
     }
-    None
+    false
 }
 
 fn classify_clause_type(sql_template: &str) -> String {
@@ -552,6 +601,20 @@ fn classify_clause_type(sql_template: &str) -> String {
     }
 }
 
+/// Strip "IMMEDIATE" prefix from FOR-IN-EXECUTE query strings.
+/// The ogsql-parser emits "IMMEDIATE v_sql" for `FOR rec IN EXECUTE IMMEDIATE v_sql`.
+fn strip_execute_prefix(query: &str) -> &str {
+    let trimmed = query.trim();
+    let lower = trimmed.to_lowercase();
+    if lower.starts_with("execute immediate ") {
+        return trimmed["execute immediate ".len()..].trim_start();
+    }
+    if lower.starts_with("immediate ") {
+        return trimmed["immediate ".len()..].trim_start();
+    }
+    trimmed
+}
+
 /// Check if a query string is a PL/pgSQL variable reference rather than actual SQL.
 fn is_variable_reference(query: &str) -> bool {
     let trimmed = query.trim();
@@ -559,13 +622,12 @@ fn is_variable_reference(query: &str) -> bool {
         return false;
     }
     let upper = trimmed.to_uppercase();
-    let sql_keywords = ["SELECT", "INSERT", "UPDATE", "DELETE", "WITH", "MERGE", "TRUNCATE"];
+    let sql_keywords = ["SELECT", "INSERT", "UPDATE", "DELETE", "WITH", "MERGE", "TRUNCATE", "EXECUTE", "IMMEDIATE"];
     for kw in &sql_keywords {
         if upper.starts_with(kw) {
             return false;
         }
     }
-    // Single identifier (no spaces) — it's a variable reference
     !trimmed.contains(' ') && trimmed.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
@@ -663,6 +725,7 @@ fn handle_resolved_execute_sql(
     concat_vars: &[(String, bool)],
     execute: &ogsql_parser::ast::plpgsql::PlExecuteStmt,
     ctx: &mut StatementContext,
+    var_name: &str,
 ) {
     let mut clean_sql = sql_template.to_string();
     let dml_type = detect_dml_type(&clean_sql);
@@ -716,18 +779,21 @@ fn handle_resolved_execute_sql(
             }
         }
 
-         proc.dml_statements.push(DmlStatement {
-             sql_type: dml_type,
-             method_id: method_id.clone(),
-             sql_text: clean_sql.clone(),
-             result_type: None,
-             parameter_types: Default::default(),
-             optional_filters: Vec::new(),
-             returns_list: false,
-             extra_params,
-             dynamic_conditions: Vec::new(),
-             base_sql: String::new(),
-         });
+         let dynamic_conditions = collect_dynamic_conditions(proc, var_name);
+         let base_sql = resolve_dynamic_sql_text(proc, var_name).unwrap_or_default();
+
+          proc.dml_statements.push(DmlStatement {
+              sql_type: dml_type,
+              method_id: method_id.clone(),
+              sql_text: clean_sql.clone(),
+              result_type: None,
+              parameter_types: Default::default(),
+              optional_filters: Vec::new(),
+              returns_list: false,
+              extra_params,
+              dynamic_conditions,
+              base_sql,
+          });
         push_logic_line(proc, format!("mapper.{}({});", method_id, build_mapper_call_args(proc)));
     } else {
         push_logic_line(proc, format!("// SQL: {}", clean_sql.replace('\n', " ")));
@@ -1117,14 +1183,14 @@ fn process_execute_stmt(
         Expr::ColumnRef(name) | Expr::PlVariable(name) if name.len() == 1 => {
             let var_name = &name[0];
             if let Some((sql_template, concat_vars)) = proc.dynamic_sql_templates.get(var_name).cloned() {
-                handle_resolved_execute_sql(proc, &sql_template, &concat_vars, &execute, ctx);
+                handle_resolved_execute_sql(proc, &sql_template, &concat_vars, &execute, ctx, var_name);
             } else {
                 push_logic_line(proc, format!("// TODO: EXECUTE {} — could not resolve SQL string", var_name));
             }
         }
         Expr::BinaryOp { op, .. } if op == "||" => {
             if let Some((sql_template, concat_vars)) = flatten_concat(&execute.string_expr, proc) {
-                handle_resolved_execute_sql(proc, &sql_template, &concat_vars, &execute, ctx);
+                handle_resolved_execute_sql(proc, &sql_template, &concat_vars, &execute, ctx, "");
                 return;
             }
             push_logic_line(proc, "// TODO: EXECUTE dynamic SQL — could not resolve SQL string".to_string());
@@ -1900,10 +1966,11 @@ pub fn process_statement(
                 }
                 ogsql_parser::ast::plpgsql::PlForKind::Query { query, .. } => {
                     let clean_sql = strip_sql_comments(query).replace('\n', " ");
+                    let resolved_sql = strip_execute_prefix(&clean_sql);
 
                     let (sql_text, dynamic_conditions, extra_params, base_sql) =
-                        if is_variable_reference(&clean_sql) {
-                            let var_name = clean_sql.trim();
+                        if is_variable_reference(resolved_sql) {
+                            let var_name = resolved_sql.trim();
                             if let Some(resolved) = resolve_dynamic_sql_text(proc, var_name) {
                                 let conditions = collect_dynamic_conditions(proc, var_name);
                                 let params = collect_extra_params_from_template(proc, var_name);
@@ -2081,13 +2148,14 @@ pub fn process_statement(
 
                let (sql_text_opt, using_args, dynamic_conditions, extra_params, base_sql): (Option<String>, Vec<ogsql_parser::ast::Expr>, Vec<crate::types::DynamicCondition>, Vec<(String, String)>, String) = match &open_stmt.node.kind {
                    ogsql_parser::ast::plpgsql::PlOpenKind::ForQuery { query, .. } => {
-                       if query.contains("||") || query.trim().starts_with('\'') {
-                           push_logic_line(proc, format!("/* OPEN {} FOR {} — dynamic SQL, not materializable */", cursor_java, query.replace("*/", "*\\/")));
-                           return Ok(());
-                       }
-                       let clean = query.trim().trim_end_matches(';').to_string();
-                       if is_variable_reference(&clean) {
-                           let var_name = clean.trim();
+                        if query.contains("||") || query.trim().starts_with('\'') {
+                            push_logic_line(proc, format!("/* OPEN {} FOR {} — dynamic SQL, not materializable */", cursor_java, query.replace("*/", "*\\/")));
+                            return Ok(());
+                        }
+                        let clean = query.trim().trim_end_matches(';').to_string();
+                        let resolved_clean = strip_execute_prefix(&clean);
+                        if is_variable_reference(resolved_clean) {
+                            let var_name = resolved_clean.trim();
                            if let Some(resolved) = resolve_dynamic_sql_text(proc, var_name) {
                                let conditions = collect_dynamic_conditions(proc, var_name);
                                let params = collect_extra_params_from_template(proc, var_name);
