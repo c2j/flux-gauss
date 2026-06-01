@@ -589,6 +589,7 @@ fn classify_clause_type(sql_template: &str) -> String {
     match first_word.as_str() {
         "where" => "WHERE".to_string(),
         "order" => "ORDER_BY".to_string(),
+        "set" => "SET".to_string(),
         "and" => "AND".to_string(),
         "or" => "OR".to_string(),
         "group" => "GROUP_BY".to_string(),
@@ -1704,20 +1705,29 @@ pub fn process_statement(
 ) -> Result<(), ConversionError> {
     use ogsql_parser::ast::plpgsql::PlStatement;
     match stmt {
-        PlStatement::Assignment { target, expression } => {
-            if let Some(var_name) = extract_assignment_target_name(target) {
-                if let Some((sql_template, concat_vars)) = flatten_concat(expression, proc) {
-                    let lower = sql_template.trim().to_lowercase();
-                    let sql_verbs = ["select", "insert", "update", "delete", "truncate", "alter", "drop", "create", "merge", "savepoint", "rollback"];
-                    if sql_verbs.iter().any(|v| lower.starts_with(v)) {
-                        proc.dynamic_sql_templates.insert(var_name, (sql_template, concat_vars));
-                    }
-                }
-            }
-            let line = crate::expr::assignment_to_java(target, expression, proc);
-            push_logic_line(proc, line);
-            Ok(())
-        }
+         PlStatement::Assignment { target, expression } => {
+             if let Some(var_name) = extract_assignment_target_name(target) {
+                 if let Some((sql_template, concat_vars)) = flatten_concat(expression, proc) {
+                     let lower = sql_template.trim().to_lowercase();
+                     let sql_verbs = ["select", "insert", "update", "delete", "truncate", "alter", "drop", "create", "merge", "savepoint", "rollback"];
+                     if sql_verbs.iter().any(|v| lower.starts_with(v)) {
+                         proc.dynamic_sql_templates.insert(var_name.clone(), (sql_template, concat_vars));
+                     }
+                 }
+                 if let Some((target_name, sql_fragment, clause_type)) =
+                     detect_sql_concat_append(&var_name, expression, proc)
+                 {
+                     let chain = proc.sql_concat_chain.entry(target_name).or_default();
+                     let already_exists = chain.iter().any(|(_, f, _)| f == &sql_fragment);
+                     if !already_exists {
+                         chain.push(("true".to_string(), sql_fragment, clause_type));
+                     }
+                 }
+             }
+             let line = crate::expr::assignment_to_java(target, expression, proc);
+             push_logic_line(proc, line);
+             Ok(())
+         }
         PlStatement::Return { expression } => {
             if let Some(expr) = expression {
                 let val = crate::expr::expr_to_java(expr, proc);
@@ -1804,24 +1814,31 @@ pub fn process_statement(
         }
         PlStatement::If(if_stmt) => {
             let cond = crate::expr::bool_expr_to_java(&if_stmt.node.condition, proc);
-            if if_stmt.node.then_stmts.len() == 1
-                && if_stmt.node.elsifs.is_empty()
+            if if_stmt.node.elsifs.is_empty()
                 && if_stmt.node.else_stmts.is_empty()
             {
-                if let Some(stmt) = if_stmt.node.then_stmts.first() {
-                    if let PlStatement::Assignment { target, expression } = stmt {
+                let mut all_concat = true;
+                for s in &if_stmt.node.then_stmts {
+                    if let PlStatement::Assignment { target, expression } = s {
                         if let Some(var_name) = extract_assignment_target_name(target) {
-                            if let Some((target_name, sql_template, clause_type)) =
+                            if let Some((target_name, sql_fragment, clause_type)) =
                                 detect_sql_concat_append(&var_name, expression, proc)
                             {
-                                proc.sql_concat_chain
-                                    .entry(target_name)
-                                    .or_default()
-                                    .push((cond, sql_template, clause_type));
-                                return Ok(());
+                                let chain = proc.sql_concat_chain.entry(target_name).or_default();
+                                let already_exists = chain.iter().any(|(_, f, _)| f == &sql_fragment);
+                                if !already_exists {
+                                    chain.push((cond.clone(), sql_fragment, clause_type));
+                                }
+                            } else {
+                                all_concat = false;
                             }
                         }
+                    } else {
+                        all_concat = false;
                     }
+                }
+                if all_concat && !if_stmt.node.then_stmts.is_empty() {
+                    return Ok(());
                 }
             }
             push_logic_line(proc, format!("if ({}) {{", cond));

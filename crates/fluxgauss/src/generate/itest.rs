@@ -85,6 +85,7 @@ pub fn write_itest_class(
         let out_params: Vec<&Parameter> = proc.parameters.iter().filter(|p| p.is_out()).collect();
 
         let numeric_string_params = extract_numeric_string_params(proc);
+        let dollar_params = collect_dollar_interpolation_params(proc);
 
         let mut param_values: Vec<String> = Vec::new();
         let mut param_args: Vec<String> = Vec::new();
@@ -92,6 +93,13 @@ pub fn write_itest_class(
             let mut val = default_test_value(&p.java_type, &snake_to_camel(&p.name));
             if p.java_type == "String" && (numeric_string_params.contains(&p.name.to_lowercase()) || numeric_string_params.contains(&snake_to_camel(&p.name).to_lowercase())) {
                 val = "\"1\"".to_string();
+            }
+            let param_key = p.name.to_lowercase();
+            let camel_key = snake_to_camel(&p.name).to_lowercase();
+            if p.java_type == "String" {
+                if let Some(dv) = dollar_params.get(&param_key).or_else(|| dollar_params.get(&camel_key)) {
+                    val = dv.clone();
+                }
             }
             let decl_type = &p.java_type;
             param_values.push(format!("{} {} = {};", decl_type, snake_to_camel(&p.name), val));
@@ -160,7 +168,10 @@ pub fn write_itest_class(
                       && !sql.to_lowercase().starts_with("merge");
                   looks_like_var && no_sql_keywords && !sql.contains(' ') && !sql.contains('(')
               };
-              is_single_bind || has_text_subst || has_bind_using || starts_with_var_using || is_just_var
+              let has_dynamic_cond_subst = dml.dynamic_conditions.iter().any(|dc| {
+                  dc.sql_fragment.contains("${") || dc.condition_expr.contains("${")
+              });
+              is_single_bind || has_text_subst || has_bind_using || starts_with_var_using || is_just_var || has_dynamic_cond_subst
           });
 
        let mut lines: Vec<String> = Vec::new();
@@ -1266,6 +1277,57 @@ fn extract_numeric_string_params(proc: &ProcedureInfo) -> HashSet<String> {
     result
 }
 
+fn collect_dollar_interpolation_params(proc: &ProcedureInfo) -> HashMap<String, String> {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r"\$\{(\w+)\}").unwrap());
+    let mut result = HashMap::new();
+    for dml in &proc.dml_statements {
+        for caps in re.captures_iter(&dml.sql_text) {
+            if let Some(m) = caps.get(1) {
+                let name = m.as_str().to_lowercase();
+                let val = itest_dollar_param_value(&name, &dml.sql_text);
+                result.insert(name, val);
+            }
+        }
+        for dc in &dml.dynamic_conditions {
+            for caps in re.captures_iter(&dc.sql_fragment) {
+                if let Some(m) = caps.get(1) {
+                    let name = m.as_str().to_lowercase();
+                    let val = itest_dollar_param_value(&name, &dc.sql_fragment);
+                    result.insert(name, val);
+                }
+            }
+        }
+    }
+    result
+}
+
+fn itest_dollar_param_value(param_name: &str, sql_fragment: &str) -> String {
+    let lower = param_name.to_lowercase();
+    if lower.contains("table") || lower.contains("tbl") {
+        return "\"t_test\"".to_string();
+    }
+    if lower.contains("column") || lower.contains("col") || lower.contains("field") {
+        return "\"c_test\"".to_string();
+    }
+    if lower.contains("order") && lower.contains("by") {
+        return "\"id ASC\"".to_string();
+    }
+    if lower.contains("where") || lower.contains("clause") || lower.contains("cond") {
+        return "\"1=1\"".to_string();
+    }
+    if lower.contains("sql") || lower.contains("query") || lower.contains("stmt") {
+        return "\"SELECT 1\"".to_string();
+    }
+    if sql_fragment.to_lowercase().contains("order by") {
+        return "\"id ASC\"".to_string();
+    }
+    if sql_fragment.to_lowercase().contains("where") {
+        return "\"1=1\"".to_string();
+    }
+    "\"x\"".to_string()
+}
+
 fn default_test_value(java_type: &str, param_name: &str) -> String {
     let tl = java_type.to_lowercase();
     let nl = param_name.to_lowercase();
@@ -1435,12 +1497,14 @@ mod tests {
             java_type: "Long".to_string(),
             sql_type: "bigint".to_string(),
             mode: Some(ParamMode::In),
+            default_value: None,
         });
         proc.parameters.push(Parameter {
             name: "p_qty".to_string(),
             java_type: "Integer".to_string(),
             sql_type: "integer".to_string(),
             mode: Some(ParamMode::In),
+            default_value: None,
         });
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
@@ -1463,6 +1527,7 @@ mod tests {
             java_type: "Long".to_string(),
             sql_type: "bigint".to_string(),
             mode: Some(ParamMode::In),
+            default_value: None,
         });
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
@@ -1482,12 +1547,14 @@ mod tests {
             java_type: "Long".to_string(),
             sql_type: "bigint".to_string(),
             mode: Some(ParamMode::In),
+            default_value: None,
         });
         proc.parameters.push(Parameter {
             name: "p_result".to_string(),
             java_type: "String".to_string(),
             sql_type: "varchar".to_string(),
             mode: Some(ParamMode::Out),
+            default_value: None,
         });
         let pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
@@ -1645,5 +1712,64 @@ CREATE TABLE BIGFUND.orders (
         assert_eq!(maybe_upgrade_type("TEXT", "created_at"), "TIMESTAMP");
         assert_eq!(maybe_upgrade_type("TEXT", "is_active"), "BOOLEAN");
         assert_eq!(maybe_upgrade_type("TEXT", "foo"), "TEXT");
+    }
+
+    #[test]
+    fn test_collect_dollar_interpolation_params() {
+        let mut proc = make_proc("dyn_query");
+        proc.dml_statements.push(DmlStatement {
+            sql_type: DmlType::Select,
+            method_id: "selectDyn".to_string(),
+            sql_text: "SELECT * FROM ${tableName} WHERE ${whereClause}".to_string(),
+            result_type: None,
+            parameter_types: Default::default(),
+            optional_filters: Vec::new(),
+            returns_list: false,
+            extra_params: Vec::new(),
+            dynamic_conditions: Vec::new(),
+            base_sql: String::new(),
+        });
+        let params = collect_dollar_interpolation_params(&proc);
+        assert!(params.contains_key("tablename"));
+        assert!(params.contains_key("whereclause"));
+        assert_eq!(params.get("tablename").unwrap(), "\"t_test\"");
+        assert_eq!(params.get("whereclause").unwrap(), "\"1=1\"");
+    }
+
+    #[test]
+    fn test_itest_dollar_param_value_table() {
+        assert_eq!(itest_dollar_param_value("tableName", ""), "\"t_test\"");
+        assert_eq!(itest_dollar_param_value("orderByClause", "ORDER BY ${orderByClause}"), "\"id ASC\"");
+        assert_eq!(itest_dollar_param_value("whereClause", "WHERE ${whereClause}"), "\"1=1\"");
+        assert_eq!(itest_dollar_param_value("foo", ""), "\"x\"");
+    }
+
+    #[test]
+    fn test_has_dynamic_sql_from_dynamic_conditions() {
+        let mut proc = make_proc("dyn_query");
+        proc.dml_statements.push(DmlStatement {
+            sql_type: DmlType::Select,
+            method_id: "selectDyn".to_string(),
+            sql_text: "SELECT * FROM orders".to_string(),
+            result_type: None,
+            parameter_types: Default::default(),
+            optional_filters: Vec::new(),
+            returns_list: false,
+            extra_params: Vec::new(),
+            dynamic_conditions: vec![crate::types::DynamicCondition {
+                condition_expr: "whereClause != null".to_string(),
+                sql_fragment: "WHERE ${whereClause}".to_string(),
+                clause_type: "WHERE".to_string(),
+                tag_name: "where".to_string(),
+            }],
+            base_sql: String::new(),
+        });
+        let pkg = make_pkg("pkg_test", vec![proc]);
+        let dir = tempfile::tempdir().unwrap();
+        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new()).unwrap();
+        let content = std::fs::read_to_string(
+            dir.path().join("src/test/java/com/example/demo/itest/TestServiceIntegrationTest.java"),
+        ).unwrap();
+        assert!(content.contains("auto-generated itest cannot exercise runtime-constructed dynamic SQL"));
     }
 }

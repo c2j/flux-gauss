@@ -392,14 +392,16 @@ fn build_service_method(
             if p.is_refcursor() {
                 continue;
             }
-            params.push(format!("AtomicReference<{}> {}", p.java_type, snake_to_camel(&p.name)));
-            out_params.push(p);
-        } else {
-            params.push(format!("{} {}", boxed_to_primitive(&p.java_type), snake_to_camel(&p.name)));
-        }
-    }
+             params.push(format!("AtomicReference<{}> {}", p.java_type, snake_to_camel(&p.name)));
+             out_params.push(p);
+         } else {
+             let is_null_default = p.default_value.as_ref().map_or(false, |dv| dv.to_lowercase() == "null");
+             let param_type = if is_null_default { &p.java_type } else { boxed_to_primitive(&p.java_type) };
+             params.push(format!("{} {}", param_type, snake_to_camel(&p.name)));
+         }
+     }
 
-    let params_str = params.join(", ");
+     let params_str = params.join(", ");
 
     let mut ret_type = if proc.is_function {
         match &proc.return_type {
@@ -861,6 +863,7 @@ mod tests {
             java_type: "String".to_string(),
             sql_type: "varchar".to_string(),
             mode: Some(ParamMode::Out),
+            default_value: None,
         });
         let pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();

@@ -603,6 +603,7 @@ fn convert_params(params: &[RoutineParam]) -> Vec<Parameter> {
                 java_type,
                 sql_type,
                 mode,
+                default_value: p.default_value.clone(),
             }
         })
         .collect()

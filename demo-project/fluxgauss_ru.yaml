@@ -67,3 +67,4 @@ sources:
   - demo-project/sql/gauss_insert_all_styles.sql
   - demo-project/sql/PACK_LOG.sql
   - demo-project/sql/missing_tables.sql
+  - demo-project/sql/pkg_dynamic_xml.sql

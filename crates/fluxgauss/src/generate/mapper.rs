@@ -4,7 +4,7 @@ use std::path::Path;
 use crate::generate::writer::CodeWriter;
 use crate::naming::{package_to_classname, snake_to_camel};
 use crate::type_map::{java_type_to_jdbc, sql_type_to_java};
-use crate::types::{DmlType, PackageInfo, Parameter};
+use crate::types::{DmlType, DynamicCondition, PackageInfo, Parameter};
 
 static IDENTIFIER_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 static CLEAN_SQL_WS_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
@@ -410,10 +410,92 @@ fn build_mapper_statement(
     parts.push(format!("<!-- {} -->", source_info));
 
     if !dml.dynamic_conditions.is_empty() {
-        let where_conds: Vec<_> = dml.dynamic_conditions.iter()
-            .filter(|dc| dc.clause_type == "WHERE").collect();
-        let other_conds: Vec<_> = dml.dynamic_conditions.iter()
-            .filter(|dc| dc.clause_type != "WHERE").collect();
+        let local_var_names: Vec<String> = proc.local_vars.keys()
+            .map(|k| crate::naming::snake_to_camel(k).to_lowercase())
+            .collect();
+        let is_valid_condition = |dc: &&DynamicCondition| -> bool {
+            let frag_lower = dc.sql_fragment.to_lowercase();
+            let cond_lower = dc.condition_expr.to_lowercase();
+            let has_local_var = local_var_names.iter().any(|lv| {
+                frag_lower.contains(&format!("#{{{}}}", lv)) ||
+                frag_lower.contains(&format!("${{{}}}", lv)) ||
+                cond_lower.contains(&format!("#{{{}}}", lv)) ||
+                cond_lower.contains(&format!("${{{}}}", lv))
+            });
+            !has_local_var
+        };
+
+        let mut valid_conds: Vec<&DynamicCondition> = Vec::new();
+        let mut rejected_conds: Vec<&DynamicCondition> = Vec::new();
+        for dc in &dml.dynamic_conditions {
+            if is_valid_condition(&dc) {
+                valid_conds.push(dc);
+            } else {
+                rejected_conds.push(dc);
+            }
+        }
+
+        let mut where_conds: Vec<&DynamicCondition> = Vec::new();
+        let mut set_conds: Vec<&DynamicCondition> = Vec::new();
+        let mut other_conds: Vec<&DynamicCondition> = Vec::new();
+
+        for dc in &valid_conds {
+            if dc.clause_type == "WHERE" {
+                where_conds.push(dc);
+            } else if dc.clause_type == "SET" {
+                set_conds.push(dc);
+            } else {
+                other_conds.push(dc);
+            }
+        }
+
+        let re_where_re = regex::Regex::new(r"(?i)\bWHERE\b\s+(.+)").unwrap();
+        let mut extracted_where_conds: Vec<DynamicCondition> = Vec::new();
+        for dc in &rejected_conds {
+            let frag = dc.sql_fragment.clone();
+            if let Some(caps) = re_where_re.captures(&frag) {
+                if let Some(m) = caps.get(1) {
+                    let extracted_where = m.as_str().trim().to_string();
+                    let mut new_dc = DynamicCondition {
+                        condition_expr: dc.condition_expr.clone(),
+                        sql_fragment: extracted_where,
+                        clause_type: "WHERE".to_string(),
+                        tag_name: dc.tag_name.clone(),
+                    };
+                    let cond_lower = dc.condition_expr.to_lowercase();
+                    let cond_refs_local = local_var_names.iter().any(|lv| {
+                        cond_lower.contains(&format!("#{{{}}}", lv)) ||
+                        cond_lower.contains(&format!("${{{}}}", lv)) ||
+                        cond_lower.split(|c: char| !c.is_alphanumeric() && c != '_')
+                            .any(|word| word == lv.as_str())
+                    });
+                    if cond_refs_local {
+                        new_dc.condition_expr = "true".to_string();
+                    }
+                    extracted_where_conds.push(new_dc);
+                }
+            }
+        }
+        for dc in &extracted_where_conds {
+            where_conds.push(dc);
+        }
+
+        let is_update = matches!(dml.sql_type, DmlType::Update);
+        let mut reclassified_set_conds: Vec<DynamicCondition> = Vec::new();
+        if is_update {
+            let mut new_other: Vec<&DynamicCondition> = Vec::new();
+            for dc in &other_conds {
+                if dc.sql_fragment.contains('=') && !dc.sql_fragment.to_lowercase().contains("order by") {
+                    reclassified_set_conds.push((*dc).clone());
+                } else {
+                    new_other.push(dc);
+                }
+            }
+            other_conds = new_other;
+        }
+        for dc in &reclassified_set_conds {
+            set_conds.push(dc);
+        }
 
         parts.push(format!("<{} id=\"{}\"{}{}>", tag, dml.method_id, params_attrs, result_type_attr));
 
@@ -443,7 +525,7 @@ fn build_mapper_statement(
 
         if !where_conds.is_empty() {
             parts.push("    <where>".to_string());
-            for dc in where_conds {
+            for dc in &where_conds {
                 let frag = strip_leading_clause(&dc.sql_fragment, "WHERE");
                 parts.push(format!("        <if test=\"{}\">", xml_escape(&dc.condition_expr)));
                 parts.push(format!("            AND {}", xml_escape(&frag)));
@@ -452,7 +534,18 @@ fn build_mapper_statement(
             parts.push("    </where>".to_string());
         }
 
-        for dc in other_conds {
+        if !set_conds.is_empty() {
+            parts.push("    <set>".to_string());
+            for dc in &set_conds {
+                let frag = strip_leading_clause(&dc.sql_fragment, "SET");
+                parts.push(format!("        <if test=\"{}\">", xml_escape(&dc.condition_expr)));
+                parts.push(format!("            {},", xml_escape(&frag)));
+                parts.push("        </if>".to_string());
+            }
+            parts.push("    </set>".to_string());
+        }
+
+        for dc in &other_conds {
             if dc.clause_type == "ORDER_BY" {
                 let frag = strip_leading_clause(&dc.sql_fragment, "ORDER_BY");
                 parts.push(format!("    <if test=\"{}\">", xml_escape(&dc.condition_expr)));
@@ -1355,12 +1448,14 @@ mod tests {
                 java_type: "Long".to_string(),
                 sql_type: "bigint".to_string(),
                 mode: Some(ParamMode::In),
+                default_value: None,
             },
             Parameter {
                 name: "p_result".to_string(),
                 java_type: "String".to_string(),
                 sql_type: "varchar".to_string(),
                 mode: Some(ParamMode::Out),
+                default_value: None,
             },
         ];
         let dml = make_dml(DmlType::Select, "selectData", "select * from t where id = p_id");
@@ -1429,6 +1524,7 @@ mod tests {
             java_type: "Long".to_string(),
             sql_type: "bigint".to_string(),
             mode: Some(ParamMode::In),
+            default_value: None,
         }];
         let result = convert_params_to_mybatis(
             "select * from t where id = p_id",
@@ -1595,5 +1691,109 @@ mod tests {
     #[test]
     fn test_strip_leading_clause_order_by() {
         assert_eq!(strip_leading_clause("ORDER BY name ASC", "ORDER_BY"), "name ASC");
+    }
+
+    #[test]
+    fn test_set_tag_generation() {
+        let mut proc = ProcedureInfo::new(
+            "pkg_test.proc_dyn".to_string(),
+            "pkg_test".to_string(),
+            "proc_dyn".to_string(),
+        );
+        proc.local_vars.insert("v_status".to_string(), "String".to_string());
+        let dc_set = DynamicCondition {
+            condition_expr: "status != null".to_string(),
+            sql_fragment: "SET status = #{status}".to_string(),
+            clause_type: "OTHER".to_string(),
+            tag_name: "if".to_string(),
+        };
+        let dml = DmlStatement {
+            sql_type: DmlType::Update,
+            method_id: "dynUpdate1".to_string(),
+            sql_text: "UPDATE orders SET status = #{status} WHERE id = #{id}".to_string(),
+            result_type: None,
+            parameter_types: HashMap::new(),
+            optional_filters: Vec::new(),
+            returns_list: false,
+            extra_params: Vec::new(),
+            dynamic_conditions: vec![dc_set],
+            base_sql: "UPDATE orders".to_string(),
+        };
+
+        let xml = build_mapper_statement(&proc, &dml, &HashMap::new());
+        assert!(xml.contains("<set>"), "Should contain <set> tag");
+        assert!(xml.contains("</set>"), "Should contain closing </set>");
+        assert!(xml.contains("status = #{status}"), "Should contain SET fragment");
+    }
+
+    #[test]
+    fn test_rejected_where_extraction() {
+        let mut proc = ProcedureInfo::new(
+            "pkg_test.proc_dyn".to_string(),
+            "pkg_test".to_string(),
+            "proc_dyn".to_string(),
+        );
+        proc.local_vars.insert("v_where".to_string(), "String".to_string());
+        let dc_rejected = DynamicCondition {
+            condition_expr: "${vWhere} != null".to_string(),
+            sql_fragment: "WHERE ${vWhere} AND status = 1".to_string(),
+            clause_type: "WHERE".to_string(),
+            tag_name: "where".to_string(),
+        };
+        let dml = DmlStatement {
+            sql_type: DmlType::Select,
+            method_id: "dynSelect1".to_string(),
+            sql_text: "SELECT * FROM orders WHERE ${vWhere}".to_string(),
+            result_type: Some("java.util.LinkedHashMap".to_string()),
+            parameter_types: HashMap::new(),
+            optional_filters: Vec::new(),
+            returns_list: true,
+            extra_params: Vec::new(),
+            dynamic_conditions: vec![dc_rejected],
+            base_sql: "SELECT * FROM orders".to_string(),
+        };
+
+        let xml = build_mapper_statement(&proc, &dml, &HashMap::new());
+        assert!(xml.contains("<where>"), "Should contain <where> tag");
+        assert!(xml.contains(r#"<if test="true">"#), "Rejected condition should become true");
+        assert!(xml.contains("AND ${vWhere} AND status = 1"), "Should extract full WHERE fragment");
+    }
+
+    #[test]
+    fn test_update_where_before_set_order() {
+        let mut proc = ProcedureInfo::new(
+            "pkg_test.proc_dyn".to_string(),
+            "pkg_test".to_string(),
+            "proc_dyn".to_string(),
+        );
+        let dc_where = DynamicCondition {
+            condition_expr: "id != null".to_string(),
+            sql_fragment: "WHERE id = #{id}".to_string(),
+            clause_type: "WHERE".to_string(),
+            tag_name: "where".to_string(),
+        };
+        let dc_set = DynamicCondition {
+            condition_expr: "status != null".to_string(),
+            sql_fragment: "SET status = #{status}".to_string(),
+            clause_type: "SET".to_string(),
+            tag_name: "if".to_string(),
+        };
+        let dml = DmlStatement {
+            sql_type: DmlType::Update,
+            method_id: "dynUpdate1".to_string(),
+            sql_text: "UPDATE orders SET status = #{status} WHERE id = #{id}".to_string(),
+            result_type: None,
+            parameter_types: HashMap::new(),
+            optional_filters: Vec::new(),
+            returns_list: false,
+            extra_params: Vec::new(),
+            dynamic_conditions: vec![dc_where, dc_set],
+            base_sql: "UPDATE orders".to_string(),
+        };
+
+        let xml = build_mapper_statement(&proc, &dml, &HashMap::new());
+        let where_pos = xml.find("<where>").unwrap_or(xml.len());
+        let set_pos = xml.find("<set>").unwrap_or(xml.len());
+        assert!(where_pos < set_pos, "<where> must come before <set> in UPDATE");
     }
 }
