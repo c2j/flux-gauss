@@ -39,6 +39,7 @@ pub struct Parameter {
     pub java_type: String,
     pub sql_type: String,
     pub mode: Option<ParamMode>,
+    pub default_value: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -420,6 +421,7 @@ mod tests {
             java_type: "Long".into(),
             sql_type: "bigint".into(),
             mode: Some(ParamMode::In),
+            default_value: None,
         };
         assert!(!p_in.is_out());
 
@@ -428,6 +430,7 @@ mod tests {
             java_type: "String".into(),
             sql_type: "varchar".into(),
             mode: Some(ParamMode::Out),
+            default_value: None,
         };
         assert!(p_out.is_out());
 
@@ -436,6 +439,7 @@ mod tests {
             java_type: "Integer".into(),
             sql_type: "integer".into(),
             mode: Some(ParamMode::InOut),
+            default_value: None,
         };
         assert!(p_inout.is_out());
     }
@@ -459,6 +463,7 @@ mod tests {
                 java_type: "Object".into(),
                 sql_type: sql_type.into(),
                 mode: None,
+                default_value: None,
             };
             assert_eq!(p.is_refcursor(), expected, "sql_type={}", sql_type);
         }
@@ -528,6 +533,7 @@ mod tests {
             java_type: "String".into(),
             sql_type: "varchar".into(),
             mode: Some(ParamMode::In),
+            default_value: None,
         });
 
         let summary = ProcedureSummary::from_procedure(&proc);

@@ -65,6 +65,7 @@ sources:
   - demo-project/sql/PKG_DEPOSIT_ACNT_INFO_INQUIRY.sql
   - demo-project/sql/pkg_inventory.sql
   - demo-project/sql/PKG_FOR.sql
+  - demo-project/sql/pkg_dynamic_xml.sql
   - demo-project/sql/gauss_function_calls.sql
   - demo-project/sql/DAT_DATACLEAR_CONFIG.sql
   - demo-project/sql/gauss_insert_all_styles.sql

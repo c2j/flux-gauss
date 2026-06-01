@@ -54,7 +54,7 @@ CREATE OR REPLACE PACKAGE BODY pkg_dynamic_xml IS
         v_count INTEGER;
     BEGIN
         -- 基础 SELECT
-        v_sql := 'SELECT id, name, amount, status, create_time FROM ' || p_table_name;
+        v_sql := 'SELECT id, name, amount, status, created_at FROM t_test_funcs';
 
         -- 条件 WHERE 子句
         IF p_where_clause IS NOT NULL THEN
@@ -69,7 +69,7 @@ CREATE OR REPLACE PACKAGE BODY pkg_dynamic_xml IS
         -- 固定 LIMIT（非条件）
         v_sql := v_sql || ' LIMIT ' || p_limit;
 
-        DBE_OUTPUT.PRINT_LINE('Generated SQL: ' || v_sql);
+        DBE_OUTPUT.PRINT_LINE('Generated SQL: ' || p_table_name || v_sql);
 
         EXECUTE IMMEDIATE v_sql;
 
