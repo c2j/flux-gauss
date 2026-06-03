@@ -105,6 +105,18 @@ LOGGER_PRESETS = {
 # Current logger configuration (resolved from YAML config or defaults to slf4j)
 _LOGGER_CONFIG = None  # resolved from YAML, defaults to slf4j
 
+# Source file encoding (overridable via --encoding CLI or encoding: YAML config)
+_SOURCE_ENCODING = 'utf-8'
+
+
+def _write_source_file(path, content):
+    """Write generated source file with the configured encoding.
+
+    Uses errors='replace' to prevent UnicodeEncodeError on characters
+    that cannot be represented in the target encoding (e.g. ¥ in GBK).
+    """
+    path.write_text(content, encoding=_SOURCE_ENCODING, errors='replace')
+
 
 def _resolve_logger_config(config: dict) -> dict:
     """Resolve logger configuration from YAML config.
@@ -9635,9 +9647,15 @@ def _collect_service_injections(pkg: PackageInfo) -> dict:
     return services
 
 
+def _pom_source_encoding_property() -> str:
+    if _SOURCE_ENCODING.lower() != 'utf-8':
+        return f'\n                <project.build.sourceEncoding>{_SOURCE_ENCODING.upper()}</project.build.sourceEncoding>'
+    return ""
+
+
 def _write_pom_xml(base_path: Path):
-    core_deps = textwrap.dedent("""\
-        <?xml version="1.0" encoding="UTF-8"?>
+    core_deps = textwrap.dedent(f"""\
+        <?xml version="1.0" encoding="{_SOURCE_ENCODING.upper()}"?>
         <project xmlns="http://maven.apache.org/POM/4.0.0"
                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
@@ -9657,7 +9675,7 @@ def _write_pom_xml(base_path: Path):
             <name>demo</name>
 
             <properties>
-                <java.version>17</java.version>
+                <java.version>17</java.version>{_pom_source_encoding_property()}
             </properties>
 
             <dependencies>
@@ -9768,7 +9786,7 @@ def _write_pom_xml(base_path: Path):
         logger_deps += f"\n                {dep_xml}"
 
     content = core_deps + logger_deps + build_section
-    (base_path / "pom.xml").write_text(content)
+    _write_source_file(base_path / "pom.xml", content)
 
 
 def _write_application_yml(base_path: Path, config: dict = None):
@@ -9792,7 +9810,7 @@ def _write_application_yml(base_path: Path, config: dict = None):
     """)
     res_dir = base_path / RESOURCES_DIR
     res_dir.mkdir(parents=True, exist_ok=True)
-    (res_dir / "application.yml").write_text(content)
+    _write_source_file(res_dir / "application.yml", content)
 
 
 def _write_main_application(base_path: Path):
@@ -9814,7 +9832,7 @@ def _write_main_application(base_path: Path):
             }}
         }}
     """)
-    (java_dir / "DemoApplication.java").write_text(content)
+    _write_source_file(java_dir / "DemoApplication.java", content)
 
 
 def _write_business_exception(base_path: Path):
@@ -9834,7 +9852,7 @@ def _write_business_exception(base_path: Path):
             }}
         }}
     """)
-    (java_dir / "exception" / "BusinessException.java").write_text(content)
+    _write_source_file(java_dir / "exception" / "BusinessException.java", content)
 
 
 def _write_mapper_interface(base_path: Path, pkg: PackageInfo):
@@ -9877,7 +9895,7 @@ def _write_mapper_interface(base_path: Path, pkg: PackageInfo):
         {indented_methods}
         }}
     """)
-    (java_dir / f"{class_name}.java").write_text(content)
+    _write_source_file(java_dir / f"{class_name}.java", content)
 
 
 def _dml_used_local_vars(proc: ProcedureInfo, dml: DmlStatement) -> list:
@@ -10082,7 +10100,7 @@ def _write_mapper_xml(base_path: Path, pkg: PackageInfo):
         extra_stmts.append("\n".join(xml_lines))
 
     lines = []
-    lines.append('<?xml version="1.0" encoding="UTF-8"?>')
+    lines.append(f'<?xml version="1.0" encoding="{_SOURCE_ENCODING.upper()}"?>')
     lines.append('<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"')
     lines.append('        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">')
     lines.append(f'<mapper namespace="{namespace}">')
@@ -10110,7 +10128,7 @@ def _write_mapper_xml(base_path: Path, pkg: PackageInfo):
             r'\1::TEXT\2',
             content, flags=re.IGNORECASE,
         )
-    (mapper_dir / f"{package_to_classname(pkg.package_name)}Mapper.xml").write_text(content)
+    _write_source_file(mapper_dir / f"{package_to_classname(pkg.package_name)}Mapper.xml", content)
 
 
 def _clean_sql(sql: str) -> str:
@@ -10986,7 +11004,7 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
             lines.append(mline)
     lines.append("}")
     content = "\n".join(lines) + "\n"
-    (java_dir / f"{class_name}.java").write_text(content)
+    _write_source_file(java_dir / f"{class_name}.java", content)
 
 
 def _default_for_type(java_type: str) -> str:
@@ -11934,7 +11952,7 @@ def _write_service_test(base_path: Path, pkg: PackageInfo, service_injections: d
     lines.append("}")
     lines.append("")
     content = "\n".join(lines)
-    (test_dir / f"{test_class_name}.java").write_text(content)
+    _write_source_file(test_dir / f"{test_class_name}.java", content)
 
 
 def _build_test_methods(proc: ProcedureInfo, mapper_name: str, service_injections: dict,
@@ -12728,7 +12746,7 @@ def _itest_write_infrastructure(base_path: Path, itest_cfg: dict):
             public abstract class AbstractIntegrationTest {{
             }}
         """)
-    (pkg_dir / "AbstractIntegrationTest.java").write_text(content)
+    _write_source_file(pkg_dir / "AbstractIntegrationTest.java", content)
 
     db = itest_cfg if mode == "remote" else {}
     url = db.get("url", "jdbc:postgresql://localhost:5432/postgres")
@@ -12742,7 +12760,7 @@ def _itest_write_infrastructure(base_path: Path, itest_cfg: dict):
             password: {password}
             driver-class-name: org.postgresql.Driver
     """)
-    (res_dir / "application-integration.yml").write_text(yml_content)
+    _write_source_file(res_dir / "application-integration.yml", yml_content)
 
 
 def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
@@ -13109,7 +13127,7 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
     content = "\n".join(lines)
     res_dir = base_path / "src/test/resources"
     res_dir.mkdir(parents=True, exist_ok=True)
-    (res_dir / "itest-schema.sql").write_text(content)
+    _write_source_file(res_dir / "itest-schema.sql", content)
 
     func_lines = []
     standalone_funcs = _extract_standalone_functions_sql(packages)
@@ -13118,9 +13136,9 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
             func_lines.append(func_sql)
             func_lines.append("//")
     if func_lines:
-        (res_dir / "itest-functions.sql").write_text("\n".join(func_lines))
+        _write_source_file(res_dir / "itest-functions.sql", "\n".join(func_lines))
     elif (res_dir / "itest-functions.sql").exists():
-        (res_dir / "itest-functions.sql").write_text("-- No standalone functions")
+        _write_source_file(res_dir / "itest-functions.sql", "-- No standalone functions")
 
 
 def _convert_oracle_func_to_pg(func_sql: str) -> str:
@@ -13582,7 +13600,7 @@ def _itest_write_fixtures(base_path: Path, proc: ProcedureInfo, pkg: PackageInfo
     fixtures_dir = base_path / "src/test/resources" / "itest-fixtures"
     fixtures_dir.mkdir(parents=True, exist_ok=True)
     fname = f"{pkg.package_name}_{proc.proc_name}.sql"
-    (fixtures_dir / fname).write_text(content)
+    _write_source_file(fixtures_dir / fname, content)
     return f"classpath:itest-fixtures/{fname}"
 
 
@@ -13596,7 +13614,7 @@ def _itest_write_dml_cleanup(base_path: Path, proc: ProcedureInfo, pkg: PackageI
     fixtures_dir = base_path / "src/test/resources" / "itest-fixtures"
     fixtures_dir.mkdir(parents=True, exist_ok=True)
     fname = f"{pkg.package_name}_{proc.proc_name}_cleanup.sql"
-    (fixtures_dir / fname).write_text(content)
+    _write_source_file(fixtures_dir / fname, content)
     return f"classpath:itest-fixtures/{fname}"
 
 
@@ -13839,7 +13857,7 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
     lines.append("}")
     lines.append("")
     content = "\n".join(lines)
-    (itest_dir / f"{class_name}.java").write_text(content)
+    _write_source_file(itest_dir / f"{class_name}.java", content)
 
 
 
@@ -14315,11 +14333,13 @@ FLUXGAUSS_HELP = f"""\
    fluxgauss -o ./dest -s pkg_order.sql pkg_product.sql
    fluxgauss -c fluxgauss.yaml --full      强制全量重新生成
    fluxgauss -c fluxgauss.yaml --resume    从断点续做（跳过已生成的包）
-   fluxgauss -c fluxgauss.yaml --report ./report.md
+    fluxgauss -c fluxgauss.yaml --report ./report.md
+    fluxgauss -c fluxgauss.yaml --encoding gbk    指定输出编码（默认 UTF-8）
 
   配置文件格式 (YAML):
-    output_dir: ./dest                     输出目录
+     output_dir: ./dest                     输出目录
     base_package: com.example.demo         Java 包名（可选）
+    encoding: utf-8                        源码编码（可选，默认 UTF-8，如 gbk）
     logger: slf4j                          日志框架（可选，默认 slf4j）
                                            可选: slf4j, log4j2, commons-logging, jul
                                            或自定义:
@@ -14367,6 +14387,7 @@ def _build_arg_parser():
     parser.add_argument("--full", action="store_true", default=False, help="强制全量重新生成（忽略缓存）")
     parser.add_argument("--resume", action="store_true", default=False, help="从断点续做（跳过已生成的包）")
     parser.add_argument("--skip-validate", action="store_true", default=False, help="跳过 SQL 语法校验")
+    parser.add_argument("--encoding", metavar="ENC", default=None, help="生成源码的编码格式（默认 UTF-8）")
     parser.add_argument("--report", metavar="FILE", help="指定转换报告输出路径")
     parser.add_argument("-v", "--version", action="store_true", default=False, help="显示版本信息")
     return parser
@@ -14376,6 +14397,8 @@ _VERSION = "1.0.0"
 
 
 def main():
+    global _SOURCE_ENCODING
+
     parser = _build_arg_parser()
     args = parser.parse_args()
 
@@ -14411,6 +14434,11 @@ def main():
             _user_aliases = config['type_aliases']
             if isinstance(_user_aliases, dict):
                 _CUSTOM_TYPE_PRESETS.update({k.lower(): v for k, v in _user_aliases.items()})
+
+        # ── Resolve source encoding (from config only) ──
+        if config.get('encoding'):
+            _SOURCE_ENCODING = config['encoding']
+
     elif args.output and args.sources:
         output_dir = args.output
         sql_files = args.sources
@@ -14418,7 +14446,16 @@ def main():
         print(f"Error: 请指定配置文件 (-c) 或输出目录 + 源文件 (-o + -s)")
         print(f"  用法: fluxgauss -c fluxgauss.yaml")
         print(f"  用法: fluxgauss -o ./dest -s pkg_order.sql pkg_product.sql")
-        print(f"  帮助: fluxgauss -h")
+        print(f" 帮助: fluxgauss -h")
+        sys.exit(1)
+
+    # ── Resolve source encoding (CLI overrides config) ──
+    if args.encoding:
+        _SOURCE_ENCODING = args.encoding
+    try:
+        ''.encode(_SOURCE_ENCODING)
+    except LookupError:
+        print(f"Error: unsupported encoding: {_SOURCE_ENCODING}")
         sys.exit(1)
 
     sql_file_to_java_package = {}
