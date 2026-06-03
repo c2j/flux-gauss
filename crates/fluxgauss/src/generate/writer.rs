@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use encoding_rs::Encoding;
+
 pub struct CodeWriter {
     lines: Vec<String>,
     indent_level: usize,
@@ -42,11 +44,13 @@ impl CodeWriter {
         self.lines.join("\n")
     }
 
-    pub fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
+    pub fn write_to_file(&self, path: &Path, encoding: &'static Encoding) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, format!("{}\n", self.to_string()))
+        let content = format!("{}\n", self.to_string());
+        let (cow, _, _) = encoding.encode(&content);
+        std::fs::write(path, cow.into_owned())
     }
 }
 
@@ -102,7 +106,7 @@ mod tests {
         let path = dir.path().join("output.txt");
         let mut w = CodeWriter::new();
         w.line("hello");
-        w.write_to_file(&path)?;
+        w.write_to_file(&path, encoding_rs::UTF_8)?;
         let mut content = String::new();
         std::fs::File::open(&path)?.read_to_string(&mut content)?;
         assert_eq!(content, "hello\n");
