@@ -505,7 +505,11 @@ fn phase3_generate(
     let mut test_count = 0usize;
     let mut itest_count = 0usize;
 
-    match crate::generate::skeleton::write_skeleton_files(output_dir, config, &base_package) {
+    let encoding_name = config.encoding_or_default();
+    let encoding = encoding_rs::Encoding::for_label(encoding_name.as_bytes())
+        .unwrap_or(encoding_rs::UTF_8);
+
+    match crate::generate::skeleton::write_skeleton_files(output_dir, config, &base_package, encoding) {
         Ok(files) => generated.extend(files),
         Err(e) => errors.push(ConversionError::Io {
             path: output_dir.to_string_lossy().into_owned(),
@@ -520,14 +524,14 @@ fn phase3_generate(
     };
 
     if schema_map.is_some() {
-        if let Err(e) = crate::generate::itest::write_abstract_integration_test(output_dir, &base_package) {
+        if let Err(e) = crate::generate::itest::write_abstract_integration_test(output_dir, &base_package, encoding) {
             errors.push(ConversionError::Io {
                 path: output_dir.to_string_lossy().into_owned(),
                 message: format!("write_abstract_integration_test: {}", e),
             });
         }
 
-        if let Err(e) = crate::generate::itest::write_itest_schema_sql(output_dir, &analyzed.packages, schema_map.as_ref().unwrap()) {
+        if let Err(e) = crate::generate::itest::write_itest_schema_sql(output_dir, &analyzed.packages, schema_map.as_ref().unwrap(), encoding) {
             errors.push(ConversionError::Io {
                 path: output_dir.to_string_lossy().into_owned(),
                 message: format!("write_itest_schema_sql: {}", e),
@@ -542,7 +546,7 @@ fn phase3_generate(
 
         let service_injections = crate::generate::service::collect_service_injections(pkg);
 
-        if let Err(e) = crate::generate::mapper::write_mapper_interface(output_dir, pkg, &base_package) {
+        if let Err(e) = crate::generate::mapper::write_mapper_interface(output_dir, pkg, &base_package, encoding) {
             errors.push(ConversionError::Io {
                 path: pkg.package_name.clone(),
                 message: format!("write_mapper_interface: {}", e),
@@ -550,7 +554,7 @@ fn phase3_generate(
             continue;
         }
 
-        if let Err(e) = crate::generate::mapper::write_mapper_xml(output_dir, pkg, &base_package) {
+        if let Err(e) = crate::generate::mapper::write_mapper_xml(output_dir, pkg, &base_package, encoding) {
             errors.push(ConversionError::Io {
                 path: pkg.package_name.clone(),
                 message: format!("write_mapper_xml: {}", e),
@@ -558,7 +562,7 @@ fn phase3_generate(
             continue;
         }
 
-        match crate::generate::service::write_service_class(output_dir, pkg, &base_package, &service_injections) {
+        match crate::generate::service::write_service_class(output_dir, pkg, &base_package, &service_injections, encoding) {
             Ok(name) => generated.push(format!("{}.java", name)),
             Err(e) => {
                 errors.push(ConversionError::Io {
@@ -569,7 +573,7 @@ fn phase3_generate(
             }
         }
 
-        if let Err(e) = crate::generate::test::write_service_test(output_dir, pkg, &base_package, &service_injections) {
+        if let Err(e) = crate::generate::test::write_service_test(output_dir, pkg, &base_package, &service_injections, encoding) {
             errors.push(ConversionError::Io {
                 path: pkg.package_name.clone(),
                 message: format!("write_service_test: {}", e),
@@ -579,7 +583,7 @@ fn phase3_generate(
         }
 
         if let Some(sm) = schema_map.as_ref() {
-            if let Err(e) = crate::generate::itest::write_itest_class(output_dir, pkg, &base_package, &service_injections, &analyzed.packages, sm) {
+            if let Err(e) = crate::generate::itest::write_itest_class(output_dir, pkg, &base_package, &service_injections, &analyzed.packages, sm, encoding) {
                 errors.push(ConversionError::Io {
                     path: pkg.package_name.clone(),
                     message: format!("write_itest_class: {}", e),
