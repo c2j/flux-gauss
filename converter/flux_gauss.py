@@ -2003,7 +2003,7 @@ def _promote_out_local_vars(proc: ProcedureInfo, all_packages: dict):
     if isinstance(exc, dict):
         for handler in exc.get("handlers", []):
             if isinstance(handler, dict):
-                h_stmts = handler.get("body", [])
+                h_stmts = handler.get("body", []) or handler.get("statements", [])
                 if isinstance(h_stmts, list):
                     _walk_stmts_for_out_promotions(h_stmts, proc, all_packages, local_var_names, promotions)
     for var_lower, new_type in promotions.items():
@@ -2011,7 +2011,7 @@ def _promote_out_local_vars(proc: ProcedureInfo, all_packages: dict):
         old_type = proc.local_vars[orig_name]
         if old_type != new_type:
             proc.local_vars[orig_name] = new_type
-            proc.local_var_defaults.pop(orig_name, None)
+            # Keep local_var_defaults — codegen wraps it into AtomicReference constructor
             var_java = snake_to_camel(orig_name)
             patched = []
             for line in proc.java_logic_lines:
@@ -2074,8 +2074,9 @@ def _walk_stmts_for_out_promotions(stmts, proc, all_packages, local_var_names, p
                 _expr = stmt_data.get("expression", {}) if isinstance(stmt_data, dict) else {}
                 if isinstance(_expr, dict) and "FunctionCall" in _expr:
                     _fc = _expr["FunctionCall"]
+                    _fc_args = _fc.get("args") or _fc.get("arguments") or []
                     _check_call_out_promotions(
-                        {"name": _fc.get("name", []), "arguments": _fc.get("args", [])},
+                        {"name": _fc.get("name", []), "arguments": _fc_args},
                         proc, all_packages, local_var_names, promotions,
                     )
             _recurse_stmt_for_out_promotions(stmt_data, proc, all_packages, local_var_names, promotions)
@@ -2084,17 +2085,28 @@ def _walk_stmts_for_out_promotions(stmts, proc, all_packages, local_var_names, p
 def _recurse_stmt_for_out_promotions(data, proc, all_packages, local_var_names, promotions):
     if not isinstance(data, dict):
         return
-    for key in ("then_block", "else_block", "body", "loop_body", "block"):
+    for key in ("then_stmts", "else_stmts", "then_block", "else_block",
+                "body", "loop_body", "block", "stmts", "statements"):
         child = data.get(key)
         if isinstance(child, dict):
-            child_stmts = child.get("body", [])
+            child_stmts = child.get("body", []) or child.get("stmts", [])
             if isinstance(child_stmts, list):
                 _walk_stmts_for_out_promotions(child_stmts, proc, all_packages, local_var_names, promotions)
         elif isinstance(child, list):
             _walk_stmts_for_out_promotions(child, proc, all_packages, local_var_names, promotions)
+    for elsif in data.get("elsifs", []):
+        if isinstance(elsif, dict):
+            elsif_stmts = elsif.get("stmts", [])
+            if isinstance(elsif_stmts, list):
+                _walk_stmts_for_out_promotions(elsif_stmts, proc, all_packages, local_var_names, promotions)
+    for when in data.get("whens", []):
+        if isinstance(when, dict):
+            when_stmts = when.get("stmts", [])
+            if isinstance(when_stmts, list):
+                _walk_stmts_for_out_promotions(when_stmts, proc, all_packages, local_var_names, promotions)
     for branch in data.get("branches", []):
         if isinstance(branch, dict):
-            br_body = branch.get("body", [])
+            br_body = branch.get("body", []) or branch.get("stmts", [])
             if isinstance(br_body, list):
                 _walk_stmts_for_out_promotions(br_body, proc, all_packages, local_var_names, promotions)
             br_block = branch.get("block", {})
@@ -2110,7 +2122,7 @@ def _recurse_stmt_for_out_promotions(data, proc, all_packages, local_var_names, 
     if isinstance(exc, dict):
         for handler in exc.get("handlers", []):
             if isinstance(handler, dict):
-                h_body = handler.get("body", [])
+                h_body = handler.get("body", []) or handler.get("statements", [])
                 if isinstance(h_body, list):
                     _walk_stmts_for_out_promotions(h_body, proc, all_packages, local_var_names, promotions)
                 h_block = handler.get("block", {})
@@ -11236,7 +11248,10 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
             var_java = snake_to_camel(var_name)
             if var_java not in out_java_names and var_name not in _loop_vars and var_name not in _pkg_var_names:
                 default_val = proc.local_var_defaults.get(var_name, _default_for_type(var_type))
-                if var_name in proc.local_var_defaults and _is_numeric_default(default_val, var_type):
+                if var_type.startswith("AtomicReference<"):
+                    inner = proc.local_var_defaults.get(var_name)
+                    default_val = f"new AtomicReference<>({inner})" if inner else _default_for_type(var_type)
+                elif var_name in proc.local_var_defaults and _is_numeric_default(default_val, var_type):
                     default_val = _wrap_default_for_type(default_val, var_type)
                 if var_type.startswith("java.util.List") and default_val in ('"{}"', "'{}'"):
                     default_val = _default_for_type(var_type)
