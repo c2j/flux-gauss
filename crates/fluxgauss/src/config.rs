@@ -9,6 +9,7 @@ pub struct AppConfig {
     pub sources: Option<Vec<String>>,
     pub java_packages: Option<Vec<JavaPackageMapping>>,
     pub integration_test: Option<IntegrationTestConfig>,
+    pub encoding: Option<String>,
 }
 
 impl AppConfig {
@@ -18,6 +19,10 @@ impl AppConfig {
 
     pub fn base_package_or_default(&self) -> String {
         self.base_package.clone().unwrap_or_else(|| "com.example.demo".to_string())
+    }
+
+    pub fn encoding_or_default(&self) -> String {
+        self.encoding.clone().unwrap_or_else(|| "utf-8".to_string())
     }
 }
 

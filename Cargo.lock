@@ -375,6 +375,7 @@ dependencies = [
  "chrono",
  "clap",
  "criterion",
+ "encoding_rs",
  "indexmap",
  "ogsql-parser",
  "pretty_assertions",
