@@ -14408,7 +14408,7 @@ def _build_arg_parser():
     return parser
 
 
-_VERSION = "1.0.0"
+_VERSION = "0.6.0"
 
 
 def main():
