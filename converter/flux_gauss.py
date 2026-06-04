@@ -14656,7 +14656,31 @@ def _build_arg_parser():
     return parser
 
 
-_VERSION = "0.6.5"
+def _read_version_from_cargo_toml():
+    """Read version from Cargo.toml (single source of truth).
+
+    Looks for crates/fluxgauss/Cargo.toml relative to this script.
+    Returns None if not found (e.g. PyInstaller bundle without source).
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    for rel in [os.path.join('..', 'crates', 'fluxgauss', 'Cargo.toml'),
+                os.path.join('..', 'Cargo.toml'),
+                'Cargo.toml']:
+        cargo_toml = os.path.normpath(os.path.join(script_dir, rel))
+        if os.path.isfile(cargo_toml):
+            try:
+                with open(cargo_toml, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        s = line.strip()
+                        if s.startswith('version = '):
+                            return s.split('"')[1]
+            except Exception:
+                pass
+            break
+    return None
+
+
+_VERSION = _read_version_from_cargo_toml() or "0.6.5"
 
 
 def main():
@@ -14766,6 +14790,8 @@ def main():
     full_regen = args.full or not old_files or len(changed_files) == len(sql_files)
 
     print(FLUXGAUSS_LOGO)
+    print(f"  v{_VERSION}")
+    print()
     log_path = _init_log(output_dir)
     _log(f"  Output:    {output_dir}")
     _log(f"  Config:    {config_path or 'CLI mode'}")

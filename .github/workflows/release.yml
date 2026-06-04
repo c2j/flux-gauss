@@ -45,16 +45,22 @@ jobs:
       - name: Strip
         run: strip --strip-unneeded target/x86_64-unknown-linux-gnu/release/ogsql
 
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Package
         run: |
           cd target/x86_64-unknown-linux-gnu/release
-          tar czf ${{ github.workspace }}/ogsql-linux-x86_64.tar.gz ogsql
+          tar czf ${{ github.workspace }}/ogsql-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz ogsql
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ogsql-linux-x86_64
-          path: ogsql-linux-x86_64.tar.gz
+          path: ogsql-*.tar.gz
 
   build-ogsql-linux-arm64:
     name: Build ogsql linux-arm64 (glibc >= 2.17)
@@ -87,16 +93,22 @@ jobs:
           sudo apt-get install -y binutils-aarch64-linux-gnu
           aarch64-linux-gnu-strip --strip-unneeded target/aarch64-unknown-linux-gnu/release/ogsql
 
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Package
         run: |
           cd target/aarch64-unknown-linux-gnu/release
-          tar czf ${{ github.workspace }}/ogsql-linux-arm64.tar.gz ogsql
+          tar czf ${{ github.workspace }}/ogsql-${{ steps.version.outputs.version }}-linux-arm64.tar.gz ogsql
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ogsql-linux-arm64
-          path: ogsql-linux-arm64.tar.gz
+          path: ogsql-*.tar.gz
 
   build-ogsql-windows-x86_64:
     name: Build ogsql windows-x86_64
@@ -135,18 +147,25 @@ jobs:
         run: strip target/x86_64-pc-windows-gnu/release/ogsql.exe
         shell: bash
 
+      - name: Extract version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Package
         shell: pwsh
         run: |
           Compress-Archive `
             -Path "target/x86_64-pc-windows-gnu/release/ogsql.exe" `
-            -DestinationPath "ogsql-windows-x86_64.zip"
+            -DestinationPath "ogsql-${{ steps.version.outputs.version }}-windows-x86_64.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ogsql-windows-x86_64
-          path: ogsql-windows-x86_64.zip
+          path: ogsql-*.zip
 
   build-ogsql-macos-arm64:
     name: Build ogsql macos-arm64
@@ -167,16 +186,22 @@ jobs:
       - name: Strip
         run: strip target/release/ogsql
 
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Package
         run: |
           cd target/release
-          tar czf ${{ github.workspace }}/ogsql-macos-arm64.tar.gz ogsql
+          tar czf ${{ github.workspace }}/ogsql-${{ steps.version.outputs.version }}-macos-arm64.tar.gz ogsql
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ogsql-macos-arm64
-          path: ogsql-macos-arm64.tar.gz
+          path: ogsql-*.tar.gz
 
   # ── fluxgauss binary (from this repo, uses ogsql-parser git dep) ─
   build-fluxgauss-linux-x86_64:
@@ -203,16 +228,22 @@ jobs:
       - name: Strip
         run: strip --strip-unneeded target/x86_64-unknown-linux-gnu/release/fluxgauss
 
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep '^version = ' crates/fluxgauss/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Package
         run: |
           cd target/x86_64-unknown-linux-gnu/release
-          tar czf ${{ github.workspace }}/fluxgauss-linux-x86_64.tar.gz fluxgauss
+          tar czf ${{ github.workspace }}/fluxgauss-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz fluxgauss
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: fluxgauss-linux-x86_64
-          path: fluxgauss-linux-x86_64.tar.gz
+          path: fluxgauss-*.tar.gz
 
   build-fluxgauss-linux-arm64:
     name: Build fluxgauss linux-arm64 (glibc >= 2.17)
@@ -242,16 +273,22 @@ jobs:
           sudo apt-get install -y binutils-aarch64-linux-gnu
           aarch64-linux-gnu-strip --strip-unneeded target/aarch64-unknown-linux-gnu/release/fluxgauss
 
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep '^version = ' crates/fluxgauss/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Package
         run: |
           cd target/aarch64-unknown-linux-gnu/release
-          tar czf ${{ github.workspace }}/fluxgauss-linux-arm64.tar.gz fluxgauss
+          tar czf ${{ github.workspace }}/fluxgauss-${{ steps.version.outputs.version }}-linux-arm64.tar.gz fluxgauss
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: fluxgauss-linux-arm64
-          path: fluxgauss-linux-arm64.tar.gz
+          path: fluxgauss-*.tar.gz
 
   build-fluxgauss-windows-x86_64:
     name: Build fluxgauss windows-x86_64
@@ -287,18 +324,25 @@ jobs:
         run: strip target/x86_64-pc-windows-gnu/release/fluxgauss.exe
         shell: bash
 
+      - name: Extract version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(grep '^version = ' crates/fluxgauss/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Package
         shell: pwsh
         run: |
           Compress-Archive `
             -Path "target/x86_64-pc-windows-gnu/release/fluxgauss.exe" `
-            -DestinationPath "fluxgauss-windows-x86_64.zip"
+            -DestinationPath "fluxgauss-${{ steps.version.outputs.version }}-windows-x86_64.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: fluxgauss-windows-x86_64
-          path: fluxgauss-windows-x86_64.zip
+          path: fluxgauss-*.zip
 
   build-fluxgauss-macos-arm64:
     name: Build fluxgauss macos-arm64
@@ -316,16 +360,22 @@ jobs:
       - name: Strip
         run: strip target/release/fluxgauss
 
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep '^version = ' crates/fluxgauss/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Package
         run: |
           cd target/release
-          tar czf ${{ github.workspace }}/fluxgauss-macos-arm64.tar.gz fluxgauss
+          tar czf ${{ github.workspace }}/fluxgauss-${{ steps.version.outputs.version }}-macos-arm64.tar.gz fluxgauss
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: fluxgauss-macos-arm64
-          path: fluxgauss-macos-arm64.tar.gz
+          path: fluxgauss-*.tar.gz
 
   # ── Python engine CI ──────────────────────────────────────────
   test-python-engine:
@@ -352,7 +402,7 @@ jobs:
 
       - name: Extract and prepare ogsql
         run: |
-          tar xzf ogsql-artifact/ogsql-linux-x86_64.tar.gz -C ogsql-artifact
+          tar xzf ogsql-artifact/ogsql-*.tar.gz -C ogsql-artifact
           chmod +x ogsql-artifact/ogsql
           echo "OGSQL_BIN=$PWD/ogsql-artifact/ogsql" >> "$GITHUB_ENV"
 
@@ -365,7 +415,7 @@ jobs:
           name: python-engine-output
           path: dest_py/
 
-  # ── fluxgauss-py binary (PyInstaller, Python engine) ──────────
+  # ── fluxgauss-py binary (PyInstaller, Python engine + bundled ogsql) ──
   build-fluxgauss-py-linux-x86_64:
     name: Build fluxgauss-py linux-x86_64
     runs-on: ubuntu-22.04
@@ -382,6 +432,19 @@ jobs:
       - name: Install dependencies
         run: pip install pyinstaller pyyaml
 
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep '^version = ' crates/fluxgauss/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Sync version to Python source
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          sed -i.bak "s/or \"[0-9][0-9.]*\" *$/or \"${VERSION}\"/" converter/flux_gauss.py
+          rm -f converter/flux_gauss.py.bak
+
       - name: Download ogsql binary
         uses: actions/download-artifact@v4
         with:
@@ -390,7 +453,7 @@ jobs:
 
       - name: Extract ogsql
         run: |
-          tar xzf ogsql-artifact/ogsql-linux-x86_64.tar.gz -C ogsql-artifact
+          tar xzf ogsql-artifact/ogsql-*.tar.gz -C ogsql-artifact
           chmod +x ogsql-artifact/ogsql
           echo "OGSQL_BIN_PATH=$PWD/ogsql-artifact/ogsql" >> "$GITHUB_ENV"
 
@@ -400,16 +463,18 @@ jobs:
       - name: Strip
         run: strip --strip-unneeded dist/fluxgauss-py
 
-      - name: Package
+      - name: Package (fluxgauss-py + ogsql)
         run: |
-          cd dist
-          tar czf ${{ github.workspace }}/fluxgauss-py-linux-x86_64.tar.gz fluxgauss-py
+          mkdir -p bundle
+          cp dist/fluxgauss-py bundle/
+          cp ogsql-artifact/ogsql bundle/
+          tar czf ${{ github.workspace }}/fluxgauss-py-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz -C bundle fluxgauss-py ogsql
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: fluxgauss-py-linux-x86_64
-          path: fluxgauss-py-linux-x86_64.tar.gz
+          path: fluxgauss-py-*.tar.gz
 
   build-fluxgauss-py-linux-arm64:
     name: Build fluxgauss-py linux-arm64
@@ -427,6 +492,19 @@ jobs:
       - name: Install dependencies
         run: pip install pyinstaller pyyaml
 
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep '^version = ' crates/fluxgauss/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Sync version to Python source
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          sed -i.bak "s/or \"[0-9][0-9.]*\" *$/or \"${VERSION}\"/" converter/flux_gauss.py
+          rm -f converter/flux_gauss.py.bak
+
       - name: Download ogsql binary
         uses: actions/download-artifact@v4
         with:
@@ -435,7 +513,7 @@ jobs:
 
       - name: Extract ogsql
         run: |
-          tar xzf ogsql-artifact/ogsql-linux-arm64.tar.gz -C ogsql-artifact
+          tar xzf ogsql-artifact/ogsql-*.tar.gz -C ogsql-artifact
           chmod +x ogsql-artifact/ogsql
           echo "OGSQL_BIN_PATH=$PWD/ogsql-artifact/ogsql" >> "$GITHUB_ENV"
 
@@ -445,16 +523,18 @@ jobs:
       - name: Strip
         run: strip --strip-unneeded dist/fluxgauss-py
 
-      - name: Package
+      - name: Package (fluxgauss-py + ogsql)
         run: |
-          cd dist
-          tar czf ${{ github.workspace }}/fluxgauss-py-linux-arm64.tar.gz fluxgauss-py
+          mkdir -p bundle
+          cp dist/fluxgauss-py bundle/
+          cp ogsql-artifact/ogsql bundle/
+          tar czf ${{ github.workspace }}/fluxgauss-py-${{ steps.version.outputs.version }}-linux-arm64.tar.gz -C bundle fluxgauss-py ogsql
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: fluxgauss-py-linux-arm64
-          path: fluxgauss-py-linux-arm64.tar.gz
+          path: fluxgauss-py-*.tar.gz
 
   build-fluxgauss-py-windows-x86_64:
     name: Build fluxgauss-py windows-x86_64
@@ -475,6 +555,20 @@ jobs:
       - name: Install dependencies
         run: pip install pyinstaller pyyaml
 
+      - name: Extract version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(grep '^version = ' crates/fluxgauss/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Sync version to Python source
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          sed -i.bak "s/or \"[0-9][0-9.]*\" *$/or \"${VERSION}\"/" converter/flux_gauss.py
+          rm -f converter/flux_gauss.py.bak
+
       - name: Download ogsql binary
         uses: actions/download-artifact@v4
         with:
@@ -484,25 +578,28 @@ jobs:
       - name: Extract ogsql
         shell: pwsh
         run: |
-          Expand-Archive -Path ogsql-artifact/ogsql-windows-x86_64.zip -DestinationPath ogsql-artifact
+          Expand-Archive -Path ogsql-artifact/ogsql-*.zip -DestinationPath ogsql-artifact
           $ogsqlPath = (Resolve-Path "ogsql-artifact/ogsql.exe").Path
           "OGSQL_BIN_PATH=$ogsqlPath" >> $env:GITHUB_ENV
 
       - name: Build with PyInstaller
         run: pyinstaller fluxgauss.spec --clean --noconfirm
 
-      - name: Package
+      - name: Package (fluxgauss-py + ogsql)
         shell: pwsh
         run: |
+          New-Item -ItemType Directory -Force -Path bundle | Out-Null
+          Copy-Item dist/fluxgauss-py.exe bundle/
+          Copy-Item ogsql-artifact/ogsql.exe bundle/
           Compress-Archive `
-            -Path "dist/fluxgauss-py.exe" `
-            -DestinationPath "fluxgauss-py-windows-x86_64.zip"
+            -Path "bundle/fluxgauss-py.exe", "bundle/ogsql.exe" `
+            -DestinationPath "fluxgauss-py-${{ steps.version.outputs.version }}-windows-x86_64.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: fluxgauss-py-windows-x86_64
-          path: fluxgauss-py-windows-x86_64.zip
+          path: fluxgauss-py-*.zip
 
   build-fluxgauss-py-macos-arm64:
     name: Build fluxgauss-py macos-arm64
@@ -520,6 +617,19 @@ jobs:
       - name: Install dependencies
         run: pip install pyinstaller pyyaml
 
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep '^version = ' crates/fluxgauss/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Sync version to Python source
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          sed -i.bak "s/or \"[0-9][0-9.]*\" *$/or \"${VERSION}\"/" converter/flux_gauss.py
+          rm -f converter/flux_gauss.py.bak
+
       - name: Download ogsql binary
         uses: actions/download-artifact@v4
         with:
@@ -528,7 +638,7 @@ jobs:
 
       - name: Extract ogsql
         run: |
-          tar xzf ogsql-artifact/ogsql-macos-arm64.tar.gz -C ogsql-artifact
+          tar xzf ogsql-artifact/ogsql-*.tar.gz -C ogsql-artifact
           chmod +x ogsql-artifact/ogsql
           echo "OGSQL_BIN_PATH=$PWD/ogsql-artifact/ogsql" >> "$GITHUB_ENV"
 
@@ -538,16 +648,18 @@ jobs:
       - name: Strip
         run: strip dist/fluxgauss-py
 
-      - name: Package
+      - name: Package (fluxgauss-py + ogsql)
         run: |
-          cd dist
-          tar czf ${{ github.workspace }}/fluxgauss-py-macos-arm64.tar.gz fluxgauss-py
+          mkdir -p bundle
+          cp dist/fluxgauss-py bundle/
+          cp ogsql-artifact/ogsql bundle/
+          tar czf ${{ github.workspace }}/fluxgauss-py-${{ steps.version.outputs.version }}-macos-arm64.tar.gz -C bundle fluxgauss-py ogsql
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: fluxgauss-py-macos-arm64
-          path: fluxgauss-py-macos-arm64.tar.gz
+          path: fluxgauss-py-*.tar.gz
 
   # ── Rust engine CI ────────────────────────────────────────────
   test-rust-engine:
