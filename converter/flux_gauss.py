@@ -2047,7 +2047,6 @@ def _patch_promoted_var_reads(line: str, var_java: str) -> str:
     patterns_to_skip = [
         rf'\b{re.escape(var_java)}\s*=',
         rf'\b{re.escape(var_java)}\.set\s*\(',
-        rf'{re.escape(var_java)}\s*;',
         rf'this\.\w+\(.*\b{re.escape(var_java)}\b',
         rf'\w+Mapper\.\w+\(.*\b{re.escape(var_java)}\b',
     ]
