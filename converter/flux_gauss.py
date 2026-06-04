@@ -4405,8 +4405,9 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
 
     # BigDecimal context: wrap double literals from CASE/ternary into BigDecimal.valueOf()
     target_var_type = None
+    target_lower = target.lower()
     for vname, vtype in proc.local_vars.items():
-        if snake_to_camel(vname) == target:
+        if snake_to_camel(vname).lower() == target_lower:
             target_var_type = vtype
             break
     if target_var_type is None:
@@ -4483,6 +4484,8 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
                 return
         elif target_var_type and target_var_type not in ("String", "Integer", "int", "Object", "BigDecimal", "java.math.BigDecimal", "Long", "long", "boolean", "Boolean") and ".get(" in expr and not expr.startswith("("):
             expr = f"({target_var_type}) {expr}"
+        elif target_var_type in ("BigDecimal", "java.math.BigDecimal") and "mapper." in expr and "BigDecimal" not in expr:
+            expr = f"((java.math.BigDecimal) {expr})"
         proc.java_logic_lines.append(f"{target} = {expr};")
         if ("Mapper" in expr or "mapper" in expr) and target_var_type in ("Long", "Integer", "int"):
             _null_default = "0L" if target_var_type == "Long" else "0"
@@ -8267,6 +8270,10 @@ def _infer_expr_type(expr, proc: ProcedureInfo) -> str:
                 return _java_type_from_field_name(field_name)
             if name in proc.local_vars:
                 return proc.local_vars[name]
+            name_lower = name.lower()
+            for vn, vt in proc.local_vars.items():
+                if vn.lower() == name_lower:
+                    return vt
             for p in proc.parameters:
                 if p.name.lower() == name.lower():
                     return p.java_type
@@ -12307,6 +12314,8 @@ def _default_test_value(java_type: str, param_name: str, pkg=None) -> str:
             return "\"2024-01-01\""
         if any(kw in name_lower for kw in ("list", "ids", "task_list", "id_list", "values")):
             return "\"1,2,3\""
+        if any(kw in name_lower for kw in ("flag", "amount", "seqno", "interfaceseq", "operflag", "stepno", "count", "quantity", "qty", "price", "total")):
+            return "\"1\""
     return f"\"test_{param_name}\""
 
 
