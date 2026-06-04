@@ -1569,6 +1569,10 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
                                 var_type = sql_type_to_java(str(var_type_raw))
                             default_expr = item_data.get("default")
                             default_val = _expr_to_java(default_expr, None) if default_expr else None
+                            if default_val and default_expr is not None:
+                                default_inferred = _infer_expr_type(default_expr, None)
+                                if _needs_coercion(default_inferred, var_type):
+                                    default_val = _coerce_type(default_val, default_inferred, var_type)
                             package_vars[var_name] = {"java_type": var_type, "default": default_val}
                         elif item_type == "Type":
                             for type_kind, type_data in item_data.items():
@@ -1611,6 +1615,10 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
                                 var_type = sql_type_to_java(str(var_type_raw))
                             default_expr = item_data.get("default")
                             default_val = _expr_to_java(default_expr, None) if default_expr else None
+                            if default_val and default_expr is not None:
+                                default_inferred = _infer_expr_type(default_expr, None)
+                                if _needs_coercion(default_inferred, var_type):
+                                    default_val = _coerce_type(default_val, default_inferred, var_type)
                             package_vars[var_name] = {"java_type": var_type, "default": default_val}
                     else:
                         continue
@@ -2302,6 +2310,10 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
                                 default_java = f"new java.util.ArrayList<>(java.util.Arrays.asList({default_java}))"
                             else:
                                 default_java = f"new java.util.ArrayList<>({default_java})"
+                        # Type-check: coerce default value if it doesn't match declared type
+                        default_inferred = _infer_expr_type(default_ast, proc)
+                        if _needs_coercion(default_inferred, java_type):
+                            default_java = _coerce_type(default_java, default_inferred, java_type)
                         proc.local_var_defaults[var_name] = default_java
                     except Exception:
                         pass
@@ -2611,6 +2623,9 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
                                         default_java = f"new java.util.ArrayList<>(java.util.Arrays.asList({default_java}))"
                                     else:
                                         default_java = f"new java.util.ArrayList<>({default_java})"
+                                default_inferred = _infer_expr_type(default_ast, proc)
+                                if _needs_coercion(default_inferred, java_type):
+                                    default_java = _coerce_type(default_java, default_inferred, java_type)
                                 proc.local_var_defaults[var_name] = default_java
                             except Exception:
                                 pass
@@ -4681,6 +4696,23 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
             else:
                 java_expr = _safe_map_cast(target_type, java_expr)
 
+    # ── General type coercion fallback ──
+    # Existing ad-hoc checks above handle specific cases (BigDecimal, String, Map.get()).
+    # This fallback covers remaining type mismatches using the unified coercion engine.
+    if target_type and expr_type and _needs_coercion(expr_type, target_type):
+        # Skip if already handled by existing logic above (check for type conversion patterns in expr)
+        _already_coerced = any(pattern in java_expr for pattern in (
+            "BigDecimal.valueOf(", "String.valueOf(", ".intValue()", ".longValue()",
+            ".doubleValue()", "Integer.parseInt(", "Long.parseLong(", "Double.parseDouble(",
+            ".toString()", "new java.math.BigDecimal(", "_safe_map_cast(",
+            "(String) ", f"({target_type}) ",
+        ))
+        if not _already_coerced and "BigDecimal" in target_type:
+            if "BigDecimal" in java_expr or java_expr.strip().startswith("new java.math."):
+                _already_coerced = True
+        if not _already_coerced:
+            java_expr = _coerce_type(java_expr, expr_type, target_type)
+
     target_out = None
     for p in proc.parameters:
         if p.java_name == target and p.is_out:
@@ -6032,7 +6064,7 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
                             a_java = f"(String) {a_java}"
                         elif not a_java.startswith('"'):
                             a_java_type = _infer_expr_type(a, proc)
-                            if a_java_type in ("long", "Long", "int", "Integer"):
+                            if a_java_type in ("long", "Long", "int", "Integer", "double", "Double", "float", "Float", "java.math.BigDecimal"):
                                 a_java = f"String.valueOf({a_java})"
                     else:
                         a_java = _coerce_java_arg(a_java, tptype)
@@ -6143,7 +6175,16 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
                                 else:
                                     a_java = _expr_to_java(a, proc, as_read=True)
                                     if target_proc_info and i < len(target_proc_info.parameters):
-                                        a_java = _coerce_java_arg(a_java, target_proc_info.parameters[i].java_type)
+                                        tptype = target_proc_info.parameters[i].java_type
+                                        if tptype == "String":
+                                            if ".get(" in a_java:
+                                                a_java = f"(String) {a_java}"
+                                            elif not a_java.startswith('"'):
+                                                a_java_type = _infer_expr_type(a, proc)
+                                                if a_java_type in ("long", "Long", "int", "Integer", "double", "Double", "float", "Float", "java.math.BigDecimal"):
+                                                    a_java = f"String.valueOf({a_java})"
+                                        else:
+                                            a_java = _coerce_java_arg(a_java, tptype)
                                     _resolved.append(a_java)
                             args_java = ", ".join(_resolved)
                             is_self_call = (matched.lower() == proc.package.lower())
@@ -8409,6 +8450,154 @@ def _coerce_java_arg(a_java: str, target_type: str) -> str:
     return a_java
 
 
+# ── Unified Type Coercion ─────────────────────────────────────
+
+# 类型规范化：将 primitive/boxed 统一为 canonical 形式用于比较
+_CANONICAL_TYPE = {
+    "int": "Integer", "long": "Long", "double": "Double",
+    "float": "Float", "boolean": "Boolean", "short": "Short",
+    "byte": "Byte", "char": "Character",
+}
+
+
+def _normalize_type(java_type: str) -> str:
+    """Normalize a Java type to its canonical form for comparison.
+
+    Examples: "int" -> "Integer", "long" -> "Long", "java.math.BigDecimal" unchanged.
+    """
+    if not java_type:
+        return ""
+    return _CANONICAL_TYPE.get(java_type, java_type)
+
+
+def _is_numeric_type(java_type: str) -> bool:
+    """Check if a Java type is a numeric type (Integer, Long, Double, Float, BigDecimal, etc.)."""
+    t = _normalize_type(java_type)
+    return t in ("Integer", "Long", "Double", "Float", "java.math.BigDecimal", "Short", "Byte")
+
+
+def _needs_coercion(source_type: str, target_type: str) -> bool:
+    """Check if a type conversion is needed from source to target.
+
+    Returns True if source and target are different types that require explicit conversion.
+    Returns False for: same types, Object involvement, Map<String, Object> involvement,
+    primitive<->boxed pairs, unknown types.
+    """
+    if not source_type or not target_type:
+        return False
+
+    src = _normalize_type(source_type)
+    tgt = _normalize_type(target_type)
+
+    # Same type (after normalization) -- no coercion needed
+    if src == tgt:
+        return False
+
+    # Object / Map<String, Object> -- no coercion possible/needed
+    if src in ("Object", "Map<String, Object>", "") or tgt in ("Object", "Map<String, Object>", ""):
+        return False
+
+    # List types -- no generic coercion
+    if src.startswith("List<") or tgt.startswith("List<"):
+        return False
+
+    # java.sql.Date / Timestamp -- no numeric coercion
+    if src.startswith("java.sql.") or tgt.startswith("java.sql."):
+        return False
+
+    return True
+
+
+def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
+    """Coerce a Java expression from source_type to target_type.
+
+    Returns the original expr if no coercion is needed or possible.
+    Uses _needs_coercion() to determine if coercion is applicable.
+
+    Conversion rules:
+    - Numeric -> Numeric: use .xxxValue() or BigDecimal.valueOf()
+    - Numeric -> String: String.valueOf() (BigDecimal uses .toString())
+    - String -> Numeric: Xxx.parseXxx() (BigDecimal uses new BigDecimal())
+    - Integer/Long -> Boolean: (expr != 0) or (expr != 0L)
+    - Boolean -> Integer/Long: (expr ? 1 : 0) / (expr ? 1L : 0L)
+    """
+    if not _needs_coercion(source_type, target_type):
+        return expr
+
+    src = _normalize_type(source_type)
+    tgt = _normalize_type(target_type)
+
+    # Numeric to numeric conversions
+    if _is_numeric_type(src) and _is_numeric_type(tgt):
+        # Detect bare numeric literals (e.g. "42", "3.14") — avoid generating invalid "42.longValue()"
+        _is_bare_lit = re.match(r'^-?\d+(\.\d+)?([dDfFlL])?$', expr.strip())
+        # BigDecimal source -> numeric target
+        if src == "java.math.BigDecimal":
+            if tgt == "Integer":
+                return f"{expr}.intValue()"
+            if tgt == "Long":
+                return f"{expr}.longValue()"
+            if tgt == "Double":
+                return f"{expr}.doubleValue()"
+            if tgt == "Float":
+                return f"{expr}.floatValue()"
+        # Non-BigDecimal source -> BigDecimal target
+        if tgt == "java.math.BigDecimal":
+            return f"java.math.BigDecimal.valueOf({expr})"
+        # Non-BigDecimal -> non-BigDecimal (Integer<->Long, Integer<->Double, etc.)
+        if tgt == "Integer":
+            if _is_bare_lit:
+                return f"Integer.valueOf({expr})"
+            return f"{expr}.intValue()"
+        if tgt == "Long":
+            if _is_bare_lit:
+                return f"Long.valueOf({expr})"
+            return f"{expr}.longValue()"
+        if tgt == "Double":
+            if _is_bare_lit:
+                return f"Double.valueOf({expr})"
+            return f"{expr}.doubleValue()"
+        if tgt == "Float":
+            if _is_bare_lit:
+                return f"Float.valueOf({expr})"
+            return f"{expr}.floatValue()"
+
+    # Numeric to String
+    if _is_numeric_type(src) and tgt == "String":
+        if src == "java.math.BigDecimal":
+            return f"{expr}.toString()"
+        return f"String.valueOf({expr})"
+
+    # String to numeric
+    if src == "String" and _is_numeric_type(tgt):
+        if tgt == "Integer":
+            return f"Integer.parseInt({expr})"
+        if tgt == "Long":
+            return f"Long.parseLong({expr})"
+        if tgt == "Double":
+            return f"Double.parseDouble({expr})"
+        if tgt == "Float":
+            return f"Float.parseFloat({expr})"
+        if tgt == "java.math.BigDecimal":
+            return f"new java.math.BigDecimal({expr})"
+
+    # Integer/Long to Boolean
+    if src in ("Integer", "Long") and tgt == "Boolean":
+        suffix = "L" if src == "Long" else ""
+        return f"({expr} != 0{suffix})"
+
+    # Boolean to Integer
+    if src == "Boolean" and tgt == "Integer":
+        return f"({expr} ? 1 : 0)"
+
+    # Boolean to Long
+    if src == "Boolean" and tgt == "Long":
+        return f"({expr} ? 1L : 0L)"
+
+    # Fallback: no known coercion
+    return expr
+
+
 def _is_integer_literal(expr, value=None) -> bool:
     if not isinstance(expr, dict):
         return False
@@ -8713,6 +8902,49 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     elif _is_numeric_literal(val.get("left")):
                         left = f"Long.valueOf({left})"
                     return f"{left}.compareTo({right}) {cmp_map[op]} 0"
+
+                # ── General type alignment for mixed-type numeric comparisons ──
+                if op in (">", "<", ">=", "<=", "=", "<>"):
+                    _NUMERIC_PRIORITY = {"Integer": 0, "Long": 1, "Float": 2, "Double": 3, "java.math.BigDecimal": 4}
+                    _l_pri = _NUMERIC_PRIORITY.get(left_type, -1)
+                    _r_pri = _NUMERIC_PRIORITY.get(right_type, -1)
+                    
+                    if _l_pri >= 0 and _r_pri >= 0 and _l_pri != _r_pri:
+                        # Both numeric but different precision -- promote to higher
+                        cmp_map = {"<": "<", ">": ">", "<=": "<=", ">=": ">=", "=": "==", "<>": "!="}
+                        
+                        if _l_pri > _r_pri:
+                            right = _coerce_type(right, right_type, left_type)
+                            _common_type = left_type
+                        else:
+                            left = _coerce_type(left, left_type, right_type)
+                            _common_type = right_type
+                        
+                        if _common_type == "java.math.BigDecimal":
+                            return f"{left}.compareTo({right}) {cmp_map[op]} 0"
+                        elif _common_type == "Long":
+                            if _is_numeric_literal(val.get("right")):
+                                right = f"Long.valueOf({right})"
+                            elif _is_numeric_literal(val.get("left")):
+                                left = f"Long.valueOf({left})"
+                            return f"{left}.compareTo({right}) {cmp_map[op]} 0"
+                        elif _common_type == "Double":
+                            return f"Double.compare({left}, {right}) {cmp_map[op]} 0"
+                        return f"{left} {cmp_map[op]} {right}"
+                    
+                    # String vs Numeric comparison (non-Map.get)
+                    if (_l_pri >= 0 and left_type != "Object") and right_type == "String" and ".get(" not in right:
+                        cmp_map = {"<": "<", ">": ">", "<=": "<=", ">=": ">=", "=": "==", "<>": "!="}
+                        right = _coerce_type(right, "String", left_type)
+                        if left_type == "java.math.BigDecimal":
+                            return f"{left}.compareTo({right}) {cmp_map[op]} 0"
+                        return f"{left} {cmp_map[op]} {right}"
+                    if (_r_pri >= 0 and right_type != "Object") and left_type == "String" and ".get(" not in left:
+                        cmp_map = {"<": "<", ">": ">", "<=": "<=", ">=": ">=", "=": "==", "<>": "!="}
+                        left = _coerce_type(left, "String", right_type)
+                        if right_type == "java.math.BigDecimal":
+                            return f"{left}.compareTo({right}) {cmp_map[op]} 0"
+                        return f"{left} {cmp_map[op]} {right}"
 
                 if is_bd and op in ("+", "-", "*", "/"):
                     arith_map = {"+": "add", "-": "subtract", "*": "multiply", "/": "divide"}
@@ -14408,7 +14640,7 @@ def _build_arg_parser():
     return parser
 
 
-_VERSION = "0.6.0"
+_VERSION = "0.6.1"
 
 
 def main():
