@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use encoding_rs::Encoding;
+
 use crate::generate::writer::CodeWriter;
 use crate::naming::{package_to_classname, snake_to_camel};
 use crate::type_map::{java_type_to_jdbc, sql_type_to_java};
@@ -39,6 +41,7 @@ pub fn write_mapper_interface(
     base_path: &Path,
     pkg: &PackageInfo,
     base_package: &str,
+    encoding: &'static Encoding,
 ) -> std::io::Result<String> {
     let java_pkg = base_package;
     let mapper_dir = base_path.join(format!("src/main/java/{}/mapper", java_pkg.replace('.', "/")));
@@ -85,7 +88,7 @@ pub fn write_mapper_interface(
 
     std::fs::create_dir_all(&mapper_dir)?;
     let file_path = mapper_dir.join(format!("{}.java", class_name));
-    w.write_to_file(&file_path)?;
+    w.write_to_file(&file_path, encoding)?;
     Ok(class_name)
 }
 
@@ -317,6 +320,7 @@ pub fn write_mapper_xml(
     base_path: &Path,
     pkg: &PackageInfo,
     base_package: &str,
+    encoding: &'static Encoding,
 ) -> std::io::Result<String> {
     let mapper_dir = base_path.join("src/main/resources/mapper");
     let class_name = format!("{}Mapper", package_to_classname(&pkg.package_name));
@@ -331,7 +335,7 @@ pub fn write_mapper_xml(
     }
 
     let mut w = CodeWriter::new();
-    w.line("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+    w.line(&format!("<?xml version=\"1.0\" encoding=\"{}\"?>", encoding.name().to_uppercase()));
     w.line("<!DOCTYPE mapper PUBLIC \"-//mybatis.org//DTD Mapper 3.0//EN\"");
     w.line("        \"http://mybatis.org/dtd/mybatis-3-mapper.dtd\">");
     w.line(&format!("<mapper namespace=\"{}\">", namespace));
@@ -351,7 +355,7 @@ pub fn write_mapper_xml(
 
     std::fs::create_dir_all(&mapper_dir)?;
     let file_path = mapper_dir.join(format!("{}.xml", class_name));
-    w.write_to_file(&file_path)?;
+    w.write_to_file(&file_path, encoding)?;
     Ok(class_name)
 }
 
@@ -1399,7 +1403,7 @@ mod tests {
     fn test_empty_package() {
         let pkg = make_pkg("pkg_test", vec![]);
         let dir = tempfile::tempdir().unwrap();
-        let result = write_mapper_interface(dir.path(), &pkg, "com.example.demo");
+        let result = write_mapper_interface(dir.path(), &pkg, "com.example.demo", encoding_rs::UTF_8);
         assert!(result.is_ok());
         let content = std::fs::read_to_string(
             dir.path().join("src/main/java/com/example/demo/mapper/TestMapper.java"),
@@ -1416,7 +1420,7 @@ mod tests {
         let proc = make_proc("create_order", vec![], vec![dml]);
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_mapper_interface(dir.path(), &pkg, "com.example.demo").unwrap();
+        write_mapper_interface(dir.path(), &pkg, "com.example.demo", encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/main/java/com/example/demo/mapper/OrderMapper.java"),
         )
@@ -1431,7 +1435,7 @@ mod tests {
         let proc = make_proc("get_all", vec![], vec![dml]);
         let pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_mapper_interface(dir.path(), &pkg, "com.example.demo").unwrap();
+        write_mapper_interface(dir.path(), &pkg, "com.example.demo", encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/main/java/com/example/demo/mapper/DataMapper.java"),
         )
@@ -1462,7 +1466,7 @@ mod tests {
         let proc = make_proc("get_data", params, vec![dml]);
         let pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_mapper_interface(dir.path(), &pkg, "com.example.demo").unwrap();
+        write_mapper_interface(dir.path(), &pkg, "com.example.demo", encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/main/java/com/example/demo/mapper/DataMapper.java"),
         )
@@ -1479,7 +1483,7 @@ mod tests {
         let proc = make_proc("add_data", vec![], vec![dml]);
         let pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_mapper_interface(dir.path(), &pkg, "com.example.demo").unwrap();
+        write_mapper_interface(dir.path(), &pkg, "com.example.demo", encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/main/java/com/example/demo/mapper/DataMapper.java"),
         )
@@ -1493,7 +1497,7 @@ mod tests {
         let proc = make_proc("create_order", vec![], vec![dml]);
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_mapper_xml(dir.path(), &pkg, "com.example.demo").unwrap();
+        write_mapper_xml(dir.path(), &pkg, "com.example.demo", encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/main/resources/mapper/OrderMapper.xml"),
         ).unwrap();
@@ -1509,7 +1513,7 @@ mod tests {
         let proc = make_proc("get_data", vec![], vec![dml]);
         let pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_mapper_xml(dir.path(), &pkg, "com.example.demo").unwrap();
+        write_mapper_xml(dir.path(), &pkg, "com.example.demo", encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/main/resources/mapper/DataMapper.xml"),
         ).unwrap();

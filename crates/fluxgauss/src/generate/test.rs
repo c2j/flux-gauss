@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use encoding_rs::Encoding;
+
 use crate::generate::mapper::is_simple_java_type;
 use crate::generate::writer::CodeWriter;
 use crate::naming::{java_method_name, package_to_classname, snake_to_camel};
@@ -33,6 +35,7 @@ pub fn write_service_test(
     pkg: &PackageInfo,
     base_package: &str,
     service_injections: &std::collections::HashMap<String, String>,
+    encoding: &'static Encoding,
 ) -> std::io::Result<String> {
     let java_pkg = format!("{}.service", base_package);
     let test_dir = base_path.join(format!("src/test/java/{}/service", base_package.replace('.', "/")));
@@ -146,7 +149,7 @@ pub fn write_service_test(
 
     std::fs::create_dir_all(&test_dir)?;
     let file_path = test_dir.join(format!("{}.java", test_class_name));
-    w.write_to_file(&file_path)?;
+    w.write_to_file(&file_path, encoding)?;
     Ok(test_class_name)
 }
 
@@ -710,7 +713,7 @@ mod tests {
         let proc = make_proc("do_work");
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_service_test(dir.path(), &pkg, "com.example.demo", &Default::default()).unwrap();
+        write_service_test(dir.path(), &pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/service/OrderServiceTest.java"),
         ).unwrap();
@@ -740,7 +743,7 @@ mod tests {
                 });
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_service_test(dir.path(), &pkg, "com.example.demo", &Default::default()).unwrap();
+        write_service_test(dir.path(), &pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/service/OrderServiceTest.java"),
         ).unwrap();
@@ -764,7 +767,7 @@ mod tests {
                 });
         let pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_service_test(dir.path(), &pkg, "com.example.demo", &Default::default()).unwrap();
+        write_service_test(dir.path(), &pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/service/DataServiceTest.java"),
         ).unwrap();
@@ -789,7 +792,7 @@ mod tests {
                 });
         let pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_service_test(dir.path(), &pkg, "com.example.demo", &Default::default()).unwrap();
+        write_service_test(dir.path(), &pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/service/DataServiceTest.java"),
         ).unwrap();
@@ -813,7 +816,7 @@ mod tests {
                 });
         let pkg = make_pkg("pkg_inventory", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_service_test(dir.path(), &pkg, "com.example.demo", &Default::default()).unwrap();
+        write_service_test(dir.path(), &pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/service/InventoryServiceTest.java"),
         ).unwrap();
@@ -838,7 +841,7 @@ mod tests {
                 });
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_service_test(dir.path(), &pkg, "com.example.demo", &Default::default()).unwrap();
+        write_service_test(dir.path(), &pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/service/OrderServiceTest.java"),
         ).unwrap();

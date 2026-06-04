@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use encoding_rs::Encoding;
+
 use crate::config::AppConfig;
 use crate::generate::writer::CodeWriter;
 
@@ -7,18 +9,19 @@ pub fn write_skeleton_files(
     output_dir: &Path,
     config: &AppConfig,
     base_package: &str,
+    encoding: &'static Encoding,
 ) -> std::io::Result<Vec<String>> {
     let mut generated = Vec::new();
 
     if !output_dir.join("pom.xml").exists() {
-        write_pom_xml(output_dir, base_package)?;
+        write_pom_xml(output_dir, base_package, encoding)?;
         generated.push("pom.xml".to_string());
     }
 
     let resources_dir = output_dir.join("src/main/resources");
     let yml_path = resources_dir.join("application.yml");
     if !yml_path.exists() {
-        write_application_yml(&resources_dir, config)?;
+        write_application_yml(&resources_dir, config, encoding)?;
         generated.push("src/main/resources/application.yml".to_string());
     }
 
@@ -29,23 +32,23 @@ pub fn write_skeleton_files(
 
     let app_path = java_dir.join("DemoApplication.java");
     if !app_path.exists() {
-        write_main_application(&java_dir, base_package)?;
+        write_main_application(&java_dir, base_package, encoding)?;
         generated.push("src/main/java/.../DemoApplication.java".to_string());
     }
 
     let exc_dir = java_dir.join("exception");
     let exc_path = exc_dir.join("BusinessException.java");
     if !exc_path.exists() {
-        write_business_exception(&exc_dir, base_package)?;
+        write_business_exception(&exc_dir, base_package, encoding)?;
         generated.push("src/main/java/.../exception/BusinessException.java".to_string());
     }
 
     Ok(generated)
 }
 
-fn write_pom_xml(output_dir: &Path, _base_package: &str) -> std::io::Result<()> {
+fn write_pom_xml(output_dir: &Path, _base_package: &str, encoding: &'static Encoding) -> std::io::Result<()> {
     let mut w = CodeWriter::new();
-    w.line("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+    w.line(&format!("<?xml version=\"1.0\" encoding=\"{}\"?>", encoding.name().to_uppercase()));
     w.line("<project xmlns=\"http://maven.apache.org/POM/4.0.0\"");
     w.line("         xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"");
     w.line("         xsi:schemaLocation=\"http://maven.apache.org/POM/4.0.0");
@@ -70,6 +73,9 @@ fn write_pom_xml(output_dir: &Path, _base_package: &str) -> std::io::Result<()> 
     w.line("<properties>");
     w.push_indent();
     w.line("<java.version>17</java.version>");
+    if encoding.name() != "utf-8" {
+        w.line(&format!("<project.build.sourceEncoding>{}</project.build.sourceEncoding>", encoding.name().to_uppercase()));
+    }
     w.pop_indent();
     w.line("</properties>");
     w.blank();
@@ -169,7 +175,7 @@ fn write_pom_xml(output_dir: &Path, _base_package: &str) -> std::io::Result<()> 
     w.pop_indent();
     w.line("</project>");
 
-    w.write_to_file(&output_dir.join("pom.xml"))
+    w.write_to_file(&output_dir.join("pom.xml"), encoding)
 }
 
 fn write_dep(
@@ -193,7 +199,7 @@ fn write_dep(
     w.line("</dependency>");
 }
 
-fn write_application_yml(resources_dir: &Path, config: &AppConfig) -> std::io::Result<()> {
+fn write_application_yml(resources_dir: &Path, config: &AppConfig, encoding: &'static Encoding) -> std::io::Result<()> {
     let db = config.database.as_ref();
     let it = config.integration_test.as_ref();
     let url = db.and_then(|d| d.url.as_deref())
@@ -229,10 +235,10 @@ fn write_application_yml(resources_dir: &Path, config: &AppConfig) -> std::io::R
     w.pop_indent();
 
     std::fs::create_dir_all(resources_dir)?;
-    w.write_to_file(&resources_dir.join("application.yml"))
+    w.write_to_file(&resources_dir.join("application.yml"), encoding)
 }
 
-fn write_main_application(java_dir: &Path, base_package: &str) -> std::io::Result<()> {
+fn write_main_application(java_dir: &Path, base_package: &str, encoding: &'static Encoding) -> std::io::Result<()> {
     let mut w = CodeWriter::new();
     w.line(&format!("package {};", base_package));
     w.blank();
@@ -253,10 +259,10 @@ fn write_main_application(java_dir: &Path, base_package: &str) -> std::io::Resul
     w.line("}");
 
     std::fs::create_dir_all(java_dir)?;
-    w.write_to_file(&java_dir.join("DemoApplication.java"))
+    w.write_to_file(&java_dir.join("DemoApplication.java"), encoding)
 }
 
-fn write_business_exception(exc_dir: &Path, base_package: &str) -> std::io::Result<()> {
+fn write_business_exception(exc_dir: &Path, base_package: &str, encoding: &'static Encoding) -> std::io::Result<()> {
     let mut w = CodeWriter::new();
     w.line(&format!("package {}.exception;", base_package));
     w.blank();
@@ -277,7 +283,7 @@ fn write_business_exception(exc_dir: &Path, base_package: &str) -> std::io::Resu
     w.line("}");
 
     std::fs::create_dir_all(exc_dir)?;
-    w.write_to_file(&exc_dir.join("BusinessException.java"))
+    w.write_to_file(&exc_dir.join("BusinessException.java"), encoding)
 }
 
 #[cfg(test)]
@@ -289,7 +295,7 @@ mod tests {
     fn test_pom_xml_content() -> std::io::Result<()> {
         let dir = tempfile::tempdir()?;
         let config = AppConfig::default();
-        write_pom_xml(dir.path(), "com.example.demo")?;
+        write_pom_xml(dir.path(), "com.example.demo", encoding_rs::UTF_8)?;
         let content = std::fs::read_to_string(dir.path().join("pom.xml"))?;
         assert!(content.contains("spring-boot-starter-parent"));
         assert!(content.contains("3.2.5"));
@@ -305,7 +311,7 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let res_dir = dir.path().join("resources");
         let config = AppConfig::default();
-        write_application_yml(&res_dir, &config)?;
+        write_application_yml(&res_dir, &config, encoding_rs::UTF_8)?;
         let content = std::fs::read_to_string(res_dir.join("application.yml"))?;
         assert!(content.contains("spring:"));
         assert!(content.contains("datasource:"));
@@ -319,7 +325,7 @@ mod tests {
     fn test_main_application_content() -> std::io::Result<()> {
         let dir = tempfile::tempdir()?;
         let java_dir = dir.path().join("java");
-        write_main_application(&java_dir, "com.example.demo")?;
+        write_main_application(&java_dir, "com.example.demo", encoding_rs::UTF_8)?;
         let content = std::fs::read_to_string(java_dir.join("DemoApplication.java"))?;
         assert!(content.contains("package com.example.demo;"));
         assert!(content.contains("@SpringBootApplication"));
@@ -333,7 +339,7 @@ mod tests {
     fn test_business_exception_content() -> std::io::Result<()> {
         let dir = tempfile::tempdir()?;
         let exc_dir = dir.path().join("exception");
-        write_business_exception(&exc_dir, "com.example.demo")?;
+        write_business_exception(&exc_dir, "com.example.demo", encoding_rs::UTF_8)?;
         let content = std::fs::read_to_string(exc_dir.join("BusinessException.java"))?;
         assert!(content.contains("package com.example.demo.exception;"));
         assert!(content.contains("public class BusinessException extends RuntimeException"));

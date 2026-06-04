@@ -1,6 +1,8 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
+use encoding_rs::Encoding;
+
 use crate::generate::writer::CodeWriter;
 use crate::naming::{java_method_name, package_to_classname, snake_to_camel};
 use crate::types::{DmlType, PackageInfo, ParamMode, Parameter, ProcedureInfo};
@@ -12,6 +14,7 @@ pub fn write_itest_class(
     service_injections: &std::collections::HashMap<String, String>,
     all_packages: &[PackageInfo],
     precomputed_schema_map: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    encoding: &'static Encoding,
 ) -> std::io::Result<String> {
     let itest_dir = base_path.join(format!(
         "src/test/java/{}/itest",
@@ -121,7 +124,7 @@ pub fn write_itest_class(
         let args_str = all_args.join(", ");
 
         let test_data = infer_test_data(proc, pkg, &schema_map, all_packages);
-        let sql_script = write_fixtures(base_path, proc, pkg, &test_data).unwrap_or_default();
+        let sql_script = write_fixtures(base_path, proc, pkg, &test_data, encoding).unwrap_or_default();
 
         let base_test_name = format!("test_{}_integration", method_name);
         let count = seen_method_names.entry(base_test_name.clone()).or_insert(0);
@@ -279,13 +282,14 @@ pub fn write_itest_class(
 
     std::fs::create_dir_all(&itest_dir)?;
     let file_path = itest_dir.join(format!("{}.java", itest_class_name));
-    w.write_to_file(&file_path)?;
+    w.write_to_file(&file_path, encoding)?;
     Ok(itest_class_name)
 }
 
 pub fn write_abstract_integration_test(
     base_path: &Path,
     base_package: &str,
+    encoding: &'static Encoding,
 ) -> std::io::Result<()> {
     let itest_dir = base_path.join(format!(
         "src/test/java/{}/itest",
@@ -308,13 +312,14 @@ pub fn write_abstract_integration_test(
     w.line("}");
 
     std::fs::create_dir_all(&itest_dir)?;
-    w.write_to_file(&itest_dir.join("AbstractIntegrationTest.java"))
+    w.write_to_file(&itest_dir.join("AbstractIntegrationTest.java"), encoding)
 }
 
 pub fn write_itest_schema_sql(
     base_path: &Path,
     all_packages: &[PackageInfo],
     precomputed_schema_map: &HashMap<String, HashMap<String, String>>,
+    encoding: &'static Encoding,
 ) -> std::io::Result<()> {
     let schema_map = precomputed_schema_map;
 
@@ -475,7 +480,8 @@ pub fn write_itest_schema_sql(
      let content = lines.join("\n");
     let res_dir = base_path.join("src/test/resources");
     std::fs::create_dir_all(&res_dir)?;
-    std::fs::write(res_dir.join("itest-schema.sql"), content)?;
+    let (encoded, _, _) = encoding.encode(&content);
+    std::fs::write(res_dir.join("itest-schema.sql"), encoded)?;
     Ok(())
 }
 
@@ -1122,7 +1128,7 @@ fn add_transitive_tables(
     }
 }
 
-fn write_fixtures(base_path: &Path, proc: &ProcedureInfo, pkg: &PackageInfo, test_data: &HashMap<String, HashMap<String, String>>) -> std::io::Result<String> {
+fn write_fixtures(base_path: &Path, proc: &ProcedureInfo, pkg: &PackageInfo, test_data: &HashMap<String, HashMap<String, String>>, encoding: &'static Encoding) -> std::io::Result<String> {
     if test_data.is_empty() {
         return Ok(String::new());
     }
@@ -1167,7 +1173,8 @@ fn write_fixtures(base_path: &Path, proc: &ProcedureInfo, pkg: &PackageInfo, tes
     let fixtures_dir = base_path.join("src/test/resources/itest-fixtures");
     std::fs::create_dir_all(&fixtures_dir)?;
     let fname = format!("{}_{}.sql", strip_schema_prefix(&pkg.package_name), proc.proc_name);
-    std::fs::write(fixtures_dir.join(&fname), content)?;
+    let (encoded, _, _) = encoding.encode(&content);
+    std::fs::write(fixtures_dir.join(&fname), encoded)?;
     Ok(format!("classpath:itest-fixtures/{}", fname))
 }
 
@@ -1450,7 +1457,7 @@ mod tests {
         let proc = make_proc("do_work");
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new()).unwrap();
+        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new(), encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/itest/OrderServiceIntegrationTest.java"),
         ).unwrap();
@@ -1465,7 +1472,7 @@ mod tests {
     #[test]
     fn test_abstract_integration_test() {
         let dir = tempfile::tempdir().unwrap();
-        write_abstract_integration_test(dir.path(), "com.example.demo").unwrap();
+        write_abstract_integration_test(dir.path(), "com.example.demo", encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/itest/AbstractIntegrationTest.java"),
         ).unwrap();
@@ -1481,7 +1488,7 @@ mod tests {
         let p2 = make_proc("cancel_order");
         let pkg = make_pkg("pkg_order", vec![p1, p2]);
         let dir = tempfile::tempdir().unwrap();
-        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new()).unwrap();
+        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new(), encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/itest/OrderServiceIntegrationTest.java"),
         ).unwrap();
@@ -1508,7 +1515,7 @@ mod tests {
         });
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new()).unwrap();
+        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new(), encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/itest/OrderServiceIntegrationTest.java"),
         ).unwrap();
@@ -1531,7 +1538,7 @@ mod tests {
         });
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new()).unwrap();
+        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new(), encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/itest/OrderServiceIntegrationTest.java"),
         ).unwrap();
@@ -1558,7 +1565,7 @@ mod tests {
         });
         let pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new()).unwrap();
+        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new(), encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/itest/DataServiceIntegrationTest.java"),
         ).unwrap();
@@ -1584,7 +1591,7 @@ mod tests {
         let mut pkg = make_pkg("pkg_inventory", vec![proc]);
         pkg.table_refs.insert("inventory".to_string());
         let dir = tempfile::tempdir().unwrap();
-        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[pkg.clone()], &HashMap::new()).unwrap();
+        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[pkg.clone()], &HashMap::new(), encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/itest/InventoryServiceIntegrationTest.java"),
         ).unwrap();
@@ -1610,7 +1617,7 @@ mod tests {
                 });
         let pkg = make_pkg("pkg_inventory", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_itest_schema_sql(dir.path(), &[pkg], &HashMap::new()).unwrap();
+        write_itest_schema_sql(dir.path(), &[pkg], &HashMap::new(), encoding_rs::UTF_8).unwrap();
         let schema_path = dir.path().join("src/test/resources/itest-schema.sql");
         assert!(schema_path.exists());
         let content = std::fs::read_to_string(&schema_path).unwrap();
@@ -1766,7 +1773,7 @@ CREATE TABLE BIGFUND.orders (
         });
         let pkg = make_pkg("pkg_test", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new()).unwrap();
+        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new(), encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/itest/TestServiceIntegrationTest.java"),
         ).unwrap();

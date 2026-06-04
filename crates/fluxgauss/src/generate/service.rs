@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use encoding_rs::Encoding;
+
 use crate::generate::mapper::{is_simple_java_type, resolve_import};
 use crate::generate::writer::CodeWriter;
 use crate::naming::{java_method_name, package_to_classname, snake_to_camel};
@@ -12,6 +14,7 @@ pub fn write_service_class(
     pkg: &PackageInfo,
     base_package: &str,
     service_injections: &std::collections::HashMap<String, String>,
+    encoding: &'static Encoding,
 ) -> std::io::Result<String> {
     let java_pkg = format!("{}.service", base_package);
     let svc_dir = base_path.join(format!("src/main/java/{}/service", base_package.replace('.', "/")));
@@ -256,7 +259,7 @@ pub fn write_service_class(
 
     std::fs::create_dir_all(&svc_dir)?;
     let file_path = svc_dir.join(format!("{}.java", class_name));
-    w.write_to_file(&file_path)?;
+    w.write_to_file(&file_path, encoding)?;
     Ok(class_name)
 }
 
@@ -826,7 +829,7 @@ mod tests {
         let proc = make_proc("do_stuff");
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_service_class(dir.path(), &pkg, "com.example.demo", &Default::default()).unwrap();
+        write_service_class(dir.path(), &pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/main/java/com/example/demo/service/OrderService.java"),
         ).unwrap();
@@ -848,7 +851,7 @@ mod tests {
         proc.return_type = Some("timestamp".to_string());
         let pkg = make_pkg("pkg_common", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_service_class(dir.path(), &pkg, "com.example.demo", &Default::default()).unwrap();
+        write_service_class(dir.path(), &pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/main/java/com/example/demo/service/CommonService.java"),
         ).unwrap();
@@ -867,7 +870,7 @@ mod tests {
         });
         let pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_service_class(dir.path(), &pkg, "com.example.demo", &Default::default()).unwrap();
+        write_service_class(dir.path(), &pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/main/java/com/example/demo/service/DataService.java"),
         ).unwrap();
@@ -889,7 +892,7 @@ mod tests {
         assert_eq!(injections.get("inventoryService").unwrap(), "pkg_inventory");
 
         let dir = tempfile::tempdir().unwrap();
-        write_service_class(dir.path(), &pkg, "com.example.demo", &injections).unwrap();
+        write_service_class(dir.path(), &pkg, "com.example.demo", &injections, encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/main/java/com/example/demo/service/OrderService.java"),
         ).unwrap();
@@ -914,7 +917,7 @@ mod tests {
                 });
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_service_class(dir.path(), &pkg, "com.example.demo", &Default::default()).unwrap();
+        write_service_class(dir.path(), &pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/main/java/com/example/demo/service/OrderService.java"),
         ).unwrap();

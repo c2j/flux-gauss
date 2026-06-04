@@ -45,6 +45,9 @@ struct Cli {
 
     #[arg(long = "skip-validate", default_value_t = false)]
     skip_validate: bool,
+
+    #[arg(long = "encoding", default_value = "utf-8")]
+    encoding: String,
 }
 
 fn main() {
@@ -66,7 +69,12 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "CLI mode".into());
 
-    let (config, sql_files, output_dir) = resolve_inputs(&cli)?;
+    let (mut config, sql_files, output_dir) = resolve_inputs(&cli)?;
+
+    // CLI --encoding takes precedence over config file
+    if cli.encoding != "utf-8" {
+        config.encoding = Some(cli.encoding.clone());
+    }
 
     let base_package = config.base_package_or_default();
     println!("  Output:     {}", output_dir);
