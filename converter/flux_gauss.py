@@ -36,13 +36,21 @@ except ImportError:
 def _resolve_ogsql_bin() -> str:
     _script_dir = os.path.dirname(os.path.abspath(__file__))
     _project_dir = os.path.dirname(_script_dir)
-    for candidate in [
+    candidates = []
+    # PyInstaller frozen binary: bundled ogsql is in sys._MEIPASS
+    if getattr(sys, 'frozen', False):
+        _meipass = getattr(sys, '_MEIPASS', '')
+        if _meipass:
+            candidates.append(os.path.join(_meipass, 'ogsql'))
+            candidates.append(os.path.join(_meipass, 'ogsql.exe'))
+    candidates.extend([
         os.path.join(os.getcwd(), "ogsql"),
         os.environ.get("OGSQL_BIN", ""),
         shutil.which("ogsql") or "",
         os.path.join(_project_dir, "lib", "ogsql-parser", "target", "aarch64-apple-darwin", "release", "ogsql"),
         os.path.join(_project_dir, "lib", "ogsql-parser", "target", "release", "ogsql"),
-    ]:
+    ])
+    for candidate in candidates:
         if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return candidate
     return "ogsql"

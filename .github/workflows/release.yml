@@ -365,6 +365,190 @@ jobs:
           name: python-engine-output
           path: dest_py/
 
+  # ── fluxgauss-py binary (PyInstaller, Python engine) ──────────
+  build-fluxgauss-py-linux-x86_64:
+    name: Build fluxgauss-py linux-x86_64
+    runs-on: ubuntu-22.04
+    needs: [build-ogsql-linux-x86_64]
+    steps:
+      - name: Checkout flux-gauss
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install pyinstaller pyyaml
+
+      - name: Download ogsql binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ogsql-linux-x86_64
+          path: ogsql-artifact
+
+      - name: Extract ogsql
+        run: |
+          tar xzf ogsql-artifact/ogsql-linux-x86_64.tar.gz -C ogsql-artifact
+          chmod +x ogsql-artifact/ogsql
+          echo "OGSQL_BIN_PATH=$PWD/ogsql-artifact/ogsql" >> "$GITHUB_ENV"
+
+      - name: Build with PyInstaller
+        run: pyinstaller fluxgauss.spec --clean --noconfirm
+
+      - name: Strip
+        run: strip --strip-unneeded dist/fluxgauss-py
+
+      - name: Package
+        run: |
+          cd dist
+          tar czf ${{ github.workspace }}/fluxgauss-py-linux-x86_64.tar.gz fluxgauss-py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fluxgauss-py-linux-x86_64
+          path: fluxgauss-py-linux-x86_64.tar.gz
+
+  build-fluxgauss-py-linux-arm64:
+    name: Build fluxgauss-py linux-arm64
+    runs-on: ubuntu-24.04-arm  # GitHub-hosted ARM64 runner required
+    needs: [build-ogsql-linux-arm64]
+    steps:
+      - name: Checkout flux-gauss
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install pyinstaller pyyaml
+
+      - name: Download ogsql binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ogsql-linux-arm64
+          path: ogsql-artifact
+
+      - name: Extract ogsql
+        run: |
+          tar xzf ogsql-artifact/ogsql-linux-arm64.tar.gz -C ogsql-artifact
+          chmod +x ogsql-artifact/ogsql
+          echo "OGSQL_BIN_PATH=$PWD/ogsql-artifact/ogsql" >> "$GITHUB_ENV"
+
+      - name: Build with PyInstaller
+        run: pyinstaller fluxgauss.spec --clean --noconfirm
+
+      - name: Strip
+        run: strip --strip-unneeded dist/fluxgauss-py
+
+      - name: Package
+        run: |
+          cd dist
+          tar czf ${{ github.workspace }}/fluxgauss-py-linux-arm64.tar.gz fluxgauss-py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fluxgauss-py-linux-arm64
+          path: fluxgauss-py-linux-arm64.tar.gz
+
+  build-fluxgauss-py-windows-x86_64:
+    name: Build fluxgauss-py windows-x86_64
+    runs-on: windows-2022
+    needs: [build-ogsql-windows-x86_64]
+    steps:
+      - name: Checkout flux-gauss
+        uses: actions/checkout@v4
+
+      - name: Enable long paths
+        run: git config --global core.longpaths true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install pyinstaller pyyaml
+
+      - name: Download ogsql binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ogsql-windows-x86_64
+          path: ogsql-artifact
+
+      - name: Extract ogsql
+        shell: pwsh
+        run: |
+          Expand-Archive -Path ogsql-artifact/ogsql-windows-x86_64.zip -DestinationPath ogsql-artifact
+          $ogsqlPath = (Resolve-Path "ogsql-artifact/ogsql.exe").Path
+          "OGSQL_BIN_PATH=$ogsqlPath" >> $env:GITHUB_ENV
+
+      - name: Build with PyInstaller
+        run: pyinstaller fluxgauss.spec --clean --noconfirm
+
+      - name: Package
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path "dist/fluxgauss-py.exe" `
+            -DestinationPath "fluxgauss-py-windows-x86_64.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fluxgauss-py-windows-x86_64
+          path: fluxgauss-py-windows-x86_64.zip
+
+  build-fluxgauss-py-macos-arm64:
+    name: Build fluxgauss-py macos-arm64
+    runs-on: macos-14
+    needs: [build-ogsql-macos-arm64]
+    steps:
+      - name: Checkout flux-gauss
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install pyinstaller pyyaml
+
+      - name: Download ogsql binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ogsql-macos-arm64
+          path: ogsql-artifact
+
+      - name: Extract ogsql
+        run: |
+          tar xzf ogsql-artifact/ogsql-macos-arm64.tar.gz -C ogsql-artifact
+          chmod +x ogsql-artifact/ogsql
+          echo "OGSQL_BIN_PATH=$PWD/ogsql-artifact/ogsql" >> "$GITHUB_ENV"
+
+      - name: Build with PyInstaller
+        run: pyinstaller fluxgauss.spec --clean --noconfirm
+
+      - name: Strip
+        run: strip dist/fluxgauss-py
+
+      - name: Package
+        run: |
+          cd dist
+          tar czf ${{ github.workspace }}/fluxgauss-py-macos-arm64.tar.gz fluxgauss-py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fluxgauss-py-macos-arm64
+          path: fluxgauss-py-macos-arm64.tar.gz
+
   # ── Rust engine CI ────────────────────────────────────────────
   test-rust-engine:
     name: Rust engine test (Linux x86_64)
@@ -400,6 +584,10 @@ jobs:
       - build-fluxgauss-linux-arm64
       - build-fluxgauss-windows-x86_64
       - build-fluxgauss-macos-arm64
+      - build-fluxgauss-py-linux-x86_64
+      - build-fluxgauss-py-linux-arm64
+      - build-fluxgauss-py-windows-x86_64
+      - build-fluxgauss-py-macos-arm64
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

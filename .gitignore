@@ -18,3 +18,8 @@ ogsql.broken
 .worktrees/
 .DS_Store
 target
+
+# PyInstaller
+build/
+dist/
+*.spec.bak
