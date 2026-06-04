@@ -13392,8 +13392,8 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
             func_lines.append("//")
     if func_lines:
         _write_source_file(res_dir / "itest-functions.sql", "\n".join(func_lines))
-    elif (res_dir / "itest-functions.sql").exists():
-        _write_source_file(res_dir / "itest-functions.sql", "-- No standalone functions")
+    else:
+        _write_source_file(res_dir / "itest-functions.sql", "-- No standalone functions\nSELECT 1;")
 
 
 def _convert_oracle_func_to_pg(func_sql: str) -> str:
