@@ -1,0 +1,589 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cedtu.mapper._2008802001MgtMapper">
+
+    <!-- Source: PKG_2008802001_MGT.sql:162-275 — PKG_2008802001_MGT.proc_list.selectProcList -->
+    <!-- Author  : KFZX-ZHULY -->
+    <!-- Created : 2015/7/1 15:34:15 -->
+    <!-- Purpose : 待遇支付退回处理 -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_list -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    受托户待遇支付退回列表 -->
+    <!-- ******************************************************************* -->
+    <!-- 受托户id -->
+    <!-- 匹配状态 -->
+    <!-- 入款日期 -->
+    <!-- 入款日期 -->
+    <!-- 反馈日期 -->
+    <!-- 反馈日期 -->
+    <!-- 查询起始位置 -->
+    <!-- 查询记录数量 -->
+    <!-- 返成功与否标志，0成功、1失败 -->
+    <!-- 返回描述 -->
+    <!-- 总记录数 -->
+    <!-- 用户查询记录返回集合 -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_main_ctl -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    受托户待遇支付匹配处理总控程序 -->
+    <!-- ******************************************************************* -->
+    <!-- 受托户id -->
+    <!-- 日期 -->
+    <!-- 核算序列号 -->
+    <!-- 入款金额 -->
+    <!-- 记账流水号 -->
+    <!-- 返回接口流水号(COL_SEQ) -->
+    <!-- 1匹配 2修改 3解除匹配 -->
+    <!-- 反馈日期 -->
+    <!-- 返成功与否标志，0成功、1失败 -->
+    <!-- 返回描述 -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_match -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    受托户待遇支付匹配 -->
+    <!-- ******************************************************************* -->
+    <!-- 受托户id -->
+    <!-- 日期 -->
+    <!-- 记账流水号 -->
+    <!-- 返回接口流水号(COL_SEQ) -->
+    <!-- 返成功与否标志，0成功、1失败 -->
+    <!-- 返回描述 -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_match_account -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    受托户待遇支付匹配核算 -->
+    <!-- ******************************************************************* -->
+    <!-- 受托户id -->
+    <!-- 日期 -->
+    <!-- 核算序列号 -->
+    <!-- 入款金额 -->
+    <!-- 记账流水号 -->
+    <!-- 返回接口流水号(COL_SEQ) -->
+    <!-- 返成功与否标志，0成功、1失败 -->
+    <!-- 返回描述 -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_modify -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    受托户待遇支付信息修改 -->
+    <!-- ******************************************************************* -->
+    <!-- 受托户id -->
+    <!-- 日期 -->
+    <!-- 核算序列号 -->
+    <!-- 记账流水号 -->
+    <!-- 返回接口流水号(COL_SEQ) -->
+    <!-- 入款金额 -->
+    <!-- 反馈日期 -->
+    <!-- 返成功与否标志，0成功、1失败 -->
+    <!-- 返回描述 -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_cancel -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    受托户待遇支付解除匹配 -->
+    <!-- ******************************************************************* -->
+    <!-- 受托户id -->
+    <!-- 日期 -->
+    <!-- 核算序列号 -->
+    <!-- 记账流水号 -->
+    <!-- 返回接口流水号(COL_SEQ) -->
+    <!-- 入款金额 -->
+    <!-- 返成功与否标志，0成功、1失败 -->
+    <!-- 返回描述 -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_get_date -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    获取入账日期 -->
+    <!-- ******************************************************************* -->
+    <!-- 受托户id -->
+    <!-- 日期 -->
+    <!-- 记账流水号 -->
+    <!-- 返回接口流水号(COL_SEQ) -->
+    <!-- 返成功与否标志，0成功、1失败 -->
+    <!-- 返回描述 -->
+    <!-- 入账日期 -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_get_respond_date -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    获取反馈日期 -->
+    <!-- ******************************************************************* -->
+    <!-- 受托户id -->
+    <!-- 日期 -->
+    <!-- 记账流水号 -->
+    <!-- 返回接口流水号(COL_SEQ) -->
+    <!-- 返成功与否标志，0成功、1失败 -->
+    <!-- 返回描述 -->
+    <!-- 入账日期 -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_list -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    受托户待遇支付退回列表 -->
+    <!-- ******************************************************************* -->
+    <select id="selectProcList" parameterType="string" resultType="object">
+        SELECT
+          COUNT(1)
+        FROM dat_clr_cash_dtl t,
+        dat_trustee_acnt_detail d
+        WHERE t.trade_code IN('2008801001',
+        '2008802001')
+        AND t.account_id = #{inAccntId, jdbcType=VARCHAR, javaType=String}
+        AND t.match_status = #{inMatchStatus, jdbcType=VARCHAR, javaType=String}
+        AND t.account_date BETWEEN nvl(#{inAccntDate1, jdbcType=VARCHAR, javaType=String},
+        '19000101')
+        AND nvl(#{inAccntDate2, jdbcType=VARCHAR, javaType=String},
+        '99991231')
+        AND (t.respond_date BETWEEN nvl(#{inRespondDate1, jdbcType=VARCHAR, javaType=String},
+        '19000101') AND nvl(#{inRespondDate2, jdbcType=VARCHAR, javaType=String},
+        '99991231') OR t.respond_date IS NULL)
+        AND t.interface_seq = d.interface_seq(+)
+        AND (t.operation_status = decode(t.trade_code,
+        '2008801001',
+        '0',
+        t.operation_status) OR decode(t.trade_code,
+        '2008801001',
+        '0',
+        t.operation_status) IS NULL)
+                LIMIT 1
+    </select>
+
+    <!-- Source: PKG_2008802001_MGT.sql:162-275 — PKG_2008802001_MGT.proc_list.selectProcList_1 -->
+    <!-- Author  : KFZX-ZHULY -->
+    <!-- Created : 2015/7/1 15:34:15 -->
+    <!-- Purpose : 待遇支付退回处理 -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_list -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    受托户待遇支付退回列表 -->
+    <!-- ******************************************************************* -->
+    <!-- 受托户id -->
+    <!-- 匹配状态 -->
+    <!-- 入款日期 -->
+    <!-- 入款日期 -->
+    <!-- 反馈日期 -->
+    <!-- 反馈日期 -->
+    <!-- 查询起始位置 -->
+    <!-- 查询记录数量 -->
+    <!-- 返成功与否标志，0成功、1失败 -->
+    <!-- 返回描述 -->
+    <!-- 总记录数 -->
+    <!-- 用户查询记录返回集合 -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_main_ctl -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    受托户待遇支付匹配处理总控程序 -->
+    <!-- ******************************************************************* -->
+    <!-- 受托户id -->
+    <!-- 日期 -->
+    <!-- 核算序列号 -->
+    <!-- 入款金额 -->
+    <!-- 记账流水号 -->
+    <!-- 返回接口流水号(COL_SEQ) -->
+    <!-- 1匹配 2修改 3解除匹配 -->
+    <!-- 反馈日期 -->
+    <!-- 返成功与否标志，0成功、1失败 -->
+    <!-- 返回描述 -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_match -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    受托户待遇支付匹配 -->
+    <!-- ******************************************************************* -->
+    <!-- 受托户id -->
+    <!-- 日期 -->
+    <!-- 记账流水号 -->
+    <!-- 返回接口流水号(COL_SEQ) -->
+    <!-- 返成功与否标志，0成功、1失败 -->
+    <!-- 返回描述 -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_match_account -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    受托户待遇支付匹配核算 -->
+    <!-- ******************************************************************* -->
+    <!-- 受托户id -->
+    <!-- 日期 -->
+    <!-- 核算序列号 -->
+    <!-- 入款金额 -->
+    <!-- 记账流水号 -->
+    <!-- 返回接口流水号(COL_SEQ) -->
+    <!-- 返成功与否标志，0成功、1失败 -->
+    <!-- 返回描述 -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_modify -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    受托户待遇支付信息修改 -->
+    <!-- ******************************************************************* -->
+    <!-- 受托户id -->
+    <!-- 日期 -->
+    <!-- 核算序列号 -->
+    <!-- 记账流水号 -->
+    <!-- 返回接口流水号(COL_SEQ) -->
+    <!-- 入款金额 -->
+    <!-- 反馈日期 -->
+    <!-- 返成功与否标志，0成功、1失败 -->
+    <!-- 返回描述 -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_cancel -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    受托户待遇支付解除匹配 -->
+    <!-- ******************************************************************* -->
+    <!-- 受托户id -->
+    <!-- 日期 -->
+    <!-- 核算序列号 -->
+    <!-- 记账流水号 -->
+    <!-- 返回接口流水号(COL_SEQ) -->
+    <!-- 入款金额 -->
+    <!-- 返成功与否标志，0成功、1失败 -->
+    <!-- 返回描述 -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_get_date -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    获取入账日期 -->
+    <!-- ******************************************************************* -->
+    <!-- 受托户id -->
+    <!-- 日期 -->
+    <!-- 记账流水号 -->
+    <!-- 返回接口流水号(COL_SEQ) -->
+    <!-- 返成功与否标志，0成功、1失败 -->
+    <!-- 返回描述 -->
+    <!-- 入账日期 -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_get_respond_date -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    获取反馈日期 -->
+    <!-- ******************************************************************* -->
+    <!-- 受托户id -->
+    <!-- 日期 -->
+    <!-- 记账流水号 -->
+    <!-- 返回接口流水号(COL_SEQ) -->
+    <!-- 返成功与否标志，0成功、1失败 -->
+    <!-- 返回描述 -->
+    <!-- 入账日期 -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_list -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    受托户待遇支付退回列表 -->
+    <!-- ******************************************************************* -->
+    <select id="selectProcList_1" parameterType="string" resultType="java.util.LinkedHashMap">
+        SELECT
+          s.account_id,
+          s.accname,
+          s.account_date,
+          s.in_amount,
+          s.describe,
+          s.recipacc,
+          s.recipnam,
+          s.account_seqno,
+          s.accnt_seqno,
+          s.interface_seq,
+          s.match_status,
+          s.statusname,
+          s.respond_date
+        FROM(
+          SELECT
+            t.account_id,(
+              SELECT
+                s.accname
+              FROM v_par_asset_acnt_info AS s
+          WHERE s.asset_acnt_id = t.account_id AND rownum = 1
+        ) AS accname,
+        t.account_date,
+        t.in_amount,
+        t.describe,
+        d.recipacc,
+        d.recipnam,
+        t.account_seqno,
+        t.trade_code,
+        t.accnt_seqno,
+        t.match_status,
+        t.interface_seq,
+        decode(t.match_status,
+        '0',
+        '未匹配',
+        '1',
+        '已匹配') AS statusname,
+        t.respond_date,
+        row_number() OVER(
+        ORDER BY t.account_date DESC,
+        t.account_seqno,
+        t.account_id,
+        t.interface_seq,
+        accno,
+        d.serialno,
+        d.busidate,
+        d.timestmp,
+        d.updtranf,
+        d.revtranf,
+        d.trxcode,
+        d.drcrf,
+        d.amount,
+        d.detailf,
+        d.currtype,
+        d.subcode,
+        d.euoflag) AS rownm FROM dat_clr_cash_dtl AS t,
+        dat_trustee_acnt_detail AS d
+        WHERE t.trade_code IN('2008801001',
+        '2008802001') AND t.account_id = #{inAccntId, jdbcType=VARCHAR, javaType=String} AND t.match_status = #{inMatchStatus, jdbcType=VARCHAR, javaType=String} AND t.account_date BETWEEN nvl(#{inAccntDate1, jdbcType=VARCHAR, javaType=String},
+        '19000101') AND nvl(#{inAccntDate2, jdbcType=VARCHAR, javaType=String},
+        '99991231') AND(t.respond_date BETWEEN nvl(#{inRespondDate1, jdbcType=VARCHAR, javaType=String},
+        '19000101') AND nvl(#{inRespondDate2, jdbcType=VARCHAR, javaType=String},
+        '99991231') OR t.respond_date IS NULL) AND t.interface_seq = d.interface_seq AND(t.operation_status = decode(t.
+        trade_code,
+        '2008801001',
+        '0',
+        t.operation_status) OR decode(t.trade_code,
+        '2008801001',
+        '0',
+        t.operation_status) IS NULL)) AS s
+        LIMIT to_number(#{inQrynum, jdbcType=VARCHAR, javaType=String})
+        OFFSET to_number(#{inQrybeginpos, jdbcType=VARCHAR, javaType=String}) - 1
+    </select>
+
+    <!-- Source: PKG_2008802001_MGT.sql:357-431 — PKG_2008802001_MGT.proc_match.selectProcMatch -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_match -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    受托户待遇支付匹配 -->
+    <!-- ******************************************************************* -->
+    <select id="selectProcMatch" resultType="java.util.LinkedHashMap">
+        SELECT
+          t.trade_code,
+          t.in_amount
+        FROM dat_clr_cash_dtl t
+        WHERE t.account_date = #{inAccntDate, jdbcType=VARCHAR, javaType=String}
+        AND t.account_seqno = #{inSeqNo, jdbcType=NUMERIC, javaType=Long}
+        AND t.account_id = #{inAccntId, jdbcType=VARCHAR, javaType=String}
+        AND t.interface_seq = #{inInterfaceSeq, jdbcType=NUMERIC, javaType=Long}
+                LIMIT 1
+    </select>
+
+    <!-- Source: PKG_2008802001_MGT.sql:357-431 — PKG_2008802001_MGT.proc_match.updateProcMatch -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_match -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    受托户待遇支付匹配 -->
+    <!-- ******************************************************************* -->
+    <update id="updateProcMatch">
+        UPDATE dat_clr_cash_dtl t
+          SET
+            t.match_status = '1',
+            --已匹配
+            t.trade_code = '2008802001',
+            --业务类型改为待遇支付退回
+            t.respond_date = #{vRespondDate}
+        WHERE t.account_date = #{inAccntDate, jdbcType=VARCHAR, javaType=String}
+        AND t.account_seqno = #{inSeqNo, jdbcType=NUMERIC, javaType=Long}
+        AND t.account_id = #{inAccntId, jdbcType=VARCHAR, javaType=String}
+        AND t.interface_seq = #{inInterfaceSeq, jdbcType=NUMERIC, javaType=Long}
+    </update>
+
+    <!-- Source: PKG_2008802001_MGT.sql:357-431 — PKG_2008802001_MGT.proc_match.selectProcMatch_1 -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_match -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    受托户待遇支付匹配 -->
+    <!-- ******************************************************************* -->
+    <select id="selectProcMatch_1" resultType="string">
+        SELECT
+          t.accnt_flag
+        FROM prm_sth_payback_accnt_date t
+        WHERE t.accnt_id = #{inAccntId, jdbcType=VARCHAR, javaType=String}
+                LIMIT 1
+    </select>
+
+    <!-- Source: PKG_2008802001_MGT.sql:501-569 — PKG_2008802001_MGT.proc_modify.selectProcModify -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_modify -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    受托户待遇支付信息修改 -->
+    <!-- ******************************************************************* -->
+    <select id="selectProcModify" resultType="string">
+        SELECT
+          t.trade_code
+        FROM dat_clr_cash_dtl t
+        WHERE t.account_date = #{inAccntDate, jdbcType=VARCHAR, javaType=String}
+        AND t.account_seqno = #{inSeqNo, jdbcType=NUMERIC, javaType=Long}
+        AND t.account_id = #{inAccntId, jdbcType=VARCHAR, javaType=String}
+        AND t.interface_seq = #{inInterfaceSeq, jdbcType=NUMERIC, javaType=Long}
+                LIMIT 1
+    </select>
+
+    <!-- Source: PKG_2008802001_MGT.sql:501-569 — PKG_2008802001_MGT.proc_modify.updateProcModify -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_modify -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    受托户待遇支付信息修改 -->
+    <!-- ******************************************************************* -->
+    <update id="updateProcModify">
+        UPDATE dat_clr_cash_dtl t
+          SET
+            t.match_status = '1',
+            --已匹配
+            t.trade_code = '2008802001',
+            --业务类型改为待遇支付退回
+            t.respond_date = #{inRespondDate, jdbcType=VARCHAR, javaType=String}
+        WHERE t.account_date = #{inAccntDate, jdbcType=VARCHAR, javaType=String}
+        AND t.account_seqno = #{inSeqNo, jdbcType=NUMERIC, javaType=Long}
+        AND t.account_id = #{inAccntId, jdbcType=VARCHAR, javaType=String}
+        AND t.interface_seq = #{inInterfaceSeq, jdbcType=NUMERIC, javaType=Long}
+    </update>
+
+    <!-- Source: PKG_2008802001_MGT.sql:501-569 — PKG_2008802001_MGT.proc_modify.selectProcModify_1 -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_modify -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    受托户待遇支付信息修改 -->
+    <!-- ******************************************************************* -->
+    <select id="selectProcModify_1" resultType="string">
+        SELECT
+          decode(t.accnt_flag,
+          '1',
+          #{inAccntDate, jdbcType=VARCHAR, javaType=String},
+          #{inRespondDate, jdbcType=VARCHAR, javaType=String})
+        FROM prm_sth_payback_accnt_date t
+        WHERE t.accnt_id = #{inAccntId, jdbcType=VARCHAR, javaType=String}
+                LIMIT 1
+    </select>
+
+    <!-- Source: PKG_2008802001_MGT.sql:578-635 — PKG_2008802001_MGT.proc_cancel.selectProcCancel -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_cancel -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    受托户待遇支付解除匹配 -->
+    <!-- ******************************************************************* -->
+    <select id="selectProcCancel" resultType="java.util.LinkedHashMap">
+        SELECT
+          t.trade_code,
+          t.#{inAmount, jdbcType=NUMERIC, javaType=Long}
+        FROM dat_clr_cash_dtl t
+        WHERE t.account_date = #{inAccntDate, jdbcType=VARCHAR, javaType=String}
+        AND t.account_seqno = #{inSeqNo, jdbcType=NUMERIC, javaType=Long}
+        AND t.account_id = #{inAccntId, jdbcType=VARCHAR, javaType=String}
+        AND t.interface_seq = #{inInterfaceSeq, jdbcType=NUMERIC, javaType=Long}
+                LIMIT 1
+    </select>
+
+    <!-- Source: PKG_2008802001_MGT.sql:578-635 — PKG_2008802001_MGT.proc_cancel.updateProcCancel -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_cancel -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    受托户待遇支付解除匹配 -->
+    <!-- ******************************************************************* -->
+    <update id="updateProcCancel">
+        UPDATE dat_clr_cash_dtl t
+          SET
+            t.match_status = '0',
+            --已匹配
+            t.respond_date = '',
+            t.trade_code = '2008801001',
+            t.operation_status = '0'
+        WHERE t.account_date = #{inAccntDate, jdbcType=VARCHAR, javaType=String}
+        AND t.account_seqno = #{inSeqNo, jdbcType=NUMERIC, javaType=Long}
+        AND t.account_id = #{inAccntId, jdbcType=VARCHAR, javaType=String}
+        AND t.interface_seq = #{inInterfaceSeq, jdbcType=NUMERIC, javaType=Long}
+    </update>
+
+    <!-- Source: PKG_2008802001_MGT.sql:644-684 — PKG_2008802001_MGT.proc_get_date.selectProcGetDate -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_get_date -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    获取入账日期 -->
+    <!-- ******************************************************************* -->
+    <select id="selectProcGetDate" resultType="string">
+        SELECT
+          t.accnt_flag
+        FROM prm_sth_payback_accnt_date t
+        WHERE t.accnt_id = #{inAccntId, jdbcType=VARCHAR, javaType=String}
+                LIMIT 1
+    </select>
+
+    <!-- Source: PKG_2008802001_MGT.sql:693-832 — PKG_2008802001_MGT.proc_get_respond_date.selectProcGetRespondDate -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_get_respond_date -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    获取反馈日期 -->
+    <!-- ******************************************************************* -->
+    <select id="selectProcGetRespondDate" resultType="object">
+        SELECT
+          MAX(substr(t.send_tm,
+          0,
+          8))
+        FROM dat_zl_batchpayment t,
+        par_sys_plan b,
+        dat_clr_cash_dtl s,
+        dat_trustee_acnt_detail c
+        WHERE s.account_id = #{inAccntId, jdbcType=VARCHAR, javaType=String}
+        AND s.account_date = #{inAccntDate, jdbcType=VARCHAR, javaType=String}
+        AND s.account_seqno = #{inSeqNo, jdbcType=VARCHAR, javaType=String}
+        AND s.interface_seq = #{inInterfaceSeq, jdbcType=NUMERIC, javaType=Long}
+        AND t.planid = b.plan_id
+        AND b.acnt_id = s.account_id
+        AND s.interface_seq = c.interface_seq
+        AND t.beneaccount = c.recipacc
+        AND t.apaysum = s.in_amount
+        AND s.account_date BETWEEN t.apaydate
+        AND substr(t.send_tm,
+        1,
+        8)
+                LIMIT 1
+    </select>
+
+    <!-- Source: PKG_2008802001_MGT.sql:693-832 — PKG_2008802001_MGT.proc_get_respond_date.selectProcGetRespondDate_1 -->
+    <!-- ******************************************************************* -->
+    <!-- 存储过程名称：    proc_get_respond_date -->
+    <!-- 作        者：    kfzx-zhuly -->
+    <!-- 时        间：    2015-07-01 -->
+    <!-- 存储过程描述：    获取反馈日期 -->
+    <!-- ******************************************************************* -->
+    <select id="selectProcGetRespondDate_1" resultType="object">
+        SELECT
+          MAX(to_char(t.pay_tm,
+          'yyyymmdd'))
+        FROM tmp_batchpay_submit t,
+        dat_clr_cash_dtl s,
+        dat_trustee_acnt_detail b,
+        par_sys_plan p
+        WHERE s.account_id = #{inAccntId, jdbcType=VARCHAR, javaType=String}
+        AND s.account_date = #{inAccntDate, jdbcType=VARCHAR, javaType=String}
+        AND s.account_seqno = #{inSeqNo, jdbcType=VARCHAR, javaType=String}
+        AND s.interface_seq = #{inInterfaceSeq, jdbcType=NUMERIC, javaType=Long}
+        AND s.interface_seq = b.interface_seq
+        AND t.rece_account = b.recipacc
+        AND t.status = '26'
+        AND s.account_date BETWEEN t.inst_date
+        AND to_char(t.pay_tm,
+        'yyyymmdd')
+        AND t.pay_amount / 100 = s.in_amount
+        AND s.account_id = p.acnt_id
+        AND p.plan_id = t.planid
+        AND s.out_amount = 0
+                LIMIT 1
+    </select>
+
+</mapper>

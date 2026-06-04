@@ -1,0 +1,28 @@
+# $ cd ~/Projects/Desktop_Projects/DB/sp2java/ && rm -rf dest_py && \
+# OGSQL_BIN=../ogsql-parser/target/release/ogsql ~/dev/miniforge3/bin/python converter/flux_gauss.py --config demo-project/fluxgauss_py.yaml && \
+# cd dest_py/ && mvn compile && mvn test && mvn verify -Pintegration
+output_dir: ./dest_tu
+base_package: cedtu
+
+integration_test:
+  enabled: true
+  mode: remote
+  url: jdbc:postgresql://localhost:5432/postgres?currentSchema=gaussdb
+  username: gaussdb
+  password: Enmo@123
+  init_sql:
+    - demo-project/sql/missing_tables.sql
+
+# Optional: database connection (used to generate application.yml)
+# database:
+#   url: jdbc:postgresql://localhost:5432/demo
+#   username: postgres
+#   password: postgres
+#   driver: org.postgresql.Driver
+
+sources:
+  #$ find demo-project/ -name "*.sql" -exec echo "  -" {} \;
+
+  - demo-project/sql/PKG_2008802001_MGT.sql
+  - demo-project/sql/DB_LOG.sql
+  - demo-project/sql/PACK_LOG.sql

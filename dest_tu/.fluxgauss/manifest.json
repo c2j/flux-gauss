@@ -1,0 +1,19 @@
+{
+  "files": {
+    "demo-project/sql/PKG_2008802001_MGT.sql": {
+      "hash": "36d3960beaa63026cdb86d356f41e27c17bafff47b57882a61f6667dd5d44fb7",
+      "package": "PKG_2008802001_MGT",
+      "java_package": ""
+    },
+    "demo-project/sql/DB_LOG.sql": {
+      "hash": "9a160b8e326c6f37b30fa44712c19d2d83026c1995320493a941cac7438a11a2",
+      "package": "",
+      "java_package": ""
+    },
+    "demo-project/sql/PACK_LOG.sql": {
+      "hash": "1d04577e98d5eb38bf5a7642bfbd6a94d87e2816facd8477d896c462fc8450bd",
+      "package": "PACK_LOG",
+      "java_package": ""
+    }
+  }
+}

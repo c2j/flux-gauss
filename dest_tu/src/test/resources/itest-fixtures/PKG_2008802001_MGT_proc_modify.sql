@@ -1,0 +1,3 @@
+DELETE FROM dat_clr_cash_dtl;
+DELETE FROM prm_sth_payback_accnt_date;
+INSERT INTO dat_clr_cash_dtl (accnt_seqno, account_date, account_id, account_seqno, describe, in_amount, interface_seq, match_status, operation_status, out_amount, respond_date, trade_code) VALUES ('test accnt_seqno', 'test account_date', 'test_account_id', 'test account_seqno', 'test describe', 99.99, 'test interface_seq', 'test_match_status', 'test_operation_status', 99.99, 'test respond_date', 'test_trade_code');

@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cedtu.mapper.PackLogMapper">
+
+    <!-- Source: PACK_LOG.sql:108-153 — PACK_LOG.log.insertLog -->
+    <insert id="insertLog">
+        INSERT INTO DB_LOG(ID,
+          PROC_NAME,
+          INFO,
+          LOG_LEVEL,
+          TIME_STAMP,
+          CALL_STACK,
+          ERR_STACK,
+          STEP_NO,
+          SQL_TXT,
+          SQL_PARAM,
+          LOG_DATE)
+          VALUES(
+          LPAD(nextval('log_seq'),
+          20,
+          '0'),
+          #{inProcname, jdbcType=VARCHAR, javaType=String},
+          #{inInfo, jdbcType=LONGVARCHAR, javaType=String},
+          #{inLevel, jdbcType=VARCHAR, javaType=String},
+          to_char(now(),
+          'YYYYMMDDHH24MISS'),
+          #{vCallstack, jdbcType=VARCHAR, javaType=String},
+          #{vErrstack, jdbcType=VARCHAR, javaType=String},
+          #{inStepno, jdbcType=VARCHAR, javaType=String},
+          #{inSqltxt, jdbcType=LONGVARCHAR, javaType=String},
+          #{inSqlparam, jdbcType=LONGVARCHAR, javaType=String},
+          to_char(now(),
+          'YYYYMMDD'))
+    </insert>
+
+    <!-- Source: PACK_LOG.sql:170-214 — PACK_LOG.LOG_NOAUTOTRANS.insertLogNoautotrans -->
+    <insert id="insertLogNoautotrans">
+        INSERT INTO DB_LOG(ID,
+          PROC_NAME,
+          INFO,
+          LOG_LEVEL,
+          TIME_STAMP,
+          CALL_STACK,
+          ERR_STACK,
+          STEP_NO,
+          SQL_TXT,
+          SQL_PARAM,
+          LOG_DATE)
+          VALUES(
+          LPAD(nextval('log_seq'),
+          20,
+          '0'),
+          #{inProcname, jdbcType=VARCHAR, javaType=String},
+          #{inInfo, jdbcType=LONGVARCHAR, javaType=String},
+          #{inLevel, jdbcType=VARCHAR, javaType=String},
+          to_char(now(),
+          'YYYYMMDDHH24MISS'),
+          #{vCallstack, jdbcType=VARCHAR, javaType=String},
+          #{vErrstack, jdbcType=VARCHAR, javaType=String},
+          #{inStepno, jdbcType=VARCHAR, javaType=String},
+          #{inSqltxt, jdbcType=LONGVARCHAR, javaType=String},
+          #{inSqlparam, jdbcType=LONGVARCHAR, javaType=String},
+          to_char(now(),
+          'YYYYMMDD'))
+    </insert>
+
+</mapper>
