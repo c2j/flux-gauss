@@ -30,7 +30,7 @@ pub fn assignment_to_java(target: &ogsql_parser::ast::Expr, value: &ogsql_parser
                 return format!("{}.get().put(\"{}\", {});", base_camel, field_camel, val);
             }
 
-            let base_type = proc.local_vars.get(base).map(|s| s.as_str()).unwrap_or("");
+            let base_type = proc.local_vars.get(&base.to_lowercase()).map(|s| s.as_str()).unwrap_or("");
             if base_type.contains("Map") {
                 let val = expr_to_java(value, proc);
                 return format!("{}.put(\"{}\", {});", base_camel, field_camel, val);
@@ -90,7 +90,7 @@ pub fn assignment_to_java(target: &ogsql_parser::ast::Expr, value: &ogsql_parser
             };
             return format!("{}.set({});", camel, coerced);
         }
-        let var_type = proc.local_vars.get(ref_name).cloned()
+        let var_type = proc.local_vars.get(&ref_name.to_lowercase()).cloned()
             .or_else(|| {
                 let ref_lower = ref_name.to_lowercase().replace("_", "");
                 proc.package_vars.iter()
@@ -261,7 +261,7 @@ fn coerce_arg_to_type(arg: &str, target_type: &str, proc: &ProcedureInfo) -> Str
 
 fn infer_arg_type_from_expr(expr: &str, proc: &ProcedureInfo) -> &'static str {
     let trimmed = expr.trim();
-    if let Some(ty) = proc.local_vars.get(trimmed) {
+    if let Some(ty) = proc.local_vars.get(&trimmed.to_lowercase()) {
         return match ty.as_str() {
             "int" | "long" | "Integer" | "Long" => "long",
             "String" => "String",
@@ -441,6 +441,7 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
         "found" => "found".into(),
         "sqlerrm" => "__SQLERRM__".into(),
         "sqlcode" => "__SQLCODE__".into(),
+        "sqlstate" => "__SQLSTATE__".into(),
         "rowcount" => "__ROWCOUNT__".into(),
         "true" => "true".into(),
         "false" => "false".into(),
@@ -507,7 +508,7 @@ fn is_bigdecimal_var(expr_str: &str, proc: &ProcedureInfo) -> bool {
     let name = expr_str.trim();
     let base = name.split(|c: char| c == '.' || c == '(').next().unwrap_or(name);
     // Direct lookup (snake_case key)
-    if let Some(ty) = proc.local_vars.get(base) {
+    if let Some(ty) = proc.local_vars.get(&base.to_lowercase()) {
         return ty.contains("BigDecimal");
     }
     // Reverse lookup: local_vars keys are snake_case, but expr may produce camelCase
@@ -574,7 +575,7 @@ fn wrap_bigdecimal(expr: &str, already_bd: bool, _proc: &ProcedureInfo) -> Strin
 fn is_string_var(expr_str: &str, proc: &ProcedureInfo) -> bool {
     let name = expr_str.trim();
     let base = name.split(|c: char| c == '.' || c == '(').next().unwrap_or(name);
-    if let Some(ty) = proc.local_vars.get(base) {
+    if let Some(ty) = proc.local_vars.get(&base.to_lowercase()) {
         return ty == "String";
     }
     let base_lower = base.to_lowercase().replace("_", "");
@@ -596,7 +597,7 @@ fn is_string_var(expr_str: &str, proc: &ProcedureInfo) -> bool {
 fn is_timestamp_or_date_var(expr_str: &str, proc: &ProcedureInfo) -> bool {
     let name = expr_str.trim();
     let base = name.split(|c: char| c == '.' || c == '(').next().unwrap_or(name);
-    if let Some(ty) = proc.local_vars.get(base) {
+    if let Some(ty) = proc.local_vars.get(&base.to_lowercase()) {
         return ty.contains("Timestamp") || ty.contains("java.sql.Date") || ty == "Date";
     }
     let base_lower = base.to_lowercase().replace("_", "");
@@ -878,7 +879,7 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         let name_parts: Vec<&str> = name.split('.').collect();
         if name_parts.len() == 1 && args.len() == 1 {
             let snake_name = name_parts[0];
-            let is_list = proc.local_vars.get(snake_name)
+            let is_list = proc.local_vars.get(&snake_name.to_lowercase())
                 .map(|t| t.starts_with("List<"))
                 .unwrap_or(false);
             if is_list {
@@ -969,21 +970,27 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             if jargs.len() >= 2 {
                 let arg = jargs.first().map(|s| s.as_str()).unwrap_or("null");
                 let raw_fmt = jargs.get(1).map(|s| s.as_str()).unwrap_or("");
-                let fmt_clean = raw_fmt.trim_matches('"').trim_matches('\'');
-                if fmt_clean.contains("yyyy") || fmt_clean.contains("YYYY") || fmt_clean.contains("yyyymm") {
-                    let java_fmt = fmt_clean.replace("yyyy", "yyyy").replace("YYYY", "yyyy")
-                        .replace("mm", "MM").replace("MM", "MM")
-                        .replace("dd", "dd").replace("DD", "dd")
-                        .replace("hh24", "HH").replace("HH24", "HH")
-                        .replace("mi", "mm").replace("MI", "mm")
-                        .replace("ss", "ss").replace("SS", "ss");
+                let fmt_clean = raw_fmt.trim_matches('"').trim_matches('\'').to_lowercase();
+                let has_date_token = fmt_clean.contains("yyyy") || fmt_clean.contains("yy") || fmt_clean.contains("mm") || fmt_clean.contains("mon") || fmt_clean.contains("dd") || fmt_clean.contains("hh") || fmt_clean.contains("mi") || fmt_clean.contains("ss");
+                if has_date_token {
+                    let mut java_fmt = fmt_clean.clone();
+                    let date_pats = [
+                        ("yyyy", "yyyy"), ("yy", "yy"), ("mm", "MM"), ("mon", "MMM"), ("month", "MMMM"),
+                        ("dd", "dd"), ("dy", "EEE"), ("day", "EEEE"),
+                        ("hh24", "HH"), ("hh12", "hh"), ("hh", "HH"),
+                        ("mi", "mm"), ("ss", "ss"), ("ff3", "SSS"), ("ms", "SSS"),
+                    ];
+                    for (sql_pat, java_pat) in &date_pats {
+                        java_fmt = java_fmt.replace(sql_pat, java_pat);
+                    }
                     if is_timestamp_or_date_var(arg, proc) || arg.contains("Timestamp") || arg.contains("currentTimeMillis") {
                         format!("new java.text.SimpleDateFormat(\"{}\").format({})", java_fmt, arg)
                     } else {
-                        format!("String.valueOf({})", arg)
+                        format!("new java.text.SimpleDateFormat(\"{}\").format(new java.util.Date(java.sql.Timestamp.valueOf(String.valueOf({})).getTime()))", java_fmt, arg)
                     }
                 } else {
-                    format!("String.valueOf({})", arg)
+                    let num_fmt = fmt_clean.replace("fm", "").replace(",", "").replace("9", "#").replace("0", "0");
+                    format!("new java.text.DecimalFormat(\"{}\").format({})", num_fmt, arg)
                 }
             } else {
                 format!("String.valueOf({})", jargs.first().map(|s| s.as_str()).unwrap_or("null"))
@@ -991,17 +998,98 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         }
         "NULLIF" if jargs.len() >= 2 => format!("(java.util.Objects.equals({}, {}) ? 1 : {})", jargs[0], jargs[1], jargs[0]),
         "ARRAY_LENGTH" | "ARRAY_UPPER" => format!("({}).size()", jargs.first().map(|s| s.as_str()).unwrap_or("null")),
-        "ARRAY_APPEND" => format!("/* ARRAY_APPEND */ {}", jargs.first().map(|s| s.as_str()).unwrap_or("null")),
-        "ADD_MONTHS" if jargs.len() >= 2 => format!("/* ADD_MONTHS({}, {}) */ null", jargs[0], jargs[1]),
-        "LAST_DAY" => format!("/* LAST_DAY({}) */ null", jargs.first().map(|s| s.as_str()).unwrap_or("")),
-        "NEXT_DAY" => "/* NEXT_DAY */ null".into(),
+        "ARRAY_APPEND" if jargs.len() >= 2 => format!("_appendList({}, {})", jargs[0], jargs[1]),
+        "ARRAY_APPEND" => jargs.first().map(|s| s.as_str()).unwrap_or("null").to_string(),
+        "ARRAY_TO_STRING" if jargs.len() >= 2 => {
+            let delim = &jargs[1];
+            let delim_expr = if delim.starts_with('"') || delim.starts_with('\'') { delim.clone() } else { format!("String.valueOf({})", delim) };
+            format!("({}).stream().map(Object::toString).collect(java.util.stream.Collectors.joining({}))", jargs[0], delim_expr)
+        }
+        "NEXTVAL" if !jargs.is_empty() => format!("this.nextval({})", jargs.join(", ")),
+        "NEXTVAL" => "null".into(),
+        "CURRVAL" if !jargs.is_empty() => format!("this.currval({})", jargs.join(", ")),
+        "CURRVAL" => "null".into(),
+        "ADD_MONTHS" if jargs.len() >= 2 => format!("java.time.LocalDate.parse(String.valueOf({})).plusMonths(Long.parseLong(String.valueOf({})))", jargs[0], jargs[1]),
+        "LAST_DAY" => format!("java.time.LocalDate.parse(String.valueOf({})).withDayOfMonth(java.time.LocalDate.parse(String.valueOf({})).lengthOfMonth())", jargs.first().map(|s| s.as_str()).unwrap_or("null"), jargs.first().map(|s| s.as_str()).unwrap_or("null")),
+        "NEXT_DAY" if !jargs.is_empty() => format!("java.time.LocalDate.parse(String.valueOf({})).plusWeeks(1)", jargs[0]),
+        "NEXT_DAY" => "null".into(),
         "EXTRACT" => "/* EXTRACT */ 0".into(),
-        "AGE" | "DATE_TRUNC" | "TO_TIMESTAMP" | "MAKE_DATE" | "MAKE_TIMESTAMP" => format!("/* {} */ null", upper),
+        "AGE" if jargs.len() >= 2 => format!("java.time.Period.between(new java.sql.Date(((java.sql.Timestamp){}).getTime()).toLocalDate(), new java.sql.Date(((java.sql.Timestamp){}).getTime()).toLocalDate())", jargs[1], jargs[0]),
+        "AGE" if jargs.len() == 1 => format!("java.time.Period.between(new java.sql.Date(((java.sql.Timestamp){}).getTime()).toLocalDate(), java.time.LocalDate.now())", jargs[0]),
+        "DATE_TRUNC" if jargs.len() >= 2 => {
+            let unit_raw = jargs[0].trim_matches('"').trim_matches('\'').to_lowercase();
+            let chrono_unit = match unit_raw.as_str() {
+                "microsecond" | "microseconds" => "java.time.temporal.ChronoUnit.MICROS",
+                "millisecond" | "milliseconds" => "java.time.temporal.ChronoUnit.MILLIS",
+                "second" | "seconds" => "java.time.temporal.ChronoUnit.SECONDS",
+                "minute" | "minutes" => "java.time.temporal.ChronoUnit.MINUTES",
+                "hour" | "hours" => "java.time.temporal.ChronoUnit.HOURS",
+                "day" | "days" => "java.time.temporal.ChronoUnit.DAYS",
+                "week" | "weeks" => "java.time.temporal.ChronoUnit.WEEKS",
+                "month" | "months" => "java.time.temporal.ChronoUnit.MONTHS",
+                "quarter" => "java.time.temporal.ChronoUnit.MONTHS",
+                "year" | "years" => "java.time.temporal.ChronoUnit.YEARS",
+                _ => "java.time.temporal.ChronoUnit.DAYS",
+            };
+            if unit_raw == "quarter" {
+                format!("java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({}.toInstant(), java.time.ZoneId.systemDefault()).truncatedTo(java.time.temporal.ChronoUnit.DAYS).withMonth(((java.time.LocalDateTime.ofInstant({}.toInstant(), java.time.ZoneId.systemDefault()).getMonthValue() - 1) / 3) * 3 + 1).withDayOfMonth(1))", jargs[1], jargs[1])
+            } else {
+                format!("java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({}.toInstant(), java.time.ZoneId.systemDefault()).truncatedTo({}))", jargs[1], chrono_unit)
+            }
+        }
+        "MONTHS_BETWEEN" if jargs.len() >= 2 => format!("java.time.Period.between(new java.sql.Date(((java.sql.Timestamp){}).getTime()).toLocalDate(), new java.sql.Date(((java.sql.Timestamp){}).getTime()).toLocalDate()).toTotalMonths()", jargs[1], jargs[0]),
+        "TO_TIMESTAMP" | "MAKE_DATE" | "MAKE_TIMESTAMP" => format!("/* {} */ null", upper),
          "ROW_NUMBER" | "RANK" | "DENSE_RANK" | "COUNT" | "SUM" | "AVG" | "MIN" | "MAX" => format!("/* aggregate:{} */ 0", upper),
         "BIT_AND" | "BIT_OR" | "BIT_XOR" => format!("/* {} */ 0", upper),
         "GET_BIT" => "/* GET_BIT */ 0".into(),
         "SET_BIT" => "/* SET_BIT */".into(),
-        "ENCODE" | "DECODE" => format!("/* {} */ null", upper),
+        "DECODE" if jargs.len() >= 3 => {
+            let expr = &jargs[0];
+            let has_default = (jargs.len() - 1) % 2 == 1;
+            let default = if has_default { jargs.last().unwrap().clone() } else { "null".into() };
+            let mut result = default;
+            let mut i: i32 = if has_default { (jargs.len() - 3) as i32 } else { (jargs.len() - 2) as i32 };
+            while i >= 1 {
+                result = format!("(java.util.Objects.equals({}, {}) ? {} : {})", expr, jargs[i as usize], jargs[(i + 1) as usize], result);
+                i -= 2;
+            }
+            result
+        }
+        "ENCODE" if jargs.len() >= 2 => {
+            let fmt = jargs[1].trim_matches('"').trim_matches('\'').to_lowercase();
+            if fmt == "base64" {
+                let arg0 = &jargs[0];
+                let arg0_expr = if arg0.starts_with('"') || arg0.starts_with('\'') { arg0.clone() } else { format!("String.valueOf({})", arg0) };
+                format!("java.util.Base64.getEncoder().encodeToString({}.getBytes())", arg0_expr)
+            } else {
+                format!("/* TODO: encode({}, {}) */ null", jargs[0], jargs[1])
+            }
+        }
+        "ENCODE" => format!("/* ENCODE */ null"),
+        "TRANSLATE" if jargs.len() >= 3 => {
+            let s = &jargs[0];
+            let from_chars = &jargs[1];
+            let to_chars = &jargs[2];
+            let fc = if from_chars.starts_with('"') || from_chars.starts_with('\'') { from_chars.clone() } else { format!("String.valueOf({})", from_chars) };
+            let tc = if to_chars.starts_with('"') || to_chars.starts_with('\'') { to_chars.clone() } else { format!("String.valueOf({})", to_chars) };
+            format!("String.valueOf({}).chars().mapToObj(c -> {{ int idx = {}.indexOf(c); return idx >= 0 && idx < {}.length() ? String.valueOf({}.charAt(idx)) : String.valueOf((char) c); }}).collect(java.util.stream.Collectors.joining())", s, fc, tc, tc)
+        }
+        "TO_HEX" if !jargs.is_empty() => format!("Long.toHexString({}).toUpperCase()", jargs[0]),
+        "TO_DATE" if jargs.len() >= 2 => {
+            let fmt_raw = jargs[1].trim_matches('"').trim_matches('\'').to_lowercase();
+            if fmt_raw == "yyyy-mm-dd" || fmt_raw.contains("yyyy") {
+                format!("java.sql.Date.valueOf(String.valueOf({}))", jargs[0])
+            } else {
+                let java_fmt = fmt_raw.replace("yyyy", "yyyy").replace("yy", "yy")
+                    .replace("mm", "MM").replace("mon", "MMM").replace("month", "MMMM")
+                    .replace("dd", "dd").replace("dy", "EEE").replace("day", "EEEE")
+                    .replace("hh24", "HH").replace("hh12", "hh").replace("hh", "HH")
+                    .replace("mi", "mm").replace("ss", "ss")
+                    .replace("ff3", "SSS").replace("ms", "SSS");
+                format!("new java.sql.Date(new java.text.SimpleDateFormat(\"{}\").parse(String.valueOf({})).getTime())", java_fmt, jargs[0])
+            }
+        }
+        "TO_DATE" => format!("java.sql.Date.valueOf(String.valueOf({}))", jargs.first().map(|s| s.as_str()).unwrap_or("null")),
         "MD5" => {
             let arg = jargs.first().map(|s| {
                 if s.starts_with('"') || s.starts_with('\'') { s.clone() }
@@ -1185,6 +1273,93 @@ fn special_function_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: 
                 _ => format!("/* EXTRACT({}) */ 0", field),
             }
         }
+        "overlay" if args.len() >= 3 => {
+            let jargs: Vec<String> = args.iter().map(|a| expr_to_java(a, proc)).collect();
+            let s = if jargs[0].starts_with('"') || jargs[0].starts_with('\'') { jargs[0].clone() } else { format!("String.valueOf({})", jargs[0]) };
+            let repl = if jargs[1].starts_with('"') || jargs[1].starts_with('\'') { jargs[1].clone() } else { format!("String.valueOf({})", jargs[1]) };
+            let start = &jargs[2];
+            if jargs.len() >= 4 {
+                let len = &jargs[3];
+                format!("({}).substring(0, Math.max(0, ({}) - 1)) + {} + ({}).substring(Math.max(0, ({}) - 1 + ({})))", s, start, repl, s, start, len)
+            } else {
+                format!("({}).substring(0, Math.max(0, ({}) - 1)) + {} + ({}).substring(Math.max(0, ({}) - 1 + {}.length()))", s, start, repl, s, start, repl)
+            }
+        }
+        "position" if args.len() >= 2 => {
+            let jargs: Vec<String> = args.iter().map(|a| expr_to_java(a, proc)).collect();
+            let substr = &jargs[0];
+            let s = &jargs[1];
+            let substr_expr = if substr.starts_with('"') || substr.starts_with('\'') { substr.clone() } else { format!("String.valueOf({})", substr) };
+            format!("(String.valueOf({}).indexOf({}) + 1)", s, substr_expr)
+        }
+        "interval" if args.len() >= 2 => {
+            let n_expr = expr_to_java(&args[0], proc);
+            let n_clean = n_expr.trim_matches('"').trim_matches('\'').to_string();
+            let unit_parts = match &args[1] {
+                ogsql_parser::ast::Expr::ColumnRef(parts) => parts.last().cloned().unwrap_or_default().to_lowercase(),
+                _ => String::new(),
+            };
+            match unit_parts.as_str() {
+                "hour" | "hours" => format!("java.time.Duration.ofHours((long){}).toMillis()", n_clean),
+                "minute" | "minutes" => format!("java.time.Duration.ofMinutes((long){}).toMillis()", n_clean),
+                "second" | "seconds" => format!("java.time.Duration.ofSeconds((long){}).toMillis()", n_clean),
+                "day" | "days" => format!("java.time.Duration.ofDays((long){}).toMillis()", n_clean),
+                "month" | "months" => format!("(long){} * 30L * 24L * 60L * 60L * 1000L", n_clean),
+                "year" | "years" => format!("(long){} * 365L * 24L * 60L * 60L * 1000L", n_clean),
+                _ => format!("/* INTERVAL */ 0L"),
+            }
+        }
+        "trim" if args.len() >= 2 => {
+            let jargs: Vec<String> = args.iter().map(|a| expr_to_java(a, proc)).collect();
+            let direction = match &args[0] {
+                ogsql_parser::ast::Expr::ColumnRef(parts) => parts.join(".").to_uppercase(),
+                _ => "BOTH".into(),
+            };
+            match direction.as_str() {
+                "LEADING" => {
+                    if jargs.len() >= 3 {
+                        let chars = &jargs[1];
+                        let s = &jargs[2];
+                        let chars_expr = if chars.starts_with('"') || chars.starts_with('\'') { chars.clone() } else { format!("String.valueOf({})", chars) };
+                        if chars.trim_matches('"').trim_matches('\'') == " " {
+                            format!("String.valueOf({}).replaceAll(\"^\\\\s+\", \"\")", s)
+                        } else {
+                            format!("String.valueOf({}).replaceAll(\"^\" + java.util.regex.Pattern.quote({}) + \"+\", \"\")", s, chars_expr)
+                        }
+                    } else {
+                        "null".into()
+                    }
+                }
+                "TRAILING" => {
+                    if jargs.len() >= 3 {
+                        let chars = &jargs[1];
+                        let s = &jargs[2];
+                        let chars_expr = if chars.starts_with('"') || chars.starts_with('\'') { chars.clone() } else { format!("String.valueOf({})", chars) };
+                        if chars.trim_matches('"').trim_matches('\'') == " " {
+                            format!("String.valueOf({}).replaceAll(\"\\\\s+$\", \"\")", s)
+                        } else {
+                            format!("String.valueOf({}).replaceAll(java.util.regex.Pattern.quote({}) + \"+$\", \"\")", s, chars_expr)
+                        }
+                    } else {
+                        "null".into()
+                    }
+                }
+                _ => {
+                    if jargs.len() >= 3 {
+                        let chars = &jargs[1];
+                        let s = &jargs[2];
+                        let chars_expr = if chars.starts_with('"') || chars.starts_with('\'') { chars.clone() } else { format!("String.valueOf({})", chars) };
+                        if chars.trim_matches('"').trim_matches('\'') == " " {
+                            format!("String.valueOf({}).trim()", s)
+                        } else {
+                            format!("String.valueOf({}).replaceAll(\"^\" + java.util.regex.Pattern.quote({}) + \"+|\" + java.util.regex.Pattern.quote({}) + \"+$\", \"\")", s, chars_expr, chars_expr)
+                        }
+                    } else {
+                        "null".into()
+                    }
+                }
+            }
+        }
         _ => "null".into(),
     }
 }
@@ -1226,7 +1401,7 @@ fn like_to_java(expr: &ogsql_parser::ast::Expr, pattern: &ogsql_parser::ast::Exp
 fn is_boxed_integer(expr_str: &str, proc: &ProcedureInfo) -> bool {
     let name = expr_str.trim();
     let base = name.split(|c: char| c == '.' || c == '(').next().unwrap_or(name);
-    if let Some(ty) = proc.local_vars.get(base) {
+    if let Some(ty) = proc.local_vars.get(&base.to_lowercase()) {
         return ty == "Integer" || ty == "Long" || ty == "Double" || ty == "Float";
     }
     let base_lower = base.to_lowercase().replace("_", "");
@@ -1282,7 +1457,7 @@ fn type_cast_to_java(expr: &ogsql_parser::ast::Expr, type_name: &str, proc: &Pro
 fn is_integer_type(expr_str: &str, proc: &ProcedureInfo) -> bool {
     let name = expr_str.trim();
     let base = name.split(|c: char| c == '.' || c == '(').next().unwrap_or(name);
-    if let Some(ty) = proc.local_vars.get(base) {
+    if let Some(ty) = proc.local_vars.get(&base.to_lowercase()) {
         let t = ty.as_str();
         return t == "int" || t == "long" || t == "Integer" || t == "Long";
     }
