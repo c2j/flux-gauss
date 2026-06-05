@@ -435,6 +435,7 @@ mod tests {
                 comments: vec![],
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),
+                extra_mapper_methods: Vec::new(),
             },
             PackageInfo {
                 package_name: "pkg_b".into(),
@@ -455,6 +456,7 @@ mod tests {
                 comments: vec![],
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),
+                extra_mapper_methods: Vec::new(),
             },
             PackageInfo {
                 package_name: "pkg_c".into(),
@@ -469,6 +471,7 @@ mod tests {
                 comments: vec![],
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),
+                extra_mapper_methods: Vec::new(),
             },
         ];
 
@@ -496,6 +499,7 @@ mod tests {
             comments: vec![],
             java_package: "com.example".into(),
             custom_types: HashMap::new(),
+            extra_mapper_methods: Vec::new(),
         }];
 
         let graph = IncrementalState::build_dependency_graph(&packages);
@@ -525,6 +529,7 @@ mod tests {
                 comments: vec![],
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),
+                extra_mapper_methods: Vec::new(),
             },
             PackageInfo {
                 package_name: "pkg_b".into(),
@@ -545,6 +550,7 @@ mod tests {
                 comments: vec![],
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),
+                extra_mapper_methods: Vec::new(),
             },
             PackageInfo {
                 package_name: "pkg_c".into(),
@@ -559,6 +565,7 @@ mod tests {
                 comments: vec![],
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),
+                extra_mapper_methods: Vec::new(),
             },
         ];
 

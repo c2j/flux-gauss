@@ -256,6 +256,7 @@ mod tests {
             comments: vec![],
             java_package: "com.example".into(),
             custom_types: Default::default(),
+            extra_mapper_methods: Vec::new(),
         };
         let report = build_report(
             &[pkg],
