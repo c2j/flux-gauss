@@ -1,2 +1,0 @@
-INSERT INTO dat_zl_batchpayment ("account_date", "account_id", "account_seqno", "acnt_id", "apaysum", "beneaccount", "interface_seq", "planid") VALUES (CURRENT_TIMESTAMP, 1, 't_account_seqno', 1, 't_apaysum', 't_beneaccount', 't_interface_seq', 't_planid');
-INSERT INTO tmp_batchpay_submit ("account_date", "account_id", "account_seqno", "interface_seq", "out_amount", "plan_id", "rece_account", "status", "yyyymmdd") VALUES (CURRENT_TIMESTAMP, 1, 't_account_seqno', 't_interface_seq', 10.50, 1, 't_rece_account', 't_status', 't_yyyymmdd');
