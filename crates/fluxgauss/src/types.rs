@@ -70,6 +70,12 @@ pub enum DmlType {
     Delete,
 }
 
+impl Default for DmlType {
+    fn default() -> Self {
+        Self::Select
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DynamicCondition {
     pub condition_expr: String,
@@ -78,7 +84,7 @@ pub struct DynamicCondition {
     pub tag_name: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct DmlStatement {
     pub sql_type: DmlType,
     pub method_id: String,
@@ -90,6 +96,13 @@ pub struct DmlStatement {
     pub extra_params: Vec<(String, String)>,
     pub dynamic_conditions: Vec<DynamicCondition>,
     pub base_sql: String,
+    /// Whether this DML is a FORALL batch operation (uses `<foreach>` in XML)
+    pub is_forall_batch: bool,
+    /// The item variable name used in `<foreach collection="list" item="...">`
+    pub forall_batch_list_var: String,
+    /// Map from Java variable name to element type for each batch array used in FORALL.
+    /// e.g., `{"pArray" -> "String", "pIds" -> "Long"}`
+    pub forall_batch_arrays: HashMap<String, String>,
 }
 
 // ── Service Calls ──
@@ -284,6 +297,7 @@ pub struct PackageInfo {
     pub comments: Vec<CommentBlock>,
     pub java_package: String,
     pub custom_types: HashMap<String, CustomTypeInfo>,
+    pub extra_mapper_methods: Vec<(String, String, String)>,
 }
 
 // ── Lightweight Summaries (Phase 2 cross-package analysis) ──
@@ -510,12 +524,7 @@ mod tests {
                     method_id: "selectOrder".into(),
                     sql_text: "SELECT * FROM orders".into(),
                     result_type: None,
-                    parameter_types: HashMap::new(),
-                    optional_filters: Vec::new(),
-                    returns_list: false,
-                    extra_params: Vec::new(),
-                    dynamic_conditions: Vec::new(),
-                    base_sql: String::new(),
+                    ..Default::default()
                 });
         assert!(!proc.is_stub());
     }
@@ -546,18 +555,19 @@ mod tests {
     #[test]
     fn test_package_summary_find_procedure() {
         let pkg = PackageInfo {
-            package_name: "pkg_order".into(),
-            procedures: vec![
-                ProcedureInfo::new("pkg_order.create".into(), "pkg_order".into(), "create".into()),
-                ProcedureInfo::new("pkg_order.cancel".into(), "pkg_order".into(), "cancel".into()),
-            ],
-            table_refs: HashSet::new(),
-            package_vars: HashMap::new(),
-            source_file: "pkg_order.sql".into(),
-            comments: Vec::new(),
-            java_package: "com.example".into(),
-            custom_types: HashMap::new(),
-        };
+                    package_name: "pkg_order".into(),
+                    procedures: vec![
+                        ProcedureInfo::new("pkg_order.create".into(), "pkg_order".into(), "create".into()),
+                        ProcedureInfo::new("pkg_order.cancel".into(), "pkg_order".into(), "cancel".into()),
+                    ],
+                    table_refs: HashSet::new(),
+                    package_vars: HashMap::new(),
+                    source_file: "pkg_order.sql".into(),
+                    comments: Vec::new(),
+                    java_package: "com.example".into(),
+                    custom_types: HashMap::new(),
+                    extra_mapper_methods: Vec::new(),
+                };
 
         let summary = PackageSummary::from_package(&pkg);
         assert!(summary.find_procedure("create").is_some());
