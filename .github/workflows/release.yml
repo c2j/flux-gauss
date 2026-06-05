@@ -20,7 +20,7 @@ jobs:
   # ── ogsql binary (from ogsql-parser repo) ──────────────────────
   build-ogsql-linux-x86_64:
     name: Build ogsql linux-x86_64 (glibc >= 2.17)
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout ogsql-parser
         uses: actions/checkout@v4
@@ -64,7 +64,7 @@ jobs:
 
   build-ogsql-linux-arm64:
     name: Build ogsql linux-arm64 (glibc >= 2.17)
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout ogsql-parser
         uses: actions/checkout@v4
@@ -206,7 +206,7 @@ jobs:
   # ── fluxgauss binary (from this repo, uses ogsql-parser git dep) ─
   build-fluxgauss-linux-x86_64:
     name: Build fluxgauss linux-x86_64 (glibc >= 2.17)
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout flux-gauss
         uses: actions/checkout@v4
@@ -247,7 +247,7 @@ jobs:
 
   build-fluxgauss-linux-arm64:
     name: Build fluxgauss linux-arm64 (glibc >= 2.17)
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout flux-gauss
         uses: actions/checkout@v4
@@ -380,7 +380,7 @@ jobs:
   # ── Python engine CI ──────────────────────────────────────────
   test-python-engine:
     name: Python engine test (Linux x86_64)
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     needs: [build-ogsql-linux-x86_64]
     steps:
       - name: Checkout flux-gauss
@@ -418,7 +418,7 @@ jobs:
   # ── fluxgauss-py binary (PyInstaller, Python engine + bundled ogsql) ──
   build-fluxgauss-py-linux-x86_64:
     name: Build fluxgauss-py linux-x86_64
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     needs: [build-ogsql-linux-x86_64]
     steps:
       - name: Checkout flux-gauss
@@ -477,8 +477,8 @@ jobs:
           path: fluxgauss-py-*.tar.gz
 
   build-fluxgauss-py-linux-arm64:
-    name: Build fluxgauss-py linux-arm64
-    runs-on: ubuntu-20.04
+    name: Build fluxgauss-py linux-arm64 (glibc >= 2.31)
+    runs-on: ubuntu-22.04
     needs: [build-ogsql-linux-arm64]
     steps:
       - name: Checkout flux-gauss
@@ -671,7 +671,7 @@ jobs:
   # ── Rust engine CI ────────────────────────────────────────────
   test-rust-engine:
     name: Rust engine test (Linux x86_64)
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout flux-gauss
         uses: actions/checkout@v4
