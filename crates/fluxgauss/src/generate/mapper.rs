@@ -83,6 +83,10 @@ pub fn write_mapper_interface(
             w.line(line);
         }
     }
+    for (method_name, _sql_text, ret_type) in &pkg.extra_mapper_methods {
+        w.blank();
+        w.line(&format!("{} {}(String seqName);", ret_type, method_name));
+    }
     w.pop_indent();
     w.line("}");
 
@@ -98,6 +102,24 @@ fn build_mapper_method(
     imports: &mut BTreeSet<String>,
     package_vars: &std::collections::HashMap<String, crate::types::VarInfo>,
 ) -> String {
+    // FORALL batch: mapper accepts a single List<Map<String, Object>>
+    if dml.is_forall_batch {
+        imports.insert("import java.util.List;".to_string());
+        imports.insert("import java.util.Map;".to_string());
+        let ret = return_type_for_dml(dml, imports);
+        let source_info = if !proc.source_file.is_empty() {
+            format!("// {}:{} — {}", proc.source_file, proc.source_start_line, proc.name)
+        } else {
+            String::new()
+        };
+        let mut lines = Vec::new();
+        if !source_info.is_empty() {
+            lines.push(source_info);
+        }
+        lines.push(format!("{} {}(List<Map<String, Object>> list);", ret, dml.method_id));
+        return lines.join("\n");
+    }
+
     let mut params: Vec<String> = Vec::new();
 
     for p in &proc.parameters {
@@ -181,7 +203,7 @@ fn promote_out_params_to_mapper(
             let jn = snake_to_camel(&p.name);
             let already = extra_params.iter().any(|(name, _)| name == &jn);
             if !already {
-                let java_type = out_local_vars.get(&p.name)
+                let java_type = out_local_vars.get(&p.name.to_lowercase())
                     .cloned()
                     .unwrap_or_else(|| p.java_type.clone());
                 extra_params.push((jn, java_type));
@@ -266,11 +288,11 @@ fn extract_local_var_refs(
         ) {
             continue;
         }
-        if let Some(java_type) = local_vars.get(word) {
+        if let Some(java_type) = local_vars.get(&word.to_lowercase()) {
             let jn = snake_to_camel(word);
             let jn_lower = jn.to_lowercase();
             if !param_java_names.iter().any(|pn| pn == &jn_lower) {
-                let resolved_type = out_local_vars.get(word).cloned().unwrap_or_else(|| java_type.clone());
+                let resolved_type = out_local_vars.get(&word.to_lowercase()).cloned().unwrap_or_else(|| java_type.clone());
                 result.push((jn, resolved_type));
             }
         }
@@ -348,6 +370,13 @@ pub fn write_mapper_xml(
         for line in stmt.split('\n') {
             w.line(line);
         }
+    }
+
+    for (method_name, sql_text, ret_type) in &pkg.extra_mapper_methods {
+        w.blank();
+        w.line(&format!("<select id=\"{}\" resultType=\"{}\">", method_name, ret_type));
+        w.line(&format!("    {}", sql_text));
+        w.line("</select>");
     }
 
     w.blank();
@@ -567,7 +596,17 @@ fn build_mapper_statement(
         sql = xml_escape(&sql);
         let formatted_sql: String = sql.split('\n').map(|l| format!("    {}", l)).collect::<Vec<_>>().join("\n");
         parts.push(format!("<{} id=\"{}\"{}{}>", tag, dml.method_id, params_attrs, result_type_attr));
-        parts.push(formatted_sql);
+        if dml.is_forall_batch {
+            // Wrap DML in <foreach> for batch execution
+            let item = &dml.forall_batch_list_var;
+            let item = if item.is_empty() { "item" } else { item.as_str() };
+            parts.push(format!("    <foreach collection=\"list\" item=\"{}\" separator=\";\">", item));
+            let indented_sql: String = sql.split('\n').map(|l| format!("        {}", l)).collect::<Vec<_>>().join("\n");
+            parts.push(indented_sql);
+            parts.push("    </foreach>".to_string());
+        } else {
+            parts.push(formatted_sql);
+        }
         parts.push(format!("</{}>", tag));
     }
     parts.join("\n")
@@ -869,6 +908,31 @@ fn fix_postgresql_syntax(sql: &str) -> String {
             }
         }
     }
+
+    // Strip quotes from MyBatis params: "#{param}" → #{param}
+    let quoted_mybatis_re = regex::Regex::new("\"#\\{[^}]+\\}\"").unwrap();
+    result = quoted_mybatis_re.replace_all(&result, |caps: &regex::Captures| {
+        let m = caps.get(0).unwrap().as_str();
+        m[1..m.len()-1].to_string()
+    }).to_string();
+
+    // TIMESTAMP(x) → CAST(x AS TIMESTAMP) (DATE variant already handled above)
+    let timestamp_func_re = regex::Regex::new(r"(?i)\bTIMESTAMP\s*\(([^)]+)\)").unwrap();
+    result = timestamp_func_re.replace_all(&result, "CAST($1 AS TIMESTAMP)").to_string();
+
+    // FILTER( → FILTER(WHERE when ogsql drops the WHERE keyword
+    // Only add WHERE if it's not already present after FILTER(
+    let filter_re = regex::Regex::new(r"(?i)\bFILTER\s*\(").unwrap();
+    result = filter_re.replace_all(&result, |caps: &regex::Captures| {
+        let matched = caps.get(0).unwrap().as_str();
+        let rest_start = caps.get(0).unwrap().end();
+        let after = result.get(rest_start..).unwrap_or("");
+        if after.trim_start().to_lowercase().starts_with("where") {
+            matched.to_string()
+        } else {
+            format!("{}WHERE ", matched)
+        }
+    }).to_string();
 
     result
 }
@@ -1377,26 +1441,22 @@ mod tests {
             method_id: method_id.to_string(),
             sql_text: sql.to_string(),
             result_type: None,
-            parameter_types: Default::default(),
-            optional_filters: Vec::new(),
-            returns_list: false,
-            extra_params: Vec::new(),
-            dynamic_conditions: Vec::new(),
-            base_sql: String::new(),
+            ..Default::default()
         }
     }
 
     fn make_pkg(name: &str, procs: Vec<ProcedureInfo>) -> PackageInfo {
         PackageInfo {
-            package_name: name.to_string(),
-            procedures: procs,
-            table_refs: Default::default(),
-            package_vars: Default::default(),
-            source_file: String::new(),
-            comments: Vec::new(),
-            java_package: String::new(),
-            custom_types: Default::default(),
-        }
+                    package_name: name.to_string(),
+                    procedures: procs,
+                    table_refs: Default::default(),
+                    package_vars: Default::default(),
+                    source_file: String::new(),
+                    comments: Vec::new(),
+                    java_package: String::new(),
+                    custom_types: Default::default(),
+                    extra_mapper_methods: Vec::new(),
+                }
     }
 
     #[test]
@@ -1576,12 +1636,10 @@ mod tests {
             method_id: "dynSelect1".to_string(),
             sql_text: "SELECT * FROM ${tableName} WHERE ${whereClause}".to_string(),
             result_type: Some("java.util.LinkedHashMap".to_string()),
-            parameter_types: HashMap::new(),
-            optional_filters: Vec::new(),
             returns_list: true,
-            extra_params: Vec::new(),
             dynamic_conditions: vec![dc],
             base_sql: "SELECT * FROM ${tableName}".to_string(),
+            ..Default::default()
         };
 
         let xml = build_mapper_statement(&proc, &dml, &HashMap::new());
@@ -1609,12 +1667,10 @@ mod tests {
             method_id: "dynSelect1".to_string(),
             sql_text: "SELECT * FROM ${tableName} ORDER BY ${orderBy}".to_string(),
             result_type: Some("java.util.LinkedHashMap".to_string()),
-            parameter_types: HashMap::new(),
-            optional_filters: Vec::new(),
             returns_list: true,
-            extra_params: Vec::new(),
             dynamic_conditions: vec![dc],
             base_sql: "SELECT * FROM ${tableName}".to_string(),
+            ..Default::default()
         };
 
         let xml = build_mapper_statement(&proc, &dml, &HashMap::new());
@@ -1636,11 +1692,8 @@ mod tests {
             sql_text: "SELECT * FROM orders WHERE status = #{status}".to_string(),
             result_type: Some("java.util.LinkedHashMap".to_string()),
             parameter_types: HashMap::new(),
-            optional_filters: Vec::new(),
             returns_list: true,
-            extra_params: Vec::new(),
-            dynamic_conditions: Vec::new(),
-            base_sql: String::new(),
+            ..Default::default()
         };
 
         let xml = build_mapper_statement(&proc, &dml, &HashMap::new());
@@ -1672,12 +1725,10 @@ mod tests {
             method_id: "dynSelect1".to_string(),
             sql_text: "SELECT * FROM ${tableName} WHERE ${whereClause} ORDER BY ${orderBy}".to_string(),
             result_type: Some("java.util.LinkedHashMap".to_string()),
-            parameter_types: HashMap::new(),
-            optional_filters: Vec::new(),
             returns_list: true,
-            extra_params: Vec::new(),
             dynamic_conditions: vec![dc_where, dc_order],
             base_sql: "SELECT * FROM ${tableName}".to_string(),
+            ..Default::default()
         };
 
         let xml = build_mapper_statement(&proc, &dml, &HashMap::new());
@@ -1716,12 +1767,10 @@ mod tests {
             method_id: "dynUpdate1".to_string(),
             sql_text: "UPDATE orders SET status = #{status} WHERE id = #{id}".to_string(),
             result_type: None,
-            parameter_types: HashMap::new(),
-            optional_filters: Vec::new(),
             returns_list: false,
-            extra_params: Vec::new(),
             dynamic_conditions: vec![dc_set],
             base_sql: "UPDATE orders".to_string(),
+            ..Default::default()
         };
 
         let xml = build_mapper_statement(&proc, &dml, &HashMap::new());
@@ -1749,12 +1798,10 @@ mod tests {
             method_id: "dynSelect1".to_string(),
             sql_text: "SELECT * FROM orders WHERE ${vWhere}".to_string(),
             result_type: Some("java.util.LinkedHashMap".to_string()),
-            parameter_types: HashMap::new(),
-            optional_filters: Vec::new(),
             returns_list: true,
-            extra_params: Vec::new(),
             dynamic_conditions: vec![dc_rejected],
             base_sql: "SELECT * FROM orders".to_string(),
+            ..Default::default()
         };
 
         let xml = build_mapper_statement(&proc, &dml, &HashMap::new());
@@ -1787,12 +1834,10 @@ mod tests {
             method_id: "dynUpdate1".to_string(),
             sql_text: "UPDATE orders SET status = #{status} WHERE id = #{id}".to_string(),
             result_type: None,
-            parameter_types: HashMap::new(),
-            optional_filters: Vec::new(),
             returns_list: false,
-            extra_params: Vec::new(),
             dynamic_conditions: vec![dc_where, dc_set],
             base_sql: "UPDATE orders".to_string(),
+            ..Default::default()
         };
 
         let xml = build_mapper_statement(&proc, &dml, &HashMap::new());
