@@ -1,4 +1,2 @@
-DELETE FROM dat_clr_cash_dtl;
-DELETE FROM v_par_asset_acnt_info;
-INSERT INTO dat_clr_cash_dtl (account_id, interface_seq, match_status, operation_status) VALUES ('test_account_id', 'test interface_seq', 'test_match_status', 'test_operation_status');
-INSERT INTO v_par_asset_acnt_info (accname, asset_acnt_id) VALUES ('test accname', 'test_asset_acnt_id');
+INSERT INTO dat_clr_cash_dtl ("account_date", "account_id", "account_seqno", "interface_seq", "match_status", "operation_status", "t") VALUES (CURRENT_TIMESTAMP, 1, 't_account_seqno', 't_interface_seq', 't_match_status', 't_operation_status', 't_t');
+INSERT INTO v_par_asset_acnt_info ("account_id", "asset_acnt_id", "interface_seq", "match_status", "operation_status", "rownum", "s", "use_cplan") VALUES (1, 1, 't_interface_seq', 't_match_status', 't_operation_status', 't_rownum', 't_s', 't_use_cplan');

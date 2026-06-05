@@ -2,6 +2,7 @@ lib/ogsql-parser
 dest/
 dest_ru/
 dest_py/
+dest_tu/
 dest_itest/
 dest_itest_remote/
 demo-project/dest
