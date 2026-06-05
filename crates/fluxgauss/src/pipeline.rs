@@ -273,8 +273,8 @@ pub fn run_pipeline(
     let mut ctx = AnalysisContext::new();
 
     let parsed = phase1_parse(sql_files, config, incremental);
-    let analyzed = phase2_analyze(parsed, &mut ctx, sql_files);
-    let (generated, test_count, itest_count, errors) = phase3_generate(&analyzed, config, incremental, sql_files);
+    let mut analyzed = phase2_analyze(parsed, &mut ctx, sql_files);
+    let (generated, test_count, itest_count, errors) = phase3_generate(&mut analyzed, config, incremental, sql_files);
 
     let packages = analyzed.packages;
     let skipped = analyzed.skipped;
@@ -492,7 +492,7 @@ fn phase2_analyze(
 }
 
 fn phase3_generate(
-    analyzed: &AnalyzedPackages,
+    analyzed: &mut AnalyzedPackages,
     config: &AppConfig,
     _incremental: &IncrementalState,
     sql_files: &[PathBuf],
@@ -539,12 +539,25 @@ fn phase3_generate(
         }
     }
 
-    for (idx, pkg) in analyzed.packages.iter().enumerate() {
+    let total = analyzed.packages.len();
+    let all_packages: Vec<_> = analyzed.packages.clone();
+    for (idx, pkg) in analyzed.packages.iter_mut().enumerate() {
         let n = idx + 1;
-        let total = analyzed.packages.len();
         crate::progress::progress_bar("Generate", n, total, &pkg.package_name);
 
         let service_injections = crate::generate::service::collect_service_injections(pkg);
+
+        // Service class first — it populates extra_mapper_methods for nextval/currval stubs
+        match crate::generate::service::write_service_class(output_dir, pkg, &base_package, &service_injections, encoding) {
+            Ok(name) => generated.push(format!("{}.java", name)),
+            Err(e) => {
+                errors.push(ConversionError::Io {
+                    path: pkg.package_name.clone(),
+                    message: format!("write_service_class: {}", e),
+                });
+                continue;
+            }
+        }
 
         if let Err(e) = crate::generate::mapper::write_mapper_interface(output_dir, pkg, &base_package, encoding) {
             errors.push(ConversionError::Io {
@@ -562,17 +575,6 @@ fn phase3_generate(
             continue;
         }
 
-        match crate::generate::service::write_service_class(output_dir, pkg, &base_package, &service_injections, encoding) {
-            Ok(name) => generated.push(format!("{}.java", name)),
-            Err(e) => {
-                errors.push(ConversionError::Io {
-                    path: pkg.package_name.clone(),
-                    message: format!("write_service_class: {}", e),
-                });
-                continue;
-            }
-        }
-
         if let Err(e) = crate::generate::test::write_service_test(output_dir, pkg, &base_package, &service_injections, encoding) {
             errors.push(ConversionError::Io {
                 path: pkg.package_name.clone(),
@@ -583,7 +585,7 @@ fn phase3_generate(
         }
 
         if let Some(sm) = schema_map.as_ref() {
-            if let Err(e) = crate::generate::itest::write_itest_class(output_dir, pkg, &base_package, &service_injections, &analyzed.packages, sm, encoding) {
+            if let Err(e) = crate::generate::itest::write_itest_class(output_dir, pkg, &base_package, &service_injections, &all_packages, sm, encoding) {
                 errors.push(ConversionError::Io {
                     path: pkg.package_name.clone(),
                     message: format!("write_itest_class: {}", e),
