@@ -516,10 +516,10 @@ jobs:
             -v "$PWD:/workspace" -w /workspace \
             -e OGSQL_BIN_PATH=/workspace/ogsql-artifact/ogsql \
             python:3.12-slim-bullseye bash -c '
-              pip install --no-cache-dir pyinstaller pyyaml && \
-              pyinstaller fluxgauss.spec --clean --noconfirm && \
               apt-get update && \
               apt-get install -y binutils && \
+              pip install --no-cache-dir pyinstaller pyyaml && \
+              pyinstaller fluxgauss.spec --clean --noconfirm && \
               strip --strip-unneeded dist/fluxgauss-py
             '
 
