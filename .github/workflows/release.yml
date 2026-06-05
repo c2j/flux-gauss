@@ -20,7 +20,7 @@ jobs:
   # ── ogsql binary (from ogsql-parser repo) ──────────────────────
   build-ogsql-linux-x86_64:
     name: Build ogsql linux-x86_64 (glibc >= 2.17)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
     steps:
       - name: Checkout ogsql-parser
         uses: actions/checkout@v4
@@ -64,7 +64,7 @@ jobs:
 
   build-ogsql-linux-arm64:
     name: Build ogsql linux-arm64 (glibc >= 2.17)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
     steps:
       - name: Checkout ogsql-parser
         uses: actions/checkout@v4
@@ -206,7 +206,7 @@ jobs:
   # ── fluxgauss binary (from this repo, uses ogsql-parser git dep) ─
   build-fluxgauss-linux-x86_64:
     name: Build fluxgauss linux-x86_64 (glibc >= 2.17)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
     steps:
       - name: Checkout flux-gauss
         uses: actions/checkout@v4
@@ -247,7 +247,7 @@ jobs:
 
   build-fluxgauss-linux-arm64:
     name: Build fluxgauss linux-arm64 (glibc >= 2.17)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
     steps:
       - name: Checkout flux-gauss
         uses: actions/checkout@v4
@@ -380,7 +380,7 @@ jobs:
   # ── Python engine CI ──────────────────────────────────────────
   test-python-engine:
     name: Python engine test (Linux x86_64)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
     needs: [build-ogsql-linux-x86_64]
     steps:
       - name: Checkout flux-gauss
@@ -418,7 +418,7 @@ jobs:
   # ── fluxgauss-py binary (PyInstaller, Python engine + bundled ogsql) ──
   build-fluxgauss-py-linux-x86_64:
     name: Build fluxgauss-py linux-x86_64
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
     needs: [build-ogsql-linux-x86_64]
     steps:
       - name: Checkout flux-gauss
@@ -478,19 +478,11 @@ jobs:
 
   build-fluxgauss-py-linux-arm64:
     name: Build fluxgauss-py linux-arm64
-    runs-on: ubuntu-24.04-arm  # GitHub-hosted ARM64 runner required
+    runs-on: ubuntu-20.04
     needs: [build-ogsql-linux-arm64]
     steps:
       - name: Checkout flux-gauss
         uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: pip install pyinstaller pyyaml
 
       - name: Extract version
         id: version
@@ -499,7 +491,6 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Sync version to Python source
-        shell: bash
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           sed -i.bak "s/or \"[0-9][0-9.]*\" *$/or \"${VERSION}\"/" converter/flux_gauss.py
@@ -515,20 +506,36 @@ jobs:
         run: |
           tar xzf ogsql-artifact/ogsql-*.tar.gz -C ogsql-artifact
           chmod +x ogsql-artifact/ogsql
-          echo "OGSQL_BIN_PATH=$PWD/ogsql-artifact/ogsql" >> "$GITHUB_ENV"
 
-      - name: Build with PyInstaller
-        run: pyinstaller fluxgauss.spec --clean --noconfirm
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
-      - name: Strip
-        run: strip --strip-unneeded dist/fluxgauss-py
+      - name: Build with PyInstaller in ARM64 container
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD:/workspace" -w /workspace \
+            -e OGSQL_BIN_PATH=/workspace/ogsql-artifact/ogsql \
+            arm64v8/ubuntu:20.04 bash -c '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update && \
+              apt-get install -y software-properties-common && \
+              add-apt-repository -y ppa:deadsnakes/ppa && \
+              apt-get update && \
+              apt-get install -y python3.12 python3.12-dev python3.12-venv \
+                curl binutils && \
+              curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 && \
+              python3.12 -m pip install pyinstaller pyyaml && \
+              python3.12 -m PyInstaller fluxgauss.spec --clean --noconfirm && \
+              strip --strip-unneeded dist/fluxgauss-py
+            '
 
       - name: Package (fluxgauss-py + ogsql)
         run: |
           mkdir -p bundle
           cp dist/fluxgauss-py bundle/
           cp ogsql-artifact/ogsql bundle/
-          tar czf ${{ github.workspace }}/fluxgauss-py-${{ steps.version.outputs.version }}-linux-arm64.tar.gz -C bundle fluxgauss-py ogsql
+          tar czf "$GITHUB_WORKSPACE/fluxgauss-py-${{ steps.version.outputs.version }}-linux-arm64.tar.gz" \
+            -C bundle fluxgauss-py ogsql
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -664,7 +671,7 @@ jobs:
   # ── Rust engine CI ────────────────────────────────────────────
   test-rust-engine:
     name: Rust engine test (Linux x86_64)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
     steps:
       - name: Checkout flux-gauss
         uses: actions/checkout@v4
