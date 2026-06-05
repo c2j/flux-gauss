@@ -1164,7 +1164,7 @@ fn write_fixtures(base_path: &Path, proc: &ProcedureInfo, pkg: &PackageInfo, tes
         if col_names.is_empty() {
             continue;
         }
-        lines.push(format!("INSERT INTO {} ({}) VALUES ({});", table, col_names.join(", "), values.join(", ")));
+        lines.push(format!("INSERT INTO {} ({}) VALUES ({});", table, col_names.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", "), values.join(", ")));
     }
     if lines.is_empty() {
         return Ok(String::new());
@@ -1237,11 +1237,7 @@ fn generate_test_value(col_name: &str, sql_type: &str) -> String {
         if max_len == 1 {
             return "'Y'".to_string();
         }
-        let val = if lower_col.contains("id") || lower_col.contains("code") || lower_col.contains("type") || lower_col.contains("status") {
-            format!("t_{}", lower_col)
-        } else {
-            format!("t {}", lower_col)
-        };
+        let val = format!("t_{}", lower_col);
         let val = if max_len > 0 && val.len() > max_len {
             val[..max_len].to_string()
         } else {
@@ -1354,6 +1350,13 @@ fn default_test_value(java_type: &str, param_name: &str) -> String {
     if tl.contains("date") { return "java.sql.Date.valueOf(\"2024-01-01\")".to_string(); }
     if tl.contains("map") { return "new java.util.HashMap<>()".to_string(); }
     if tl == "object" { return "java.util.Arrays.asList(\"a\", \"b\")".to_string(); }
+    if tl.contains("string") || tl == "object" {
+        if nl.contains("date") { return "\"2024-01-01\"".to_string(); }
+        if nl.contains("ids") || nl.contains("list") { return "\"1,2,3\"".to_string(); }
+        if ["flag", "amount", "seqno", "seq", "interfaceseq", "operflag", "stepno", "count", "quantity", "qty", "price", "total"].iter().any(|kw| nl.contains(kw)) {
+            return "\"1\"".to_string();
+        }
+    }
     let short_name: String = param_name.chars().take(4).collect();
     format!("\"t_{}\"", short_name)
 }
@@ -1437,15 +1440,16 @@ mod tests {
 
     fn make_pkg(name: &str, procs: Vec<ProcedureInfo>) -> PackageInfo {
         PackageInfo {
-            package_name: name.to_string(),
-            procedures: procs,
-            table_refs: Default::default(),
-            package_vars: Default::default(),
-            source_file: String::new(),
-            comments: Vec::new(),
-            java_package: String::new(),
-            custom_types: Default::default(),
-        }
+                    package_name: name.to_string(),
+                    procedures: procs,
+                    table_refs: Default::default(),
+                    package_vars: Default::default(),
+                    source_file: String::new(),
+                    comments: Vec::new(),
+                    java_package: String::new(),
+                    custom_types: Default::default(),
+                    extra_mapper_methods: Vec::new(),
+                }
     }
 
     fn make_proc(name: &str) -> ProcedureInfo {
@@ -1581,12 +1585,7 @@ mod tests {
                     method_id: "insertCheckStock".to_string(),
                     sql_text: "INSERT INTO inventory (id, qty) VALUES (#{id}, #{qty})".to_string(),
                     result_type: None,
-                    parameter_types: Default::default(),
-                    optional_filters: Vec::new(),
-                    returns_list: false,
-                    extra_params: Vec::new(),
-                    dynamic_conditions: Vec::new(),
-                    base_sql: String::new(),
+                    ..Default::default()
                 });
         let mut pkg = make_pkg("pkg_inventory", vec![proc]);
         pkg.table_refs.insert("inventory".to_string());
@@ -1608,12 +1607,7 @@ mod tests {
                     method_id: "selectCheckStock".to_string(),
                     sql_text: "SELECT id, qty FROM inventory WHERE product_id = #{productId}".to_string(),
                     result_type: None,
-                    parameter_types: Default::default(),
-                    optional_filters: Vec::new(),
-                    returns_list: false,
-                    extra_params: Vec::new(),
-                    dynamic_conditions: Vec::new(),
-                    base_sql: String::new(),
+                    ..Default::default()
                 });
         let pkg = make_pkg("pkg_inventory", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
@@ -1686,12 +1680,7 @@ CREATE TABLE BIGFUND.orders (
                     method_id: "insertCheckStock".to_string(),
                     sql_text: "INSERT INTO inventory (id, qty) VALUES (#{id}, #{qty})".to_string(),
                     result_type: None,
-                    parameter_types: Default::default(),
-                    optional_filters: Vec::new(),
-                    returns_list: false,
-                    extra_params: Vec::new(),
-                    dynamic_conditions: Vec::new(),
-                    base_sql: String::new(),
+                    ..Default::default()
                 });
         let pkg = make_pkg("pkg_inventory", vec![proc]);
         let mut ddl_schemas: HashMap<String, HashMap<String, String>> = HashMap::new();
@@ -1729,12 +1718,7 @@ CREATE TABLE BIGFUND.orders (
             method_id: "selectDyn".to_string(),
             sql_text: "SELECT * FROM ${tableName} WHERE ${whereClause}".to_string(),
             result_type: None,
-            parameter_types: Default::default(),
-            optional_filters: Vec::new(),
-            returns_list: false,
-            extra_params: Vec::new(),
-            dynamic_conditions: Vec::new(),
-            base_sql: String::new(),
+            ..Default::default()
         });
         let params = collect_dollar_interpolation_params(&proc);
         assert!(params.contains_key("tablename"));
@@ -1759,17 +1743,13 @@ CREATE TABLE BIGFUND.orders (
             method_id: "selectDyn".to_string(),
             sql_text: "SELECT * FROM orders".to_string(),
             result_type: None,
-            parameter_types: Default::default(),
-            optional_filters: Vec::new(),
-            returns_list: false,
-            extra_params: Vec::new(),
             dynamic_conditions: vec![crate::types::DynamicCondition {
                 condition_expr: "whereClause != null".to_string(),
                 sql_fragment: "WHERE ${whereClause}".to_string(),
                 clause_type: "WHERE".to_string(),
                 tag_name: "where".to_string(),
             }],
-            base_sql: String::new(),
+            ..Default::default()
         });
         let pkg = make_pkg("pkg_test", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
