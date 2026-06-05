@@ -31,9 +31,10 @@ pub fn java_safe_identifier(s: &str) -> String {
 /// Convert snake_case to camelCase.
 /// Examples: "create_order" → "createOrder", "status" → "status", "" → ""
 pub fn snake_to_camel(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
+    let lower = s.to_lowercase();
+    let mut result = String::with_capacity(lower.len());
     let mut capitalize_next = false;
-    for c in s.chars() {
+    for c in lower.chars() {
         if c == '_' {
             capitalize_next = true;
         } else if capitalize_next {

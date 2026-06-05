@@ -168,7 +168,7 @@ pub fn process_declaration(
                     }
                 }
             };
-            proc.local_vars.insert(var.name.clone(), java_type.clone());
+            proc.local_vars.insert(var.name.to_lowercase(), java_type.clone());
             if let Some(default) = &var.default {
                 // Detect pkg_param_common.getarray() calls → stringToArray()
                 let default_java = match default {
@@ -187,7 +187,7 @@ pub fn process_declaration(
                     _ => crate::expr::expr_to_java(default, proc),
                 };
                 proc.local_var_defaults
-                    .insert(var.name.clone(), default_java);
+                    .insert(var.name.to_lowercase(), default_java);
             }
         }
         PlDeclaration::Cursor(cursor) => {
@@ -203,7 +203,7 @@ pub fn process_declaration(
             }
         }
         PlDeclaration::Record(rec) => {
-            proc.local_vars.insert(rec.name.clone(), "Map<String, Object>".into());
+            proc.local_vars.insert(rec.name.to_lowercase(), "Map<String, Object>".into());
             proc.imports.insert("import java.util.Map;".into());
         }
         PlDeclaration::Type(_type_decl) => {}

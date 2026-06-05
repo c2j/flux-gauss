@@ -103,7 +103,7 @@ fn is_unreachable_after_terminal(java_logic_lines: &[String]) -> bool {
 }
 
 fn resolve_var_type<'a>(proc: &'a ProcedureInfo, var_name: &str) -> (&'a str, bool) {
-    if let Some(t) = proc.local_vars.get(var_name) {
+    if let Some(t) = proc.local_vars.get(&var_name.to_lowercase()) {
         return (t.as_str(), false);
     }
     for p in &proc.parameters {
@@ -788,13 +788,12 @@ fn handle_resolved_execute_sql(
               method_id: method_id.clone(),
               sql_text: clean_sql.clone(),
               result_type: None,
-              parameter_types: Default::default(),
-              optional_filters: Vec::new(),
-              returns_list: false,
-              extra_params,
-              dynamic_conditions,
-              base_sql,
-          });
+        returns_list: false,
+        extra_params,
+        dynamic_conditions,
+        base_sql,
+        ..Default::default()
+    });
         push_logic_line(proc, format!("mapper.{}({});", method_id, build_mapper_call_args(proc)));
     } else {
         push_logic_line(proc, format!("// SQL: {}", clean_sql.replace('\n', " ")));
@@ -890,7 +889,7 @@ fn process_execute_stmt(
                     }
                 }
                 if jdbc.is_none() {
-                    if let Some(var_java_type) = proc.local_vars.get(&arg_name) {
+                    if let Some(var_java_type) = proc.local_vars.get(&arg_name.to_lowercase()) {
                         java = Some(var_java_type.clone());
                         jdbc = Some(java_type_to_jdbc(var_java_type));
                     }
@@ -920,7 +919,7 @@ fn process_execute_stmt(
                     }
                 }
                 if jdbc.is_none() {
-                    if let Some(var_java_type) = proc.local_vars.get(&arg_name) {
+                    if let Some(var_java_type) = proc.local_vars.get(&arg_name.to_lowercase()) {
                         java = Some(var_java_type.clone());
                         jdbc = Some(java_type_to_jdbc(var_java_type));
                     }
@@ -963,16 +962,11 @@ fn process_execute_stmt(
                                 method_id: method_id.clone(),
                                 sql_text: clean_sql,
                                 result_type: Some("Object".to_string()),
-                                parameter_types: Default::default(),
-                                optional_filters: Vec::new(),
-                                returns_list: false,
-                                extra_params: Vec::new(),
-                                dynamic_conditions: Vec::new(),
-                                base_sql: String::new(),
+                                ..Default::default()
                             });
                     push_logic_line(proc, out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc));
                  } else {
-                      let declared_type = proc.local_vars.get(var_name)
+                      let declared_type = proc.local_vars.get(&var_name.to_lowercase())
                           .cloned()
                           .unwrap_or_else(|| "Object".to_string());
                       let java_type = infer_select_result_type(&declared_type, &clean_sql);
@@ -981,14 +975,9 @@ fn process_execute_stmt(
                                   method_id: method_id.clone(),
                                   sql_text: clean_sql,
                                   result_type: Some(java_type.clone()),
-                                  parameter_types: Default::default(),
-                                  optional_filters: Vec::new(),
-                                  returns_list: false,
-                                  extra_params: Vec::new(),
-                                  dynamic_conditions: Vec::new(),
-                                  base_sql: String::new(),
-                              });
-                     let original_java_type = proc.local_vars.get(var_name).cloned().unwrap_or_default();
+        ..Default::default()
+    });
+                     let original_java_type = proc.local_vars.get(&var_name.to_lowercase()).cloned().unwrap_or_default();
                      push_logic_line(proc, if java_type.contains("Map") {
                          format!("{{ var _row = mapper.{}({}); if (_row != null) {{ {} = _row; }} }}", method_id, args, var_java)
                      } else if java_type != original_java_type {
@@ -1004,12 +993,7 @@ fn process_execute_stmt(
                             method_id: method_id.clone(),
                             sql_text: clean_sql,
                             result_type: Some("Map<String, Object>".to_string()),
-                            parameter_types: Default::default(),
-                            optional_filters: Vec::new(),
-                            returns_list: false,
-                            extra_params: Vec::new(),
-                            dynamic_conditions: Vec::new(),
-                            base_sql: String::new(),
+                            ..Default::default()
                         });
                 push_logic_line(proc, format!("Map<String, Object> {} = mapper.{}({});", var_name, method_id, args));
                 proc.imports.insert("import java.util.Map;".to_string());
@@ -1017,7 +1001,7 @@ fn process_execute_stmt(
                 for target in &execute.into_targets {
                     if let Some(field_name) = extract_var_name_from_expr(target) {
                         let field_java = snake_to_camel(&field_name);
-                        let field_type = proc.local_vars.get(&field_name)
+                        let field_type = proc.local_vars.get(&field_name.to_lowercase())
                             .cloned()
                             .unwrap_or_else(|| "Object".to_string());
                         let cast = if field_type != "Object" {
@@ -1029,7 +1013,7 @@ fn process_execute_stmt(
                     } else if let Some((parent, field)) = extract_dotted_ref_from_expr(target) {
                         let parent_java = snake_to_camel(&parent);
                         let field_java = snake_to_camel(&field);
-                        let field_type = proc.local_vars.get(&parent)
+                        let field_type = proc.local_vars.get(&parent.to_lowercase())
                             .cloned()
                             .unwrap_or_else(|| "Object".to_string());
                         let cast = if field_type != "Object" && field_type != "Map<String, Object>" {
@@ -1052,12 +1036,7 @@ fn process_execute_stmt(
                 method_id: method_id.clone(),
                 sql_text: clean_sql,
                 result_type,
-                parameter_types: Default::default(),
-                optional_filters: Vec::new(),
-                returns_list: false,
-                extra_params: Vec::new(),
-                dynamic_conditions: Vec::new(),
-                base_sql: String::new(),
+                ..Default::default()
             });
             push_logic_line(proc, format!("mapper.{}({});", method_id, args));
         }
@@ -1096,17 +1075,12 @@ fn process_execute_stmt(
                                         method_id: method_id.clone(),
                                         sql_text: clean_sql,
                                         result_type: Some("Object".to_string()),
-                                        parameter_types: Default::default(),
-                                        optional_filters: Vec::new(),
-                                        returns_list: false,
-                                        extra_params: Vec::new(),
-                                        dynamic_conditions: Vec::new(),
-                                        base_sql: String::new(),
+                                        ..Default::default()
                                     });
                             push_logic_line(proc, out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc));
                         } else {
                             let var_java = snake_to_camel(var_name);
-                            let declared_type = proc.local_vars.get(var_name)
+                            let declared_type = proc.local_vars.get(&var_name.to_lowercase())
                                 .cloned()
                                 .unwrap_or_else(|| "Object".to_string());
                             let java_type = infer_select_result_type(&declared_type, &clean_sql);
@@ -1115,12 +1089,7 @@ fn process_execute_stmt(
                                         method_id: method_id.clone(),
                                         sql_text: clean_sql,
                                         result_type: Some(java_type.clone()),
-                                        parameter_types: Default::default(),
-                                        optional_filters: Vec::new(),
-                                        returns_list: false,
-                                        extra_params: Vec::new(),
-                                        dynamic_conditions: Vec::new(),
-                                        base_sql: String::new(),
+                                        ..Default::default()
                                     });
                             push_logic_line(proc, if java_type != declared_type {
                                 format!("String _{} = mapper.{}({});", var_name, method_id, args)
@@ -1135,12 +1104,7 @@ fn process_execute_stmt(
                                     method_id: method_id.clone(),
                                     sql_text: clean_sql,
                                     result_type: Some("Map<String, Object>".to_string()),
-                                    parameter_types: Default::default(),
-                                    optional_filters: Vec::new(),
-                                    returns_list: false,
-                                    extra_params: Vec::new(),
-                                    dynamic_conditions: Vec::new(),
-                                    base_sql: String::new(),
+                                    ..Default::default()
                                 });
                         push_logic_line(proc, format!("Map<String, Object> {} = mapper.{}({});", var_name, method_id, args));
                         proc.imports.insert("import java.util.Map;".to_string());
@@ -1150,12 +1114,7 @@ fn process_execute_stmt(
                                     method_id: method_id.clone(),
                                     sql_text: clean_sql,
                                     result_type: Some("Map<String, Object>".to_string()),
-                                    parameter_types: Default::default(),
-                                    optional_filters: Vec::new(),
-                                    returns_list: true,
-                                    extra_params: Vec::new(),
-                                    dynamic_conditions: Vec::new(),
-                                    base_sql: String::new(),
+                                    ..Default::default()
                                 });
                         let var_name = next_result_var_name(proc);
                         push_logic_line(proc, format!("List<Map<String, Object>> {} = mapper.{}({});", var_name, method_id, args));
@@ -1168,12 +1127,7 @@ fn process_execute_stmt(
                                 method_id: method_id.clone(),
                                 sql_text: clean_sql,
                                 result_type: None,
-                                parameter_types: Default::default(),
-                                optional_filters: Vec::new(),
-                                returns_list: false,
-                                extra_params: Vec::new(),
-                                dynamic_conditions: Vec::new(),
-                                base_sql: String::new(),
+                                ..Default::default()
                             });
                     push_logic_line(proc, format!("mapper.{}({});", method_id, args));
                 }
@@ -1246,7 +1200,7 @@ fn process_sql_statement(
                         let line = out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc);
                         ("Object".to_string(), line, String::new())
                     } else {
-                         let declared_type = proc.local_vars.get(var_name)
+                         let declared_type = proc.local_vars.get(&var_name.to_lowercase())
                              .cloned()
                              .unwrap_or_else(|| "Object".to_string());
                          let rt = infer_select_result_type(&declared_type, &clean_sql);
@@ -1254,6 +1208,8 @@ fn process_sql_statement(
                              format!("{{ var _row = mapper.{}({}); if (_row != null) {{ {} = _row; }} }}", method_id, args, var_java)
                          } else if rt != declared_type {
                              format!("String _{} = mapper.{}({});", var_name, method_id, args)
+                         } else if declared_type != "Object" {
+                             format!("{{ var _val = mapper.{}({}); if (_val != null) {} = ({}) _val; }}", method_id, args, var_java, declared_type)
                          } else {
                              format!("{{ var _val = mapper.{}({}); if (_val != null) {} = _val; }}", method_id, args, var_java)
                          };
@@ -1272,12 +1228,7 @@ fn process_sql_statement(
                             method_id: method_id.clone(),
                             sql_text: clean_sql,
                             result_type: Some(result_type),
-                            parameter_types: Default::default(),
-                            optional_filters: Vec::new(),
-                            returns_list: false,
-                            extra_params: Vec::new(),
-                            dynamic_conditions: Vec::new(),
-                            base_sql: String::new(),
+                            ..Default::default()
                         });
                 push_logic_line(proc, java_line);
 
@@ -1335,13 +1286,9 @@ fn process_sql_statement(
                             method_id: method_id.clone(),
                             sql_text: sql_text.to_string(),
                             result_type: Some("Map<String, Object>".to_string()),
-                            parameter_types: Default::default(),
-                            optional_filters: Vec::new(),
-                            returns_list: true,
-                            extra_params: Vec::new(),
-                            dynamic_conditions: Vec::new(),
-                            base_sql: String::new(),
-                        });
+        returns_list: true,
+        ..Default::default()
+    });
                 let var_name = next_result_var_name(proc);
                 push_logic_line(proc, format!("List<Map<String, Object>> {} = mapper.{}({});", var_name, method_id, args));
                 proc.imports.insert("import java.util.List;".to_string());
@@ -1359,12 +1306,7 @@ fn process_sql_statement(
                         method_id: method_id.clone(),
                         sql_text: sql_text.to_string(),
                         result_type: None,
-                        parameter_types: Default::default(),
-                        optional_filters: Vec::new(),
-                        returns_list: false,
-                        extra_params: Vec::new(),
-                        dynamic_conditions: Vec::new(),
-                        base_sql: String::new(),
+                        ..Default::default()
                     });
             push_logic_line(proc, format!("mapper.{}({});", method_id, args));
         }
@@ -1376,12 +1318,7 @@ fn process_sql_statement(
                         method_id: method_id.clone(),
                         sql_text: sql_text.to_string(),
                         result_type: None,
-                        parameter_types: Default::default(),
-                        optional_filters: Vec::new(),
-                        returns_list: false,
-                        extra_params: Vec::new(),
-                        dynamic_conditions: Vec::new(),
-                        base_sql: String::new(),
+                        ..Default::default()
                     });
             push_logic_line(proc, format!("mapper.{}({});", method_id, args));
         }
@@ -1393,12 +1330,7 @@ fn process_sql_statement(
                         method_id: method_id.clone(),
                         sql_text: sql_text.to_string(),
                         result_type: None,
-                        parameter_types: Default::default(),
-                        optional_filters: Vec::new(),
-                        returns_list: false,
-                        extra_params: Vec::new(),
-                        dynamic_conditions: Vec::new(),
-                        base_sql: String::new(),
+                        ..Default::default()
                     });
             push_logic_line(proc, format!("mapper.{}({});", method_id, args));
         }
@@ -1531,7 +1463,7 @@ fn process_procedure_call(
                             for (vname, _) in &proc.local_vars {
                                 let vname_camel = crate::naming::snake_to_camel(vname);
                                 if vname_camel == arg_trimmed {
-                                    proc.out_local_vars.insert(vname.clone(), target_type.clone());
+                                    proc.out_local_vars.insert(vname.to_lowercase(), target_type.clone());
                                     break;
                                 }
                             }
@@ -1636,10 +1568,20 @@ fn try_resolve_perform_call(
 
             if let Some(matched_pkg) = resolve_package_name(pkg, ctx.summaries) {
                 let pkg_lower = matched_pkg.to_lowercase();
-                let is_system_pkg = ["dbe_scheduler", "dbms_output", "dbms_random", "dbms_lob", "dbe_output", "utl_file", "dbms_sql", "dbms_job"]
+                let is_system_pkg = ["dbms_output", "dbms_random", "dbms_lob", "dbe_output", "utl_file", "dbms_sql", "dbms_job"]
                     .iter().any(|sp| pkg_lower.starts_with(sp));
+                let is_dbe_scheduler = pkg_lower.starts_with("dbe_scheduler");
                 if is_system_pkg {
                     push_logic_line(proc, format!("// {}.{}({}) — system package stub", pkg, func_name, args_java));
+                    return true;
+                }
+                if is_dbe_scheduler {
+                    let func_lower = func_name.to_lowercase();
+                    if func_lower == "create_job" || func_lower == "enable" {
+                        push_logic_line(proc, format!("// DBE_SCHEDULER.{} — scheduler job action", func_name));
+                    } else {
+                        push_logic_line(proc, format!("// DBE_SCHEDULER.{}({})", func_name, args_java));
+                    }
                     return true;
                 }
                 let svc_name = format!("{}Service", {
@@ -1675,7 +1617,7 @@ fn try_resolve_perform_call(
 fn is_primitive_selector(sel: &str, proc: &ProcedureInfo) -> bool {
     let sel_var = sel.trim();
     let primitive_types: &[&str] = &["int", "long", "double", "float", "short", "byte", "char", "boolean"];
-    if let Some(ty) = proc.local_vars.get(sel_var) {
+    if let Some(ty) = proc.local_vars.get(&sel_var.to_lowercase()) {
         return primitive_types.contains(&ty.as_str());
     }
     for p in &proc.parameters {
@@ -1696,6 +1638,262 @@ fn is_primitive_selector(sel: &str, proc: &ProcedureInfo) -> bool {
         }
     }
     false
+}
+
+fn process_forall_stmt(
+    forall: &ogsql_parser::ast::plpgsql::PlForAllStmt,
+    proc: &mut ProcedureInfo,
+    ctx: &mut StatementContext,
+) {
+    let index_var = &forall.variable; // e.g., "i"
+    let bounds_str = forall.bounds.trim();
+    let dml_sql = forall.body.trim();
+
+    if bounds_str.is_empty() {
+        push_logic_line(proc, "// TODO: FORALL — empty bounds".into());
+        return;
+    }
+    if dml_sql.is_empty() {
+        push_logic_line(proc, "// TODO: FORALL — empty body".into());
+        return;
+    }
+
+    // Detect DML type
+    let dml_re = Regex::new(r"(?i)^\s*(INSERT|UPDATE|DELETE)\b").unwrap();
+    let dml_cap = match dml_re.captures(dml_sql) {
+        Some(c) => c,
+        None => {
+            push_logic_line(proc, format!("// TODO: FORALL — unparseable DML: {}", dml_sql));
+            return;
+        }
+    };
+    let dml_type_str = dml_cap.get(1).unwrap().as_str().to_lowercase();
+
+    // Parse bounds: strip "IN " prefix
+    let bounds_trimmed = bounds_str.trim();
+    let bounds_no_in = if bounds_trimmed.to_uppercase().starts_with("IN ") {
+        &bounds_trimmed[3..]
+    } else {
+        bounds_trimmed
+    };
+    let bounds_no_in = bounds_no_in.trim();
+
+    // Range patterns: 1..v_arr.COUNT or 1..v_count or just var
+    let range_count_re = Regex::new(r"(?i)^(\d+)\s*\.\.\s*(\w[\w.]*)\.\s*COUNT\s*$").unwrap();
+    let range_simple_re = Regex::new(r"^(\w+)\s*\.\.\s*(\w+)$").unwrap();
+
+    let loop_start;
+    let is_array_count_range;
+    let _primary_arr_java;
+    if let Some(caps) = range_count_re.captures(bounds_no_in) {
+        let low = &caps[1];
+        let arr_var = caps[2].trim();
+        let arr_java = snake_to_camel(arr_var.split('.').next().unwrap_or(""));
+        loop_start = format!("for (int {index_var} = {low}; {index_var} <= {arr_java}.size(); {index_var}++)");
+        is_array_count_range = true;
+        _primary_arr_java = arr_java;
+    } else if let Some(caps) = range_simple_re.captures(bounds_no_in) {
+        let low = &caps[1];
+        let high = &caps[2];
+        let high_java = snake_to_camel(high);
+        loop_start = format!("for (int {index_var} = {low}; {index_var} <= {high_java}; {index_var}++)");
+        is_array_count_range = false;
+        _primary_arr_java = String::new();
+    } else {
+        let var_java = snake_to_camel(bounds_no_in);
+        loop_start = format!("for (int {index_var} = 1; {index_var} <= {var_java}; {index_var}++)");
+        is_array_count_range = false;
+        _primary_arr_java = String::new();
+    };
+
+    // Find array references: p_array(i), p_ids(i)
+    let array_ref_re = Regex::new(&format!(r"(?i)(\w+)\s*\(\s*{}\s*\)", regex::escape(index_var))).unwrap();
+    let array_names: Vec<String> = array_ref_re.captures_iter(dml_sql)
+        .map(|c| c[1].to_string())
+        .collect();
+    let mut seen_arrays: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for an in &array_names {
+        seen_arrays.insert(an.to_lowercase());
+    }
+
+    // Determine if batch is possible: range is 1..arr.COUNT with at least one array ref
+    let can_batch = is_array_count_range && !array_names.is_empty();
+
+    // Build extra_params for array element types (unwraps List<T> → T)
+    let mut extra_params: Vec<(String, String)> = Vec::new();
+    let mut forall_batch_arrays: HashMap<String, String> = HashMap::new();
+
+    for arr_name in &array_names {
+        let arr_lower = arr_name.to_lowercase();
+        if arr_lower == index_var.to_lowercase() || !seen_arrays.contains(&arr_lower) {
+            continue;
+        }
+        let arr_java = snake_to_camel(arr_name);
+        let arr_type = proc.local_vars.get(&arr_name.to_lowercase())
+            .map(|s| s.as_str())
+            .unwrap_or("Object");
+        // Extract element type from List<T>
+        let elem_type_re = Regex::new(r"(?i)java\.util\.List<(.+)>").unwrap();
+        if let Some(et_caps) = elem_type_re.captures(arr_type) {
+            let elem_type = et_caps.get(1).unwrap().as_str().to_string();
+            extra_params.push((arr_java.clone(), elem_type.clone()));
+            if can_batch {
+                forall_batch_arrays.insert(arr_java, elem_type);
+            }
+        } else {
+            extra_params.push((arr_java.clone(), arr_type.to_string()));
+        }
+    }
+
+    // Rewrite SQL: replace p_array(i) → #{pArray} (for per-row) or #{item.pArray} (for batch)
+    let mut mybatis_sql = dml_sql.to_string();
+    let array_replace_re = Regex::new(&format!(r"(?i)(\w+)\s*\(\s*{}\s*\)", regex::escape(index_var))).unwrap();
+    if can_batch {
+        mybatis_sql = array_replace_re.replace_all(&mybatis_sql, |caps: &regex::Captures| {
+            let arr_java = snake_to_camel(&caps[1]);
+            format!("#{{item.{}}}", arr_java)
+        }).to_string();
+    } else {
+        mybatis_sql = array_replace_re.replace_all(&mybatis_sql, |caps: &regex::Captures| {
+            let arr_java = snake_to_camel(&caps[1]);
+            format!("#{{{}}}", arr_java)
+        }).to_string();
+    }
+
+    // Detect standalone index reference (e.g., "|| i")
+    let standalone_index_re = Regex::new(&format!(r"(?i)[^(\w]{}[^)\w]|\b{}\b", regex::escape(index_var), regex::escape(index_var))).unwrap();
+    // Check if standalone index is used (not inside array subscript)
+    let text_without_subscripts = array_replace_re.replace_all(dml_sql, "?").to_string();
+    let has_standalone_index = standalone_index_re.is_match(&text_without_subscripts);
+
+    // Add index var as extra param if used standalone
+    let index_var_java = format!("_{}", index_var);
+    if has_standalone_index {
+        extra_params.push((index_var_java.clone(), "Integer".to_string()));
+    }
+
+    // Build mapper method name
+    let mapper_method = dml_method_name(&dml_type_str, &proc.proc_name, &mut ctx.dml_counter);
+
+    let dml_type = match dml_type_str.as_str() {
+        "insert" => DmlType::Insert,
+        "update" => DmlType::Update,
+        "delete" => DmlType::Delete,
+        _ => {
+            push_logic_line(proc, format!("// TODO: FORALL — unsupported DML type: {}", dml_type_str));
+            return;
+        }
+    };
+
+    // Build call args for the mapper method
+    let mut call_args: Vec<String> = Vec::new();
+    let mut seen_args: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // Local vars referenced in SQL (excluding subscript vars which are already handled)
+    let clean_sql = array_replace_re.replace_all(dml_sql, "?").to_string();
+    let ident_re = Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap();
+    for caps in ident_re.captures_iter(&clean_sql) {
+        let word = caps.get(1).unwrap().as_str();
+        let lower = word.to_lowercase();
+        if matches!(lower.as_str(),
+            "select" | "from" | "where" | "insert" | "into" | "values" | "update" | "set" |
+            "delete" | "and" | "or" | "not" | "null" | "is" | "in" | "between" | "like" |
+            "as" | "on" | "join" | "left" | "right" | "inner" | "outer" | "order" | "by" |
+            "group" | "having" | "limit" | "offset" | "union" | "all" | "distinct" | "case" |
+            "when" | "then" | "else" | "end" | "exists" | "true" | "false" | "asc" | "desc" |
+            "current_timestamp" | "current_date" | "current_time" | "now" | "count" | "sum" |
+            "avg" | "min" | "max" | "coalesce" | "nvl" | "cast" | "default" | "returning"
+        ) {
+            continue;
+        }
+        let jn = snake_to_camel(word);
+        let jn_lower = jn.to_lowercase();
+        if seen_args.contains(&jn_lower) || seen_arrays.contains(&jn_lower) {
+            continue;
+        }
+        if let Some(_var_type) = proc.local_vars.get(&word.to_lowercase()) {
+            seen_args.insert(jn_lower.clone());
+            // If this is an array ref var, use .get() access
+            let is_array_param = array_names.iter().any(|an| an.to_lowercase() == lower);
+            if is_array_param {
+                call_args.push(format!("{}.get((int)({}) - 1)", jn, index_var));
+            } else {
+                call_args.push(jn);
+            }
+        }
+    }
+
+    // Procedure parameters
+    for p in &proc.parameters {
+        if p.is_out() {
+            continue;
+        }
+        let pj = snake_to_camel(&p.name);
+        let pj_lower = pj.to_lowercase();
+        if seen_args.contains(&pj_lower) || seen_arrays.contains(&pj_lower) {
+            continue;
+        }
+        seen_args.insert(pj_lower);
+        // Check if this param is an array ref in the FORALL
+        let is_array_param = array_names.iter().any(|an| an.to_lowercase() == p.name.to_lowercase());
+        if is_array_param {
+            call_args.push(format!("{}.get((int)({}) - 1)", pj, index_var));
+        } else {
+            call_args.push(pj);
+        }
+    }
+
+    let args_str = call_args.join(", ");
+
+    proc.dml_statements.push(DmlStatement {
+        sql_type: dml_type,
+        method_id: mapper_method.clone(),
+        sql_text: mybatis_sql,
+        result_type: None,
+        returns_list: false,
+        extra_params,
+        is_forall_batch: can_batch,
+        forall_batch_list_var: "item".to_string(),
+        forall_batch_arrays,
+        ..Default::default()
+    });
+
+    // Generate Java code
+    if can_batch {
+        // Batch mode: build list of Maps and pass to mapper once
+        push_logic_line(proc, format!("java.util.List<java.util.Map<String, Object>> _batch_{} = new java.util.ArrayList<>();", mapper_method));
+        push_logic_line(proc, format!("for (int _bi = 0; _bi < {}; _bi++) {{", _primary_arr_java));
+        push_logic_line(proc, "    java.util.Map<String, Object> _brow = new java.util.LinkedHashMap<>();".into());
+        for arr_name in &array_names {
+            let arr_lower = arr_name.to_lowercase();
+            if arr_lower == index_var.to_lowercase() {
+                continue;
+            }
+            let arr_java = snake_to_camel(arr_name);
+            push_logic_line(proc, format!("    _brow.put(\"{}\", {}.get(_bi));", arr_java, arr_java));
+        }
+        if has_standalone_index {
+            push_logic_line(proc, format!("    _brow.put(\"{}\", _bi + 1);", index_var_java));
+        }
+        push_logic_line(proc, format!("    _batch_{}.add(_brow);", mapper_method));
+        push_logic_line(proc, "}".to_string());
+        push_logic_line(proc, format!("__ROWCOUNT__ += mapper.{}(_batch_{});", mapper_method, mapper_method));
+    } else {
+        // Per-row loop
+        push_logic_line(proc, format!("{} {{", loop_start));
+        push_logic_line(proc, format!("    __ROWCOUNT__ += mapper.{}({});", mapper_method, args_str));
+        push_logic_line(proc, "}".to_string());
+    }
+    proc.imports.insert("import java.util.Map;".to_string());
+    proc.imports.insert("import java.util.ArrayList;".to_string());
+    proc.imports.insert("import java.util.List;".to_string());
+
+    // Track table references
+    for table_match in Regex::new(r"(?i)\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM|DELETE)\s+(\w+)").unwrap().captures_iter(dml_sql) {
+        if let Some(table_name) = table_match.get(1) {
+            proc.table_refs.insert(table_name.as_str().to_string());
+        }
+    }
 }
 
 pub fn process_statement(
@@ -1743,11 +1941,19 @@ pub fn process_statement(
         }
         PlStatement::ReturnNext { expression } => {
             let val = crate::expr::expr_to_java(expression, proc);
-            push_logic_line(proc, format!("// return next: {};", val));
+            push_logic_line(proc, format!("_returnResults.add({});", val));
             Ok(())
         }
-        PlStatement::ReturnQuery(_) => {
-            push_logic_line(proc, "// return query;".into());
+        PlStatement::ReturnQuery(query) => {
+            // RETURN QUERY EXECUTE v_sql or RETURN QUERY SELECT ...
+            // For EXECUTE: TODO — requires dynamic SQL resolution
+            // For direct SELECT: generate mapper call + addAll
+            let query_str = format!("{:?}", query);
+            if query_str.contains("Execute") || query_str.contains("execute") {
+                push_logic_line(proc, "// TODO: RETURN QUERY EXECUTE — requires dynamic SQL resolution".into());
+            } else {
+                push_logic_line(proc, format!("// TODO: RETURN QUERY — {}", query_str.chars().take(80).collect::<String>()));
+            }
             Ok(())
         }
         PlStatement::Null => Ok(()),
@@ -1909,8 +2115,16 @@ pub fn process_statement(
                 process_statement(s, proc, ctx)?;
             }
             if let Some(exc_block) = &block_stmt.node.exception_block {
-                push_logic_line(proc, "} catch (Exception e) {".into());
                 for handler in &exc_block.handlers {
+                    let is_others = handler.conditions.is_empty() || handler.conditions.iter().any(|c| c.eq_ignore_ascii_case("others"));
+                    if is_others {
+                        push_logic_line(proc, "} catch (Exception e) {".into());
+                    } else {
+                        let cond = handler.conditions.join(", ");
+                        push_logic_line(proc, format!("}} catch (BusinessException e) {{ // {}", cond));
+                    }
+                    push_logic_line(proc, "    __SQLERRM__ = e.getMessage();".into());
+                    push_logic_line(proc, "    __SQLCODE__ = -1;".into());
                     for s in &handler.statements {
                         process_statement(s, proc, ctx)?;
                     }
@@ -1955,7 +2169,7 @@ pub fn process_statement(
                     let lo_safe = if lo.trim() == "null" { "0".to_string() } else { lo };
                     let hi_safe = if hi.trim() == "null" { "0".to_string() } else { hi };
                     let iter_var = var.clone();
-                    let already_declared = proc.local_vars.contains_key(&for_stmt.node.variable);
+                    let already_declared = proc.local_vars.contains_key(&for_stmt.node.variable.to_lowercase());
                     let step_code = match step {
                         Some(s) => {
                             let s_val = crate::expr::expr_to_java(s, proc);
@@ -2000,7 +2214,7 @@ pub fn process_statement(
                         };
 
                     push_logic_line(proc, format!("// for {} in query: {}", var, &clean_sql));
-                    proc.local_vars.insert(for_stmt.node.variable.clone(), "Map<String, Object>".into());
+                    proc.local_vars.insert(for_stmt.node.variable.to_lowercase(), "Map<String, Object>".into());
                     proc.local_var_defaults.remove(&for_stmt.node.variable);
                     proc.imports.insert("import java.util.List;".to_string());
                     proc.imports.insert("import java.util.Map;".to_string());
@@ -2014,13 +2228,12 @@ pub fn process_statement(
                                 method_id: method_id.clone(),
                                 sql_text,
                                 result_type: Some("Map<String, Object>".to_string()),
-                                parameter_types: Default::default(),
-                                optional_filters: Vec::new(),
-                                returns_list: true,
-                                extra_params,
-                                dynamic_conditions,
-                                base_sql,
-                            });
+        returns_list: true,
+        extra_params,
+        dynamic_conditions,
+        base_sql,
+        ..Default::default()
+    });
 
                     proc.for_loop_counter += 1;
                     let list_var = if proc.for_loop_counter <= 1 {
@@ -2064,12 +2277,7 @@ pub fn process_statement(
                                     method_id: method_id.clone(),
                                     sql_text: clean_sql,
                                     result_type: Some("Map<String, Object>".to_string()),
-                                    parameter_types: Default::default(),
-                                    optional_filters: Vec::new(),
-                                    returns_list: true,
-                                    extra_params: Vec::new(),
-                                    dynamic_conditions: Vec::new(),
-                                    base_sql: String::new(),
+                                    ..Default::default()
                                 });
 
                         proc.for_loop_counter += 1;
@@ -2229,13 +2437,11 @@ pub fn process_statement(
                        method_id: method_id.clone(),
                        sql_text,
                        result_type: Some("Map<String, Object>".to_string()),
-                       parameter_types: Default::default(),
-                       optional_filters: Vec::new(),
-                       returns_list: true,
-                       extra_params,
-                       dynamic_conditions,
-                       base_sql,
-                   });
+        returns_list: true,
+        dynamic_conditions,
+        base_sql,
+        ..Default::default()
+    });
 
                  let args = build_mapper_call_args(proc);
                 push_logic_line(proc, format!("{} = mapper.{}({});", result_var, method_id, args));
@@ -2314,11 +2520,33 @@ pub fn process_statement(
         }
         PlStatement::Move { cursor, .. } => {
             let cur = crate::expr::expr_to_java(cursor, proc);
-            push_logic_line(proc, format!("// MOVE {};", cur));
+            let cur_name = format!("{:?}", cursor);
+            let idx_var = format!("{}Idx", snake_to_camel(&cur_name.replace('"', "")));
+            push_logic_line(proc, format!("{}++;", idx_var));
             Ok(())
         }
-        PlStatement::GetDiagnostics(_) => {
-            push_logic_line(proc, "// GET DIAGNOSTICS;".into());
+        PlStatement::GetDiagnostics(gd) => {
+            for item in &gd.node.items {
+                let var_name = match &item.target {
+                    ogsql_parser::ast::Expr::PlVariable(name) => name.join("."),
+                    ogsql_parser::ast::Expr::ColumnRef(name) => name.join("."),
+                    _ => continue,
+                };
+                let var_java = snake_to_camel(&var_name);
+                match item.item {
+                    ogsql_parser::ast::plpgsql::GetDiagItemKind::RowCount => {
+                        let var_type = proc.local_vars.get(&var_name.to_lowercase()).map(|s| s.as_str()).unwrap_or("Integer");
+                        if var_type == "int" {
+                            push_logic_line(proc, format!("{} = __ROWCOUNT__;", var_java));
+                        } else {
+                            push_logic_line(proc, format!("{} = Integer.valueOf(__ROWCOUNT__);", var_java));
+                        }
+                    }
+                    _ => {
+                        push_logic_line(proc, format!("// GET DIAGNOSTICS {} = {} — manual review needed", var_java, item.item));
+                    }
+                }
+            }
             Ok(())
         }
         PlStatement::Commit { .. } => {
@@ -2327,7 +2555,10 @@ pub fn process_statement(
         }
         PlStatement::Rollback { to_savepoint, .. } => {
             if let Some(sp) = to_savepoint {
-                push_logic_line(proc, format!("// ROLLBACK TO {};", sp));
+                let sp_var = snake_to_camel(sp);
+                proc.imports
+                    .insert("import org.springframework.transaction.interceptor.TransactionAspectSupport;".into());
+                push_logic_line(proc, format!("TransactionAspectSupport.currentTransactionStatus().rollbackToSavepoint({});", sp_var));
             } else {
                 proc.imports
                     .insert("import org.springframework.transaction.interceptor.TransactionAspectSupport;".into());
@@ -2338,11 +2569,13 @@ pub fn process_statement(
             Ok(())
         }
         PlStatement::Savepoint { name } => {
-            push_logic_line(proc, format!("// SAVEPOINT {};", name));
+            proc.imports.insert("import java.sql.Savepoint;".to_string());
+            let sp_var = snake_to_camel(name);
+            push_logic_line(proc, format!("Savepoint {} = connection.setSavepoint(\"{}\");", sp_var, name));
             Ok(())
         }
         PlStatement::ReleaseSavepoint { name } => {
-            push_logic_line(proc, format!("// RELEASE SAVEPOINT {};", name));
+            push_logic_line(proc, format!("// RELEASE SAVEPOINT {} — not needed in Spring managed transaction", name));
             Ok(())
         }
         PlStatement::SetTransaction { .. } => {
@@ -2408,17 +2641,12 @@ pub fn process_statement(
                                         method_id: method_id.clone(),
                                         sql_text: clean_sql,
                                         result_type: Some("Object".to_string()),
-                                        parameter_types: Default::default(),
-                                        optional_filters: Vec::new(),
-                                        returns_list: false,
-                                        extra_params: Vec::new(),
-                                        dynamic_conditions: Vec::new(),
-                                        base_sql: String::new(),
+                                        ..Default::default()
                                     });
                             push_logic_line(proc, out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc));
                         } else {
                              let var_java = snake_to_camel(var_name);
-                             let declared_type = proc.local_vars.get(var_name)
+                             let declared_type = proc.local_vars.get(&var_name.to_lowercase())
                                  .cloned()
                                  .unwrap_or_else(|| "Object".to_string());
                              let java_type = infer_select_result_type(&declared_type, &clean_sql);
@@ -2428,12 +2656,7 @@ pub fn process_statement(
                                          method_id: method_id.clone(),
                                          sql_text: clean_sql,
                                          result_type: Some(java_type.clone()),
-                                         parameter_types: Default::default(),
-                                         optional_filters: Vec::new(),
-                                         returns_list: false,
-                                         extra_params: Vec::new(),
-                                         dynamic_conditions: Vec::new(),
-                                         base_sql: String::new(),
+                                         ..Default::default()
                                      });
                             push_logic_line(proc, if java_type != declared_type {
                                 format!("String _{} = mapper.{}({});", var_name, method_id, args)
@@ -2448,12 +2671,7 @@ pub fn process_statement(
                                     method_id: method_id.clone(),
                                     sql_text: clean_sql,
                                     result_type: Some("Map<String, Object>".to_string()),
-                                    parameter_types: Default::default(),
-                                    optional_filters: Vec::new(),
-                                    returns_list: false,
-                                    extra_params: Vec::new(),
-                                    dynamic_conditions: Vec::new(),
-                                    base_sql: String::new(),
+                                    ..Default::default()
                                 });
                         push_logic_line(proc, format!("Map<String, Object> {} = mapper.{}({});", var_name, method_id, args));
                         proc.imports.insert("import java.util.Map;".to_string());
@@ -2497,12 +2715,7 @@ pub fn process_statement(
                                     method_id: method_id.clone(),
                                     sql_text: clean_sql,
                                     result_type: Some("Map<String, Object>".to_string()),
-                                    parameter_types: Default::default(),
-                                    optional_filters: Vec::new(),
-                                    returns_list: true,
-                                    extra_params: Vec::new(),
-                                    dynamic_conditions: Vec::new(),
-                                    base_sql: String::new(),
+                                    ..Default::default()
                                 });
                         let rv_name = next_result_var_name(proc);
                         push_logic_line(proc, format!("List<Map<String, Object>> {} = mapper.{}({});", rv_name, method_id, args));
@@ -2515,21 +2728,16 @@ pub fn process_statement(
                                 method_id: method_id.clone(),
                                 sql_text: clean_sql,
                                 result_type: None,
-                                parameter_types: Default::default(),
-                                optional_filters: Vec::new(),
-                                returns_list: false,
-                                extra_params: Vec::new(),
-                                dynamic_conditions: Vec::new(),
-                                base_sql: String::new(),
+                                ..Default::default()
                             });
                     push_logic_line(proc, format!("mapper.{}({});", method_id, args));
                 }
             } else {
                 let sql_trimmed = sql_text.trim();
                 if let Some((var_name, java_type, default_java)) = try_parse_inline_var_decl(sql_trimmed, proc) {
-                    proc.local_vars.insert(var_name.clone(), java_type.clone());
+                    proc.local_vars.insert(var_name.to_lowercase(), java_type.clone());
                     if let Some(default) = &default_java {
-                        proc.local_var_defaults.insert(var_name.clone(), default.clone());
+                        proc.local_var_defaults.insert(var_name.to_lowercase(), default.clone());
                     } else {
                         let default_val = match java_type.as_str() {
                             "int" | "Integer" => "0",
@@ -2540,7 +2748,7 @@ pub fn process_statement(
                             "java.sql.Date" => "null",
                             _ => "null",
                         };
-                        proc.local_var_defaults.insert(var_name.clone(), default_val.to_string());
+                        proc.local_var_defaults.insert(var_name.to_lowercase(), default_val.to_string());
                     }
                 } else {
                     push_logic_line(proc, format!("// SQL: {}", sql_text.replace('\n', " ")));
@@ -2552,8 +2760,8 @@ pub fn process_statement(
             process_sql_statement(statement, &sql_text, proc, ctx);
             Ok(())
         }
-        PlStatement::ForAll(_) => {
-            push_logic_line(proc, "// FORALL;".into());
+        PlStatement::ForAll(forall) => {
+            process_forall_stmt(&forall.node, proc, ctx);
             Ok(())
         }
         PlStatement::PipeRow { expression } => {

@@ -5,13 +5,13 @@ use encoding_rs::Encoding;
 
 use crate::generate::mapper::{is_simple_java_type, resolve_import};
 use crate::generate::writer::CodeWriter;
-use crate::naming::{java_method_name, package_to_classname, snake_to_camel};
+use crate::naming::{java_method_name, package_to_classname, snake_to_camel, snake_to_pascal};
 use crate::type_map::sql_type_to_java;
 use crate::types::{DmlType, PackageInfo, ParamMode};
 
 pub fn write_service_class(
     base_path: &Path,
-    pkg: &PackageInfo,
+    pkg: &mut PackageInfo,
     base_package: &str,
     service_injections: &std::collections::HashMap<String, String>,
     encoding: &'static Encoding,
@@ -176,6 +176,22 @@ pub fn write_service_class(
     }
     w.line("}");
 
+    // Generate inner static classes for RECORD custom types
+    for (type_name, type_info) in &pkg.custom_types {
+        if type_info.is_record && !type_info.fields.is_empty() {
+            let inner_cls = custom_type_classname(type_name);
+            w.blank();
+            w.line(&format!("public static class {} {{", inner_cls));
+            w.push_indent();
+            for (fld_name, fld_java_type) in &type_info.fields {
+                let fld_java = snake_to_camel(fld_name);
+                w.line(&format!("public {} {};", fld_java_type, fld_java));
+            }
+            w.pop_indent();
+            w.line("}");
+        }
+    }
+
     let object_pkg_var_names: Vec<String> = pkg.package_vars.iter()
         .filter(|(_, v)| v.java_type == "Object")
         .map(|(name, _)| snake_to_camel(name))
@@ -252,6 +268,35 @@ pub fn write_service_class(
         w.line("        return node.get(String.valueOf(key)).asText();");
         w.line("    } catch (Exception e) { return null; }");
         w.line("}");
+    }
+    if all_body.contains("this._crc32(") {
+        w.blank();
+        w.line("private int _crc32(String input) {");
+        w.line("    java.util.zip.CRC32 crc = new java.util.zip.CRC32();");
+        w.line("    crc.update(input.getBytes());");
+        w.line("    return (int) crc.getValue();");
+        w.line("}");
+    }
+    if all_body.contains("_appendList(") {
+        w.blank();
+        w.line("private <T> java.util.List<T> _appendList(java.util.List<T> list, T element) {");
+        w.line("    list.add(element);");
+        w.line("    return list;");
+        w.line("}");
+    }
+    if all_body.contains("this.nextval(") {
+        w.blank();
+        w.line(&format!("public Long nextval(String seqName) {{"));
+        w.line(&format!("    return {}.selectNextval(seqName);", mapper_var));
+        w.line("}");
+        pkg.extra_mapper_methods.push(("selectNextval".into(), "SELECT nextval(#{seqName,jdbcType=VARCHAR}) AS val".into(), "Long".into()));
+    }
+    if all_body.contains("this.currval(") {
+        w.blank();
+        w.line(&format!("public Long currval(String seqName) {{"));
+        w.line(&format!("    return {}.selectCurrval(seqName);", mapper_var));
+        w.line("}");
+        pkg.extra_mapper_methods.push(("selectCurrval".into(), "SELECT currval(#{seqName,jdbcType=VARCHAR}) AS val".into(), "Long".into()));
     }
 
     w.pop_indent();
@@ -336,6 +381,42 @@ fn coerce_default_value(java_type: &str, default_val: &str) -> String {
         }
     }
     default_val.to_string()
+}
+
+/// Convert a SQL custom type name to a Java class name for inner static classes.
+/// Strips "t_" or "type_" prefix, then applies PascalCase.
+fn custom_type_classname(sql_type_name: &str) -> String {
+    let name = sql_type_name.to_lowercase();
+    let stripped = if name.starts_with("t_") {
+        &sql_type_name[2..]
+    } else if name.starts_with("type_") {
+        &sql_type_name[5..]
+    } else {
+        sql_type_name
+    };
+    snake_to_pascal(stripped)
+}
+
+/// Format a SQL CommentBlock as a Java comment line.
+fn format_comment_for_java(comment: &crate::types::CommentBlock) -> String {
+    let text = comment.text.trim();
+    let stripped = if text.starts_with("--") {
+        text[2..].trim().to_string()
+    } else if text.starts_with("/*") && text.ends_with("*/") {
+        let inner = text[2..text.len()-2].trim();
+        inner.lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+    } else {
+        text.to_string()
+    };
+    if stripped.is_empty() {
+        String::new()
+    } else {
+        format!("// {}", stripped)
+    }
 }
 
 pub(crate) fn should_stub_procedure(proc: &crate::types::ProcedureInfo, _object_pkg_var_names: &[String]) -> bool {
@@ -459,10 +540,10 @@ fn build_service_method(
                     continue;
                 }
                 // Check if this local var was promoted to AtomicReference for OUT param usage
-                if let Some(inner_type) = proc.out_local_vars.get(var_name) {
+                if let Some(inner_type) = proc.out_local_vars.get(&var_name.to_lowercase()) {
                     body_lines.push(format!("AtomicReference<{}> {} = new AtomicReference<>(null);", inner_type, var_java));
                 } else {
-                    let default_val = proc.local_var_defaults.get(var_name)
+                    let default_val = proc.local_var_defaults.get(&var_name.to_lowercase())
                         .cloned()
                         .unwrap_or_else(|| default_for_type(var_type).to_string());
                     let coerced = coerce_default_value(var_type, &default_val);
@@ -640,10 +721,24 @@ fn build_service_method(
         if proc.is_function { "FUNCTION" } else { "PROCEDURE" },
         source_info
     ));
+    // Add leading comments before the method
+    for c in &proc.leading_comments {
+        let formatted = format_comment_for_java(c);
+        if !formatted.is_empty() {
+            result.push(format!("    {}", formatted));
+        }
+    }
     if has_dml {
         result.push("    @Transactional".to_string());
     }
     result.push(format!("    public {} {}({}) {{", ret_type, method_name, params_str));
+    // Add inline comments at heuristic positions (at start of body, simplified approach)
+    for c in &proc.inline_comments {
+        let formatted = format_comment_for_java(c);
+        if !formatted.is_empty() {
+            body_lines.insert(0, formatted);
+        }
+    }
     for line in &body_lines {
         result.push(format!("        {}", line));
     }
@@ -693,7 +788,7 @@ fn append_local_vars_to_mapper_calls(
                 if re.is_match(&dml.sql_text) {
                     let jn = snake_to_camel(&p.name);
                     if !promoted_extra.iter().any(|(n, _)| n == &jn) {
-                        let jt = proc.out_local_vars.get(&p.name)
+                        let jt = proc.out_local_vars.get(&p.name.to_lowercase())
                             .cloned()
                             .unwrap_or_else(|| p.java_type.clone());
                         promoted_extra.push((jn, jt));
@@ -712,7 +807,7 @@ fn append_local_vars_to_mapper_calls(
 
             for word_caps in word_re.captures_iter(&dml.sql_text) {
                 let word = word_caps.get(1).unwrap().as_str();
-                if proc.local_vars.contains_key(word) {
+                if proc.local_vars.contains_key(&word.to_lowercase()) {
                     let jn = snake_to_camel(word);
                     let jn_lower = jn.to_lowercase();
                     if !param_java_names.iter().any(|pn| pn.to_lowercase() == jn_lower)
@@ -809,15 +904,16 @@ mod tests {
 
     fn make_pkg(name: &str, procs: Vec<ProcedureInfo>) -> PackageInfo {
         PackageInfo {
-            package_name: name.to_string(),
-            procedures: procs,
-            table_refs: Default::default(),
-            package_vars: Default::default(),
-            source_file: String::new(),
-            comments: Vec::new(),
-            java_package: String::new(),
-            custom_types: Default::default(),
-        }
+                    package_name: name.to_string(),
+                    procedures: procs,
+                    table_refs: Default::default(),
+                    package_vars: Default::default(),
+                    source_file: String::new(),
+                    comments: Vec::new(),
+                    java_package: String::new(),
+                    custom_types: Default::default(),
+                    extra_mapper_methods: Vec::new(),
+                }
     }
 
     fn make_proc(name: &str) -> ProcedureInfo {
@@ -827,9 +923,9 @@ mod tests {
     #[test]
     fn test_simple_service() {
         let proc = make_proc("do_stuff");
-        let pkg = make_pkg("pkg_order", vec![proc]);
+        let mut pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_service_class(dir.path(), &pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
+        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/main/java/com/example/demo/service/OrderService.java"),
         ).unwrap();
@@ -849,9 +945,9 @@ mod tests {
         );
         proc.is_function = true;
         proc.return_type = Some("timestamp".to_string());
-        let pkg = make_pkg("pkg_common", vec![proc]);
+        let mut pkg = make_pkg("pkg_common", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_service_class(dir.path(), &pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
+        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/main/java/com/example/demo/service/CommonService.java"),
         ).unwrap();
@@ -868,9 +964,9 @@ mod tests {
             mode: Some(ParamMode::Out),
             default_value: None,
         });
-        let pkg = make_pkg("pkg_data", vec![proc]);
+        let mut pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_service_class(dir.path(), &pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
+        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/main/java/com/example/demo/service/DataService.java"),
         ).unwrap();
@@ -887,12 +983,12 @@ mod tests {
             args: vec!["productId".to_string()],
             package_name: "pkg_inventory".to_string(),
         });
-        let pkg = make_pkg("pkg_order", vec![proc]);
+        let mut pkg = make_pkg("pkg_order", vec![proc]);
         let injections = collect_service_injections(&pkg);
         assert_eq!(injections.get("inventoryService").unwrap(), "pkg_inventory");
 
         let dir = tempfile::tempdir().unwrap();
-        write_service_class(dir.path(), &pkg, "com.example.demo", &injections, encoding_rs::UTF_8).unwrap();
+        write_service_class(dir.path(), &mut pkg, "com.example.demo", &injections, encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/main/java/com/example/demo/service/OrderService.java"),
         ).unwrap();
@@ -908,16 +1004,11 @@ mod tests {
                     method_id: "insertOrder".to_string(),
                     sql_text: "insert into t values(1)".to_string(),
                     result_type: None,
-                    parameter_types: Default::default(),
-                    optional_filters: Vec::new(),
-                    returns_list: false,
-                    extra_params: Vec::new(),
-                    dynamic_conditions: Vec::new(),
-                    base_sql: String::new(),
+                    ..Default::default()
                 });
-        let pkg = make_pkg("pkg_order", vec![proc]);
+        let mut pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_service_class(dir.path(), &pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
+        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/main/java/com/example/demo/service/OrderService.java"),
         ).unwrap();

@@ -752,6 +752,7 @@ fn build_package_info(
         comments: Vec::new(),
         java_package,
         custom_types,
+        extra_mapper_methods: Vec::new(),
     }
 }
 

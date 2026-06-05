@@ -185,7 +185,7 @@ fn count_mapper_params_for_dml(
     let re = IDENTIFIER_RE.get_or_init(|| regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap());
     for caps in re.captures_iter(&dml.sql_text) {
         let word = caps.get(1).unwrap().as_str();
-        if proc.local_vars.contains_key(word) && !param_names.contains(&word.to_lowercase()) {
+        if proc.local_vars.contains_key(&word.to_lowercase()) && !param_names.contains(&word.to_lowercase()) {
             let jn = snake_to_camel(word).to_lowercase();
             all_names.insert(jn);
         }
@@ -200,7 +200,7 @@ fn count_mapper_params_for_dml(
     for caps in re.captures_iter(&dml.sql_text) {
         let word = caps.get(1).unwrap().as_str();
         if pkg.package_vars.contains_key(word)
-            && !proc.local_vars.contains_key(word)
+            && !proc.local_vars.contains_key(&word.to_lowercase())
             && !pkg_param_names.contains(&word.to_lowercase())
         {
             let jn = snake_to_camel(word).to_lowercase();
@@ -352,7 +352,7 @@ fn count_local_var_refs_in_sql(
     let re = IDENTIFIER_RE.get_or_init(|| regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap());
     for caps in re.captures_iter(sql_text) {
         let word = caps.get(1).unwrap().as_str();
-        if local_vars.contains_key(word) && !param_names.contains(&word.to_lowercase()) {
+        if local_vars.contains_key(&word.to_lowercase()) && !param_names.contains(&word.to_lowercase()) {
             found.insert(word.to_lowercase());
         }
     }
@@ -376,7 +376,7 @@ fn count_package_var_refs_in_sql(
         let word = caps.get(1).unwrap().as_str();
         if package_vars.contains_key(word)
             && !param_names.contains(&word.to_lowercase())
-            && !local_vars.contains_key(word)
+            && !local_vars.contains_key(&word.to_lowercase())
         {
             found.insert(word.to_lowercase());
         }
@@ -546,18 +546,18 @@ fn extract_map_access_keys(pkg: &PackageInfo) -> Vec<String> {
                   .collect();
               for caps in re.captures_iter(&dml.sql_text) {
                   let word = caps.get(1).unwrap().as_str();
-                  if proc.local_vars.contains_key(word) && !proc_param_names.contains(&word.to_lowercase()) {
+                  if proc.local_vars.contains_key(&word.to_lowercase()) && !proc_param_names.contains(&word.to_lowercase()) {
                       all_names.insert(crate::naming::snake_to_camel(word).to_lowercase());
                   }
               }
 
               // Step 4: package vars from SQL text
-              let local_var_names: std::collections::HashSet<String> = proc.local_vars.keys().cloned().collect();
-              for caps in re.captures_iter(&dml.sql_text) {
-                  let word = caps.get(1).unwrap().as_str();
-                  if pkg.package_vars.contains_key(word)
-                      && !local_var_names.contains(word)
-                      && !proc_param_names.contains(&word.to_lowercase())
+               let local_var_names: std::collections::HashSet<String> = proc.local_vars.keys().map(|k| k.to_lowercase()).collect();
+               for caps in re.captures_iter(&dml.sql_text) {
+                   let word = caps.get(1).unwrap().as_str();
+                   if pkg.package_vars.contains_key(word)
+                       && !local_var_names.contains(&word.to_lowercase())
+                       && !proc_param_names.contains(&word.to_lowercase())
                   {
                       all_names.insert(crate::naming::snake_to_camel(word).to_lowercase());
                   }
@@ -661,6 +661,13 @@ fn default_test_value(java_type: &str, param_name: &str) -> String {
     if tl.contains("date") { return "java.sql.Date.valueOf(\"2024-01-01\")".to_string(); }
     if tl.contains("map") { return "new java.util.HashMap<>()".to_string(); }
     if tl == "object" { return "java.util.Arrays.asList(\"a\", \"b\")".to_string(); }
+    if tl.contains("string") || tl == "object" {
+        if nl.contains("date") { return "\"2024-01-01\"".to_string(); }
+        if nl.contains("ids") || nl.contains("list") { return "\"1,2,3\"".to_string(); }
+        if ["flag", "amount", "seqno", "seq", "interfaceseq", "operflag", "stepno", "count", "quantity", "qty", "price", "total"].iter().any(|kw| nl.contains(kw)) {
+            return "\"1\"".to_string();
+        }
+    }
     format!("\"test_{}\"", param_name)
 }
 
@@ -693,15 +700,16 @@ mod tests {
 
     fn make_pkg(name: &str, procs: Vec<ProcedureInfo>) -> PackageInfo {
         PackageInfo {
-            package_name: name.to_string(),
-            procedures: procs,
-            table_refs: Default::default(),
-            package_vars: Default::default(),
-            source_file: String::new(),
-            comments: Vec::new(),
-            java_package: String::new(),
-            custom_types: Default::default(),
-        }
+                    package_name: name.to_string(),
+                    procedures: procs,
+                    table_refs: Default::default(),
+                    package_vars: Default::default(),
+                    source_file: String::new(),
+                    comments: Vec::new(),
+                    java_package: String::new(),
+                    custom_types: Default::default(),
+                    extra_mapper_methods: Vec::new(),
+                }
     }
 
     fn make_proc(name: &str) -> ProcedureInfo {
@@ -734,12 +742,7 @@ mod tests {
                     method_id: "insertOrder".to_string(),
                     sql_text: "insert into t values(1)".to_string(),
                     result_type: None,
-                    parameter_types: Default::default(),
-                    optional_filters: Vec::new(),
-                    returns_list: false,
-                    extra_params: Vec::new(),
-                    dynamic_conditions: Vec::new(),
-                    base_sql: String::new(),
+                    ..Default::default()
                 });
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
@@ -758,12 +761,7 @@ mod tests {
                     method_id: "selectData".to_string(),
                     sql_text: "select * from t".to_string(),
                     result_type: None,
-                    parameter_types: Default::default(),
-                    optional_filters: Vec::new(),
-                    returns_list: false,
-                    extra_params: Vec::new(),
-                    dynamic_conditions: Vec::new(),
-                    base_sql: String::new(),
+                    ..Default::default()
                 });
         let pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
@@ -783,12 +781,8 @@ mod tests {
                     method_id: "selectListData".to_string(),
                     sql_text: "select * from t".to_string(),
                     result_type: None,
-                    parameter_types: Default::default(),
-                    optional_filters: Vec::new(),
                     returns_list: true,
-                    extra_params: Vec::new(),
-                    dynamic_conditions: Vec::new(),
-                    base_sql: String::new(),
+                    ..Default::default()
                 });
         let pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
@@ -807,12 +801,7 @@ mod tests {
                     method_id: "selectCheckStock".to_string(),
                     sql_text: "select count(*) into v_count from t".to_string(),
                     result_type: Some("Integer".to_string()),
-                    parameter_types: Default::default(),
-                    optional_filters: Vec::new(),
-                    returns_list: false,
-                    extra_params: Vec::new(),
-                    dynamic_conditions: Vec::new(),
-                    base_sql: String::new(),
+                    ..Default::default()
                 });
         let pkg = make_pkg("pkg_inventory", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
@@ -832,12 +821,7 @@ mod tests {
                     method_id: "selectGetId".to_string(),
                     sql_text: "select seq.nextval into v_id from dual".to_string(),
                     result_type: Some("Long".to_string()),
-                    parameter_types: Default::default(),
-                    optional_filters: Vec::new(),
-                    returns_list: false,
-                    extra_params: Vec::new(),
-                    dynamic_conditions: Vec::new(),
-                    base_sql: String::new(),
+                    ..Default::default()
                 });
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
@@ -917,12 +901,7 @@ mod tests {
                     method_id: "selectData".to_string(),
                     sql_text: "select id, name, salary from t_employees".to_string(),
                     result_type: Some("Map<String, Object>".to_string()),
-                    parameter_types: Default::default(),
-                    optional_filters: Vec::new(),
-                    returns_list: false,
-                    extra_params: Vec::new(),
-                    dynamic_conditions: Vec::new(),
-                    base_sql: String::new(),
+                    ..Default::default()
                 });
         let pkg = make_pkg("pkg_data", vec![proc]);
         let lines = mock_all_mapper_methods("dataMapper", &pkg);
@@ -941,12 +920,8 @@ mod tests {
                     method_id: "selectListData".to_string(),
                     sql_text: "select id, name from t".to_string(),
                     result_type: None,
-                    parameter_types: Default::default(),
-                    optional_filters: Vec::new(),
                     returns_list: true,
-                    extra_params: Vec::new(),
-                    dynamic_conditions: Vec::new(),
-                    base_sql: String::new(),
+                    ..Default::default()
                 });
         let pkg = make_pkg("pkg_data", vec![proc]);
         let lines = mock_all_mapper_methods("dataMapper", &pkg);
