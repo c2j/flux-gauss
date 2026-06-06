@@ -9815,8 +9815,6 @@ def _mapper_call(proc: ProcedureInfo, mapper_method: str, sql_text: str = "") ->
 
 def generate_project(output_dir: str, packages: list, changed_packages: set = None,
                      config: dict = None, progress_cb=None, resume_skip: set = None):
-    if changed_packages is not None and not changed_packages:
-        return
     base_path = Path(output_dir)
     base_path.mkdir(parents=True, exist_ok=True)
 
@@ -9824,7 +9822,13 @@ def generate_project(output_dir: str, packages: list, changed_packages: set = No
         _write_pom_xml(base_path)
         _write_application_yml(base_path, config)
         _write_main_application(base_path)
+
+    _be_java = base_path / BASE_DIR / "exception" / "BusinessException.java"
+    if not _be_java.exists():
         _write_business_exception(base_path)
+
+    if changed_packages is not None and not changed_packages:
+        return
 
     svc_method_param_counts: dict = {}
     all_packages = {p.package_name: p for p in packages}
