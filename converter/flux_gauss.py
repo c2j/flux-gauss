@@ -116,6 +116,12 @@ _LOGGER_CONFIG = None  # resolved from YAML, defaults to slf4j
 # Source file encoding (overridable via --encoding CLI or encoding: YAML config)
 _SOURCE_ENCODING = 'utf-8'
 
+# Debug mode: inject SQL source line comments into generated Java/XML (via --debug flag)
+DEBUG_MODE = False
+
+# Cache for reading source SQL files (path -> list of lines)
+_SQL_FILE_CACHE = {}
+
 
 def _write_source_file(path, content):
     """Write generated source file with the configured encoding.
@@ -988,6 +994,7 @@ class ProcedureInfo:
     leading_comments: list = field(default_factory=list)   # List[CommentInfo] — comments before procedure declaration
     inline_comments: list = field(default_factory=list)    # List[CommentInfo] — comments inside procedure body
     _dynamic_sql_build_stmts: dict = field(default_factory=dict)  # {stmt_body_idx: var_name}
+    local_var_source_lines: dict = field(default_factory=dict)  # var_name -> SQL source line number
 
 
 @dataclass
@@ -2306,6 +2313,10 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
                 else:
                     java_type = sql_type_to_java(raw_type)
                 proc.local_vars[var_name] = java_type
+                if DEBUG_MODE:
+                    _decl_line = _find_var_decl_line(proc, var_name)
+                    if _decl_line:
+                        proc.local_var_source_lines[var_name] = _decl_line
                 default_ast = decl_data.get("default")
                 if default_ast is not None:
                     try:
@@ -2328,6 +2339,10 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
                 var_name = decl_data.get("name", "")
                 if var_name:
                     proc.local_vars[var_name] = "Map<String, Object>"
+                    if DEBUG_MODE:
+                        _decl_line = _find_var_decl_line(proc, var_name)
+                        if _decl_line:
+                            proc.local_var_source_lines[var_name] = _decl_line
             elif decl_type == "Pragma":
                 pragma_name = decl_data.get("name", "")
                 if pragma_name == "AUTONOMOUS_TRANSACTION":
@@ -2510,6 +2525,71 @@ def _find_body_stmt_lines(proc: ProcedureInfo) -> list:
     return stmt_lines
 
 
+def _get_sql_file_lines(source_path: str) -> list:
+    if source_path in _SQL_FILE_CACHE:
+        return _SQL_FILE_CACHE[source_path]
+    try:
+        with open(source_path, 'r', encoding='utf-8', errors='replace') as f:
+            lines = f.readlines()
+    except OSError:
+        lines = []
+    _SQL_FILE_CACHE[source_path] = lines
+    return lines
+
+
+def _format_debug_comment(source_path: str, line_number: int, max_len: int = 100) -> str:
+    if not line_number or not source_path or not os.path.exists(source_path):
+        return ""
+    lines = _get_sql_file_lines(source_path)
+    if line_number < 1 or line_number > len(lines):
+        return f"// [DEBUG] L{line_number}"
+    raw = lines[line_number - 1].strip()
+    fname = os.path.basename(source_path)
+    if len(raw) > max_len:
+        raw = raw[:max_len - 3] + "..."
+    return f"// [DEBUG] {fname}:{line_number} → {raw}"
+
+
+def _stmt_span_line(stmt_data: dict) -> int:
+    span = stmt_data.get("span")
+    if span and isinstance(span, dict):
+        start = span.get("start")
+        if start and isinstance(start, dict):
+            return start.get("line", 0)
+    return 0
+
+
+def _map_stmt_idx_to_sql_line(stmt_idx: int, proc: ProcedureInfo) -> int:
+    stmt_lines = _find_body_stmt_lines(proc)
+    if stmt_lines and stmt_idx < len(stmt_lines):
+        return stmt_lines[stmt_idx]
+    return 0
+
+
+def _map_stmt_to_sql_line(stmt_data: dict, stmt_idx: int, proc: ProcedureInfo) -> int:
+    line = _map_stmt_idx_to_sql_line(stmt_idx, proc)
+    if line:
+        return line
+    return _stmt_span_line(stmt_data)
+
+
+def _find_var_decl_line(proc: ProcedureInfo, var_name: str) -> int:
+    source_path = proc._source_path or proc.source_file
+    if not source_path or not os.path.exists(source_path):
+        return 0
+    lines = _get_sql_file_lines(source_path)
+    start = max(0, (proc.source_start_line or 1) - 1)
+    end = proc.source_end_line or len(lines)
+    target = var_name.lower().strip('"')
+    for i in range(start, min(end, len(lines))):
+        stripped = lines[i].strip()
+        if re.match(r'BEGIN\b', stripped, re.IGNORECASE):
+            break
+        if target in stripped.lower() and re.search(r'\b' + re.escape(target) + r'\b', stripped, re.IGNORECASE):
+            return i + 1
+    return 0
+
+
 def _map_comment_to_checkpoint(comment_line: int, stmt_lines: list,
                                checkpoints: list, proc: ProcedureInfo) -> int:
     """Map a comment's SQL line to the index of the checkpoint it should precede."""
@@ -2569,6 +2649,14 @@ def _process_get_diagnostics(stmt_data: dict, proc: ProcedureInfo):
 
 def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_counter: dict):
     for stmt_type, stmt_data in stmt.items():
+        if DEBUG_MODE and stmt_type not in ("Null",) and isinstance(stmt_data, dict):
+            src_path = proc._source_path or proc.source_file
+            stmt_idx = getattr(proc, '_current_stmt_idx', 0)
+            sql_line = _map_stmt_to_sql_line(stmt_data, stmt_idx, proc)
+            if sql_line and src_path:
+                dbg = _format_debug_comment(src_path, sql_line)
+                if dbg:
+                    proc.java_logic_lines.append(dbg)
         if stmt_type == "SqlStatement":
             _process_sql_statement(stmt_data, proc, dml_counter)
         elif stmt_type == "If":
@@ -2619,6 +2707,10 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
                             java_type = sql_type_to_java(raw_type)
                         if var_name not in proc.local_vars:
                             proc.local_vars[var_name] = java_type
+                            if DEBUG_MODE:
+                                decl_line = _find_var_decl_line(proc, var_name)
+                                if decl_line:
+                                    proc.local_var_source_lines[var_name] = decl_line
                         default_ast = decl_data.get("default")
                         if default_ast is not None:
                             try:
@@ -2654,6 +2746,10 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
                         var_name = decl_data.get("name", "")
                         if var_name and var_name not in proc.local_vars:
                             proc.local_vars[var_name] = "Map<String, Object>"
+                            if DEBUG_MODE:
+                                decl_line = _find_var_decl_line(proc, var_name)
+                                if decl_line:
+                                    proc.local_var_source_lines[var_name] = decl_line
                     elif decl_type == "Cursor":
                         cursor_name = decl_data.get("name", "")
                         parsed_q = decl_data.get("parsed_query")
@@ -10761,6 +10857,12 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
     xml_parts = []
     source_info = f"Source: {proc.source_file}:{proc.source_start_line}-{proc.source_end_line} — {proc.name}.{dml.method_id}" if proc.source_file else f"Source: {proc.name}.{dml.method_id}"
     xml_parts.append(f"<!-- {source_info} -->")
+    if DEBUG_MODE and proc.source_file:
+        src_path = proc._source_path or proc.source_file
+        dbg = _format_debug_comment(src_path, proc.source_start_line, max_len=120)
+        if dbg:
+            safe_dbg = dbg.replace("--", "\u2014\u2014").replace("<!", "< !")
+            xml_parts.append(f"<!-- {safe_dbg} -->")
     for c in proc.leading_comments:
         formatted = _format_comment_for_java(c)
         if formatted:
@@ -11523,6 +11625,13 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                     default_val = _wrap_default_for_type(default_val, var_type)
                 if var_type.startswith("java.util.List") and default_val in ('"{}"', "'{}'"):
                     default_val = _default_for_type(var_type)
+                if DEBUG_MODE:
+                    src_path = proc._source_path or proc.source_file
+                    decl_line = proc.local_var_source_lines.get(var_name, 0)
+                    if decl_line and src_path:
+                        dbg = _format_debug_comment(src_path, decl_line)
+                        if dbg:
+                            body_lines.append(dbg)
                 body_lines.append(f"{var_type} {var_java} = {default_val};")
                 top_level_declares.add(var_java)
                 top_level_insert_idx = len(body_lines)
@@ -14656,6 +14765,7 @@ def _build_arg_parser():
     parser.add_argument("--skip-validate", action="store_true", default=False, help="跳过 SQL 语法校验")
     parser.add_argument("--encoding", metavar="ENC", default=None, help="生成源码的编码格式（默认 UTF-8）")
     parser.add_argument("--report", metavar="FILE", help="指定转换报告输出路径")
+    parser.add_argument("--debug", action="store_true", default=False, help="调试模式：在生成的Java/XML中注入SQL源码行号注释")
     parser.add_argument("-v", "--version", action="store_true", default=False, help="显示版本信息")
     return parser
 
@@ -14688,7 +14798,7 @@ _VERSION = _read_version_from_cargo_toml() or "0.6.7"
 
 
 def main():
-    global _SOURCE_ENCODING
+    global _SOURCE_ENCODING, DEBUG_MODE
 
     parser = _build_arg_parser()
     args = parser.parse_args()
@@ -14706,6 +14816,10 @@ def main():
     sql_files = []
     config_path = None
     config = {}
+
+    if args.debug:
+        DEBUG_MODE = True
+        print("  🔧 Debug mode enabled — SQL source annotations will be injected")
 
     if args.config:
         config_path = args.config
