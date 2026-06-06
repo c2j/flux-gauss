@@ -1896,12 +1896,59 @@ fn process_forall_stmt(
     }
 }
 
+fn get_stmt_line(stmt: &ogsql_parser::ast::plpgsql::PlStatement, stmt_idx: usize, stmt_lines: &[u32]) -> u32 {
+    use ogsql_parser::ast::plpgsql::PlStatement;
+    // Prefer body statement line mapping (text scanning) — more reliable than AST span
+    if stmt_idx < stmt_lines.len() && stmt_lines[stmt_idx] > 0 {
+        return stmt_lines[stmt_idx];
+    }
+    // Fallback: use AST span from Spanned/span variants
+    let line = match stmt {
+        PlStatement::Block(b) => b.span.as_ref().map(|s| s.start.line as u32),
+        PlStatement::If(s) => s.span.as_ref().map(|s| s.start.line as u32),
+        PlStatement::Case(s) => s.span.as_ref().map(|s| s.start.line as u32),
+        PlStatement::Loop(s) => s.span.as_ref().map(|s| s.start.line as u32),
+        PlStatement::While(s) => s.span.as_ref().map(|s| s.start.line as u32),
+        PlStatement::For(s) => s.span.as_ref().map(|s| s.start.line as u32),
+        PlStatement::ForEach(s) => s.span.as_ref().map(|s| s.start.line as u32),
+        PlStatement::ReturnQuery(s) => s.span.as_ref().map(|s| s.start.line as u32),
+        PlStatement::Raise(s) => s.span.as_ref().map(|s| s.start.line as u32),
+        PlStatement::Execute(s) => s.span.as_ref().map(|s| s.start.line as u32),
+        PlStatement::Perform { span, .. } => span.as_ref().map(|s| s.start.line as u32),
+        PlStatement::Open(s) => s.span.as_ref().map(|s| s.start.line as u32),
+        PlStatement::Fetch(s) => s.span.as_ref().map(|s| s.start.line as u32),
+        PlStatement::GetDiagnostics(s) => s.span.as_ref().map(|s| s.start.line as u32),
+        PlStatement::ProcedureCall(s) => s.span.as_ref().map(|s| s.start.line as u32),
+        PlStatement::SqlStatement { span, .. } => span.as_ref().map(|s| s.start.line as u32),
+        PlStatement::ForAll(s) => s.span.as_ref().map(|s| s.start.line as u32),
+        PlStatement::VariableSet(s) => s.span.as_ref().map(|s| s.start.line as u32),
+        PlStatement::VariableReset(s) => s.span.as_ref().map(|s| s.start.line as u32),
+        _ => None,
+    };
+    line.unwrap_or_else(|| {
+        if stmt_idx < stmt_lines.len() {
+            stmt_lines[stmt_idx]
+        } else {
+            0
+        }
+    })
+}
+
 pub fn process_statement(
     stmt: &ogsql_parser::ast::plpgsql::PlStatement,
     proc: &mut ProcedureInfo,
     ctx: &mut StatementContext,
 ) -> Result<(), ConversionError> {
     use ogsql_parser::ast::plpgsql::PlStatement;
+
+    if ctx.debug && !matches!(stmt, PlStatement::Null) {
+        let stmt_line = get_stmt_line(stmt, ctx.current_stmt_idx, &ctx.stmt_lines);
+        if stmt_line > 0 && !proc.source_path.is_empty() {
+            let debug_comment = crate::debug::format_debug_comment(&proc.source_path, stmt_line, 100);
+            proc.java_logic_lines.push(debug_comment);
+        }
+    }
+
     match stmt {
          PlStatement::Assignment { target, expression } => {
              if let Some(var_name) = extract_assignment_target_name(target) {
@@ -2105,7 +2152,7 @@ pub fn process_statement(
         PlStatement::Block(block_stmt) => {
             // Promote inner Block declarations to method-level scope
             for decl in &block_stmt.node.declarations {
-                crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new());
+                crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new(), None);
             }
             let has_exceptions = block_stmt.node.exception_block.is_some();
             if has_exceptions {
@@ -2787,6 +2834,9 @@ mod tests {
             dml_counter: HashMap::new(),
             sm_enum_name: None,
             sm_labels: HashSet::new(),
+            debug: false,
+            current_stmt_idx: 0,
+            stmt_lines: Vec::new(),
         }
     }
 

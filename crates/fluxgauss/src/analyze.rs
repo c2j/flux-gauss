@@ -7,6 +7,7 @@ pub fn analyze_procedure(
     summaries: &std::collections::HashMap<String, crate::types::PackageSummary>,
     ctx: &mut AnalysisContext,
     ddl_schema: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    debug: bool,
 ) -> Result<(), ConversionError> {
     let body = proc.body.take();
     let mut result = Ok(());
@@ -52,14 +53,19 @@ pub fn analyze_procedure(
             proc.goto_analysis = Some(analysis);
         }
         for decl in &body_inner.declarations {
-            process_declaration(decl, proc, ddl_schema);
+            process_declaration(decl, proc, ddl_schema, Some(ctx));
         }
         let has_exceptions = body_inner.exception_block.is_some();
         if has_exceptions {
             proc.java_logic_lines.push("try {".into());
         }
         let mut stmt_ctx = crate::context::StatementContext::new(summaries);
-        for stmt in &body_inner.body {
+        stmt_ctx.debug = debug;
+        if debug {
+            stmt_ctx.stmt_lines = crate::debug::find_body_stmt_lines(proc, ctx);
+        }
+        for (idx, stmt) in body_inner.body.iter().enumerate() {
+            stmt_ctx.current_stmt_idx = idx;
             if let Err(e) = crate::statement::process_statement(stmt, proc, &mut stmt_ctx) {
                 ctx.stub_procedures
                     .insert((proc.name.clone(), proc.parameters.len()));
@@ -109,6 +115,7 @@ pub fn process_declaration(
     decl: &ogsql_parser::ast::plpgsql::PlDeclaration,
     proc: &mut ProcedureInfo,
     ddl_schema: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    mut ctx: Option<&mut AnalysisContext>,
 ) {
     use ogsql_parser::ast::plpgsql::PlDeclaration;
     match decl {
@@ -169,6 +176,13 @@ pub fn process_declaration(
                 }
             };
             proc.local_vars.insert(var.name.to_lowercase(), java_type.clone());
+            if let Some(ref mut ctx) = ctx {
+                if ctx.debug {
+                    if let Some(line) = crate::debug::find_var_decl_line(proc, &var.name, ctx) {
+                        proc.local_var_source_lines.insert(var.name.to_lowercase(), line);
+                    }
+                }
+            }
             if let Some(default) = &var.default {
                 // Detect pkg_param_common.getarray() calls → stringToArray()
                 let default_java = match default {
@@ -205,6 +219,13 @@ pub fn process_declaration(
         PlDeclaration::Record(rec) => {
             proc.local_vars.insert(rec.name.to_lowercase(), "Map<String, Object>".into());
             proc.imports.insert("import java.util.Map;".into());
+            if let Some(ref mut ctx) = ctx {
+                if ctx.debug {
+                    if let Some(line) = crate::debug::find_var_decl_line(proc, &rec.name, ctx) {
+                        proc.local_var_source_lines.insert(rec.name.to_lowercase(), line);
+                    }
+                }
+            }
         }
         PlDeclaration::Type(_type_decl) => {}
         PlDeclaration::NestedProcedure(_) | PlDeclaration::NestedFunction(_) => {}

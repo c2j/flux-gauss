@@ -1,5 +1,6 @@
 pub mod config;
 pub mod context;
+pub mod debug;
 pub mod extract;
 pub mod incremental;
 pub mod logging;
