@@ -4576,6 +4576,8 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
     else:
         if target_var_type == "Long" and _is_bare_int_literal(expr):
             expr = f"Long.valueOf({expr})"
+        if target_var_type in ("Long", "long") and ".indexOf(" in expr and "(long)" not in expr:
+            expr = f"(long)({expr})"
         elif target_var_type == "Integer" and _is_bare_long_literal(expr):
             expr = f"Integer.valueOf({expr})"
         elif target_var_type == "Map<String, Object>" and not expr.startswith("new HashMap") and not expr.startswith("new java.util.HashMap"):
@@ -7676,7 +7678,7 @@ SQL_FUNCTION_MAP = {
     "mod": "__EXPR__(({args0}) % ({args1}))",
     "power": "Math.pow",
     "sign": "__EXPR__Integer.signum((int)({args0}))",
-    "instr": "__EXPR__String.valueOf({args0}).indexOf({args1}) + 1",
+    "instr": "__HANDLER__",
     "rtrim": "__EXPR__String.valueOf({args0}).replaceAll(\"\\\\s+$\", \"\")",
     "ltrim": "__EXPR__String.valueOf({args0}).replaceAll(\"^\\\\s+\", \"\")",
     "chr": "__EXPR__String.valueOf((char)({args0}))",
@@ -7775,16 +7777,37 @@ def _sf_substr(val, proc, _expr_to_java_fn):
     args_java = [_expr_to_java_fn(a, proc) for a in args]
     s = args_java[0] if len(args_java) > 0 else '""'
     s_expr = s if (s.startswith('"') or s.startswith("'")) else f"String.valueOf({s})"
+    needs_parens = any(op in s_expr for op in (" + ", " - ", " * ", " / "))
+    if needs_parens:
+        s_expr = f"({s_expr})"
     if len(args_java) >= 3:
         start = args_java[1]
         length = args_java[2]
-        _clamped_start = f"Math.min({s_expr}.length(), Math.max(0, ({start}) - 1))"
-        _e = f"Math.min({s_expr}.length(), {_clamped_start} + ({length}))"
+        start_int = f"(int)({start})" if _might_be_long(start, proc) else f"({start})"
+        length_int = f"(int)({length})" if _might_be_long(length, proc) else f"({length})"
+        _clamped_start = f"Math.max(0, {start_int} - 1)"
+        _e = f"Math.min({s_expr}.length(), {_clamped_start} + {length_int})"
         return f"{s_expr}.substring({_clamped_start}, {_e})"
     elif len(args_java) == 2:
         start = args_java[1]
-        return f"{s_expr}.substring(Math.min({s_expr}.length(), Math.max(0, ({start}) - 1)))"
+        start_int = f"(int)({start})" if _might_be_long(start, proc) else f"({start})"
+        return f"{s_expr}.substring(Math.max(0, {start_int} - 1))"
     return f"{s_expr}"
+
+
+def _might_be_long(expr: str, proc) -> bool:
+    if not proc:
+        return False
+    stripped = expr.strip()
+    for var_name, var_type in proc.local_vars.items():
+        if snake_to_camel(var_name) == stripped and var_type in ("Long", "long", "java.math.BigDecimal"):
+            return True
+    if any(op in stripped for op in (" + ", " - ", " * ", " / ")):
+        for var_name, var_type in proc.local_vars.items():
+            camel = snake_to_camel(var_name)
+            if camel in stripped and var_type in ("Long", "long"):
+                return True
+    return False
 
 
 def _sf_overlay(val, proc, _expr_to_java_fn):
@@ -8136,6 +8159,19 @@ def _handle_function(func_name, args_java, proc):
                 arg0_expr = arg0 if (arg0.startswith('"') or arg0.startswith("'")) else f"String.valueOf({arg0})"
                 return f"java.util.Base64.getEncoder().encodeToString({arg0_expr}.getBytes())"
         return f"/* TODO: encode({', '.join(args_java)}) */ null"
+
+    elif func_name == "instr":
+        if len(args_java) >= 2:
+            s = args_java[0]
+            sub_expr = args_java[1]
+            s_expr = s if (s.startswith('"') or s.startswith("'")) else f"String.valueOf({s})"
+            sub_wrapped = sub_expr if (sub_expr.startswith('"') or sub_expr.startswith("'")) else f"String.valueOf({sub_expr})"
+            if len(args_java) >= 3:
+                start = args_java[2]
+                start_cast = f"(int)({start})" if _might_be_long(start, proc) else f"({start})"
+                return f"{s_expr}.indexOf({sub_wrapped}, Math.max(0, {start_cast} - 1)) + 1"
+            return f"{s_expr}.indexOf({sub_wrapped}) + 1"
+        return "0"
 
     elif func_name == "to_hex":
         if args_java:
@@ -8808,6 +8844,12 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             # Multi-part ColumnRef: composite/ROWTYPE/RECORD field access
             # e.g. ["v_emp", "status"] → vEmp.get("status") or vEmp.status (for custom RECORD types)
             if len(parts) >= 2 and proc is not None:
+                # Check if this is a same-package variable reference (e.g. PKG_NAME.var_name)
+                if len(parts) == 2 and proc is not None:
+                    _pkg_candidate = parts[0]
+                    _field_candidate = parts[-1]
+                    if _pkg_candidate.upper() == proc.package.upper() and _field_candidate in _PACKAGE_VARIABLES:
+                        return f"this.{snake_to_camel(_field_candidate)}"
                 var_name_raw = parts[0]
                 field_name = parts[-1]
                 var_java = snake_to_camel(var_name_raw)
