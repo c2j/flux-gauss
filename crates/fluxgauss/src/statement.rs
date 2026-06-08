@@ -1898,12 +1898,7 @@ fn process_forall_stmt(
 
 fn get_stmt_line(stmt: &ogsql_parser::ast::plpgsql::PlStatement, stmt_idx: usize, stmt_lines: &[u32]) -> u32 {
     use ogsql_parser::ast::plpgsql::PlStatement;
-    // Prefer body statement line mapping (text scanning) — more reliable than AST span
-    if stmt_idx < stmt_lines.len() && stmt_lines[stmt_idx] > 0 {
-        return stmt_lines[stmt_idx];
-    }
-    // Fallback: use AST span from Spanned/span variants
-    let line = match stmt {
+    let ast_line = match stmt {
         PlStatement::Block(b) => b.span.as_ref().map(|s| s.start.line as u32),
         PlStatement::If(s) => s.span.as_ref().map(|s| s.start.line as u32),
         PlStatement::Case(s) => s.span.as_ref().map(|s| s.start.line as u32),
@@ -1925,13 +1920,13 @@ fn get_stmt_line(stmt: &ogsql_parser::ast::plpgsql::PlStatement, stmt_idx: usize
         PlStatement::VariableReset(s) => s.span.as_ref().map(|s| s.start.line as u32),
         _ => None,
     };
-    line.unwrap_or_else(|| {
-        if stmt_idx < stmt_lines.len() {
-            stmt_lines[stmt_idx]
-        } else {
-            0
-        }
-    })
+    if let Some(line) = ast_line {
+        if line > 0 { return line; }
+    }
+    if stmt_idx < stmt_lines.len() && stmt_lines[stmt_idx] > 0 {
+        return stmt_lines[stmt_idx];
+    }
+    0
 }
 
 pub fn process_statement(
