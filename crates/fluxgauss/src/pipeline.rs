@@ -100,7 +100,7 @@ pub fn phase0_validate(sql_files: &[PathBuf]) -> ValidateResult {
             }
         };
 
-        let mut parser = ogsql_parser::Parser::new(tokens);
+        let mut parser = ogsql_parser::Parser::with_source(tokens, content.clone());
         let stmts = parser.parse_with_text();
         let parse_errors = parser.errors().to_vec();
 
@@ -268,13 +268,14 @@ pub fn run_pipeline(
     sql_files: &[PathBuf],
     config: &AppConfig,
     incremental: &mut IncrementalState,
+    debug: bool,
 ) -> PipelineResult {
     let base_package = config.base_package_or_default();
     let mut ctx = AnalysisContext::new();
 
     let parsed = phase1_parse(sql_files, config, incremental);
-    let mut analyzed = phase2_analyze(parsed, &mut ctx, sql_files);
-    let (generated, test_count, itest_count, errors) = phase3_generate(&mut analyzed, config, incremental, sql_files);
+    let mut analyzed = phase2_analyze(parsed, &mut ctx, sql_files, debug);
+    let (generated, test_count, itest_count, errors) = phase3_generate(&mut analyzed, config, incremental, sql_files, debug);
 
     let packages = analyzed.packages;
     let skipped = analyzed.skipped;
@@ -376,7 +377,7 @@ fn phase1_parse(
             }
         };
 
-        let stmts_with_info = ogsql_parser::Parser::new(tokens).parse_with_text();
+        let stmts_with_info = ogsql_parser::Parser::with_source(tokens, content).parse_with_text();
         let parse_output = ogsql_parser::parser::ParseOutput {
             statements: stmts_with_info,
             errors: Vec::new(),
@@ -416,9 +417,11 @@ fn phase2_analyze(
     parsed: ParsedPackages,
     mut ctx: &mut AnalysisContext,
     sql_files: &[PathBuf],
+    debug: bool,
 ) -> AnalyzedPackages {
     let mut errors = Vec::new();
     let mut packages = parsed.packages;
+    ctx.debug = debug;
 
     let proc_summaries: std::collections::HashMap<String, PackageSummary> = parsed
         .summaries
@@ -471,7 +474,7 @@ fn phase2_analyze(
             idx += 1;
             crate::progress::progress_bar("Analyze", idx, total, &proc.name);
 
-            if let Err(e) = crate::analyze::analyze_procedure(proc, &proc_summaries, &mut ctx, &ddl_schema) {
+            if let Err(e) = crate::analyze::analyze_procedure(proc, &proc_summaries, &mut ctx, &ddl_schema, debug) {
                 errors.push(e);
             }
         }
@@ -496,6 +499,7 @@ fn phase3_generate(
     config: &AppConfig,
     _incremental: &IncrementalState,
     sql_files: &[PathBuf],
+    debug: bool,
 ) -> (Vec<String>, usize, usize, Vec<ConversionError>) {
     let base_package = config.base_package_or_default();
     let output_dir_str = config.output_dir_or_default();
@@ -548,7 +552,7 @@ fn phase3_generate(
         let service_injections = crate::generate::service::collect_service_injections(pkg);
 
         // Service class first — it populates extra_mapper_methods for nextval/currval stubs
-        match crate::generate::service::write_service_class(output_dir, pkg, &base_package, &service_injections, encoding) {
+        match crate::generate::service::write_service_class(output_dir, pkg, &base_package, &service_injections, encoding, debug) {
             Ok(name) => generated.push(format!("{}.java", name)),
             Err(e) => {
                 errors.push(ConversionError::Io {

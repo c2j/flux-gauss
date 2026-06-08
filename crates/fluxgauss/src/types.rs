@@ -227,6 +227,7 @@ pub struct ProcedureInfo {
     pub source_end_line: u32,
     pub leading_comments: Vec<CommentBlock>,
     pub inline_comments: Vec<CommentBlock>,
+    pub local_var_source_lines: HashMap<String, u32>,
 }
 
 impl ProcedureInfo {
@@ -275,6 +276,7 @@ impl ProcedureInfo {
             source_end_line: 0,
             leading_comments: Vec::new(),
             inline_comments: Vec::new(),
+            local_var_source_lines: HashMap::new(),
         }
     }
 

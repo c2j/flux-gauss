@@ -30,6 +30,8 @@ pub struct AnalysisContext {
     pub unresolved_calls: Vec<String>,
     /// Cache for source file contents: path → lines. Avoids re-reading files per procedure.
     pub source_cache: HashMap<String, Vec<String>>,
+    /// Debug mode enabled (--debug CLI flag)
+    pub debug: bool,
 }
 
 impl AnalysisContext {
@@ -43,6 +45,7 @@ impl AnalysisContext {
             unsupported_functions: Vec::new(),
             unresolved_calls: Vec::new(),
             source_cache: HashMap::new(),
+            debug: false,
         }
     }
 }
@@ -72,6 +75,9 @@ pub struct StatementContext<'a> {
     pub dml_counter: HashMap<String, usize>,
     pub sm_enum_name: Option<String>,
     pub sm_labels: HashSet<String>,
+    pub debug: bool,
+    pub current_stmt_idx: usize,
+    pub stmt_lines: Vec<u32>,
 }
 
 impl<'a> StatementContext<'a> {
@@ -81,6 +87,9 @@ impl<'a> StatementContext<'a> {
             dml_counter: HashMap::new(),
             sm_enum_name: None,
             sm_labels: HashSet::new(),
+            debug: false,
+            current_stmt_idx: 0,
+            stmt_lines: Vec::new(),
         }
     }
 }

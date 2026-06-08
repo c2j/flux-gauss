@@ -613,8 +613,11 @@ fn build_mapper_statement(
 }
 
 fn clean_sql(sql: &str) -> String {
-    let s = CLEAN_SQL_WS_RE.get_or_init(|| regex::Regex::new(r"\s+").unwrap()).replace_all(sql.trim(), " ");
-    s.to_string()
+    // Strip SQL comments (-- to end-of-line) before whitespace normalization.
+    // Preserve optimizer hints in /*+ ... */ form; only remove -- line comments.
+    let no_comments = regex::Regex::new(r"--[^\n]*").unwrap().replace_all(sql.trim(), "");
+    let s = CLEAN_SQL_WS_RE.get_or_init(|| regex::Regex::new(r"\s+").unwrap()).replace_all(&no_comments, " ");
+    s.trim().to_string()
 }
 
 fn fix_postgresql_syntax(sql: &str) -> String {
@@ -830,8 +833,19 @@ fn fix_postgresql_syntax(sql: &str) -> String {
     ).unwrap();
     result = json_alias_re.replace_all(&result, ") as ").to_string();
 
-    // Fix remaining JSON#> pattern (without space): JSON#> → #>
-    result = result.replace("JSON#", "#");
+    // Fix remaining JSON#> pattern after close paren: ...)JSON#> → ...)#>
+    let json_hash_re = regex::Regex::new(r"\)JSON(#)").unwrap();
+    result = json_hash_re.replace_all(&result, ")$1").to_string();
+
+    // Convert PostgreSQL JSON #> (path extract) to chained -> for OpenGauss compatibility
+    // e.g. expr::JSON#>'{a,b}' → expr::JSON->'a'->'b'
+    let json_path_arrow_re = regex::Regex::new(r"#>>?'(\{[^}]+\})'").unwrap();
+    result = json_path_arrow_re.replace_all(&result, |caps: &regex::Captures| {
+        let path_str = caps.get(1).unwrap().as_str();
+        let op = if caps.get(0).unwrap().as_str().starts_with("#>>") { "->>" } else { "->" };
+        let parts: Vec<&str> = path_str.trim_start_matches('{').trim_end_matches('}').split(',').collect();
+        parts.iter().map(|p| format!("{}'{}'", op, p.trim())).collect::<Vec<_>>().join("")
+    }).to_string();
 
     // Fix implicit cast: IDENTIFIER integer as → IDENTIFIER::integer as (lost :: or cast)
     let implicit_cast_re = regex::Regex::new(
@@ -894,14 +908,15 @@ fn fix_postgresql_syntax(sql: &str) -> String {
     result = delete_from_from_re.replace_all(&result, "$1 USING ").to_string();
 
     // Fix ambiguous column when emp_performance joins employees: qualify dept_id in GROUP BY/ORDER BY
-    if result.contains("emp_performance p") && result.contains("join employees e") {
+    let result_lower = result.to_lowercase();
+    if result_lower.contains("emp_performance p") && result_lower.contains("join employees e") {
         let ambig_select_re = regex::Regex::new(r"(?i)\bselect\s+dept_id\b").unwrap();
         result = ambig_select_re.replace_all(&result, "select e.dept_id").to_string();
         let ambig_re = regex::Regex::new(r"(?i)(group\s+by\s|order\s+by\s)dept_id").unwrap();
         result = ambig_re.replace_all(&result, "${1}e.dept_id").to_string();
         for col_pair in &[("perf_score", "p"), ("perf_quarter", "p"), ("perf_year", "p")] {
             let (col, alias) = col_pair;
-            let qualified = format!("{} . {}", alias, col);
+            let qualified = format!("{}.{}", alias, col);
             if !result.contains(&qualified) {
                 let re = regex::Regex::new(&format!(r"(?i)\b{}\b", regex::escape(col))).unwrap();
                 result = re.replace_all(&result, format!("{}.{}", alias, col)).to_string();

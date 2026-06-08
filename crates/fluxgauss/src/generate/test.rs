@@ -495,9 +495,18 @@ fn build_map_mock(cols: &[String]) -> String {
     for col in cols {
         let val = column_mock_value(col);
         let camel_key = crate::naming::snake_to_camel(col);
-        s.push_str(&format!("m.put(\"{}\", {}); ", camel_key, val));
+        let safe_key = escape_java_string(&camel_key);
+        s.push_str(&format!("m.put(\"{}\", {}); ", safe_key, val));
     }
     s
+}
+
+fn escape_java_string(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('"', "\\\"")
+        .replace('\t', "\\t")
 }
 
 /// Scan all procedures in the package for `.get("key")` patterns in logic lines,
@@ -623,7 +632,7 @@ fn extract_map_access_keys(pkg: &PackageInfo) -> Vec<String> {
                         let mut mock = build_map_mock(&cols);
                         for k in &extra_keys {
                             if !cols.iter().any(|c| crate::naming::snake_to_camel(c) == *k) {
-                                mock.push_str(&format!("m.put(\"{}\", {}); ", k, column_mock_value_for_key(k)));
+                                mock.push_str(&format!("m.put(\"{}\", {}); ", escape_java_string(k), column_mock_value_for_key(k)));
                             }
                         }
                         mock.push_str(&format!("when({}.{}({})).thenReturn(m); }}", mapper_name, method_id, any_args));

@@ -216,6 +216,9 @@ fn coerce_for_type(expr: &str, target_type: Option<&str>) -> String {
         Some(t) if t.starts_with("Map<") && trimmed.contains("this.") && !trimmed.starts_with('(') => {
             format!("(Map<String, Object>) {}", trimmed)
         }
+        Some(t) if (t == "Long" || t == "long") && trimmed.contains(".indexOf(") && !trimmed.contains("(long)") => {
+            format!("(long)({})", trimmed)
+        }
         _ => expr.to_string()
     }
 }
@@ -284,6 +287,24 @@ fn is_out_param(name: &str, proc: &ProcedureInfo) -> bool {
         name
     };
     proc.parameters.iter().any(|p| p.name == base_name && p.is_out())
+}
+
+fn might_be_long(expr: &str, proc: &ProcedureInfo) -> bool {
+    let stripped = expr.trim();
+    for (var_name, var_type) in &proc.local_vars {
+        if crate::naming::snake_to_camel(var_name) == stripped {
+            return var_type == "Long" || var_type == "long";
+        }
+    }
+    if stripped.contains(" + ") || stripped.contains(" - ") || stripped.contains(" * ") || stripped.contains(" / ") {
+        for (var_name, var_type) in &proc.local_vars {
+            let camel = crate::naming::snake_to_camel(var_name);
+            if stripped.contains(&camel) && (var_type == "Long" || var_type == "long") {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn get_column_ref_name(expr: &ogsql_parser::ast::Expr) -> Option<String> {
@@ -451,6 +472,24 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
         _ => {
             if name.contains('.') {
                 let parts: Vec<&str> = name.splitn(2, '.').collect();
+                // Check if this is a same-package variable reference (e.g. PKG_NAME.var_name)
+                if parts.len() == 2 {
+                    let pkg_candidate = parts[0];
+                    let field_candidate = parts[1];
+                    let pkg_normalized = pkg_candidate.to_lowercase().replace("_", "");
+                    let proc_pkg_normalized = proc.package.to_lowercase().replace("_", "");
+                    if pkg_normalized == proc_pkg_normalized {
+                        let field_lower = field_candidate.to_lowercase();
+                        let field_lower_no_underscore = field_lower.replace("_", "");
+                        let found = proc.package_vars.keys().any(|k| {
+                            let k_lower = k.to_lowercase();
+                            k_lower == field_lower || k_lower.replace("_", "") == field_lower_no_underscore
+                        });
+                        if found {
+                            return format!("this.{}", crate::naming::snake_to_camel(field_candidate));
+                        }
+                    }
+                }
                 let var_name = snake_to_camel(parts[0]);
                 let field = parts[1].to_lowercase();
                 let snake_base = parts[0];
@@ -954,13 +993,30 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         }
         "REPLACE" if jargs.len() >= 3 => format!("{}.replace({}, {})", jargs[0], jargs[1], jargs[2]),
         "SUBSTRING" => {
+            let wrap_s = |s: &str| -> String {
+                if s.starts_with('"') || s.starts_with('\'') {
+                    s.to_string()
+                } else {
+                    let needs_parens = s.contains(" + ") || s.contains(" - ") || s.contains(" * ") || s.contains(" / ");
+                    if needs_parens {
+                        format!("(String.valueOf({}))", s)
+                    } else {
+                        format!("String.valueOf({})", s)
+                    }
+                }
+            };
             if jargs.len() >= 3 {
-                let s = &jargs[0];
+                let s = wrap_s(&jargs[0]);
                 let start = &jargs[1];
                 let len = &jargs[2];
-                format!("{}.substring(Math.min({}.length(), Math.max(0, ({}) - 1)), Math.min({}.length(), Math.min({}.length(), Math.max(0, ({}) - 1)) + ({})))", s, s, start, s, s, start, len)
+                let start_cast = if might_be_long(start, proc) { format!("(int)({})", start) } else { format!("({})", start) };
+                let len_cast = if might_be_long(len, proc) { format!("(int)({})", len) } else { format!("({})", len) };
+                format!("{}.substring(Math.max(0, {} - 1), Math.min({}.length(), Math.max(0, {} - 1) + {}))", s, start_cast, s, start_cast, len_cast)
             } else if jargs.len() >= 2 {
-                format!("{}.substring(Math.min({}.length(), Math.max(0, ({}) - 1)))", jargs[0], jargs[0], jargs[1])
+                let s = wrap_s(&jargs[0]);
+                let start = &jargs[1];
+                let start_cast = if might_be_long(start, proc) { format!("(int)({})", start) } else { format!("({})", start) };
+                format!("{}.substring(Math.max(0, {} - 1))", s, start_cast)
             } else {
                 "null".into()
             }
@@ -1152,7 +1208,18 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         "CHR" if !jargs.is_empty() => format!("String.valueOf((char)({}))", jargs[0]),
         "ASCII" if !jargs.is_empty() => format!("(int){}.charAt(0)", jargs[0]),
         "TO_NUMBER" => format!("new BigDecimal({})", jargs.first().map(|s| s.as_str()).unwrap_or("\"0\"")),
-        "INSTR" if jargs.len() >= 2 => format!("{}.indexOf({}) + 1", jargs[0], jargs[1]),
+        "INSTR" if jargs.len() >= 3 => {
+            let s = if jargs[0].starts_with('"') || jargs[0].starts_with('\'') { jargs[0].clone() } else { format!("String.valueOf({})", jargs[0]) };
+            let sub = if jargs[1].starts_with('"') || jargs[1].starts_with('\'') { jargs[1].clone() } else { format!("String.valueOf({})", jargs[1]) };
+            let start = &jargs[2];
+            let start_cast = if might_be_long(start, proc) { format!("(int)({})", start) } else { format!("({})", start) };
+            format!("{}.indexOf({}, Math.max(0, {} - 1)) + 1", s, sub, start_cast)
+        }
+        "INSTR" if jargs.len() >= 2 => {
+            let s = if jargs[0].starts_with('"') || jargs[0].starts_with('\'') { jargs[0].clone() } else { format!("String.valueOf({})", jargs[0]) };
+            let sub = if jargs[1].starts_with('"') || jargs[1].starts_with('\'') { jargs[1].clone() } else { format!("String.valueOf({})", jargs[1]) };
+            format!("{}.indexOf({}) + 1", s, sub)
+        }
         "TRUNC" if jargs.len() >= 1 => format!("(int) Math.floor((double)({}))", jargs[0]),
         "JSONB_ARRAY_LENGTH" => format!("this.jsonbArrayLength({})", jargs.join(", ")),
         "JSONB_BUILD_OBJECT" => {
@@ -1246,13 +1313,30 @@ fn special_function_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: 
     match lower.as_str() {
         "substring" | "substr" => {
             let jargs: Vec<String> = args.iter().map(|a| expr_to_java(a, proc)).collect();
+            let wrap_s = |s: &str| -> String {
+                if s.starts_with('"') || s.starts_with('\'') {
+                    s.to_string()
+                } else {
+                    let needs_parens = s.contains(" + ") || s.contains(" - ") || s.contains(" * ") || s.contains(" / ");
+                    if needs_parens {
+                        format!("(String.valueOf({}))", s)
+                    } else {
+                        format!("String.valueOf({})", s)
+                    }
+                }
+            };
             if jargs.len() >= 3 {
-                let s = &jargs[0];
+                let s = wrap_s(&jargs[0]);
                 let start = &jargs[1];
                 let len = &jargs[2];
-                format!("{}.substring(Math.min({}.length(), Math.max(0, ({}) - 1)), Math.min({}.length(), Math.min({}.length(), Math.max(0, ({}) - 1)) + ({})))", s, s, start, s, s, start, len)
+                let start_cast = if might_be_long(start, proc) { format!("(int)({})", start) } else { format!("({})", start) };
+                let len_cast = if might_be_long(len, proc) { format!("(int)({})", len) } else { format!("({})", len) };
+                format!("{}.substring(Math.max(0, {} - 1), Math.min({}.length(), Math.max(0, {} - 1) + {}))", s, start_cast, s, start_cast, len_cast)
             } else if jargs.len() >= 2 {
-                format!("{}.substring(Math.min({}.length(), Math.max(0, ({}) - 1)))", jargs[0], jargs[0], jargs[1])
+                let s = wrap_s(&jargs[0]);
+                let start = &jargs[1];
+                let start_cast = if might_be_long(start, proc) { format!("(int)({})", start) } else { format!("({})", start) };
+                format!("{}.substring(Math.max(0, {} - 1))", s, start_cast)
             } else {
                 jargs.first().cloned().unwrap_or_else(|| "null".into())
             }

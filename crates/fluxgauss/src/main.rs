@@ -48,6 +48,9 @@ struct Cli {
 
     #[arg(long = "encoding", default_value = "utf-8")]
     encoding: String,
+
+    #[arg(long = "debug", default_value_t = false)]
+    debug: bool,
 }
 
 fn main() {
@@ -81,6 +84,10 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     println!("  Config:     {}", config_path_str);
     println!("  Package:    {}", base_package);
     println!("  Input:      {} SQL file(s)", sql_files.len());
+
+    if cli.debug {
+        println!("  🔧 Debug mode enabled — SQL source annotations will be injected");
+    }
 
     if sql_files.is_empty() {
         eprintln!("No valid source files. Exiting.");
@@ -156,7 +163,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let result = pipeline::run_pipeline(&sql_files, &config, &mut incremental);
+    let result = pipeline::run_pipeline(&sql_files, &config, &mut incremental, cli.debug);
 
     let total_packages = result.packages.len();
     let total_procedures: usize = result.packages.iter().map(|p| p.procedures.len()).sum();

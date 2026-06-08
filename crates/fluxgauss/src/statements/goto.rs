@@ -383,7 +383,7 @@ fn generate_cleanup_goto(
         }
         if let PlStatement::Block(block) = stmt {
             for decl in &block.node.declarations {
-                crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new());
+                crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new(), None);
             }
             if block.node.label.as_deref() == Some(&cleanup_label) {
                 for s in &block.node.body {
@@ -434,7 +434,7 @@ fn process_cleanup_stmt(
         }
         PlStatement::Block(block) => {
             for decl in &block.node.declarations {
-                crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new());
+                crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new(), None);
             }
             for s in &block.node.body {
                 process_cleanup_stmt(s, cleanup_label, proc, stmt_ctx)?;
@@ -602,7 +602,7 @@ fn generate_logic_skip_goto(
             }
             if let PlStatement::Block(block) = stmt {
                 for decl in &block.node.declarations {
-                    crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new());
+                    crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new(), None);
                 }
                 if block.node.label.as_deref() == Some(label_name.as_str()) {
                     for s in &block.node.body {
@@ -683,7 +683,7 @@ fn process_with_goto_replace(
         }
         PlStatement::Block(block) => {
             for decl in &block.node.declarations {
-                crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new());
+                crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new(), None);
             }
             process_with_goto_replace(&block.node.body, goto_labels, proc, stmt_ctx)?;
         }
@@ -818,7 +818,7 @@ fn generate_state_machine_goto(
                 }
                 PlStatement::Block(block) => {
                     for decl in &block.node.declarations {
-                        crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new());
+                        crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new(), None);
                     }
                     if block.node.label.as_deref() == Some(label_name.as_str()) {
                         for s in &block.node.body {

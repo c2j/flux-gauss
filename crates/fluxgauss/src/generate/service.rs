@@ -15,6 +15,7 @@ pub fn write_service_class(
     base_package: &str,
     service_injections: &std::collections::HashMap<String, String>,
     encoding: &'static Encoding,
+    debug: bool,
 ) -> std::io::Result<String> {
     let java_pkg = format!("{}.service", base_package);
     let svc_dir = base_path.join(format!("src/main/java/{}/service", base_package.replace('.', "/")));
@@ -201,7 +202,7 @@ pub fn write_service_class(
 
     for proc in &pkg.procedures {
         w.blank();
-        let method = build_service_method(proc, &mapper_var, &object_pkg_var_names, &pkg.package_vars);
+            let method = build_service_method(proc, &mapper_var, &object_pkg_var_names, &pkg.package_vars, debug);
         for line in method.split('\n') {
             w.line(line);
         }
@@ -467,6 +468,7 @@ fn build_service_method(
     mapper_name: &str,
     object_pkg_var_names: &[String],
     package_vars: &std::collections::HashMap<String, crate::types::VarInfo>,
+    debug: bool,
 ) -> String {
     let mut params: Vec<String> = Vec::new();
     let mut out_params: Vec<&crate::types::Parameter> = Vec::new();
@@ -557,10 +559,28 @@ fn build_service_method(
                     let is_object_used_as_list = var_type == "Object" && proc.java_logic_lines.iter()
                         .any(|l| l.contains(&format!("((java.util.List<?>) {})", var_java)));
                     if is_object_used_as_map {
+                        if debug {
+                            if let Some(&line) = proc.local_var_source_lines.get(&var_name.to_lowercase()) {
+                                let src_path = if !proc.source_path.is_empty() { &proc.source_path } else { &proc.source_file };
+                                body_lines.push(crate::debug::format_debug_comment(src_path, line, 100));
+                            }
+                        }
                         body_lines.push(format!("java.util.Map<String, Object> {} = new java.util.HashMap<>();", var_java));
                     } else if is_object_used_as_list {
+                        if debug {
+                            if let Some(&line) = proc.local_var_source_lines.get(&var_name.to_lowercase()) {
+                                let src_path = if !proc.source_path.is_empty() { &proc.source_path } else { &proc.source_file };
+                                body_lines.push(crate::debug::format_debug_comment(src_path, line, 100));
+                            }
+                        }
                         body_lines.push(format!("java.util.List<Object> {} = new java.util.ArrayList<>();", var_java));
                     } else {
+                        if debug {
+                            if let Some(&line) = proc.local_var_source_lines.get(&var_name.to_lowercase()) {
+                                let src_path = if !proc.source_path.is_empty() { &proc.source_path } else { &proc.source_file };
+                                body_lines.push(crate::debug::format_debug_comment(src_path, line, 100));
+                            }
+                        }
                         body_lines.push(format!("{} {} = {};", var_type, var_java, coerced));
                     }
                 }
@@ -925,7 +945,7 @@ mod tests {
         let proc = make_proc("do_stuff");
         let mut pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
+        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8, false).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/main/java/com/example/demo/service/OrderService.java"),
         ).unwrap();
@@ -947,7 +967,7 @@ mod tests {
         proc.return_type = Some("timestamp".to_string());
         let mut pkg = make_pkg("pkg_common", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
+        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8, false).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/main/java/com/example/demo/service/CommonService.java"),
         ).unwrap();
@@ -966,7 +986,7 @@ mod tests {
         });
         let mut pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
+        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8, false).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/main/java/com/example/demo/service/DataService.java"),
         ).unwrap();
@@ -988,7 +1008,7 @@ mod tests {
         assert_eq!(injections.get("inventoryService").unwrap(), "pkg_inventory");
 
         let dir = tempfile::tempdir().unwrap();
-        write_service_class(dir.path(), &mut pkg, "com.example.demo", &injections, encoding_rs::UTF_8).unwrap();
+        write_service_class(dir.path(), &mut pkg, "com.example.demo", &injections, encoding_rs::UTF_8, false).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/main/java/com/example/demo/service/OrderService.java"),
         ).unwrap();
@@ -1008,7 +1028,7 @@ mod tests {
                 });
         let mut pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
+        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8, false).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/main/java/com/example/demo/service/OrderService.java"),
         ).unwrap();

@@ -116,14 +116,19 @@ _LOGGER_CONFIG = None  # resolved from YAML, defaults to slf4j
 # Source file encoding (overridable via --encoding CLI or encoding: YAML config)
 _SOURCE_ENCODING = 'utf-8'
 
+# Debug mode: inject SQL source line comments into generated Java/XML (via --debug flag)
+DEBUG_MODE = False
+
+# Cache for reading source SQL files (path -> list of lines)
+_SQL_FILE_CACHE = {}
+
 
 def _write_source_file(path, content):
-    """Write generated source file with the configured encoding.
+    """Write generated source file with UTF-8 encoding.
 
-    Uses errors='replace' to prevent UnicodeEncodeError on characters
-    that cannot be represented in the target encoding (e.g. ¥ in GBK).
+    Java/XML source files are always UTF-8 regardless of SQL source encoding.
     """
-    path.write_text(content, encoding=_SOURCE_ENCODING, errors='replace')
+    path.write_text(content, encoding='utf-8', errors='replace')
 
 
 def _resolve_logger_config(config: dict) -> dict:
@@ -988,6 +993,7 @@ class ProcedureInfo:
     leading_comments: list = field(default_factory=list)   # List[CommentInfo] — comments before procedure declaration
     inline_comments: list = field(default_factory=list)    # List[CommentInfo] — comments inside procedure body
     _dynamic_sql_build_stmts: dict = field(default_factory=dict)  # {stmt_body_idx: var_name}
+    local_var_source_lines: dict = field(default_factory=dict)  # var_name -> SQL source line number
 
 
 @dataclass
@@ -2306,6 +2312,10 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
                 else:
                     java_type = sql_type_to_java(raw_type)
                 proc.local_vars[var_name] = java_type
+                if DEBUG_MODE:
+                    _decl_line = _find_var_decl_line(proc, var_name)
+                    if _decl_line:
+                        proc.local_var_source_lines[var_name] = _decl_line
                 default_ast = decl_data.get("default")
                 if default_ast is not None:
                     try:
@@ -2328,6 +2338,10 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
                 var_name = decl_data.get("name", "")
                 if var_name:
                     proc.local_vars[var_name] = "Map<String, Object>"
+                    if DEBUG_MODE:
+                        _decl_line = _find_var_decl_line(proc, var_name)
+                        if _decl_line:
+                            proc.local_var_source_lines[var_name] = _decl_line
             elif decl_type == "Pragma":
                 pragma_name = decl_data.get("name", "")
                 if pragma_name == "AUTONOMOUS_TRANSACTION":
@@ -2510,6 +2524,73 @@ def _find_body_stmt_lines(proc: ProcedureInfo) -> list:
     return stmt_lines
 
 
+def _get_sql_file_lines(source_path: str) -> list:
+    if source_path in _SQL_FILE_CACHE:
+        return _SQL_FILE_CACHE[source_path]
+    try:
+        with open(source_path, 'r', encoding=_SOURCE_ENCODING, errors='replace') as f:
+            lines = f.readlines()
+    except OSError:
+        lines = []
+    _SQL_FILE_CACHE[source_path] = lines
+    return lines
+
+
+def _format_debug_comment(source_path: str, line_number: int, max_len: int = 100) -> str:
+    if not line_number or not source_path or not os.path.exists(source_path):
+        return ""
+    lines = _get_sql_file_lines(source_path)
+    if line_number < 1 or line_number > len(lines):
+        return f"// [DEBUG] L{line_number}"
+    raw = lines[line_number - 1].strip()
+    fname = os.path.basename(source_path)
+    if len(raw) > max_len:
+        raw = raw[:max_len - 3] + "..."
+    return f"// [DEBUG] {fname}:{line_number} → {raw}"
+
+
+def _stmt_span_line(stmt_data: dict) -> int:
+    span = stmt_data.get("span")
+    if span and isinstance(span, dict):
+        start = span.get("start")
+        if start and isinstance(start, dict):
+            return start.get("line", 0)
+    return 0
+
+
+def _map_stmt_idx_to_sql_line(stmt_idx: int, proc: ProcedureInfo) -> int:
+    stmt_lines = _find_body_stmt_lines(proc)
+    if stmt_lines and stmt_idx < len(stmt_lines):
+        return stmt_lines[stmt_idx]
+    return 0
+
+
+def _map_stmt_to_sql_line(stmt_data: dict, stmt_idx: int, proc: ProcedureInfo) -> int:
+    # Prefer AST span — directly tied to the parsed statement, accurate with source
+    span_line = _stmt_span_line(stmt_data)
+    if span_line:
+        return span_line
+    # Fallback: text-scanned stmt_lines (less accurate, may have offset drift)
+    return _map_stmt_idx_to_sql_line(stmt_idx, proc)
+
+
+def _find_var_decl_line(proc: ProcedureInfo, var_name: str) -> int:
+    source_path = proc._source_path or proc.source_file
+    if not source_path or not os.path.exists(source_path):
+        return 0
+    lines = _get_sql_file_lines(source_path)
+    start = max(0, (proc.source_start_line or 1) - 1)
+    end = proc.source_end_line or len(lines)
+    target = var_name.lower().strip('"')
+    for i in range(start, min(end, len(lines))):
+        stripped = lines[i].strip()
+        if re.match(r'BEGIN\b', stripped, re.IGNORECASE):
+            break
+        if target in stripped.lower() and re.search(r'\b' + re.escape(target) + r'\b', stripped, re.IGNORECASE):
+            return i + 1
+    return 0
+
+
 def _map_comment_to_checkpoint(comment_line: int, stmt_lines: list,
                                checkpoints: list, proc: ProcedureInfo) -> int:
     """Map a comment's SQL line to the index of the checkpoint it should precede."""
@@ -2569,6 +2650,14 @@ def _process_get_diagnostics(stmt_data: dict, proc: ProcedureInfo):
 
 def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_counter: dict):
     for stmt_type, stmt_data in stmt.items():
+        if DEBUG_MODE and stmt_type not in ("Null",) and isinstance(stmt_data, dict):
+            src_path = proc._source_path or proc.source_file
+            stmt_idx = getattr(proc, '_current_stmt_idx', 0)
+            sql_line = _map_stmt_to_sql_line(stmt_data, stmt_idx, proc)
+            if sql_line and src_path:
+                dbg = _format_debug_comment(src_path, sql_line)
+                if dbg:
+                    proc.java_logic_lines.append(dbg)
         if stmt_type == "SqlStatement":
             _process_sql_statement(stmt_data, proc, dml_counter)
         elif stmt_type == "If":
@@ -2619,6 +2708,10 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
                             java_type = sql_type_to_java(raw_type)
                         if var_name not in proc.local_vars:
                             proc.local_vars[var_name] = java_type
+                            if DEBUG_MODE:
+                                decl_line = _find_var_decl_line(proc, var_name)
+                                if decl_line:
+                                    proc.local_var_source_lines[var_name] = decl_line
                         default_ast = decl_data.get("default")
                         if default_ast is not None:
                             try:
@@ -2654,6 +2747,10 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
                         var_name = decl_data.get("name", "")
                         if var_name and var_name not in proc.local_vars:
                             proc.local_vars[var_name] = "Map<String, Object>"
+                            if DEBUG_MODE:
+                                decl_line = _find_var_decl_line(proc, var_name)
+                                if decl_line:
+                                    proc.local_var_source_lines[var_name] = decl_line
                     elif decl_type == "Cursor":
                         cursor_name = decl_data.get("name", "")
                         parsed_q = decl_data.get("parsed_query")
@@ -4480,6 +4577,8 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
     else:
         if target_var_type == "Long" and _is_bare_int_literal(expr):
             expr = f"Long.valueOf({expr})"
+        if target_var_type in ("Long", "long") and ".indexOf(" in expr and "(long)" not in expr:
+            expr = f"(long)({expr})"
         elif target_var_type == "Integer" and _is_bare_long_literal(expr):
             expr = f"Integer.valueOf({expr})"
         elif target_var_type == "Map<String, Object>" and not expr.startswith("new HashMap") and not expr.startswith("new java.util.HashMap"):
@@ -7580,7 +7679,7 @@ SQL_FUNCTION_MAP = {
     "mod": "__EXPR__(({args0}) % ({args1}))",
     "power": "Math.pow",
     "sign": "__EXPR__Integer.signum((int)({args0}))",
-    "instr": "__EXPR__String.valueOf({args0}).indexOf({args1}) + 1",
+    "instr": "__HANDLER__",
     "rtrim": "__EXPR__String.valueOf({args0}).replaceAll(\"\\\\s+$\", \"\")",
     "ltrim": "__EXPR__String.valueOf({args0}).replaceAll(\"^\\\\s+\", \"\")",
     "chr": "__EXPR__String.valueOf((char)({args0}))",
@@ -7679,16 +7778,37 @@ def _sf_substr(val, proc, _expr_to_java_fn):
     args_java = [_expr_to_java_fn(a, proc) for a in args]
     s = args_java[0] if len(args_java) > 0 else '""'
     s_expr = s if (s.startswith('"') or s.startswith("'")) else f"String.valueOf({s})"
+    needs_parens = any(op in s_expr for op in (" + ", " - ", " * ", " / "))
+    if needs_parens:
+        s_expr = f"({s_expr})"
     if len(args_java) >= 3:
         start = args_java[1]
         length = args_java[2]
-        _clamped_start = f"Math.min({s_expr}.length(), Math.max(0, ({start}) - 1))"
-        _e = f"Math.min({s_expr}.length(), {_clamped_start} + ({length}))"
+        start_int = f"(int)({start})" if _might_be_long(start, proc) else f"({start})"
+        length_int = f"(int)({length})" if _might_be_long(length, proc) else f"({length})"
+        _clamped_start = f"Math.max(0, {start_int} - 1)"
+        _e = f"Math.min({s_expr}.length(), {_clamped_start} + {length_int})"
         return f"{s_expr}.substring({_clamped_start}, {_e})"
     elif len(args_java) == 2:
         start = args_java[1]
-        return f"{s_expr}.substring(Math.min({s_expr}.length(), Math.max(0, ({start}) - 1)))"
+        start_int = f"(int)({start})" if _might_be_long(start, proc) else f"({start})"
+        return f"{s_expr}.substring(Math.max(0, {start_int} - 1))"
     return f"{s_expr}"
+
+
+def _might_be_long(expr: str, proc) -> bool:
+    if not proc:
+        return False
+    stripped = expr.strip()
+    for var_name, var_type in proc.local_vars.items():
+        if snake_to_camel(var_name) == stripped and var_type in ("Long", "long", "java.math.BigDecimal"):
+            return True
+    if any(op in stripped for op in (" + ", " - ", " * ", " / ")):
+        for var_name, var_type in proc.local_vars.items():
+            camel = snake_to_camel(var_name)
+            if camel in stripped and var_type in ("Long", "long"):
+                return True
+    return False
 
 
 def _sf_overlay(val, proc, _expr_to_java_fn):
@@ -8040,6 +8160,19 @@ def _handle_function(func_name, args_java, proc):
                 arg0_expr = arg0 if (arg0.startswith('"') or arg0.startswith("'")) else f"String.valueOf({arg0})"
                 return f"java.util.Base64.getEncoder().encodeToString({arg0_expr}.getBytes())"
         return f"/* TODO: encode({', '.join(args_java)}) */ null"
+
+    elif func_name == "instr":
+        if len(args_java) >= 2:
+            s = args_java[0]
+            sub_expr = args_java[1]
+            s_expr = s if (s.startswith('"') or s.startswith("'")) else f"String.valueOf({s})"
+            sub_wrapped = sub_expr if (sub_expr.startswith('"') or sub_expr.startswith("'")) else f"String.valueOf({sub_expr})"
+            if len(args_java) >= 3:
+                start = args_java[2]
+                start_cast = f"(int)({start})" if _might_be_long(start, proc) else f"({start})"
+                return f"{s_expr}.indexOf({sub_wrapped}, Math.max(0, {start_cast} - 1)) + 1"
+            return f"{s_expr}.indexOf({sub_wrapped}) + 1"
+        return "0"
 
     elif func_name == "to_hex":
         if args_java:
@@ -8712,6 +8845,12 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             # Multi-part ColumnRef: composite/ROWTYPE/RECORD field access
             # e.g. ["v_emp", "status"] → vEmp.get("status") or vEmp.status (for custom RECORD types)
             if len(parts) >= 2 and proc is not None:
+                # Check if this is a same-package variable reference (e.g. PKG_NAME.var_name)
+                if len(parts) == 2 and proc is not None:
+                    _pkg_candidate = parts[0]
+                    _field_candidate = parts[-1]
+                    if _pkg_candidate.upper() == proc.package.upper() and _field_candidate in _PACKAGE_VARIABLES:
+                        return f"this.{snake_to_camel(_field_candidate)}"
                 var_name_raw = parts[0]
                 field_name = parts[-1]
                 var_java = snake_to_camel(var_name_raw)
@@ -9815,8 +9954,6 @@ def _mapper_call(proc: ProcedureInfo, mapper_method: str, sql_text: str = "") ->
 
 def generate_project(output_dir: str, packages: list, changed_packages: set = None,
                      config: dict = None, progress_cb=None, resume_skip: set = None):
-    if changed_packages is not None and not changed_packages:
-        return
     base_path = Path(output_dir)
     base_path.mkdir(parents=True, exist_ok=True)
 
@@ -9824,7 +9961,13 @@ def generate_project(output_dir: str, packages: list, changed_packages: set = No
         _write_pom_xml(base_path)
         _write_application_yml(base_path, config)
         _write_main_application(base_path)
+
+    _be_java = base_path / BASE_DIR / "exception" / "BusinessException.java"
+    if not _be_java.exists():
         _write_business_exception(base_path)
+
+    if changed_packages is not None and not changed_packages:
+        return
 
     svc_method_param_counts: dict = {}
     all_packages = {p.package_name: p for p in packages}
@@ -10757,6 +10900,12 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
     xml_parts = []
     source_info = f"Source: {proc.source_file}:{proc.source_start_line}-{proc.source_end_line} — {proc.name}.{dml.method_id}" if proc.source_file else f"Source: {proc.name}.{dml.method_id}"
     xml_parts.append(f"<!-- {source_info} -->")
+    if DEBUG_MODE and proc.source_file:
+        src_path = proc._source_path or proc.source_file
+        dbg = _format_debug_comment(src_path, proc.source_start_line, max_len=120)
+        if dbg:
+            safe_dbg = dbg.replace("--", "\u2014\u2014").replace("<!", "< !")
+            xml_parts.append(f"<!-- {safe_dbg} -->")
     for c in proc.leading_comments:
         formatted = _format_comment_for_java(c)
         if formatted:
@@ -11519,6 +11668,13 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                     default_val = _wrap_default_for_type(default_val, var_type)
                 if var_type.startswith("java.util.List") and default_val in ('"{}"', "'{}'"):
                     default_val = _default_for_type(var_type)
+                if DEBUG_MODE:
+                    src_path = proc._source_path or proc.source_file
+                    decl_line = proc.local_var_source_lines.get(var_name, 0)
+                    if decl_line and src_path:
+                        dbg = _format_debug_comment(src_path, decl_line)
+                        if dbg:
+                            body_lines.append(dbg)
                 body_lines.append(f"{var_type} {var_java} = {default_val};")
                 top_level_declares.add(var_java)
                 top_level_insert_idx = len(body_lines)
@@ -11634,18 +11790,33 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
             body_lines.append("return null;")
 
     # Hoist local variable declarations before try-catch so they're visible in catch blocks
+    # Also hoist any debug comments that immediately precede a variable declaration.
     hoisted_decls = []
     remaining_lines = []
+    _pending_debug = []  # accumulate debug comments that precede a declaration
     for line in body_lines:
         s = line.strip()
         if re.match(r'^(String|Long|Integer|BigDecimal|java\.math\.BigDecimal|AtomicReference|List<Map<String, Object>>|boolean|int|long|double|float)\s+\w+\s*=', s):
             # Don't hoist mapper query result assignments — they must stay in place (e.g., inside loops)
             if 'mapper.' not in s:
+                # Flush any pending debug comments right before this declaration
+                hoisted_decls.extend(_pending_debug)
+                _pending_debug = []
                 hoisted_decls.append(line)
             else:
+                _pending_debug = []
                 remaining_lines.append(line)
+        elif s.startswith('// [DEBUG]'):
+            # This might be a debug comment preceding a declaration — stash it
+            _pending_debug.append(line)
         else:
+            # Non-debug, non-decl line: any stashed debug comments belong to a prior decl
+            # or were orphaned — flush them to remaining
+            remaining_lines.extend(_pending_debug)
+            _pending_debug = []
             remaining_lines.append(line)
+    # Flush any trailing pending debug comments
+    remaining_lines.extend(_pending_debug)
     body_lines = remaining_lines
 
     if exception_block:
@@ -14652,6 +14823,7 @@ def _build_arg_parser():
     parser.add_argument("--skip-validate", action="store_true", default=False, help="跳过 SQL 语法校验")
     parser.add_argument("--encoding", metavar="ENC", default=None, help="生成源码的编码格式（默认 UTF-8）")
     parser.add_argument("--report", metavar="FILE", help="指定转换报告输出路径")
+    parser.add_argument("--debug", action="store_true", default=False, help="调试模式：在生成的Java/XML中注入SQL源码行号注释")
     parser.add_argument("-v", "--version", action="store_true", default=False, help="显示版本信息")
     return parser
 
@@ -14680,11 +14852,11 @@ def _read_version_from_cargo_toml():
     return None
 
 
-_VERSION = _read_version_from_cargo_toml() or "0.6.7"
+_VERSION = _read_version_from_cargo_toml() or "0.6.10"
 
 
 def main():
-    global _SOURCE_ENCODING
+    global _SOURCE_ENCODING, DEBUG_MODE
 
     parser = _build_arg_parser()
     args = parser.parse_args()
@@ -14702,6 +14874,10 @@ def main():
     sql_files = []
     config_path = None
     config = {}
+
+    if args.debug:
+        DEBUG_MODE = True
+        print("  🔧 Debug mode enabled — SQL source annotations will be injected")
 
     if args.config:
         config_path = args.config
@@ -14876,7 +15052,7 @@ def main():
     for sql_file in _ddl_files:
         if sql_file not in changed_files and not full_regen:
             continue
-        with open(sql_file, 'r', encoding='utf-8', errors='replace') as _f:
+        with open(sql_file, 'r', encoding=_SOURCE_ENCODING, errors='replace') as _f:
             _content = _f.read()
         if re.search(r'create\s+table', _content, re.IGNORECASE):
             schema = parse_table_ddl(sql_file)
