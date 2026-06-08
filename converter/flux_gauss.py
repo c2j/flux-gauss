@@ -124,12 +124,11 @@ _SQL_FILE_CACHE = {}
 
 
 def _write_source_file(path, content):
-    """Write generated source file with the configured encoding.
+    """Write generated source file with UTF-8 encoding.
 
-    Uses errors='replace' to prevent UnicodeEncodeError on characters
-    that cannot be represented in the target encoding (e.g. ¥ in GBK).
+    Java/XML source files are always UTF-8 regardless of SQL source encoding.
     """
-    path.write_text(content, encoding=_SOURCE_ENCODING, errors='replace')
+    path.write_text(content, encoding='utf-8', errors='replace')
 
 
 def _resolve_logger_config(config: dict) -> dict:
@@ -2529,7 +2528,7 @@ def _get_sql_file_lines(source_path: str) -> list:
     if source_path in _SQL_FILE_CACHE:
         return _SQL_FILE_CACHE[source_path]
     try:
-        with open(source_path, 'r', encoding='utf-8', errors='replace') as f:
+        with open(source_path, 'r', encoding=_SOURCE_ENCODING, errors='replace') as f:
             lines = f.readlines()
     except OSError:
         lines = []
@@ -2567,10 +2566,12 @@ def _map_stmt_idx_to_sql_line(stmt_idx: int, proc: ProcedureInfo) -> int:
 
 
 def _map_stmt_to_sql_line(stmt_data: dict, stmt_idx: int, proc: ProcedureInfo) -> int:
-    line = _map_stmt_idx_to_sql_line(stmt_idx, proc)
-    if line:
-        return line
-    return _stmt_span_line(stmt_data)
+    # Prefer AST span — directly tied to the parsed statement, accurate with source
+    span_line = _stmt_span_line(stmt_data)
+    if span_line:
+        return span_line
+    # Fallback: text-scanned stmt_lines (less accurate, may have offset drift)
+    return _map_stmt_idx_to_sql_line(stmt_idx, proc)
 
 
 def _find_var_decl_line(proc: ProcedureInfo, var_name: str) -> int:
@@ -11789,18 +11790,33 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
             body_lines.append("return null;")
 
     # Hoist local variable declarations before try-catch so they're visible in catch blocks
+    # Also hoist any debug comments that immediately precede a variable declaration.
     hoisted_decls = []
     remaining_lines = []
+    _pending_debug = []  # accumulate debug comments that precede a declaration
     for line in body_lines:
         s = line.strip()
         if re.match(r'^(String|Long|Integer|BigDecimal|java\.math\.BigDecimal|AtomicReference|List<Map<String, Object>>|boolean|int|long|double|float)\s+\w+\s*=', s):
             # Don't hoist mapper query result assignments — they must stay in place (e.g., inside loops)
             if 'mapper.' not in s:
+                # Flush any pending debug comments right before this declaration
+                hoisted_decls.extend(_pending_debug)
+                _pending_debug = []
                 hoisted_decls.append(line)
             else:
+                _pending_debug = []
                 remaining_lines.append(line)
+        elif s.startswith('// [DEBUG]'):
+            # This might be a debug comment preceding a declaration — stash it
+            _pending_debug.append(line)
         else:
+            # Non-debug, non-decl line: any stashed debug comments belong to a prior decl
+            # or were orphaned — flush them to remaining
+            remaining_lines.extend(_pending_debug)
+            _pending_debug = []
             remaining_lines.append(line)
+    # Flush any trailing pending debug comments
+    remaining_lines.extend(_pending_debug)
     body_lines = remaining_lines
 
     if exception_block:
@@ -15036,7 +15052,7 @@ def main():
     for sql_file in _ddl_files:
         if sql_file not in changed_files and not full_regen:
             continue
-        with open(sql_file, 'r', encoding='utf-8', errors='replace') as _f:
+        with open(sql_file, 'r', encoding=_SOURCE_ENCODING, errors='replace') as _f:
             _content = _f.read()
         if re.search(r'create\s+table', _content, re.IGNORECASE):
             schema = parse_table_ddl(sql_file)
