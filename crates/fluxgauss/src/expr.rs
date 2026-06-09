@@ -1011,12 +1011,12 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                 let len = &jargs[2];
                 let start_cast = if might_be_long(start, proc) { format!("(int)({})", start) } else { format!("({})", start) };
                 let len_cast = if might_be_long(len, proc) { format!("(int)({})", len) } else { format!("({})", len) };
-                format!("{}.substring(Math.max(0, {} - 1), Math.min({}.length(), Math.max(0, {} - 1) + {}))", s, start_cast, s, start_cast, len_cast)
+                format!("{}.substring(Math.min({}.length(), Math.max(0, {} - 1)), Math.min({}.length(), Math.max(0, {} - 1) + {}))", s, s, start_cast, s, start_cast, len_cast)
             } else if jargs.len() >= 2 {
                 let s = wrap_s(&jargs[0]);
                 let start = &jargs[1];
                 let start_cast = if might_be_long(start, proc) { format!("(int)({})", start) } else { format!("({})", start) };
-                format!("{}.substring(Math.max(0, {} - 1))", s, start_cast)
+                format!("{}.substring(Math.min({}.length(), Math.max(0, {} - 1)))", s, s, start_cast)
             } else {
                 "null".into()
             }
@@ -1331,12 +1331,12 @@ fn special_function_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: 
                 let len = &jargs[2];
                 let start_cast = if might_be_long(start, proc) { format!("(int)({})", start) } else { format!("({})", start) };
                 let len_cast = if might_be_long(len, proc) { format!("(int)({})", len) } else { format!("({})", len) };
-                format!("{}.substring(Math.max(0, {} - 1), Math.min({}.length(), Math.max(0, {} - 1) + {}))", s, start_cast, s, start_cast, len_cast)
+                format!("{}.substring(Math.min({}.length(), Math.max(0, {} - 1)), Math.min({}.length(), Math.max(0, {} - 1) + {}))", s, s, start_cast, s, start_cast, len_cast)
             } else if jargs.len() >= 2 {
                 let s = wrap_s(&jargs[0]);
                 let start = &jargs[1];
                 let start_cast = if might_be_long(start, proc) { format!("(int)({})", start) } else { format!("({})", start) };
-                format!("{}.substring(Math.max(0, {} - 1))", s, start_cast)
+                format!("{}.substring(Math.min({}.length(), Math.max(0, {} - 1)))", s, s, start_cast)
             } else {
                 jargs.first().cloned().unwrap_or_else(|| "null".into())
             }
