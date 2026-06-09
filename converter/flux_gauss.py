@@ -11614,9 +11614,12 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
             out_params.append(p)
             proc.imports.add("import java.util.concurrent.atomic.AtomicReference;")
         else:
+            # Always use boxed types (Long, Integer, ...) for IN params so that
+            # the metadata type (Parameter.java_type) matches the generated
+            # method signature.  This prevents .compareTo() calls on primitive
+            # types when BinaryOp comparison logic looks up the type via
+            # _infer_expr_type() → Parameter.java_type.
             param_type = p.java_type
-            if not (p.default_value and p.default_value.lower() == "null"):
-                param_type = _to_primitive_if_boxed(p.java_type)
             params.append(f"{param_type} {p.java_name}")
 
     params_str = ", ".join(params) if params else ""
