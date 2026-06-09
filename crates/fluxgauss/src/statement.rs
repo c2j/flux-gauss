@@ -792,6 +792,7 @@ fn handle_resolved_execute_sql(
         extra_params,
         dynamic_conditions,
         base_sql,
+        source_line: ctx.current_source_line,
         ..Default::default()
     });
         push_logic_line(proc, format!("mapper.{}({});", method_id, build_mapper_call_args(proc)));
@@ -962,7 +963,8 @@ fn process_execute_stmt(
                                 method_id: method_id.clone(),
                                 sql_text: clean_sql,
                                 result_type: Some("Object".to_string()),
-                                ..Default::default()
+                                source_line: ctx.current_source_line,
+        ..Default::default()
                             });
                     push_logic_line(proc, out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc));
                  } else {
@@ -975,6 +977,7 @@ fn process_execute_stmt(
                                   method_id: method_id.clone(),
                                   sql_text: clean_sql,
                                   result_type: Some(java_type.clone()),
+        source_line: ctx.current_source_line,
         ..Default::default()
     });
                      let original_java_type = proc.local_vars.get(&var_name.to_lowercase()).cloned().unwrap_or_default();
@@ -993,7 +996,8 @@ fn process_execute_stmt(
                             method_id: method_id.clone(),
                             sql_text: clean_sql,
                             result_type: Some("Map<String, Object>".to_string()),
-                            ..Default::default()
+                            source_line: ctx.current_source_line,
+        ..Default::default()
                         });
                 push_logic_line(proc, format!("Map<String, Object> {} = mapper.{}({});", var_name, method_id, args));
                 proc.imports.insert("import java.util.Map;".to_string());
@@ -1036,7 +1040,8 @@ fn process_execute_stmt(
                 method_id: method_id.clone(),
                 sql_text: clean_sql,
                 result_type,
-                ..Default::default()
+                source_line: ctx.current_source_line,
+        ..Default::default()
             });
             push_logic_line(proc, format!("mapper.{}({});", method_id, args));
         }
@@ -1075,7 +1080,8 @@ fn process_execute_stmt(
                                         method_id: method_id.clone(),
                                         sql_text: clean_sql,
                                         result_type: Some("Object".to_string()),
-                                        ..Default::default()
+                                        source_line: ctx.current_source_line,
+        ..Default::default()
                                     });
                             push_logic_line(proc, out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc));
                         } else {
@@ -1089,7 +1095,8 @@ fn process_execute_stmt(
                                         method_id: method_id.clone(),
                                         sql_text: clean_sql,
                                         result_type: Some(java_type.clone()),
-                                        ..Default::default()
+                                        source_line: ctx.current_source_line,
+        ..Default::default()
                                     });
                             push_logic_line(proc, if java_type != declared_type {
                                 format!("String _{} = mapper.{}({});", var_name, method_id, args)
@@ -1104,7 +1111,8 @@ fn process_execute_stmt(
                                     method_id: method_id.clone(),
                                     sql_text: clean_sql,
                                     result_type: Some("Map<String, Object>".to_string()),
-                                    ..Default::default()
+                                    source_line: ctx.current_source_line,
+        ..Default::default()
                                 });
                         push_logic_line(proc, format!("Map<String, Object> {} = mapper.{}({});", var_name, method_id, args));
                         proc.imports.insert("import java.util.Map;".to_string());
@@ -1114,7 +1122,8 @@ fn process_execute_stmt(
                                     method_id: method_id.clone(),
                                     sql_text: clean_sql,
                                     result_type: Some("Map<String, Object>".to_string()),
-                                    ..Default::default()
+                                    source_line: ctx.current_source_line,
+        ..Default::default()
                                 });
                         let var_name = next_result_var_name(proc);
                         push_logic_line(proc, format!("List<Map<String, Object>> {} = mapper.{}({});", var_name, method_id, args));
@@ -1127,7 +1136,8 @@ fn process_execute_stmt(
                                 method_id: method_id.clone(),
                                 sql_text: clean_sql,
                                 result_type: None,
-                                ..Default::default()
+                                source_line: ctx.current_source_line,
+        ..Default::default()
                             });
                     push_logic_line(proc, format!("mapper.{}({});", method_id, args));
                 }
@@ -1228,7 +1238,8 @@ fn process_sql_statement(
                             method_id: method_id.clone(),
                             sql_text: clean_sql,
                             result_type: Some(result_type),
-                            ..Default::default()
+                            source_line: ctx.current_source_line,
+        ..Default::default()
                         });
                 push_logic_line(proc, java_line);
 
@@ -1287,6 +1298,7 @@ fn process_sql_statement(
                             sql_text: sql_text.to_string(),
                             result_type: Some("Map<String, Object>".to_string()),
         returns_list: true,
+        source_line: ctx.current_source_line,
         ..Default::default()
     });
                 let var_name = next_result_var_name(proc);
@@ -1306,7 +1318,8 @@ fn process_sql_statement(
                         method_id: method_id.clone(),
                         sql_text: sql_text.to_string(),
                         result_type: None,
-                        ..Default::default()
+                        source_line: ctx.current_source_line,
+        ..Default::default()
                     });
             push_logic_line(proc, format!("mapper.{}({});", method_id, args));
         }
@@ -1318,7 +1331,8 @@ fn process_sql_statement(
                         method_id: method_id.clone(),
                         sql_text: sql_text.to_string(),
                         result_type: None,
-                        ..Default::default()
+                        source_line: ctx.current_source_line,
+        ..Default::default()
                     });
             push_logic_line(proc, format!("mapper.{}({});", method_id, args));
         }
@@ -1330,7 +1344,8 @@ fn process_sql_statement(
                         method_id: method_id.clone(),
                         sql_text: sql_text.to_string(),
                         result_type: None,
-                        ..Default::default()
+                        source_line: ctx.current_source_line,
+        ..Default::default()
                     });
             push_logic_line(proc, format!("mapper.{}({});", method_id, args));
         }
@@ -1855,6 +1870,7 @@ fn process_forall_stmt(
         is_forall_batch: can_batch,
         forall_batch_list_var: "item".to_string(),
         forall_batch_arrays,
+        source_line: ctx.current_source_line,
         ..Default::default()
     });
 
@@ -1936,10 +1952,11 @@ pub fn process_statement(
 ) -> Result<(), ConversionError> {
     use ogsql_parser::ast::plpgsql::PlStatement;
 
+    ctx.current_source_line = get_stmt_line(stmt, ctx.current_stmt_idx, &ctx.stmt_lines);
+
     if ctx.debug && !matches!(stmt, PlStatement::Null) {
-        let stmt_line = get_stmt_line(stmt, ctx.current_stmt_idx, &ctx.stmt_lines);
-        if stmt_line > 0 && !proc.source_path.is_empty() {
-            let debug_comment = crate::debug::format_debug_comment(&proc.source_path, stmt_line, 100);
+        if ctx.current_source_line > 0 && !proc.source_path.is_empty() {
+            let debug_comment = crate::debug::format_debug_comment(&proc.source_path, ctx.current_source_line, 100);
             proc.java_logic_lines.push(debug_comment);
         }
     }
@@ -2274,6 +2291,7 @@ pub fn process_statement(
         extra_params,
         dynamic_conditions,
         base_sql,
+        source_line: ctx.current_source_line,
         ..Default::default()
     });
 
@@ -2319,7 +2337,8 @@ pub fn process_statement(
                                     method_id: method_id.clone(),
                                     sql_text: clean_sql,
                                     result_type: Some("Map<String, Object>".to_string()),
-                                    ..Default::default()
+                                    source_line: ctx.current_source_line,
+        ..Default::default()
                                 });
 
                         proc.for_loop_counter += 1;
@@ -2482,6 +2501,7 @@ pub fn process_statement(
         returns_list: true,
         dynamic_conditions,
         base_sql,
+        source_line: ctx.current_source_line,
         ..Default::default()
     });
 
@@ -2683,7 +2703,8 @@ pub fn process_statement(
                                         method_id: method_id.clone(),
                                         sql_text: clean_sql,
                                         result_type: Some("Object".to_string()),
-                                        ..Default::default()
+                                        source_line: ctx.current_source_line,
+        ..Default::default()
                                     });
                             push_logic_line(proc, out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc));
                         } else {
@@ -2698,7 +2719,8 @@ pub fn process_statement(
                                          method_id: method_id.clone(),
                                          sql_text: clean_sql,
                                          result_type: Some(java_type.clone()),
-                                         ..Default::default()
+                                         source_line: ctx.current_source_line,
+        ..Default::default()
                                      });
                             push_logic_line(proc, if java_type != declared_type {
                                 format!("String _{} = mapper.{}({});", var_name, method_id, args)
@@ -2713,7 +2735,8 @@ pub fn process_statement(
                                     method_id: method_id.clone(),
                                     sql_text: clean_sql,
                                     result_type: Some("Map<String, Object>".to_string()),
-                                    ..Default::default()
+                                    source_line: ctx.current_source_line,
+        ..Default::default()
                                 });
                         push_logic_line(proc, format!("Map<String, Object> {} = mapper.{}({});", var_name, method_id, args));
                         proc.imports.insert("import java.util.Map;".to_string());
@@ -2757,7 +2780,8 @@ pub fn process_statement(
                                     method_id: method_id.clone(),
                                     sql_text: clean_sql,
                                     result_type: Some("Map<String, Object>".to_string()),
-                                    ..Default::default()
+                                    source_line: ctx.current_source_line,
+        ..Default::default()
                                 });
                         let rv_name = next_result_var_name(proc);
                         push_logic_line(proc, format!("List<Map<String, Object>> {} = mapper.{}({});", rv_name, method_id, args));
@@ -2770,7 +2794,8 @@ pub fn process_statement(
                                 method_id: method_id.clone(),
                                 sql_text: clean_sql,
                                 result_type: None,
-                                ..Default::default()
+                                source_line: ctx.current_source_line,
+        ..Default::default()
                             });
                     push_logic_line(proc, format!("mapper.{}({});", method_id, args));
                 }

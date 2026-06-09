@@ -430,10 +430,11 @@ fn build_mapper_statement(
     let result_type_attr = build_result_type_attr(dml);
     let params_attrs = build_params_attr(proc, dml);
 
+    let src_line = crate::debug::resolve_dml_source_line(proc, dml);
     let source_info = if !proc.source_file.is_empty() {
         format!(
             "Source: {}:{}-{} — {}.{}",
-            proc.source_file, proc.source_start_line, proc.source_end_line, proc.name, dml.method_id
+            proc.source_file, src_line, src_line, proc.name, dml.method_id
         )
     } else {
         format!("Source: {}.{}", proc.name, dml.method_id)

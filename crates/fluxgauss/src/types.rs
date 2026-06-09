@@ -103,6 +103,7 @@ pub struct DmlStatement {
     /// Map from Java variable name to element type for each batch array used in FORALL.
     /// e.g., `{"pArray" -> "String", "pIds" -> "Long"}`
     pub forall_batch_arrays: HashMap<String, String>,
+    pub source_line: u32,
 }
 
 // ── Service Calls ──

@@ -78,6 +78,7 @@ pub struct StatementContext<'a> {
     pub debug: bool,
     pub current_stmt_idx: usize,
     pub stmt_lines: Vec<u32>,
+    pub current_source_line: u32,
 }
 
 impl<'a> StatementContext<'a> {
@@ -90,6 +91,7 @@ impl<'a> StatementContext<'a> {
             debug: false,
             current_stmt_idx: 0,
             stmt_lines: Vec::new(),
+            current_source_line: 0,
         }
     }
 }

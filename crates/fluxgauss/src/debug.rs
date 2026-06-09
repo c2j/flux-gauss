@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::context::AnalysisContext;
-use crate::types::ProcedureInfo;
+use crate::types::{DmlStatement, ProcedureInfo};
 
 pub fn get_sql_file_lines(source_path: &str, ctx: &mut AnalysisContext) -> Vec<String> {
     if let Some(lines) = ctx.source_cache.get(source_path) {
@@ -172,4 +172,52 @@ pub fn format_debug_comment(source_path: &str, line_number: u32, max_len: usize)
     let truncated: String = raw.chars().take(max_len).collect();
     let suffix = if raw.chars().count() > max_len { "..." } else { "" };
     format!("// [DEBUG] {}:{} → {}{}", fname, line_number, truncated, suffix)
+}
+
+pub fn resolve_dml_source_line(proc: &ProcedureInfo, dml: &DmlStatement) -> u32 {
+    let path = if !proc.source_path.is_empty() {
+        &proc.source_path
+    } else if !proc.source_file.is_empty() {
+        &proc.source_file
+    } else {
+        return if dml.source_line > 0 { dml.source_line } else { proc.source_start_line };
+    };
+    if path.is_empty() || !Path::new(path).exists() {
+        return if dml.source_line > 0 { dml.source_line } else { proc.source_start_line };
+    }
+    let sql = dml.sql_text.trim();
+    if sql.is_empty() {
+        return if dml.source_line > 0 { dml.source_line } else { proc.source_start_line };
+    }
+    let sql_upper = sql.to_uppercase();
+    let search_tokens = if sql_upper.starts_with("INSERT INTO") {
+        sql_upper.split_whitespace().take(3).collect::<Vec<_>>()
+    } else if sql_upper.starts_with("UPDATE") {
+        sql_upper.split_whitespace().take(2).collect::<Vec<_>>()
+    } else if sql_upper.starts_with("DELETE FROM") {
+        sql_upper.split_whitespace().take(3).collect::<Vec<_>>()
+    } else if sql_upper.starts_with("SELECT") {
+        vec!["SELECT"]
+    } else if sql_upper.starts_with("MERGE INTO") {
+        sql_upper.split_whitespace().take(3).collect::<Vec<_>>()
+    } else if sql_upper.starts_with("WITH") {
+        vec!["WITH"]
+    } else if sql_upper.starts_with("TRUNCATE") {
+        sql_upper.split_whitespace().take(2).collect::<Vec<_>>()
+    } else {
+        return if dml.source_line > 0 { dml.source_line } else { proc.source_start_line };
+    };
+
+    let content = std::fs::read_to_string(path).unwrap_or_default();
+    let lines: Vec<&str> = content.lines().collect();
+    let start = (proc.source_start_line.saturating_sub(1)) as usize;
+    let end = (proc.source_end_line as usize).min(lines.len());
+
+    for i in start..end {
+        let line_upper = lines[i].trim().to_uppercase();
+        if search_tokens.iter().all(|tok| line_upper.contains(tok)) {
+            return (i + 1) as u32;
+        }
+    }
+    if dml.source_line > 0 { dml.source_line } else { proc.source_start_line }
 }

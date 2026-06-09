@@ -61,9 +61,7 @@ pub fn analyze_procedure(
         }
         let mut stmt_ctx = crate::context::StatementContext::new(summaries);
         stmt_ctx.debug = debug;
-        if debug {
-            stmt_ctx.stmt_lines = crate::debug::find_body_stmt_lines(proc, ctx);
-        }
+        stmt_ctx.stmt_lines = crate::debug::find_body_stmt_lines(proc, ctx);
         for (idx, stmt) in body_inner.body.iter().enumerate() {
             stmt_ctx.current_stmt_idx = idx;
             if let Err(e) = crate::statement::process_statement(stmt, proc, &mut stmt_ctx) {
