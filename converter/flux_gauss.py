@@ -14920,7 +14920,7 @@ def _read_version_from_cargo_toml():
     return None
 
 
-_VERSION = _read_version_from_cargo_toml() or "0.6.12"
+_VERSION = _read_version_from_cargo_toml() or "0.6.13"
 
 
 def main():
