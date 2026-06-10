@@ -55,12 +55,15 @@ jobs:
         run: |
           cd target/x86_64-unknown-linux-gnu/release
           tar czf ${{ github.workspace }}/ogsql-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz ogsql
+          zip ${{ github.workspace }}/ogsql-${{ steps.version.outputs.version }}-linux-x86_64.zip ogsql
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ogsql-linux-x86_64
-          path: ogsql-*.tar.gz
+          path: |
+            ogsql-*.tar.gz
+            ogsql-*.zip
 
   build-ogsql-linux-arm64:
     name: Build ogsql linux-arm64 (glibc >= 2.17)
@@ -103,12 +106,15 @@ jobs:
         run: |
           cd target/aarch64-unknown-linux-gnu/release
           tar czf ${{ github.workspace }}/ogsql-${{ steps.version.outputs.version }}-linux-arm64.tar.gz ogsql
+          zip ${{ github.workspace }}/ogsql-${{ steps.version.outputs.version }}-linux-arm64.zip ogsql
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ogsql-linux-arm64
-          path: ogsql-*.tar.gz
+          path: |
+            ogsql-*.tar.gz
+            ogsql-*.zip
 
   build-ogsql-windows-x86_64:
     name: Build ogsql windows-x86_64
@@ -196,12 +202,15 @@ jobs:
         run: |
           cd target/release
           tar czf ${{ github.workspace }}/ogsql-${{ steps.version.outputs.version }}-macos-arm64.tar.gz ogsql
+          zip ${{ github.workspace }}/ogsql-${{ steps.version.outputs.version }}-macos-arm64.zip ogsql
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ogsql-macos-arm64
-          path: ogsql-*.tar.gz
+          path: |
+            ogsql-*.tar.gz
+            ogsql-*.zip
 
   # ── fluxgauss binary (from this repo, uses ogsql-parser git dep) ─
   build-fluxgauss-linux-x86_64:
@@ -238,12 +247,15 @@ jobs:
         run: |
           cd target/x86_64-unknown-linux-gnu/release
           tar czf ${{ github.workspace }}/fluxgauss-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz fluxgauss
+          zip ${{ github.workspace }}/fluxgauss-${{ steps.version.outputs.version }}-linux-x86_64.zip fluxgauss
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: fluxgauss-linux-x86_64
-          path: fluxgauss-*.tar.gz
+          path: |
+            fluxgauss-*.tar.gz
+            fluxgauss-*.zip
 
   build-fluxgauss-linux-arm64:
     name: Build fluxgauss linux-arm64 (glibc >= 2.17)
@@ -283,12 +295,15 @@ jobs:
         run: |
           cd target/aarch64-unknown-linux-gnu/release
           tar czf ${{ github.workspace }}/fluxgauss-${{ steps.version.outputs.version }}-linux-arm64.tar.gz fluxgauss
+          zip ${{ github.workspace }}/fluxgauss-${{ steps.version.outputs.version }}-linux-arm64.zip fluxgauss
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: fluxgauss-linux-arm64
-          path: fluxgauss-*.tar.gz
+          path: |
+            fluxgauss-*.tar.gz
+            fluxgauss-*.zip
 
   build-fluxgauss-windows-x86_64:
     name: Build fluxgauss windows-x86_64
@@ -370,12 +385,15 @@ jobs:
         run: |
           cd target/release
           tar czf ${{ github.workspace }}/fluxgauss-${{ steps.version.outputs.version }}-macos-arm64.tar.gz fluxgauss
+          zip ${{ github.workspace }}/fluxgauss-${{ steps.version.outputs.version }}-macos-arm64.zip fluxgauss
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: fluxgauss-macos-arm64
-          path: fluxgauss-*.tar.gz
+          path: |
+            fluxgauss-*.tar.gz
+            fluxgauss-*.zip
 
   # ── Python engine CI ──────────────────────────────────────────
   test-python-engine:
@@ -402,7 +420,11 @@ jobs:
 
       - name: Extract and prepare ogsql
         run: |
-          tar xzf ogsql-artifact/ogsql-*.tar.gz -C ogsql-artifact
+          if [ -f ogsql-artifact/ogsql-*.zip ]; then
+            unzip ogsql-artifact/ogsql-*.zip -d ogsql-artifact
+          else
+            tar xzf ogsql-artifact/ogsql-*.tar.gz -C ogsql-artifact
+          fi
           chmod +x ogsql-artifact/ogsql
           echo "OGSQL_BIN=$PWD/ogsql-artifact/ogsql" >> "$GITHUB_ENV"
 
@@ -453,7 +475,11 @@ jobs:
 
       - name: Extract ogsql
         run: |
-          tar xzf ogsql-artifact/ogsql-*.tar.gz -C ogsql-artifact
+          if [ -f ogsql-artifact/ogsql-*.zip ]; then
+            unzip ogsql-artifact/ogsql-*.zip -d ogsql-artifact
+          else
+            tar xzf ogsql-artifact/ogsql-*.tar.gz -C ogsql-artifact
+          fi
           chmod +x ogsql-artifact/ogsql
           echo "OGSQL_BIN_PATH=$PWD/ogsql-artifact/ogsql" >> "$GITHUB_ENV"
 
@@ -469,12 +495,15 @@ jobs:
           cp dist/fluxgauss-py bundle/
           cp ogsql-artifact/ogsql bundle/
           tar czf ${{ github.workspace }}/fluxgauss-py-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz -C bundle fluxgauss-py ogsql
+          zip ${{ github.workspace }}/fluxgauss-py-${{ steps.version.outputs.version }}-linux-x86_64.zip -j bundle/fluxgauss-py bundle/ogsql
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: fluxgauss-py-linux-x86_64
-          path: fluxgauss-py-*.tar.gz
+          path: |
+            fluxgauss-py-*.tar.gz
+            fluxgauss-py-*.zip
 
   build-fluxgauss-py-linux-arm64:
     name: Build fluxgauss-py linux-arm64 (glibc >= 2.31)
@@ -504,7 +533,11 @@ jobs:
 
       - name: Extract ogsql
         run: |
-          tar xzf ogsql-artifact/ogsql-*.tar.gz -C ogsql-artifact
+          if [ -f ogsql-artifact/ogsql-*.zip ]; then
+            unzip ogsql-artifact/ogsql-*.zip -d ogsql-artifact
+          else
+            tar xzf ogsql-artifact/ogsql-*.tar.gz -C ogsql-artifact
+          fi
           chmod +x ogsql-artifact/ogsql
 
       - name: Set up QEMU
@@ -530,12 +563,16 @@ jobs:
           cp ogsql-artifact/ogsql bundle/
           tar czf "$GITHUB_WORKSPACE/fluxgauss-py-${{ steps.version.outputs.version }}-linux-arm64.tar.gz" \
             -C bundle fluxgauss-py ogsql
+          zip "$GITHUB_WORKSPACE/fluxgauss-py-${{ steps.version.outputs.version }}-linux-arm64.zip" \
+            -j bundle/fluxgauss-py bundle/ogsql
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: fluxgauss-py-linux-arm64
-          path: fluxgauss-py-*.tar.gz
+          path: |
+            fluxgauss-py-*.tar.gz
+            fluxgauss-py-*.zip
 
   build-fluxgauss-py-windows-x86_64:
     name: Build fluxgauss-py windows-x86_64
@@ -639,7 +676,11 @@ jobs:
 
       - name: Extract ogsql
         run: |
-          tar xzf ogsql-artifact/ogsql-*.tar.gz -C ogsql-artifact
+          if [ -f ogsql-artifact/ogsql-*.zip ]; then
+            unzip ogsql-artifact/ogsql-*.zip -d ogsql-artifact
+          else
+            tar xzf ogsql-artifact/ogsql-*.tar.gz -C ogsql-artifact
+          fi
           chmod +x ogsql-artifact/ogsql
           echo "OGSQL_BIN_PATH=$PWD/ogsql-artifact/ogsql" >> "$GITHUB_ENV"
 
@@ -655,12 +696,15 @@ jobs:
           cp dist/fluxgauss-py bundle/
           cp ogsql-artifact/ogsql bundle/
           tar czf ${{ github.workspace }}/fluxgauss-py-${{ steps.version.outputs.version }}-macos-arm64.tar.gz -C bundle fluxgauss-py ogsql
+          zip ${{ github.workspace }}/fluxgauss-py-${{ steps.version.outputs.version }}-macos-arm64.zip -j bundle/fluxgauss-py bundle/ogsql
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: fluxgauss-py-macos-arm64
-          path: fluxgauss-py-*.tar.gz
+          path: |
+            fluxgauss-py-*.tar.gz
+            fluxgauss-py-*.zip
 
   # ── Rust engine CI ────────────────────────────────────────────
   test-rust-engine:
