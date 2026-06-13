@@ -14837,6 +14837,7 @@ FLUXGAUSS_HELP = f"""\
    fluxgauss -c fluxgauss.yaml --resume    从断点续做（跳过已生成的包）
     fluxgauss -c fluxgauss.yaml --report ./report.md
     fluxgauss -c fluxgauss.yaml --encoding gbk    指定输出编码（默认 UTF-8）
+    fluxgauss --mcp          以 MCP 服务器模式启动（stdio 协议）
 
   配置文件格式 (YAML):
      output_dir: ./dest                     输出目录
@@ -14893,6 +14894,7 @@ def _build_arg_parser():
     parser.add_argument("--report", metavar="FILE", help="指定转换报告输出路径")
     parser.add_argument("--debug", action="store_true", default=False, help="调试模式：在生成的Java/XML中注入SQL源码行号注释")
     parser.add_argument("-v", "--version", action="store_true", default=False, help="显示版本信息")
+    parser.add_argument("--mcp", action="store_true", default=False, help="以 MCP 服务器模式启动（stdio 协议）")
     return parser
 
 
@@ -14923,6 +14925,467 @@ def _read_version_from_cargo_toml():
 _VERSION = _read_version_from_cargo_toml() or "0.6.13"
 
 
+def _run_mcp_server():
+    """Start MCP stdio server exposing validate_sql and convert_sql tools.
+
+    This function never returns — it blocks on mcp.run().
+    All non-MCP flags are ignored. No logo, no progress bars.
+    All logging goes to stderr (stdout is reserved for MCP protocol).
+    """
+    try:
+        from mcp.server.fastmcp import FastMCP
+    except ImportError:
+        print(
+            "Error: MCP mode requires the 'mcp' package. Install it with:\n"
+            "  pip install mcp",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        from mcp.types import ToolError as _McpToolError
+    except ImportError:
+        _McpToolError = ValueError  # fallback
+
+    mcp = FastMCP("FluxGauss")
+
+    # ──────────────────────────────────────────────
+    # Tool: validate_sql
+    # ──────────────────────────────────────────────
+    @mcp.tool()
+    def validate_sql(files: list[str], encoding: str = "utf-8") -> dict:
+        """Validate one or more SQL files using ogsql-parser.
+
+        Args:
+            files: List of SQL file paths (absolute or relative to CWD).
+            encoding: File encoding (default: utf-8).
+
+        Returns:
+            JSON with keys: valid, error_file_count, warning_file_count, file_results.
+        """
+        global _SOURCE_ENCODING
+        missing = [f for f in files if not os.path.exists(f)]
+        if missing:
+            raise _McpToolError(f"Files not found: {', '.join(missing)}")
+
+        orig_encoding = _SOURCE_ENCODING
+        try:
+            _SOURCE_ENCODING = encoding
+            results = validate_sql_files(files)
+        except Exception as e:
+            raise _McpToolError(f"Validation failed: {e}") from e
+        finally:
+            _SOURCE_ENCODING = orig_encoding
+
+        file_results = []
+        total_error_files = 0
+        total_warning_files = 0
+        for f in files:
+            fresult = results.get(f, {})
+            raw_errors = fresult.get("errors", [])
+            raw_warnings = fresult.get("warnings", [])
+            errors_out = []
+            for e in raw_errors:
+                if isinstance(e, dict):
+                    ve = e.get("ValidationError", {})
+                    if isinstance(ve, dict) and ve:
+                        errors_out.append({
+                            "line": ve.get("line", 0),
+                            "column": ve.get("column", 0),
+                            "message": ve.get("message", str(ve)),
+                        })
+                    else:
+                        errors_out.append({"line": 0, "column": 0, "message": str(e)})
+                else:
+                    errors_out.append({"line": 0, "column": 0, "message": str(e)})
+            warnings_out = []
+            for w in raw_warnings:
+                if isinstance(w, dict):
+                    vw = w.get("ValidationWarning", w)
+                    if isinstance(vw, dict):
+                        warnings_out.append({
+                            "line": vw.get("line", 0),
+                            "column": vw.get("column", 0),
+                            "message": vw.get("message", str(vw)),
+                        })
+                    else:
+                        warnings_out.append({"line": 0, "column": 0, "message": str(w)})
+                else:
+                    warnings_out.append({"line": 0, "column": 0, "message": str(w)})
+
+            if errors_out:
+                total_error_files += 1
+            if warnings_out:
+                total_warning_files += 1
+            file_results.append({
+                "file": f,
+                "errors": errors_out,
+                "warnings": warnings_out,
+            })
+
+        return {
+            "valid": total_error_files == 0,
+            "error_file_count": total_error_files,
+            "warning_file_count": total_warning_files,
+            "file_results": file_results,
+        }
+
+    # ──────────────────────────────────────────────
+    # Tool: convert_sql
+    # ──────────────────────────────────────────────
+    @mcp.tool()
+    def convert_sql(
+        config: dict = None,
+        files: list[str] = None,
+        output_dir: str = None,
+        base_package: str = None,
+        full: bool = False,
+        debug: bool = False,
+        skip_validation: bool = False,
+    ) -> dict:
+        """Convert SQL stored procedures into a Spring Boot + MyBatis Java project.
+
+        Provide either a config dict (matching fluxgauss.yaml structure) OR
+        the individual parameters files + output_dir + base_package.
+
+        Args:
+            config: Optional config dict (keys: output_dir, base_package, sources, ...).
+            files: SQL source file paths (used when config is not provided).
+            output_dir: Output directory (used when config is not provided).
+            base_package: Java base package (used when config is not provided).
+            full: Force full regeneration (ignore cache).
+            debug: Enable debug mode (inject SQL source line annotations).
+            skip_validation: Skip SQL syntax validation before conversion.
+
+        Returns:
+            JSON with keys: success, output_dir, generated_files, report,
+            report_paths, log_path, summary.
+        """
+        # ── Resolve inputs ──
+        resolved_config = config or {}
+        resolved_output_dir = output_dir or resolved_config.get("output_dir", "./dest")
+        resolved_sql_files = files or resolved_config.get("sources", [])
+        resolved_base_package = base_package or resolved_config.get("base_package", "com.example.demo")
+
+        if not resolved_sql_files:
+            raise _McpToolError("No SQL source files specified. Provide 'files' or config['sources'].")
+
+        # Check file existence
+        missing_files = [f for f in resolved_sql_files if not os.path.exists(f)]
+        if missing_files:
+            raise _McpToolError(f"Source files not found: {', '.join(missing_files)}")
+
+        # ── Set global state ──
+        global BASE_PACKAGE, BASE_DIR, _SOURCE_ENCODING, DEBUG_MODE, _LOGGER_CONFIG
+        global TYPE_OVERRIDES, _TABLE_DDL_SOURCE, _PACKAGE_CONSTANTS, _PACKAGE_VARIABLES
+        global STUB_PROCEDURES, STUB_REASONS, UNRESOLVED_CALLS, UNSUPPORTED_FUNCTIONS, TODO_SUMMARY
+
+        saved_state = (
+            BASE_PACKAGE, BASE_DIR, _SOURCE_ENCODING, DEBUG_MODE, _LOGGER_CONFIG,
+            TYPE_OVERRIDES.copy(), _TABLE_DDL_SOURCE.copy(),
+            _PACKAGE_CONSTANTS.copy(), _PACKAGE_VARIABLES.copy(),
+            STUB_PROCEDURES.copy(), STUB_REASONS.copy(),
+            UNRESOLVED_CALLS.copy(), UNSUPPORTED_FUNCTIONS.copy(), TODO_SUMMARY.copy(),
+        )
+
+        # Apply new state
+        BASE_PACKAGE = resolved_base_package
+        BASE_DIR = "src/main/java/" + BASE_PACKAGE.replace(".", "/")
+        _SOURCE_ENCODING = str(resolved_config.get("encoding", "utf-8"))
+        DEBUG_MODE = debug
+        _LOGGER_CONFIG = None  # reset, will be set from config if present
+        TYPE_OVERRIDES.clear()
+        _TABLE_DDL_SOURCE.clear()
+        _PACKAGE_CONSTANTS.clear()
+        _PACKAGE_VARIABLES.clear()
+        STUB_PROCEDURES.clear()
+        STUB_REASONS.clear()
+        UNRESOLVED_CALLS.clear()
+        UNSUPPORTED_FUNCTIONS.clear()
+        TODO_SUMMARY.clear()
+
+        if resolved_config.get("type_aliases"):
+            _user_aliases = resolved_config["type_aliases"]
+            if isinstance(_user_aliases, dict):
+                _CUSTOM_TYPE_PRESETS.update({k.lower(): v for k, v in _user_aliases.items()})
+
+        if "logger" in resolved_config:
+            _resolved = _resolve_logger_config(resolved_config)
+            _LOGGER_CONFIG = _resolved
+
+        parse_errors_map = {}
+        parse_warnings_map = {}
+        output_dir_abs = os.path.abspath(resolved_output_dir)
+
+        try:
+            # ── Phase 0: Table DDL pre-scan ──
+            for sql_file in resolved_sql_files:
+                try:
+                    with open(sql_file, "r", encoding=_SOURCE_ENCODING, errors="replace") as _f:
+                        _content = _f.read()
+                except Exception:
+                    continue
+                if re.search(r"create\s+table", _content, re.IGNORECASE):
+                    try:
+                        schema = parse_table_ddl(sql_file)
+                        for tbl, cols in schema.items():
+                            for col, col_type in cols.items():
+                                TYPE_OVERRIDES[(tbl, col)] = col_type
+                                _TABLE_DDL_SOURCE[(tbl, col)] = sql_file
+                    except Exception:
+                        pass
+
+            # ── Phase 1: Validate (optional) ──
+            if not skip_validation:
+                try:
+                    vresults = validate_sql_files(resolved_sql_files)
+                    for sf in resolved_sql_files:
+                        vr = vresults.get(sf, {})
+                        real_errors = [
+                            e for e in vr.get("errors", [])
+                            if not _is_parse_warning(e)
+                        ]
+                        if real_errors:
+                            err_msgs = "; ".join(
+                                _format_validate_error(e) for e in real_errors[:5]
+                            )
+                            raise _McpToolError(
+                                f"Validation failed for {sf}: {err_msgs}"
+                            )
+                except _McpToolError:
+                    raise
+                except Exception as e:
+                    raise _McpToolError(f"Validation error: {e}") from e
+
+            # ── Phase 2: Parse SQL files ──
+            parsed_asts = {}
+            try:
+                parsed_asts = parse_sql_files(resolved_sql_files)
+            except Exception as e:
+                # Fallback to per-file parsing
+                for sf in resolved_sql_files:
+                    try:
+                        parsed_asts[sf] = parse_sql_file(sf)
+                    except Exception as e2:
+                        raise _McpToolError(f"Failed to parse {sf}: {e2}") from e2
+
+            # ── Phase 3: Extract procedures ──
+            packages = []
+            all_package_names = {}
+            all_skipped = []
+
+            for sql_file in resolved_sql_files:
+                basename = os.path.basename(sql_file)
+                ast = parsed_asts.get(sql_file, {})
+                if not ast:
+                    continue
+
+                errors = ast.get("errors", [])
+                if errors:
+                    real_errors = [e for e in errors if not _is_parse_warning(e)]
+                    warnings = [e for e in errors if _is_parse_warning(e)]
+                    if real_errors:
+                        parse_errors_map[basename] = real_errors
+                    if warnings:
+                        parse_warnings_map[basename] = warnings
+
+                try:
+                    skipped = extract_non_procedure_statements(ast, source_file=basename)
+                    if skipped:
+                        all_skipped.extend(skipped)
+
+                    procedures, pkg_vars, custom_types = extract_procedures(ast, source_file=basename)
+                    _recover_constant_declarations(sql_file, pkg_vars)
+                    for p in procedures:
+                        p._source_path = sql_file
+                    comments = extract_comments(ast)
+                    _map_comments_to_procedures(comments, procedures, source_file=basename)
+
+                    if not procedures:
+                        continue
+
+                    pkg_name = procedures[0].package if procedures[0].package else Path(sql_file).stem
+                    for vname, vdata in pkg_vars.items():
+                        if vname not in _PACKAGE_CONSTANTS:
+                            _PACKAGE_VARIABLES[vname] = {**vdata, "package": pkg_name}
+
+                    java_pkg = ""
+                    if resolved_config:
+                        jp_entries = resolved_config.get("java_packages", [])
+                        if not jp_entries:
+                            jp_single = resolved_config.get("java_package", {})
+                            if isinstance(jp_single, dict):
+                                jp_entries = [jp_single]
+                        for jp_entry in jp_entries:
+                            if not isinstance(jp_entry, dict):
+                                continue
+                            if sql_file in jp_entry.get("sources", []):
+                                java_pkg = jp_entry.get("package", "")
+                                break
+
+                    pkg = PackageInfo(
+                        package_name=pkg_name,
+                        procedures=procedures,
+                        package_vars=pkg_vars,
+                        source_file=basename,
+                        java_package=java_pkg,
+                        comments=[],
+                        custom_types=custom_types,
+                    )
+                    packages.append(pkg)
+                    all_package_names[pkg_name] = pkg
+
+                    for _p in procedures:
+                        if _p.is_function and _p.return_type:
+                            _rt = sql_type_to_java(_p.return_type)
+                            _UDF_RETURN_TYPES[(_p.proc_name.lower(), len(_p.parameters))] = _rt
+                except Exception as e:
+                    parse_errors_map[basename] = [{"parse_error": str(e)}]
+                    continue
+
+            # ── Phase 4: Analyze procedures ──
+            if not packages:
+                raise _McpToolError("No procedures found in SQL files — nothing to convert.")
+
+            for pkg in packages:
+                for proc in pkg.procedures:
+                    try:
+                        if pkg.package_vars:
+                            _pkg_var_names = getattr(proc, "_pkg_var_names", set())
+                            for vn, vi in pkg.package_vars.items():
+                                if vn not in proc.local_vars:
+                                    proc.local_vars[vn] = vi.get("java_type", "Object")
+                                    _pkg_var_names.add(vn)
+                            setattr(proc, "_pkg_var_names", _pkg_var_names)
+                        analyze_procedure(proc, all_package_names)
+                    except Exception as e:
+                        proc.java_logic_lines.append(f"// ERROR: 转换失败 - {e}")
+                        _stub_key = (proc.name, len(proc.parameters))
+                        _add_stub_reason(proc, f"转换分析阶段异常: {e}")
+                        if _stub_key not in STUB_PROCEDURES:
+                            STUB_PROCEDURES.append(_stub_key)
+
+            for pkg in packages:
+                for proc in pkg.procedures:
+                    try:
+                        _promote_out_local_vars(proc, all_package_names)
+                    except Exception:
+                        pass
+
+            # ── Phase 5: Generate project ──
+            try:
+                os.makedirs(output_dir_abs, exist_ok=True)
+                generate_project(
+                    output_dir_abs, packages,
+                    changed_packages=None,
+                    config=resolved_config,
+                    progress_cb=None,
+                    resume_skip=None,
+                )
+            except Exception as e:
+                raise _McpToolError(f"Project generation failed: {e}") from e
+
+            # ── Phase 6: Build report ──
+            report = build_conversion_report(
+                output_dir_abs, packages, all_skipped, parse_errors_map,
+                config_path=str(resolved_config) if resolved_config else "MCP mode",
+                parse_warnings_map=parse_warnings_map,
+            )
+            report_paths = write_conversion_report(report, output_dir_abs)
+
+            # ── Gather generated files ──
+            generated_files = []
+            base_path = Path(output_dir_abs)
+            for pkg in packages:
+                class_name = package_to_classname(pkg.package_name)
+                jp = _pkg_java_package(pkg).replace(".", "/")
+                candidates = [
+                    f"src/main/java/{jp}/service/{class_name}Service.java",
+                    f"src/main/java/{jp}/mapper/{class_name}Mapper.java",
+                    f"src/main/resources/mapper/{class_name}Mapper.xml",
+                    f"src/test/java/{jp}/service/{class_name}ServiceTest.java",
+                ]
+                for c in candidates:
+                    if (base_path / c).exists():
+                        generated_files.append(c)
+
+            # ── Summary ──
+            total_procs = sum(len(pkg.procedures) for pkg in packages)
+            total_dml = sum(
+                len(proc.dml_statements)
+                for pkg in packages
+                for proc in pkg.procedures
+            )
+            total_calls = sum(
+                len(proc.service_calls)
+                for pkg in packages
+                for proc in pkg.procedures
+            )
+
+            result = {
+                "success": True,
+                "output_dir": output_dir_abs,
+                "generated_files": sorted(set(generated_files)),
+                "report": {
+                    "generated_at": report.generated_at,
+                    "sql_files": list(
+                        set(m.sql_file for m in report.procedure_mappings)
+                    ),
+                    "procedure_mappings": [
+                        {
+                            "sql_file": m.sql_file,
+                            "procedure_name": m.procedure_name,
+                            "java_service": m.java_service,
+                            "java_method": m.java_method,
+                            "is_stub": m.is_stub,
+                            "notes": m.notes,
+                        }
+                        for m in report.procedure_mappings
+                    ],
+                    "parse_errors": [
+                        {"file": f, "error": str(e)}
+                        for f, e in report.parse_errors
+                    ],
+                },
+                "report_paths": report_paths,
+                "log_path": str(
+                    _cache_base(output_dir_abs) / "logs" / "conversion-latest.log"
+                ),
+                "summary": {
+                    "packages": len(packages),
+                    "procedures": total_procs,
+                    "dml_statements": total_dml,
+                    "service_calls": total_calls,
+                    "unresolved_calls": len(UNRESOLVED_CALLS),
+                    "stubs": len(STUB_PROCEDURES),
+                    "todos": len(TODO_SUMMARY),
+                    "parse_errors": len(parse_errors_map),
+                },
+            }
+            return result
+
+        except _McpToolError:
+            raise
+        except Exception as e:
+            raise _McpToolError(f"Conversion failed: {e}") from e
+        finally:
+            # Restore global state
+            (
+                BASE_PACKAGE, BASE_DIR, _SOURCE_ENCODING, DEBUG_MODE, _LOGGER_CONFIG,
+                TYPE_OVERRIDES, _TABLE_DDL_SOURCE,
+                _PACKAGE_CONSTANTS, _PACKAGE_VARIABLES,
+                STUB_PROCEDURES, STUB_REASONS,
+                UNRESOLVED_CALLS, UNSUPPORTED_FUNCTIONS, TODO_SUMMARY,
+            ) = saved_state
+            _CUSTOM_TYPE_PRESETS.clear()
+            _CUSTOM_TYPE_PRESETS.update(
+                {k.lower(): v for k, v in _CUSTOM_TYPE_PRESETS.items()}
+            )
+
+    # ── Run server ──
+    mcp.run(transport="stdio")
+
+
 def main():
     global _SOURCE_ENCODING, DEBUG_MODE
 
@@ -14936,6 +15399,10 @@ def main():
     if args.version:
         print(f"fluxgauss v{_VERSION}")
         sys.exit(0)
+
+    if args.mcp:
+        _run_mcp_server()
+        return
 
     # ── Resolve config ──
     output_dir = None

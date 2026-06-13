@@ -51,10 +51,38 @@ struct Cli {
 
     #[arg(long = "debug", default_value_t = false)]
     debug: bool,
+
+    #[arg(long = "mcp", default_value_t = false)]
+    mcp: bool,
 }
 
 fn main() {
     let cli = Cli::parse();
+
+    if cli.mcp {
+        match std::process::Command::new("fluxgauss-mcp")
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .spawn()
+        {
+            Ok(mut child) => {
+                let status = child.wait().unwrap_or_else(|e| {
+                    eprintln!("Failed to wait for fluxgauss-mcp process: {}", e);
+                    std::process::exit(1);
+                });
+                std::process::exit(status.code().unwrap_or(1));
+            }
+            Err(e) => {
+                eprintln!("Error: Could not start fluxgauss-mcp binary: {}", e);
+                eprintln!();
+                eprintln!("  The fluxgauss-mcp binary is required for --mcp mode.");
+                eprintln!("  Build it with:  cargo build -p fluxgauss-mcp");
+                eprintln!("  Or run the MCP server directly: cargo run -p fluxgauss-mcp");
+                std::process::exit(1);
+            }
+        }
+    }
 
     println!("{}", LOGO);
 
