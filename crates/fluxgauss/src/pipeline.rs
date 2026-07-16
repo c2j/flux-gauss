@@ -63,6 +63,7 @@ pub fn phase0_validate(sql_files: &[PathBuf]) -> ValidateResult {
                         errors: vec![ogsql_parser::ParserError::Warning {
                             message: format!("encoding detection failed: {}", e),
                             location: ogsql_parser::SourceLocation::default(),
+                            level: ogsql_parser::linter::WarningLevel::Caution,
                         }],
                         warnings: Vec::new(),
                         package_consistency_errors: Vec::new(),
@@ -77,6 +78,7 @@ pub fn phase0_validate(sql_files: &[PathBuf]) -> ValidateResult {
                     errors: vec![ogsql_parser::ParserError::Warning {
                         message: format!("cannot read file: {}", e),
                         location: ogsql_parser::SourceLocation::default(),
+                        level: ogsql_parser::linter::WarningLevel::Caution,
                     }],
                     warnings: Vec::new(),
                     package_consistency_errors: Vec::new(),
@@ -123,6 +125,7 @@ pub fn phase0_validate(sql_files: &[PathBuf]) -> ValidateResult {
             warnings.push(ogsql_parser::ParserError::Warning {
                 message: format_undefined_var_error(ve),
                 location: ogsql_parser::SourceLocation::default(),
+                level: ogsql_parser::linter::WarningLevel::Caution,
             });
         }
 

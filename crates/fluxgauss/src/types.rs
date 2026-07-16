@@ -228,6 +228,10 @@ pub struct ProcedureInfo {
     pub leading_comments: Vec<CommentBlock>,
     pub inline_comments: Vec<CommentBlock>,
     pub local_var_source_lines: HashMap<String, u32>,
+
+    /// Package variable names (snake_case) that are written (assigned to) in this procedure body.
+    /// Used to detect de-facto constants: package vars never written here are treated as read-only.
+    pub written_package_vars: HashSet<String>,
 }
 
 impl ProcedureInfo {
@@ -277,6 +281,7 @@ impl ProcedureInfo {
             leading_comments: Vec::new(),
             inline_comments: Vec::new(),
             local_var_source_lines: HashMap::new(),
+            written_package_vars: HashSet::new(),
         }
     }
 

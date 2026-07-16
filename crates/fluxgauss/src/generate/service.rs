@@ -138,9 +138,14 @@ pub fn write_service_class(
         };
         w.line(&format!("private final {} {};", svc_class, svc_var));
     }
+    // Collect all package variable names that are written in any procedure
+    let written_package_vars: std::collections::HashSet<&str> = pkg.procedures.iter()
+        .flat_map(|p| p.written_package_vars.iter().map(|s| s.as_str()))
+        .collect();
     for (var_name, var_info) in &pkg.package_vars {
         let field_name = crate::naming::java_safe_identifier(&crate::naming::snake_to_camel(var_name));
-        let modifier = if var_info.is_constant { "private static final" } else { "private static" };
+        let is_readonly = var_info.is_constant || !written_package_vars.contains(var_name.as_str());
+        let modifier = if is_readonly { "private static final" } else { "private static" };
         let default_val = var_info.default_value.as_deref().unwrap_or_else(|| default_for_type(&var_info.java_type));
         let coerced_default = coerce_default_value(&var_info.java_type, default_val);
         w.line(&format!("{} {} {} = {};", modifier, var_info.java_type, field_name, coerced_default));

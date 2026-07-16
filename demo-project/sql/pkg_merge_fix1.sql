@@ -176,7 +176,7 @@ CREATE OR REPLACE PACKAGE BODY pkg_merge_sales AS
     ) IS
     BEGIN
         UPDATE dw_sales_fact
-        SET expiry_date = CAST(p_effective_date AS TIMESTAMP) - INTERVAL '1' DAY,
+        SET expiry_date = TIMESTAMP(p_effective_date) - INTERVAL '1' DAY,
             is_current = 0,
             dw_update_time = SYSTIMESTAMP,
             dw_updated_by = CURRENT_USER

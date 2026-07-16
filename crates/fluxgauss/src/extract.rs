@@ -461,6 +461,7 @@ fn extract_package_item(
                 }
             }
         }
+        PackageItem::Cursor(_) => {}
         PackageItem::Raw(_) => {}
     }
 }

@@ -314,7 +314,7 @@ SQL_TO_JAVA = {
     "jsonb": "String",
     "uuid": "String",
     "record": "Map<String, Object>",
-    "exception": "String",
+    "exception": "Throwable",
 }
 
 # ── Custom / Package-Qualified Type Aliases ─────────────────────────
@@ -521,6 +521,7 @@ def _add_stub_reason(proc, reason: str):
         STUB_REASONS[_stub_key].append(reason)
 _PACKAGE_CONSTANTS = {}  # module-level: maps snake_case name → java_type for recovered constants
 _PACKAGE_VARIABLES = {}  # module-level: maps snake_case name → {"java_type": str, "default": str, "package": str}
+_PACKAGE_VAR_WRITTEN: set = set()  # module-level: set of package variable names (snake_case) that are assigned to during analysis
 _UDF_RETURN_TYPES = {}  # module-level: maps (func_name_lower, arg_count) → java_type for user-defined functions
 _LOG_FH = None
 
@@ -4735,6 +4736,9 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
                         _add_stub_reason(proc, f"赋值目标 '{raw_name}' 不是局部变量/参数/包变量/常量")
                         if _stub_key not in STUB_PROCEDURES:
                             STUB_PROCEDURES.append(_stub_key)
+                    # Track package variable writes (handles both ColumnRef and PlVariable targets)
+                    if is_pkg_var:
+                        _PACKAGE_VAR_WRITTEN.add(raw_name)
 
     if isinstance(expression, dict):
         for k, v in expression.items():
@@ -4811,6 +4815,10 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
     var_name = _extract_var_name_from_expr(assign_data.get("target", {}))
     if var_name and var_name in proc.local_vars and var_name not in proc.sql_expr_vars:
         proc.sql_expr_vars[var_name] = expression
+
+    # Track package variable writes for de-facto constant detection
+    if var_name and var_name in _PACKAGE_VARIABLES:
+        _PACKAGE_VAR_WRITTEN.add(var_name)
 
     target_type = _infer_target_type(target, proc)
     expr_type = _infer_expr_type(expression, proc)
@@ -6266,6 +6274,10 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
             for sk, sv in s.items():
                 if sk == "Assignment":
                     target = _expr_to_java(sv.get("target", {}), proc, as_read=False)
+                    # Track package variable writes in exception handler assignments
+                    _exc_var_name = _extract_var_name_from_expr(sv.get("target", {}))
+                    if _exc_var_name and _exc_var_name in _PACKAGE_VARIABLES:
+                        _PACKAGE_VAR_WRITTEN.add(_exc_var_name)
                     expr_raw = sv.get("expression", {})
                     expr = _expr_to_java(expr_raw, proc, all_packages=all_packages)
                     expr = re.sub(r'\bsqlerrm\b', 'e.getMessage()', expr, flags=re.IGNORECASE)
@@ -6292,7 +6304,13 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
                                 expr = f"new java.math.BigDecimal(String.valueOf({expr}))"
                         result.append(f"    {target}.set({expr});")
                     else:
-                        result.append(f"    {target} = {expr};")
+                        # Resolve __MAP_PUT__ internal tokens (same logic as _emit_assignment line 4588)
+                        if target.startswith("__MAP_PUT__"):
+                            _, rest = target.split("__MAP_PUT__", 1)
+                            var_java, field_key = rest.split("__", 1)
+                            result.append(f'    {var_java}.put("{field_key}", {expr});')
+                        else:
+                            result.append(f"    {target} = {expr};")
                 elif sk == "Raise":
                     result.append(f"    throw new BusinessException(e.getMessage());")
                 elif sk == "Return":
@@ -6458,7 +6476,7 @@ def _extract_var_name_from_expr(expr: dict) -> str:
     if not isinstance(expr, dict):
         return ""
     for key, val in expr.items():
-        if key == "PlVariable":
+        if key in ("PlVariable", "ColumnRef"):
             parts = val if isinstance(val, list) else [val]
             return parts[-1] if parts else ""
         if key == "BinaryOp":
@@ -9201,9 +9219,9 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 return f"new java.sql.Timestamp({left}.getTime() + {right})"
             if op == "+" and _is_ts_right and _is_dur_left:
                 return f"new java.sql.Timestamp({right}.getTime() + {left})"
-            if op == "=" and _is_string_comparison(val):
+            if op == "=" and _is_string_comparison(val, proc):
                 return f"{right}.equals({left})"
-            elif op == "<>" and _is_string_comparison(val):
+            elif op == "<>" and _is_string_comparison(val, proc):
                 return f"!{right}.equals({left})"
             _is_ts_cmp = ("Timestamp" in left_type or "Timestamp" in left) and ("Timestamp" in right_type or "Timestamp" in right)
             if _is_ts_cmp and op in (">", "<", ">=", "<="):
@@ -9282,6 +9300,12 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                         arg0 = args_java[0]
                         return arg0 if (arg0.startswith('"') or arg0.startswith("'")) else f"String.valueOf({arg0})"
                     return '"{}"'
+
+            # Delegate to SPECIAL_FUNCTION_MAP first (SUBSTR with 3 args needs
+            # dedicated handler for correct 1-based→0-based offset conversion)
+            if func_name_lower in SPECIAL_FUNCTION_MAP:
+                _wrapped_fn = lambda expr, p: _expr_to_java(expr, p, all_packages=all_packages)
+                return SPECIAL_FUNCTION_MAP[func_name_lower](val, proc, _wrapped_fn)
 
             if func_name_lower in SQL_FUNCTION_MAP:
                 mapped = SQL_FUNCTION_MAP[func_name_lower]
@@ -9459,7 +9483,18 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                                     wrapped_args.append(a_java)
                                 return f"{svc_name}.{method}({', '.join(wrapped_args)})"
                 _record_unsupported(func_name, proc)
-                return f"/* TODO: implement {_flatten_comment(func_name)}({_flatten_comment(args_str)}) */ null"
+                # Enriched TODO: package hint, return type, arg types, caller location
+                _arg_count = len(val.get("args", []))
+                _pkg_hint = name_parts[-2] if len(name_parts) >= 2 else ""
+                _ret_type = _UDF_RETURN_TYPES.get((func_name_lower, _arg_count), "?")
+                _arg_types = []
+                for _a in val.get("args", []):
+                    _at = _infer_expr_type(_a, proc)
+                    _arg_types.append(_at if _at and _at != "Object" else "?")
+                _sig = f"ret={_ret_type}, args=[{', '.join(_arg_types)}]"
+                _hint = f"pkg={_pkg_hint}" if _pkg_hint else "pkg=?"
+                _caller = f"caller={proc.source_file}:{proc.proc_name}"
+                return f"/* TODO: implement {_flatten_comment(func_name)}({_flatten_comment(args_str)}) — {_hint}, {_sig}, {_caller} */ null"
         elif key == "SpecialFunction":
             func_name = val.get("name", "").lower()
             handler = SPECIAL_FUNCTION_MAP.get(func_name)
@@ -9697,12 +9732,19 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
     return str(expr)
 
 
-def _is_string_comparison(binary_op: dict) -> bool:
+def _is_string_comparison(binary_op: dict, proc: ProcedureInfo = None) -> bool:
+    # Original logic: right side is a string literal
     right = binary_op.get("right", {})
     if isinstance(right, dict):
         for k, v in right.items():
             if k == "Literal" and isinstance(v, dict) and "String" in v:
                 return True
+    # Extended: either side is a String type variable
+    if proc:
+        left_type = _infer_expr_type(binary_op.get("left", {}), proc)
+        right_type = _infer_expr_type(binary_op.get("right", {}), proc)
+        if left_type == "String" or right_type == "String":
+            return True
     return False
 
 
@@ -10853,8 +10895,8 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
     )
 
     # Disambiguate unqualified column references when multiple JOINed tables share the column.
-    # Strategy: detect JOIN clauses and find columns that exist in both tables, then prefix
-    # with the first table's alias.
+    # Only apply within the CTE/subquery that contains the JOIN — not in subsequent CTEs
+    # that select from the first CTE (where the original table alias is out of scope).
     _ambig_cols = {
         'perf_score': ('emp_performance', 'employees'),
     }
@@ -10872,11 +10914,34 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
             if _alias_tbl1 != _alias_tbl2:
                 _perf_src = 'emp_performance'
                 _perf_alias = _alias1 if _alias_tbl1 == _perf_src else _alias2
-                sql = re.sub(
-                    rf'(?<!\.)(?<!\w)(?<![a-zA-Z_]){re.escape(_col)}\b(?![_a-zA-Z0-9])',
-                    f'{_perf_alias}.{_col}',
-                    sql, flags=re.IGNORECASE,
-                )
+                # Scope the rewrite to the JOIN-containing CTE body only.
+                # Find the CTE that contains the JOIN and only rewrite within it.
+                _cte_bodies = list(re.finditer(
+                    r'(\w+)\s+AS\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)',
+                    sql, re.IGNORECASE | re.DOTALL,
+                ))
+                _rewritten = False
+                for _cte_m in _cte_bodies:
+                    _cte_body = _cte_m.group(2)
+                    if re.search(
+                        rf'\b({re.escape(_tables[0])}|{re.escape(_tables[1])})\s+AS\s+',
+                        _cte_body, re.IGNORECASE,
+                    ):
+                        _new_body = re.sub(
+                            rf'(?<!\.)(?<!\w)(?<![a-zA-Z_]){re.escape(_col)}\b(?![_a-zA-Z0-9])',
+                            f'{_perf_alias}.{_col}',
+                            _cte_body, flags=re.IGNORECASE,
+                        )
+                        sql = sql[:_cte_m.start(2)] + _new_body + sql[_cte_m.end(2):]
+                        _rewritten = True
+                        break
+                if not _rewritten:
+                    # No CTE structure — apply globally (simple JOIN query)
+                    sql = re.sub(
+                        rf'(?<!\.)(?<!\w)(?<![a-zA-Z_]){re.escape(_col)}\b(?![_a-zA-Z0-9])',
+                        f'{_perf_alias}.{_col}',
+                        sql, flags=re.IGNORECASE,
+                    )
 
     for i, ph in enumerate(param_placeholders):
         sql = sql.replace(f"__PH{i}__", ph)
@@ -10891,6 +10956,19 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
             effective_local_vars[ep_java_name] = ep_java_type
 
     sql = _convert_params_to_mybatis(sql, proc.parameters, effective_local_vars)
+
+    # OpenGauss: DATE - INTEGER returns INTEGER, not DATE/TIMESTAMP.
+    # Wrap DATE parameters used in arithmetic with explicit CAST.
+    sql = re.sub(
+        r'(=\s*)(#\{[^}]*jdbcType\s*=\s*DATE[^}]*\}|#\{[^}]*javaType\s*=\s*java\.sql\.Date[^}]*\})\s*(-\s*\d+)\b',
+        r'\1CAST(\2 AS TIMESTAMP) \3',
+        sql
+    )
+    sql = re.sub(
+        r'(=\s*)(#\{[^}]*jdbcType\s*=\s*DATE[^}]*\}|#\{[^}]*javaType\s*=\s*java\.sql\.Date[^}]*\})\s*(-\s*interval\s+[^,)]+)',
+        r'\1CAST(\2 AS TIMESTAMP) \3',
+        sql, flags=re.IGNORECASE
+    )
 
     # Dynamic SQL: if the entire mapper body is a single #{var} reference (runtime SQL variable),
     # use ${} interpolation instead of #{} binding — MyBatis will insert the SQL string literally.
@@ -11340,7 +11418,7 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
                 default_expr = f"java.math.BigDecimal.valueOf({default_expr.strip().rstrip('d')})"
             elif "BigDecimal" in java_type and default_expr and _is_bare_int_literal(default_expr):
                 default_expr = f"java.math.BigDecimal.valueOf({default_expr.strip()})"
-            if var_name in _PACKAGE_CONSTANTS:
+            if var_name in _PACKAGE_CONSTANTS or var_name not in _PACKAGE_VAR_WRITTEN:
                 lines.append(f"    private static final {java_type} {java_name} = {default_expr};")
             else:
                 lines.append(f"    private {java_type} {java_name} = {default_expr};")
@@ -11779,6 +11857,19 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                 cursor_vars_to_hoist.add(index_var)
 
         exception_block = proc.body.get("exception_block") if proc.body else None
+
+        # Defensive: catch any __MAP_PUT__ tokens that slipped through (e.g. from _wrap_try_catch)
+        _cleaned_lines = []
+        for line in proc.java_logic_lines:
+            _m = re.match(r'\s*__MAP_PUT__(\w+)__(\w+(?:_\w+)*)\s*=\s*(.+);', line)
+            if _m:
+                _var, _key, _val = _m.group(1), _m.group(2), _m.group(3)
+                line = line.replace(
+                    f"__MAP_PUT__{_var}__{_key} = {_val};",
+                    f'{_var}.put("{_key}", {_val});'
+                )
+            _cleaned_lines.append(line)
+        proc.java_logic_lines = _cleaned_lines
 
         for line in proc.java_logic_lines:
             body_lines.append(line)
@@ -14922,7 +15013,7 @@ def _read_version_from_cargo_toml():
     return None
 
 
-_VERSION = _read_version_from_cargo_toml() or "0.6.14"
+_VERSION = _read_version_from_cargo_toml() or "0.6.15"
 
 
 def _run_mcp_server():
@@ -15077,13 +15168,13 @@ def _run_mcp_server():
 
         # ── Set global state ──
         global BASE_PACKAGE, BASE_DIR, _SOURCE_ENCODING, DEBUG_MODE, _LOGGER_CONFIG
-        global TYPE_OVERRIDES, _TABLE_DDL_SOURCE, _PACKAGE_CONSTANTS, _PACKAGE_VARIABLES
+        global TYPE_OVERRIDES, _TABLE_DDL_SOURCE, _PACKAGE_CONSTANTS, _PACKAGE_VARIABLES, _PACKAGE_VAR_WRITTEN
         global STUB_PROCEDURES, STUB_REASONS, UNRESOLVED_CALLS, UNSUPPORTED_FUNCTIONS, TODO_SUMMARY
 
         saved_state = (
             BASE_PACKAGE, BASE_DIR, _SOURCE_ENCODING, DEBUG_MODE, _LOGGER_CONFIG,
             TYPE_OVERRIDES.copy(), _TABLE_DDL_SOURCE.copy(),
-            _PACKAGE_CONSTANTS.copy(), _PACKAGE_VARIABLES.copy(),
+            _PACKAGE_CONSTANTS.copy(), _PACKAGE_VARIABLES.copy(), _PACKAGE_VAR_WRITTEN.copy(),
             STUB_PROCEDURES.copy(), STUB_REASONS.copy(),
             UNRESOLVED_CALLS.copy(), UNSUPPORTED_FUNCTIONS.copy(), TODO_SUMMARY.copy(),
         )
@@ -15098,6 +15189,7 @@ def _run_mcp_server():
         _TABLE_DDL_SOURCE.clear()
         _PACKAGE_CONSTANTS.clear()
         _PACKAGE_VARIABLES.clear()
+        _PACKAGE_VAR_WRITTEN.clear()
         STUB_PROCEDURES.clear()
         STUB_REASONS.clear()
         UNRESOLVED_CALLS.clear()
@@ -15373,7 +15465,7 @@ def _run_mcp_server():
             (
                 BASE_PACKAGE, BASE_DIR, _SOURCE_ENCODING, DEBUG_MODE, _LOGGER_CONFIG,
                 TYPE_OVERRIDES, _TABLE_DDL_SOURCE,
-                _PACKAGE_CONSTANTS, _PACKAGE_VARIABLES,
+                _PACKAGE_CONSTANTS, _PACKAGE_VARIABLES, _PACKAGE_VAR_WRITTEN,
                 STUB_PROCEDURES, STUB_REASONS,
                 UNRESOLVED_CALLS, UNSUPPORTED_FUNCTIONS, TODO_SUMMARY,
             ) = saved_state
@@ -15783,6 +15875,7 @@ def main():
     STUB_REASONS.clear()
     _PACKAGE_CONSTANTS.clear()
     _PACKAGE_VARIABLES.clear()
+    _PACKAGE_VAR_WRITTEN.clear()
     UNSUPPORTED_FUNCTIONS.clear()
     TODO_SUMMARY.clear()
 

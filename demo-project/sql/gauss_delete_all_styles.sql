@@ -591,7 +591,7 @@ CREATE OR REPLACE PACKAGE BODY pkg_delete_styles AS
             WHERE e.is_deleted = 0
         ),
         final_targets AS (
-            SELECT emp_id, emp_name, base_salary
+            SELECT emp_id, emp_name, base_salary, perf_score, perf_grade
             FROM delete_candidates
             WHERE (perf_grade = 'D' AND service_years >= 3)
                OR (dept_active = 0)
@@ -606,7 +606,24 @@ CREATE OR REPLACE PACKAGE BODY pkg_delete_styles AS
 
         v_archived := SQL%ROWCOUNT;
 
-        -- 步骤4：删除主表
+        -- 步骤4：删除主表（CTE 仅在单条语句内有效，需重复定义）
+        WITH delete_candidates AS (
+            SELECT e.emp_id, e.emp_name, e.base_salary, e.dept_id, e.hire_date,
+                   p.perf_score, p.perf_grade,
+                   d.is_active AS dept_active,
+                   EXTRACT(YEAR FROM CURRENT_DATE) - EXTRACT(YEAR FROM e.hire_date) AS service_years
+            FROM employees e
+            LEFT JOIN emp_performance p ON e.emp_id = p.emp_id AND p.perf_year = 2024
+            LEFT JOIN departments d ON e.dept_id = d.dept_id
+            WHERE e.is_deleted = 0
+        ),
+        final_targets AS (
+            SELECT emp_id, emp_name, base_salary, perf_score, perf_grade
+            FROM delete_candidates
+            WHERE (perf_grade = 'D' AND service_years >= 3)
+               OR (dept_active = 0)
+               OR (perf_score < 50)
+        )
         DELETE FROM employees
         WHERE emp_id IN (
             SELECT emp_id FROM final_targets
