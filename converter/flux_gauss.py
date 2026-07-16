@@ -15013,7 +15013,7 @@ def _read_version_from_cargo_toml():
     return None
 
 
-_VERSION = _read_version_from_cargo_toml() or "0.6.15"
+_VERSION = _read_version_from_cargo_toml() or "0.6.16"
 
 
 def _run_mcp_server():

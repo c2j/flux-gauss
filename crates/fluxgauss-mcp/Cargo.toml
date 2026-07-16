@@ -1,6 +1,6 @@
 [package]
 name = "fluxgauss-mcp"
-version = "0.6.15"
+version = "0.6.16"
 edition = "2021"
 description = "MCP server for FluxGauss — Rust engine"
 
