@@ -1,13 +1,11 @@
-# $ cd ~/Projects/Desktop_Projects/DB/sp2java/ && rm -rf dest_py && \
-# OGSQL_BIN=../ogsql-parser/target/release/ogsql ~/dev/miniforge3/bin/python converter/flux_gauss.py --config demo-project/fluxgauss_py.yaml && \
-# cd dest_py/ && mvn compile && mvn test && mvn verify -Pintegration
+# $ cd ~/Projects/Desktop_Projects/DB/flux-gauss/ && rm -rf dest_py &&  OGSQL_BIN=../ogsql-parser/target/release/ogsql ~/dev/miniforge3/bin/python converter/flux_gauss.py --config demo-project/fluxgauss_py.yaml &&  cd dest_py/ && mvn compile && mvn test && mvn verify -Pintegration
 output_dir: ./dest_py
 base_package: ced
 
 integration_test:
   enabled: true
   mode: remote
-  url: jdbc:postgresql://localhost:5432/postgres?currentSchema=gaussdb
+  url: jdbc:postgresql://localhost:5432/pagila?currentSchema=gaussdb
   username: gaussdb
   password: Enmo@123
   init_sql:

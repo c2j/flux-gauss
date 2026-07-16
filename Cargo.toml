@@ -3,4 +3,4 @@ members = ["crates/fluxgauss", "crates/fluxgauss-mcp"]
 resolver = "2"
 
 [workspace.dependencies]
-ogsql-parser = { git = "https://github.com/c2j/ogsql-parser.git", branch = "main" }
+ogsql-parser = { git = "https://github.com/c2j/ogsql-parser.git", tag = "v0.8.32" }

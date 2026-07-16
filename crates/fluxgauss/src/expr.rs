@@ -1,13 +1,54 @@
 use crate::naming::snake_to_camel;
 use crate::types::ProcedureInfo;
 
+fn flatten_comment(text: &str) -> String {
+    text.replace("/*", "").replace("*/", "")
+}
+
+pub(crate) fn is_nullish_java_expr(expr: &str) -> bool {
+    let t = expr.trim();
+    if t == "null" {
+        return true;
+    }
+    t.ends_with("null") && t.contains("/*") && !t.starts_with('"')
+}
+
+fn as_double_expr(expr: &str) -> String {
+    let t = expr.trim();
+    if is_nullish_java_expr(t) {
+        return "0.0".to_string();
+    }
+    if t.parse::<f64>().is_ok() {
+        return t.to_string();
+    }
+    if t.ends_with(".doubleValue()") || t.starts_with("Math.") {
+        return t.to_string();
+    }
+    if t.contains("BigDecimal")
+        || t.contains(".divide(")
+        || t.contains(".multiply(")
+        || t.contains(".add(")
+        || t.contains(".subtract(")
+        || t.contains(".setScale(")
+    {
+        return format!("({}).doubleValue()", t);
+    }
+    if t.contains(".get(") {
+        return format!(
+            "((Number) java.util.Objects.requireNonNullElse({}, 0)).doubleValue()",
+            t
+        );
+    }
+    format!("Double.parseDouble(String.valueOf({}))", t)
+}
+
 pub fn expr_to_java(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> String {
     expr_to_java_impl(expr, proc)
 }
 
 pub fn bool_expr_to_java(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> String {
     let val = expr_to_java(expr, proc);
-    if val == "null" {
+    if is_nullish_java_expr(&val) {
         "/* unhandled */ false".into()
     } else {
         val
@@ -112,15 +153,20 @@ pub fn assignment_to_java(target: &ogsql_parser::ast::Expr, value: &ogsql_parser
 
 fn coerce_for_type(expr: &str, target_type: Option<&str>) -> String {
     let trimmed = expr.trim();
-    if trimmed == "null" {
+    if is_nullish_java_expr(trimmed) {
         if let Some(t) = target_type {
             if t.contains("BigDecimal") { return "java.math.BigDecimal.ZERO".to_string(); }
             if t == "Double" || t == "double" { return "0.0d".to_string(); }
             if t == "Float" || t == "float" { return "0.0f".to_string(); }
             if t == "Integer" || t == "int" { return "0".to_string(); }
             if t == "Long" || t == "long" { return "0L".to_string(); }
+            if t == "Boolean" || t == "boolean" { return "false".to_string(); }
+            if t == "String" { return "null".to_string(); }
         }
-        return "null".to_string();
+        if trimmed == "null" {
+            return "null".to_string();
+        }
+        return "0".to_string();
     }
     if trimmed == "\"\"" || trimmed == "''" {
         if let Some(t) = target_type {
@@ -134,6 +180,15 @@ fn coerce_for_type(expr: &str, target_type: Option<&str>) -> String {
         return trimmed.to_string();
     }
     match target_type {
+        Some(t) if t.contains("BigDecimal")
+            && !trimmed.starts_with("java.math.BigDecimal")
+            && !trimmed.starts_with("new java.math.BigDecimal")
+            && !trimmed.starts_with("((java.math.BigDecimal)")
+            && (trimmed.starts_with("Math.")
+                || (trimmed.contains("Math.")
+                    && trimmed.chars().next().map(|c| c.is_ascii_digit() || c == '(' || c == '-').unwrap_or(false))) => {
+            format!("java.math.BigDecimal.valueOf({})", trimmed)
+        }
         Some(t) if t.contains("BigDecimal") && trimmed.chars().all(|c| c.is_ascii_digit()) => {
             format!("java.math.BigDecimal.valueOf({})", trimmed)
         }
@@ -328,7 +383,7 @@ fn expr_to_java_impl(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> St
         Expr::FunctionCall { name, args, .. } => {
             function_call_to_java(&name.join("."), args, proc)
         }
-        Expr::SpecialFunction { name, args } => {
+        Expr::SpecialFunction { name, args, .. } => {
             special_function_to_java(name, args, proc)
         }
         Expr::IsNull { expr, negated } => {
@@ -490,27 +545,35 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
                         }
                     }
                 }
-                let var_name = snake_to_camel(parts[0]);
-                let field = parts[1].to_lowercase();
-                let snake_base = parts[0];
-                if field == "count" {
-                    return format!("((java.util.List<?>) {}).size()", var_name);
-                }
-                 let field_camel = snake_to_camel(parts[1]);
-                 let is_out = proc.parameters.iter().any(|p| p.name == parts[0] && p.is_out());
-                 if is_out {
-                     if field_camel != parts[1] {
-                         format!("{}.get().getOrDefault(\"{}\", {}.get().get(\"{}\"))", var_name, field_camel, var_name, parts[1])
-                     } else {
-                         format!("{}.get().get(\"{}\")", var_name, field_camel)
-                     }
-                 } else {
-                     if field_camel != parts[1] {
-                         format!("{}.getOrDefault(\"{}\", {}.get(\"{}\"))", var_name, field_camel, var_name, parts[1])
-                     } else {
-                         format!("{}.get(\"{}\")", var_name, field_camel)
-                     }
+                 let var_name = snake_to_camel(parts[0]);
+                 let field = parts[1].to_lowercase();
+                 let snake_base = parts[0];
+                 if field == "count" {
+                     return format!("((java.util.List<?>) {}).size()", var_name);
                  }
+                  let field_camel = snake_to_camel(parts[1]);
+                  let is_out = proc.parameters.iter().any(|p| p.name == parts[0] && p.is_out());
+                  let base_type = proc.local_vars.get(&snake_base.to_lowercase()).map(|s| s.as_str())
+                      .or_else(|| {
+                          proc.parameters.iter()
+                              .find(|p| p.name.eq_ignore_ascii_case(snake_base))
+                              .map(|p| p.java_type.as_str())
+                      })
+                      .unwrap_or("");
+                  let map_base = if is_out {
+                      format!("{}.get()", var_name)
+                  } else if base_type.contains("Map") {
+                      var_name.clone()
+                  } else if base_type == "Object" || base_type.is_empty() {
+                      format!("((java.util.Map<String, Object>) {})", var_name)
+                  } else {
+                      var_name.clone()
+                  };
+                  if field_camel != parts[1] {
+                      format!("{}.getOrDefault(\"{}\", {}.get(\"{}\"))", map_base, field_camel, map_base, parts[1])
+                  } else {
+                      format!("{}.get(\"{}\")", map_base, field_camel)
+                  }
             } else {
                 let camel = snake_to_camel(name);
                 let is_out = proc.parameters.iter().any(|p| p.name == name && p.is_out());
@@ -535,7 +598,22 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
                     if let Some(svc_var) = proc.all_proc_params.get(&method_name) {
                         return format!("{}.{}()", svc_var, method_name);
                     }
-                    return format!("/* TODO: {}() */ \"\"", name);
+                    let (pkg_hint, func_short) = if let Some(dot_pos) = name.rfind('.') {
+                        (Some(&name[..dot_pos]), &name[dot_pos+1..])
+                    } else {
+                        (None, name)
+                    };
+                    let hint = match pkg_hint {
+                        Some(p) => format!("pkg={}", p),
+                        None => "pkg=?".to_string(),
+                    };
+                    return format!(
+                        "/* TODO: implement {}() - {}, caller={}:{} */ \"\"",
+                        flatten_comment(func_short),
+                        flatten_comment(&hint),
+                        flatten_comment(&proc.source_file),
+                        flatten_comment(&proc.proc_name)
+                    );
                 }
                 camel
             }
@@ -577,6 +655,17 @@ fn is_bigdecimal_var(expr_str: &str, proc: &ProcedureInfo) -> bool {
             }
         }
     }
+    if name.starts_with("Math.") {
+        return false;
+    }
+    // double arithmetic that merely nests BigDecimal.doubleValue() args
+    if name.contains("Math.")
+        && name.chars().next().map(|c| c.is_ascii_digit() || c == '(' || c == '-').unwrap_or(false)
+        && !name.starts_with("java.math.BigDecimal")
+        && !name.starts_with("new java.math.BigDecimal")
+    {
+        return false;
+    }
     if name.starts_with("new java.math.BigDecimal") || name.starts_with("java.math.BigDecimal.valueOf") {
         return true;
     }
@@ -600,10 +689,13 @@ fn is_bigdecimal_var(expr_str: &str, proc: &ProcedureInfo) -> bool {
 fn wrap_bigdecimal(expr: &str, already_bd: bool, _proc: &ProcedureInfo) -> String {
     if already_bd { return expr.to_string(); }
     let trimmed = expr.trim();
-    if trimmed == "null" { return "java.math.BigDecimal.ZERO".to_string(); }
+    if is_nullish_java_expr(trimmed) { return "java.math.BigDecimal.ZERO".to_string(); }
     if trimmed.starts_with("new java.math.BigDecimal") { return trimmed.to_string(); }
+    if trimmed.starts_with("Math.") {
+        return format!("java.math.BigDecimal.valueOf({})", trimmed);
+    }
     if trimmed.contains(".get(") {
-        format!("java.math.BigDecimal.valueOf(((Number) {}).longValue())", trimmed)
+        format!("java.math.BigDecimal.valueOf(((Number) {}).doubleValue())", trimmed)
     } else if trimmed.chars().all(|c| c.is_ascii_digit() || c == '.') && !trimmed.is_empty() {
         format!("java.math.BigDecimal.valueOf({})", trimmed)
     } else {
@@ -723,10 +815,10 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
                 return format!("new java.sql.Timestamp((long)({}) * 24 * 60 * 60 * 1000 + {}.getTime())", l_coerced, r);
             }
         }
-        if l == "null" && !l_is_ts {
+        if is_nullish_java_expr(&l) && !l_is_ts {
             l = "0".into();
         }
-        if r == "null" && !r_is_ts {
+        if is_nullish_java_expr(&r) && !r_is_ts {
             r = "0".into();
         }
 
@@ -739,8 +831,16 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
 
     match op {
         "||" => {
-            let l_sv = if l == "null" { "\"\"".to_string() } else { format!("String.valueOf({})", l) };
-            let r_sv = if r == "null" { "\"\"".to_string() } else { format!("String.valueOf({})", r) };
+            let l_sv = if is_nullish_java_expr(&l) {
+                "\"\"".to_string()
+            } else {
+                format!("String.valueOf({})", l)
+            };
+            let r_sv = if is_nullish_java_expr(&r) {
+                "\"\"".to_string()
+            } else {
+                format!("String.valueOf({})", r)
+            };
             format!("{}.concat({})", l_sv, r_sv)
         }
         "<@" | "@>" => format!("((Object) {}) != null", l),
@@ -778,8 +878,8 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
         "IS" => format!("{} == {}", l, r),
         "IS NOT" => format!("{} != {}", l, r),
         ">" | "<" | ">=" | "<=" => {
-            let l_null = l.trim() == "null";
-            let r_null = r.trim() == "null";
+            let l_null = is_nullish_java_expr(&l);
+            let r_null = is_nullish_java_expr(&r);
             if l_null || r_null {
                 let safe_l = if l_null { "0".to_string() } else { l.clone() };
                 let safe_r = if r_null { "0".to_string() } else { r.clone() };
@@ -853,7 +953,19 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
             let r_bd = wrap_bigdecimal(&r, is_bigdecimal_var(&r, proc), proc);
             format!("{}.divide({}, 10, java.math.RoundingMode.HALF_UP)", l_bd, r_bd)
         }
-        "^" => format!("Math.pow({}, {})", l, r),
+        "^" => {
+            let l_pow = as_double_expr(&l);
+            let r_pow = as_double_expr(&r);
+            let pow = format!("Math.pow({}, {})", l_pow, r_pow);
+            if is_bigdecimal_var(&l, proc) || is_bigdecimal_var(&r, proc)
+                || l.contains("BigDecimal") || r.contains("BigDecimal")
+                || l.contains(".divide(") || r.contains(".divide(")
+            {
+                format!("java.math.BigDecimal.valueOf({})", pow)
+            } else {
+                pow
+            }
+        }
         _ => {
             let has_get_l = needs_get_unwrap(&l);
             let has_get_r = needs_get_unwrap(&r);
@@ -900,9 +1012,12 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
 
 fn unary_op_to_java(op: &str, operand: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> String {
     let inner = expr_to_java(operand, proc);
-    if inner.trim() == "null" || inner.trim().ends_with("null") && !inner.trim().starts_with('"') {
+    if is_nullish_java_expr(&inner) {
         if op == "-" && is_timestamp_or_date_var(&inner, proc) {
             return "null".to_string();
+        }
+        if op == "NOT" {
+            return "true".to_string();
         }
         return "0".to_string();
     }
@@ -918,13 +1033,30 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         let name_parts: Vec<&str> = name.split('.').collect();
         if name_parts.len() == 1 && args.len() == 1 {
             let snake_name = name_parts[0];
-            let is_list = proc.local_vars.get(&snake_name.to_lowercase())
-                .map(|t| t.starts_with("List<"))
-                .unwrap_or(false);
+            let list_type = proc.local_vars.get(&snake_name.to_lowercase()).map(|t| t.as_str())
+                .or_else(|| {
+                    proc.parameters.iter()
+                        .find(|p| p.name.eq_ignore_ascii_case(snake_name))
+                        .map(|p| p.java_type.as_str())
+                });
+            let is_list = match list_type {
+                Some(t) if t.starts_with("List<") || t.contains("List") => true,
+                Some("Object") => {
+                    let n = snake_name.to_lowercase();
+                    n.contains("array") || n.contains("list") || n.contains("spectrum")
+                        || n.ends_with("_arr") || n.ends_with("arr")
+                }
+                _ => false,
+            };
             if is_list {
                 let var_java = snake_to_camel(snake_name);
                 let idx = expr_to_java(&args[0], proc);
-                return format!("{}.get((int)({}) - 1)", var_java, idx);
+                let base = if list_type == Some("Object") {
+                    format!("((java.util.List<?>) {})", var_java)
+                } else {
+                    var_java
+                };
+                return format!("{}.get((int)({}) - 1)", base, idx);
             }
         }
     }
@@ -977,11 +1109,21 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                 }
             }
         }
-        "POWER" | "POW" if jargs.len() >= 2 => format!("Math.pow({}, {})", jargs[0], jargs[1]),
-        "SQRT" => format!("Math.sqrt({})", jargs.first().map(|s| s.as_str()).unwrap_or("0")),
-        "SIGN" => format!("Math.signum({})", jargs.first().map(|s| s.as_str()).unwrap_or("0")),
-        "RADIANS" => format!("Math.toRadians({})", jargs.first().map(|s| s.as_str()).unwrap_or("0")),
-        "DEGREES" => format!("Math.toDegrees({})", jargs.first().map(|s| s.as_str()).unwrap_or("0")),
+        "POWER" | "POW" if jargs.len() >= 2 => format!("Math.pow({}, {})", as_double_expr(&jargs[0]), as_double_expr(&jargs[1])),
+        "SQRT" => format!("Math.sqrt({})", as_double_expr(jargs.first().map(|s| s.as_str()).unwrap_or("0"))),
+        "SIGN" => format!("Math.signum({})", as_double_expr(jargs.first().map(|s| s.as_str()).unwrap_or("0"))),
+        "RADIANS" => format!("Math.toRadians({})", as_double_expr(jargs.first().map(|s| s.as_str()).unwrap_or("0"))),
+        "DEGREES" => format!("Math.toDegrees({})", as_double_expr(jargs.first().map(|s| s.as_str()).unwrap_or("0"))),
+        "SIN" => format!("Math.sin({})", as_double_expr(jargs.first().map(|s| s.as_str()).unwrap_or("0"))),
+        "COS" => format!("Math.cos({})", as_double_expr(jargs.first().map(|s| s.as_str()).unwrap_or("0"))),
+        "TAN" => format!("Math.tan({})", as_double_expr(jargs.first().map(|s| s.as_str()).unwrap_or("0"))),
+        "ASIN" => format!("Math.asin({})", as_double_expr(jargs.first().map(|s| s.as_str()).unwrap_or("0"))),
+        "ACOS" => format!("Math.acos({})", as_double_expr(jargs.first().map(|s| s.as_str()).unwrap_or("0"))),
+        "ATAN" => format!("Math.atan({})", as_double_expr(jargs.first().map(|s| s.as_str()).unwrap_or("0"))),
+        "ATAN2" if jargs.len() >= 2 => format!("Math.atan2({}, {})", as_double_expr(&jargs[0]), as_double_expr(&jargs[1])),
+        "LN" | "LOG" if jargs.len() == 1 => format!("Math.log({})", as_double_expr(jargs.first().map(|s| s.as_str()).unwrap_or("1"))),
+        "LOG10" => format!("Math.log10({})", as_double_expr(jargs.first().map(|s| s.as_str()).unwrap_or("1"))),
+        "EXP" => format!("Math.exp({})", as_double_expr(jargs.first().map(|s| s.as_str()).unwrap_or("0"))),
         "PI" | "PG_PI" => "Math.PI".into(),
         "RANDOM" => "Math.random()".into(),
         "MOD" if jargs.len() >= 2 => format!("({} % {})", jargs[0], jargs[1]),
@@ -992,7 +1134,7 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             jargs.iter().skip(1).fold(jargs[0].clone(), |acc, arg| format!("Math.min({}, {})", acc, arg))
         }
         "REPLACE" if jargs.len() >= 3 => format!("{}.replace({}, {})", jargs[0], jargs[1], jargs[2]),
-        "SUBSTRING" => {
+        "SUBSTRING" | "SUBSTR" => {
             let wrap_s = |s: &str| -> String {
                 if s.starts_with('"') || s.starts_with('\'') {
                     s.to_string()
@@ -1303,7 +1445,16 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             if !cross_pkg_svc.is_empty() && !method.is_empty() {
                 return format!("{}.{}({})", cross_pkg_svc, method, jargs.join(", "));
             }
-            "null".into()
+            let func_short = name_parts.last().unwrap_or(&name);
+            let pkg_hint = if name_parts.len() >= 2 { name_parts[0] } else { "?" };
+            format!(
+                "/* TODO: implement {}({}) - pkg={}, caller={}:{} */ null",
+                flatten_comment(func_short),
+                flatten_comment(&jargs.join(", ")),
+                flatten_comment(pkg_hint),
+                flatten_comment(&proc.source_file),
+                flatten_comment(&proc.proc_name)
+            )
         }
     }
 }

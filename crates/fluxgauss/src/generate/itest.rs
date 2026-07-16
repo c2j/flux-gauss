@@ -1349,8 +1349,16 @@ fn default_test_value(java_type: &str, param_name: &str) -> String {
     if tl.contains("timestamp") { return "java.sql.Timestamp.valueOf(\"2024-01-01 00:00:00\")".to_string(); }
     if tl.contains("date") { return "java.sql.Date.valueOf(\"2024-01-01\")".to_string(); }
     if tl.contains("map") { return "new java.util.HashMap<>()".to_string(); }
-    if tl == "object" { return "java.util.Arrays.asList(\"a\", \"b\")".to_string(); }
-    if tl.contains("string") || tl == "object" {
+    if tl == "object" {
+        if nl.contains("spectrum") {
+            return "java.util.Arrays.asList(1.0, 2.0, 3.0, 2.5, 1.5, 0.5, 1.0, 2.0, 3.0, 1.0)".to_string();
+        }
+        if nl.contains("array") || nl.contains("list") || nl.ends_with("arr") || nl.contains("_arr") {
+            return "java.util.Arrays.asList(1.0, 2.0, 3.0)".to_string();
+        }
+        return "new java.util.HashMap<String, Object>()".to_string();
+    }
+    if tl.contains("string") {
         if nl.contains("date") { return "\"2024-01-01\"".to_string(); }
         if nl.contains("ids") || nl.contains("list") { return "\"1,2,3\"".to_string(); }
         if ["flag", "amount", "seqno", "seq", "interfaceseq", "operflag", "stepno", "count", "quantity", "qty", "price", "total"].iter().any(|kw| nl.contains(kw)) {

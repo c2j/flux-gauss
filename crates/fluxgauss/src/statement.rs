@@ -14,6 +14,11 @@ use regex::Regex;
 use crate::context::StatementContext;
 use crate::types::{ConversionError, DmlType, DmlStatement, Parameter, ProcedureInfo, ServiceCall};
 
+fn ident_string(id: &ogsql_parser::Ident) -> String {
+    id.as_str().to_string()
+}
+
+
 fn out_param_set_expr(var_java: &str, method_id: &str, args: &str, proc: &ProcedureInfo) -> String {
     let base_name = if var_java.contains('.') {
         var_java.split('.').next().unwrap()
@@ -164,7 +169,7 @@ fn preprocess_cursor_sql(sql: &str, using_args: &[ogsql_parser::ast::Expr], proc
         using_args.iter().map(|a| {
             match a {
                 ogsql_parser::ast::Expr::ColumnRef(name) | ogsql_parser::ast::Expr::PlVariable(name) if name.len() == 1 => {
-                    name[0].clone()
+                    ident_string(&name[0])
                 }
                 _ => crate::expr::expr_to_java(a, proc),
             }
@@ -407,7 +412,7 @@ fn extract_table_ref(table_ref: &ogsql_parser::ast::TableRef, proc: &mut Procedu
     use ogsql_parser::ast::TableRef;
     match table_ref {
         TableRef::Table { name, .. } => {
-            let table_name = name.last().map(|s| s.clone()).unwrap_or_default();
+            let table_name = name.last().map(|s| ident_string(s)).unwrap_or_default();
             if !table_name.is_empty() {
                 proc.table_refs.insert(table_name);
             }
@@ -437,7 +442,7 @@ fn next_result_var_name(proc: &mut ProcedureInfo) -> String {
 fn extract_var_name_from_expr(expr: &ogsql_parser::ast::Expr) -> Option<String> {
     match expr {
         ogsql_parser::ast::Expr::ColumnRef(name) | ogsql_parser::ast::Expr::PlVariable(name) if name.len() == 1 => {
-            Some(name[0].clone())
+            Some(ident_string(&name[0]))
         }
         _ => None
     }
@@ -476,7 +481,7 @@ fn expr_to_sql_literal(expr: &ogsql_parser::ast::Expr) -> Option<String> {
 fn extract_dotted_ref_from_expr(expr: &ogsql_parser::ast::Expr) -> Option<(String, String)> {
     match expr {
         ogsql_parser::ast::Expr::ColumnRef(name) | ogsql_parser::ast::Expr::PlVariable(name) if name.len() == 2 => {
-            Some((name[0].clone(), name[1].clone()))
+            Some((ident_string(&name[0]), ident_string(&name[1])))
         }
         _ => None
     }
@@ -485,7 +490,7 @@ fn extract_dotted_ref_from_expr(expr: &ogsql_parser::ast::Expr) -> Option<(Strin
 fn extract_assignment_target_name(target: &ogsql_parser::ast::Expr) -> Option<String> {
     use ogsql_parser::ast::Expr;
     match target {
-        Expr::ColumnRef(name) | Expr::PlVariable(name) if name.len() == 1 => Some(name[0].clone()),
+        Expr::ColumnRef(name) | Expr::PlVariable(name) if name.len() == 1 => Some(ident_string(&name[0])),
         _ => None,
     }
 }
@@ -545,7 +550,7 @@ fn extract_leftmost_var_from_concat(expr: &ogsql_parser::ast::Expr) -> String {
     use ogsql_parser::ast::Expr;
     match expr {
         Expr::PlVariable(name) | Expr::ColumnRef(name) if name.len() >= 1 => {
-            name[name.len() - 1].clone()
+            ident_string(&name[name.len() - 1])
         }
         Expr::BinaryOp { left, op, .. } if op == "||" => {
             extract_leftmost_var_from_concat(left)
@@ -696,7 +701,7 @@ fn flatten_concat_inner(
             parts.push(f.clone());
         }
         Expr::PlVariable(name) | Expr::ColumnRef(name) if name.len() >= 1 => {
-            let var_name = name[name.len() - 1].clone();
+            let var_name = ident_string(&name[name.len() - 1]);
             let java_name = crate::naming::snake_to_camel(&var_name);
             // Determine if this is an identifier context (table/column name → ${})
             // Heuristic: if trailing text ends with a quote, it's a value → #{}
@@ -1136,9 +1141,9 @@ fn process_execute_stmt(
             }
         }
         Expr::ColumnRef(name) | Expr::PlVariable(name) if name.len() == 1 => {
-            let var_name = &name[0];
-            if let Some((sql_template, concat_vars)) = proc.dynamic_sql_templates.get(var_name).cloned() {
-                handle_resolved_execute_sql(proc, &sql_template, &concat_vars, &execute, ctx, var_name);
+            let var_name = ident_string(&name[0]);
+            if let Some((sql_template, concat_vars)) = proc.dynamic_sql_templates.get(&var_name).cloned() {
+                handle_resolved_execute_sql(proc, &sql_template, &concat_vars, &execute, ctx, &var_name);
             } else {
                 push_logic_line(proc, format!("// TODO: EXECUTE {} — could not resolve SQL string", var_name));
             }
@@ -1180,7 +1185,7 @@ fn process_sql_statement(
                     if let SelectTarget::Expr(expr, _) = t {
                         match expr {
                             Expr::ColumnRef(name) | Expr::PlVariable(name) if name.len() == 1 => {
-                                return Some(name[0].clone());
+                                return Some(ident_string(&name[0]));
                             }
                             _ => {}
                         }
@@ -1947,6 +1952,11 @@ pub fn process_statement(
     match stmt {
          PlStatement::Assignment { target, expression } => {
              if let Some(var_name) = extract_assignment_target_name(target) {
+                 // Track package variable writes for de-facto constant detection
+                 let var_base = var_name.split('.').next().unwrap_or(&var_name);
+                 if proc.package_vars.contains_key(var_base) {
+                     proc.written_package_vars.insert(var_base.to_string());
+                 }
                  if let Some((sql_template, concat_vars)) = flatten_concat(expression, proc) {
                      let lower = sql_template.trim().to_lowercase();
                      let sql_verbs = ["select", "insert", "update", "delete", "truncate", "alter", "drop", "create", "merge", "savepoint", "rollback"];
@@ -2208,8 +2218,8 @@ pub fn process_statement(
                 ogsql_parser::ast::plpgsql::PlForKind::Range { low, high, step, reverse } => {
                     let lo = crate::expr::expr_to_java(low, proc);
                     let hi = crate::expr::expr_to_java(high, proc);
-                    let lo_safe = if lo.trim() == "null" { "0".to_string() } else { lo };
-                    let hi_safe = if hi.trim() == "null" { "0".to_string() } else { hi };
+                    let lo_safe = if crate::expr::is_nullish_java_expr(&lo) { "0".to_string() } else { lo };
+                    let hi_safe = if crate::expr::is_nullish_java_expr(&hi) { "0".to_string() } else { hi };
                     let iter_var = var.clone();
                     let already_declared = proc.local_vars.contains_key(&for_stmt.node.variable.to_lowercase());
                     let step_code = match step {
@@ -2221,20 +2231,18 @@ pub fn process_statement(
                     };
                     if already_declared {
                         if *reverse {
-                            push_logic_line(proc, format!("{} = {}; while ({} >= {}) {{ {}--;",
+                            push_logic_line(proc, format!("for ({} = {}; {} >= {}; {}--) {{",
                                 iter_var, hi_safe, iter_var, lo_safe, iter_var));
                         } else {
-                            push_logic_line(proc, format!("{} = {}; while ({} <= {}) {{ {};",
+                            push_logic_line(proc, format!("for ({} = {}; {} <= {}; {}) {{",
                                 iter_var, lo_safe, iter_var, hi_safe, step_code));
                         }
+                    } else if *reverse {
+                        push_logic_line(proc, format!("for (int {} = {}; {} >= {}; {}--) {{",
+                            iter_var, hi_safe, iter_var, lo_safe, iter_var));
                     } else {
-                        if *reverse {
-                            push_logic_line(proc, format!("for (int {} = {}; {} >= {}; {}--) {{",
-                                iter_var, hi_safe, iter_var, lo_safe, iter_var));
-                        } else {
-                            push_logic_line(proc, format!("for (int {} = {}; {} <= {}; {}) {{",
-                                iter_var, lo_safe, iter_var, hi_safe, step_code));
-                        }
+                        push_logic_line(proc, format!("for (int {} = {}; {} <= {}; {}) {{",
+                            iter_var, lo_safe, iter_var, hi_safe, step_code));
                     }
                 }
                 ogsql_parser::ast::plpgsql::PlForKind::Query { query, .. } => {
@@ -2405,7 +2413,7 @@ pub fn process_statement(
              use ogsql_parser::ast::Expr;
              let raw_cursor_name = match &open_stmt.node.cursor {
                  Expr::ColumnRef(name) | Expr::PlVariable(name) if name.len() == 1 => {
-                     name[0].clone()
+                     ident_string(&name[0])
                  }
                  _ => cursor_java.clone(),
              };
@@ -2512,7 +2520,7 @@ pub fn process_statement(
         PlStatement::Fetch(fetch_stmt) => {
             let cursor_name_str = match &fetch_stmt.node.cursor {
                 ogsql_parser::ast::Expr::ColumnRef(name) | ogsql_parser::ast::Expr::PlVariable(name) if name.len() == 1 => {
-                    name[0].clone()
+                    ident_string(&name[0])
                 }
                 _ => "cursor".into(),
             };
@@ -2534,7 +2542,7 @@ pub fn process_statement(
                         for into_expr in into_exprs {
                             let var_name = match into_expr {
                                 ogsql_parser::ast::Expr::ColumnRef(name) | ogsql_parser::ast::Expr::PlVariable(name) if name.len() == 1 => {
-                                    name[0].clone()
+                                    ident_string(&name[0])
                                 }
                                 _ => continue,
                             };

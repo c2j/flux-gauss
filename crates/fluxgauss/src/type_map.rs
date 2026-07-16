@@ -37,7 +37,7 @@ pub static SQL_TO_JAVA: &[(&str, &str)] = &[
     ("jsonb", "String"),
     ("uuid", "String"),
     ("record", "Map<String, Object>"),
-    ("exception", "String"),
+    ("exception", "Throwable"),
 ];
 
 /// SQL type name → MyBatis JdbcType

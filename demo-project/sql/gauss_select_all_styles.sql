@@ -1368,12 +1368,12 @@ CREATE OR REPLACE PACKAGE BODY pkg_select_styles AS
             SELECT
                 dept_id,
                 COUNT(*) AS total_emps,
-                COUNT(*) FILTER (WHERE status = 'ACTIVE') AS active_count,
-                COUNT(*) FILTER (WHERE base_salary > 10000) AS high_salary_count,
+                COUNT(CASE WHEN status = 'ACTIVE' THEN 1 END) AS active_count,
+                COUNT(CASE WHEN base_salary > 10000 THEN 1 END) AS high_salary_count,
                 SUM(base_salary) AS total_salary,
-                SUM(base_salary) FILTER (WHERE status = 'ACTIVE') AS active_salary,
-                AVG(base_salary) FILTER (WHERE hire_date >= '2020-01-01') AS new_avg,
-                MAX(base_salary) FILTER (WHERE status = 'ACTIVE') AS active_max,
+                SUM(CASE WHEN status = 'ACTIVE' THEN base_salary END) AS active_salary,
+                AVG(CASE WHEN hire_date >= '2020-01-01' THEN base_salary END) AS new_avg,
+                MAX(CASE WHEN status = 'ACTIVE' THEN base_salary END) AS active_max,
                 -- CASE 条件聚合
                 SUM(CASE WHEN status = 'ACTIVE' THEN base_salary ELSE 0 END) AS case_active_sal,
                 COUNT(CASE WHEN base_salary > 10000 THEN 1 END) AS case_high_count

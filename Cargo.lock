@@ -434,7 +434,7 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fluxgauss"
-version = "0.6.13"
+version = "0.6.15"
 dependencies = [
  "chrono",
  "clap",
@@ -456,7 +456,7 @@ dependencies = [
 
 [[package]]
 name = "fluxgauss-mcp"
-version = "0.6.13"
+version = "0.6.15"
 dependencies = [
  "anyhow",
  "fluxgauss",
@@ -802,8 +802,8 @@ dependencies = [
 
 [[package]]
 name = "ogsql-parser"
-version = "0.6.1"
-source = "git+https://github.com/c2j/ogsql-parser.git?branch=main#866554ef303f7b24903dfe396c507b034a4b9205"
+version = "0.8.32"
+source = "git+https://github.com/c2j/ogsql-parser.git?tag=v0.8.32#30c24723b99a6858e621e586c64774b24b8482ab"
 dependencies = [
  "encoding_rs",
  "phf",
