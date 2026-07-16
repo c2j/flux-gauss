@@ -61,6 +61,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ogsql-linux-x86_64
+          retention-days: 1
           path: |
             ogsql-*.tar.gz
             ogsql-*.zip
@@ -112,6 +113,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ogsql-linux-arm64
+          retention-days: 1
           path: |
             ogsql-*.tar.gz
             ogsql-*.zip
@@ -171,6 +173,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ogsql-windows-x86_64
+          retention-days: 1
           path: ogsql-*.zip
 
   build-ogsql-macos-arm64:
@@ -208,6 +211,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ogsql-macos-arm64
+          retention-days: 1
           path: |
             ogsql-*.tar.gz
             ogsql-*.zip
@@ -253,6 +257,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fluxgauss-linux-x86_64
+          retention-days: 1
           path: |
             fluxgauss-*.tar.gz
             fluxgauss-*.zip
@@ -301,6 +306,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fluxgauss-linux-arm64
+          retention-days: 1
           path: |
             fluxgauss-*.tar.gz
             fluxgauss-*.zip
@@ -357,6 +363,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fluxgauss-windows-x86_64
+          retention-days: 1
           path: fluxgauss-*.zip
 
   build-fluxgauss-macos-arm64:
@@ -391,6 +398,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fluxgauss-macos-arm64
+          retention-days: 1
           path: |
             fluxgauss-*.tar.gz
             fluxgauss-*.zip
@@ -435,6 +443,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: python-engine-output
+          retention-days: 1
           path: dest_py/
 
   # ── fluxgauss-py binary (PyInstaller, Python engine + bundled ogsql) ──
@@ -501,6 +510,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fluxgauss-py-linux-x86_64
+          retention-days: 1
           path: |
             fluxgauss-py-*.tar.gz
             fluxgauss-py-*.zip
@@ -570,6 +580,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fluxgauss-py-linux-arm64
+          retention-days: 1
           path: |
             fluxgauss-py-*.tar.gz
             fluxgauss-py-*.zip
@@ -637,6 +648,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fluxgauss-py-windows-x86_64
+          retention-days: 1
           path: fluxgauss-py-*.zip
 
   build-fluxgauss-py-macos-arm64:
@@ -702,6 +714,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fluxgauss-py-macos-arm64
+          retention-days: 1
           path: |
             fluxgauss-py-*.tar.gz
             fluxgauss-py-*.zip
@@ -727,6 +740,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rust-engine-output
+          retention-days: 1
           path: dest_ru/
 
   # ── Release ───────────────────────────────────────────────────
