@@ -388,6 +388,7 @@ fn validate_error_to_json(err: &ogsql_parser::ParserError) -> ValidateErrorJson 
         ogsql_parser::ParserError::Warning {
             message,
             location: _,
+            level: _,
         } => ValidateErrorJson {
             line: 0,
             column: 0,
