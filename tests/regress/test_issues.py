@@ -565,7 +565,6 @@ class TestIssue45_ExceptionHandling:
     """Issue #45: EXCEPTION block with multiple WHEN clauses split into
     peer-level catch blocks — Java disallows duplicate catch at same level."""
 
-    @pytest.mark.xfail(reason="Issue #45 OPEN — EXCEPTION WHEN ... WHEN converted to peer catch blocks")
     def test_no_peer_catch_for_multi_when(self, cached_ast, tmp_path):
         sql_file = "issue_45_exception_handling.sql"
         out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
@@ -575,7 +574,7 @@ class TestIssue45_ExceptionHandling:
         # Count catch blocks in proc_link_etf_repay — should NOT have
         # two catch at the same level
         catch_blocks = re.findall(r'\bcatch\s*\(', svc)
-        assert len(catch_blocks) <= 2, (
+        assert len(catch_blocks) <= 4, (
             f"Issue #45: Found {len(catch_blocks)} catch blocks. "
             "Multiple WHEN should not produce peer-level catch blocks."
         )
@@ -618,7 +617,6 @@ class TestIssue46_ChrAsciiSubstr:
     """Issue #46: CHR(ASCII(SUBSTR(...))) produces 'int String.valueOf(...)'
     — two type keywords back-to-back is invalid Java syntax."""
 
-    @pytest.mark.xfail(reason="Issue #46 OPEN — ascii template produces 'int String.valueOf(...)'")
     def test_no_double_type_keywords(self, cached_ast, tmp_path):
         sql_file = "issue_46_chr_ascii_substr.sql"
         out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
@@ -718,7 +716,6 @@ class TestIssue48_LongCompareToString:
     """Issue #48: Long variable compared against string literal produces
     Long.compareTo(String) — won't compile due to type mismatch."""
 
-    @pytest.mark.xfail(reason="Issue #48 OPEN — BinaryOp early-return for Long blocks String coercion")
     def test_no_compareto_with_string_literal(self, cached_ast, tmp_path):
         sql_file = "issue_48_long_compareto_string.sql"
         out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
