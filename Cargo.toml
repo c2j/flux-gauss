@@ -3,7 +3,7 @@ members = ["crates/fluxgauss", "crates/fluxgauss-mcp"]
 resolver = "2"
 
 [workspace.package]
-version = "0.6.21"
+version = "0.6.23"
 edition = "2021"
 
 [workspace.dependencies]
