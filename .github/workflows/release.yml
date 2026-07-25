@@ -417,8 +417,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install pyyaml
-        run: pip install pyyaml
+      - name: Install dependencies
+        run: pip install pyyaml pytest
 
       - name: Download ogsql binary
         uses: actions/download-artifact@v4
@@ -436,8 +436,20 @@ jobs:
           chmod +x ogsql-artifact/ogsql
           echo "OGSQL_BIN=$PWD/ogsql-artifact/ogsql" >> "$GITHUB_ENV"
 
+      - name: Run Python unit tests
+        run: python3 -m pytest tests/ -v --tb=short --ignore=tests/regress
+
       - name: Run Python converter
         run: python3 converter/flux_gauss.py -c demo-project/fluxgauss_py.yaml
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Compile generated output
+        run: cd dest_py && mvn compile --batch-mode --quiet
 
       - name: Upload Python output
         uses: actions/upload-artifact@v4
@@ -445,6 +457,42 @@ jobs:
           name: python-engine-output
           retention-days: 1
           path: dest_py/
+
+  # ── Python regression guard ────────────────────────────────────
+  test-python-regress:
+    name: Python regression guard (Linux x86_64)
+    runs-on: ubuntu-22.04
+    needs: [build-ogsql-linux-x86_64]
+    steps:
+      - name: Checkout flux-gauss
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install pyyaml pytest
+
+      - name: Download ogsql binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ogsql-linux-x86_64
+          path: ogsql-artifact
+
+      - name: Extract and prepare ogsql
+        run: |
+          if [ -f ogsql-artifact/ogsql-*.zip ]; then
+            unzip ogsql-artifact/ogsql-*.zip -d ogsql-artifact
+          else
+            tar xzf ogsql-artifact/ogsql-*.tar.gz -C ogsql-artifact
+          fi
+          chmod +x ogsql-artifact/ogsql
+          echo "OGSQL_BIN=$PWD/ogsql-artifact/ogsql" >> "$GITHUB_ENV"
+
+      - name: Run regression tests
+        run: python3 -m pytest tests/regress/ -v --tb=short
 
   # ── fluxgauss-py binary (PyInstaller, Python engine + bundled ogsql) ──
   build-fluxgauss-py-linux-x86_64:
@@ -733,8 +781,23 @@ jobs:
       - name: Build
         run: cargo build --release --bin fluxgauss
 
+      - name: Run Rust tests
+        run: cargo test --workspace
+
+      - name: Run Rust regression tests
+        run: cargo test --test regress
+
       - name: Run Rust converter
         run: cargo run --release --bin fluxgauss -- --config demo-project/fluxgauss_ru.yaml
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Compile generated output
+        run: cd dest_ru && mvn compile --batch-mode --quiet
 
       - name: Upload Rust output
         uses: actions/upload-artifact@v4

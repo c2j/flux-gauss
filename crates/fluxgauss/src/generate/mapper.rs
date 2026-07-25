@@ -1238,7 +1238,9 @@ fn convert_params_to_mybatis(
         s = re.replace_all(&s, placeholder.as_str()).to_string();
     }
 
-    for (var_name, var_java_type) in local_vars {
+    let mut sorted_local: Vec<_> = local_vars.iter().collect();
+    sorted_local.sort_by_key(|(k, _)| *k);
+    for (var_name, var_java_type) in sorted_local {
          let jn = snake_to_camel(var_name);
          let is_map = var_java_type.contains("Map<") || var_java_type == "Object";
          let has_dotted_access = is_map || regex::Regex::new(&format!(
@@ -1273,7 +1275,9 @@ fn convert_params_to_mybatis(
         }
     }
 
-    for (var_name, var_info) in package_vars {
+    let mut sorted_pkg: Vec<_> = package_vars.iter().collect();
+    sorted_pkg.sort_by_key(|(k, _)| *k);
+    for (var_name, var_info) in sorted_pkg {
         let jn = snake_to_camel(var_name);
         let already_replaced = s.contains(&format!("#{{{}}}", jn))
             || s.contains(&format!("#{{{},", jn));

@@ -1,0 +1,417 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.GaussCompleteExamplesMapper;
+import java.math.BigDecimal;
+import java.sql.Date;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class GaussCompleteExamplesService {
+    private static final Logger log = LoggerFactory.getLogger(GaussCompleteExamplesService.class);
+
+    private final GaussCompleteExamplesMapper gaussCompleteExamplesMapper;
+
+    public GaussCompleteExamplesService(GaussCompleteExamplesMapper gaussCompleteExamplesMapper) {
+        this.gaussCompleteExamplesMapper = gaussCompleteExamplesMapper;
+    }
+    // Source: string_split (FUNCTION) — gauss_complete_examples.sql:5-31
+    public List<String> stringSplit(String pString, String pDelimiter) {
+        Integer vStart = Integer.valueOf(1);
+        Integer vEnd = 0;
+        Integer vIdx = Integer.valueOf(1);
+        List<String> vArray = new java.util.ArrayList<>();
+        if (pString == null) {
+            return vArray;
+        }
+        vEnd = String.valueOf(pString).indexOf(String.valueOf(pDelimiter), Math.max(0, (vStart) - 1)) + 1;
+        while (vEnd > 0) {
+            // CALL v_array(...)
+            vIdx = vIdx + 1;
+            vStart = vEnd + String.valueOf(pDelimiter).length();
+            vEnd = String.valueOf(pString).indexOf(String.valueOf(pDelimiter), Math.max(0, (vStart) - 1)) + 1;
+        }
+        // CALL v_array(...)
+        return vArray;
+    }
+
+    // Source: array_length (FUNCTION) — gauss_complete_examples.sql:35-41
+    public Integer arrayLength(List<String> pArray) {
+        return pArray.size();
+    }
+
+    // Source: pkg_for_in_select.func_get_bonus_rate (FUNCTION) — gauss_complete_examples.sql:63-73
+    public java.math.BigDecimal funcGetBonusRate(Integer pDeptId) {
+        java.math.BigDecimal vRate = java.math.BigDecimal.ZERO;
+        if (pDeptId == 10) {
+            vRate = java.math.BigDecimal.valueOf(0.15d);
+        } else if (pDeptId == 20) {
+            vRate = java.math.BigDecimal.valueOf(0.10d);
+        } else if (pDeptId == 30) {
+            vRate = java.math.BigDecimal.valueOf(0.08d);
+        } else {
+            vRate = java.math.BigDecimal.valueOf(0.05d);
+        }
+        return vRate;
+    }
+
+    // Source: pkg_for_in_select.proc_sync_employee_bonus (PROCEDURE) — gauss_complete_examples.sql:75-185
+    @Transactional
+    public void procSyncEmployeeBonus() {
+        java.math.BigDecimal vTotalBonus = java.math.BigDecimal.valueOf(0);
+        Integer vProcessed = Integer.valueOf(0);
+        Integer vLogId = 0;
+        java.math.BigDecimal vBonusRate = java.math.BigDecimal.ZERO;
+        java.math.BigDecimal vBonusAmt = java.math.BigDecimal.ZERO;
+        java.math.BigDecimal vMaxBonus = java.math.BigDecimal.ZERO;
+        Integer vInsertId = 0;
+        int _sqlRowCount = 0;
+        try {
+            java.util.Map<String, Object> _row = null;
+            _row = gaussCompleteExamplesMapper.insertProcSyncEmployeeBonus(vLogId);
+            if (_row == null) _row = java.util.Collections.emptyMap();
+            _sqlRowCount = (_row != null && !_row.isEmpty()) ? 1 : 0;
+            vLogId = (_row.get("batch_id") != null ? (_row.get("batch_id") instanceof Number ? ((Number) _row.get("batch_id")).intValue() : Integer.parseInt(String.valueOf(_row.get("batch_id")))) : 0);
+            List<Map<String, Object>> vEmpList = gaussCompleteExamplesMapper.selectProcSyncEmployeeBonus();
+            for (Map<String, Object> vEmp : vEmpList) {
+                vBonusRate = (java.math.BigDecimal) this.funcGetBonusRate(Integer.parseInt(String.valueOf(vEmp.get("department_id"))));
+                vBonusAmt = (java.math.BigDecimal) (java.math.BigDecimal.valueOf(((Number) (vEmp.get("salary") != null ? vEmp.get("salary") : 0L)).longValue()).multiply(vBonusRate)).setScale((int)(2), java.math.RoundingMode.HALF_UP);
+                vMaxBonus = (java.math.BigDecimal) java.math.BigDecimal.valueOf(((Number) (java.math.BigDecimal.valueOf(((Number) (vEmp.get("salary") != null ? vEmp.get("salary") : 0L)).longValue()).multiply(java.math.BigDecimal.valueOf(12)) != null ? java.math.BigDecimal.valueOf(((Number) (vEmp.get("salary") != null ? vEmp.get("salary") : 0L)).longValue()).multiply(java.math.BigDecimal.valueOf(12)) : 0L)).longValue()).multiply(java.math.BigDecimal.valueOf(0.20d));
+                if (java.math.BigDecimal.valueOf(((Number) (java.math.BigDecimal.valueOf(((Number) (vEmp.get("year_bonus_total") != null ? vEmp.get("year_bonus_total") : 0L)).longValue()).add(vBonusAmt) != null ? java.math.BigDecimal.valueOf(((Number) (vEmp.get("year_bonus_total") != null ? vEmp.get("year_bonus_total") : 0L)).longValue()).add(vBonusAmt) : 0L)).longValue()).compareTo(vMaxBonus) > 0) {
+                    vBonusAmt = (java.math.BigDecimal) vMaxBonus.subtract(java.math.BigDecimal.valueOf(((Number) (vEmp.get("year_bonus_total") != null ? vEmp.get("year_bonus_total") : 0L)).longValue()));
+                    _sqlRowCount = gaussCompleteExamplesMapper.insertProcSyncEmployeeBonus_1(vEmp);
+                }
+                if (vBonusAmt.compareTo(java.math.BigDecimal.valueOf(0)) > 0) {
+                    _row = gaussCompleteExamplesMapper.insertProcSyncEmployeeBonus_2(vEmp, vBonusAmt, vInsertId);
+                    if (_row == null) _row = java.util.Collections.emptyMap();
+                    _sqlRowCount = (_row != null && !_row.isEmpty()) ? 1 : 0;
+                    vInsertId = (_row.get("bonus_id") != null ? (_row.get("bonus_id") instanceof Number ? ((Number) _row.get("bonus_id")).intValue() : Integer.parseInt(String.valueOf(_row.get("bonus_id")))) : 0);
+                    vTotalBonus = vTotalBonus.add(vBonusAmt);
+                    vProcessed = vProcessed + 1;
+                    if (((vProcessed) % (100)) == 0) {
+                        // COMMIT — auto-committed by Spring @Transactional boundary
+                    }
+                }
+            }
+            // COMMIT — auto-committed by Spring @Transactional boundary
+            _sqlRowCount = gaussCompleteExamplesMapper.updateProcSyncEmployeeBonus(vTotalBonus, vProcessed, vLogId);
+            // COMMIT — auto-committed by Spring @Transactional boundary
+        } catch (Exception e) { // OTHERS — src: gauss_complete_examples.sql:75
+            // Rollback
+            // SqlStatement
+            // Commit
+            throw new BusinessException(e.getMessage());
+        }
+    }
+
+    // Source: pkg_open_cursor.proc_get_employee_cursor (PROCEDURE) — gauss_complete_examples.sql:221-245
+    public void procGetEmployeeCursor(Integer pDeptId, java.math.BigDecimal pMinSalary, AtomicReference<List<Map<String, Object>>> pResult) {
+        int pResultIdx = 0;
+        List<Map<String, Object>> pResultResult = null;
+        pResult.set(null);
+        pResultResult = gaussCompleteExamplesMapper.selectProcGetEmployeeCursor(pDeptId, pMinSalary);
+        pResultIdx = 0;
+        if (pResultResult == null) pResultResult = new java.util.ArrayList<>();
+    }
+
+    // Source: pkg_open_cursor.proc_process_dynamic_query (PROCEDURE) — gauss_complete_examples.sql:247-342
+    @Transactional
+    public void procProcessDynamicQuery(String pTableName, String pWhereClause, String pOrderBy) {
+        List<Map<String, Object>> vCursor = new java.util.ArrayList<>();
+        Integer vRecId = 0;
+        String vRecName = null;
+        java.math.BigDecimal vRecValue = java.math.BigDecimal.ZERO;
+        String vRecStatus = null;
+        String vSql = null;
+        Integer vRowCount = Integer.valueOf(0);
+        Integer vBatchSize = Integer.valueOf(500);
+        boolean found = false;
+        int _sqlRowCount = 0;
+        int vCursorIdx = 0;
+        List<Map<String, Object>> vCursorResult = null;
+        try {
+            java.sql.Timestamp vRecTime = null;
+            java.sql.Timestamp vStartTime = null;
+            java.util.Map<String, Object> _row = null;
+            vStartTime = new java.sql.Timestamp(System.currentTimeMillis());
+            _sqlRowCount = gaussCompleteExamplesMapper.insertProcProcessDynamicQuery(pTableName, pWhereClause, pOrderBy, vSql);
+            vCursorResult = gaussCompleteExamplesMapper.selectProcProcessDynamicQuery(pTableName, pWhereClause, pOrderBy);
+            vCursorIdx = 0;
+            if (vCursorResult == null) vCursorResult = new java.util.ArrayList<>();
+            while (true) {
+                found = vCursorIdx < vCursorResult.size();
+                if (found) {
+                    _row = vCursorResult.get(vCursorIdx);
+                    vCursorIdx++;
+                    vRecId = (_row.get("v_rec_id") != null ? (_row.get("v_rec_id") instanceof Number ? ((Number) _row.get("v_rec_id")).intValue() : Integer.parseInt(String.valueOf(_row.get("v_rec_id")))) : 0);
+                    vRecName = (String) _row.get("v_rec_name");
+                    vRecValue = (_row.get("v_rec_value") != null ? (_row.get("v_rec_value") instanceof java.math.BigDecimal ? (java.math.BigDecimal) _row.get("v_rec_value") : new java.math.BigDecimal(String.valueOf(_row.get("v_rec_value")))) : java.math.BigDecimal.ZERO);
+                    vRecStatus = (String) _row.get("v_rec_status");
+                    vRecTime = (java.sql.Timestamp) _row.get("v_rec_time");
+                }
+                if (!(vCursorIdx < vCursorResult.size())) { break; }
+                vRowCount = vRowCount + 1;
+                if (java.util.Objects.equals(vRecStatus, "PENDING")) {
+                    _sqlRowCount = gaussCompleteExamplesMapper.updateProcProcessDynamicQuery(pTableName, vRecId);
+                } else if (java.util.Objects.equals(vRecStatus, "PROCESSING")) {
+                    if (new java.sql.Timestamp(new java.sql.Timestamp(System.currentTimeMillis()).getTime() - java.time.Duration.ofHours((long)2).toMillis()).before(vRecTime)) {
+                        _sqlRowCount = gaussCompleteExamplesMapper.updateProcProcessDynamicQuery_1(pTableName, vRecId);
+                    }
+                } else if (java.util.Objects.equals(vRecStatus, "COMPLETED")) {
+                    _sqlRowCount = gaussCompleteExamplesMapper.insertProcProcessDynamicQuery_1(pTableName, pWhereClause, pOrderBy, vRecId, vRecName, vRecValue, vRecStatus);
+                    _sqlRowCount = gaussCompleteExamplesMapper.deleteProcProcessDynamicQuery(pTableName, vRecId);
+                } else {
+                    _sqlRowCount = gaussCompleteExamplesMapper.insertProcProcessDynamicQuery_2(pTableName, pWhereClause, pOrderBy, vRecId, vRecStatus);
+                }
+                if (((vRowCount) % (vBatchSize)) == 0) {
+                    // COMMIT — auto-committed by Spring @Transactional boundary
+                }
+            }
+            // COMMIT — auto-committed by Spring @Transactional boundary
+            // cursor v_cursor closed
+            _sqlRowCount = gaussCompleteExamplesMapper.insertProcProcessDynamicQuery_3(pTableName, pWhereClause, pOrderBy, vRowCount, vStartTime);
+        } catch (Exception e) { // OTHERS — src: gauss_complete_examples.sql:247
+            // If
+            // Rollback
+            throw new BusinessException(e.getMessage());
+        }
+    }
+
+    // Source: pkg_open_cursor.proc_paginated_query (PROCEDURE) — gauss_complete_examples.sql:344-381
+    public void procPaginatedQuery(Integer pPageSize, Integer pPageNum, AtomicReference<List<Map<String, Object>>> pDataCursor, AtomicReference<List<Map<String, Object>>> pCountCursor) {
+        Integer vOffset = 0;
+        int pCountCursorIdx = 0;
+        List<Map<String, Object>> pCountCursorResult = null;
+        int pDataCursorIdx = 0;
+        List<Map<String, Object>> pDataCursorResult = null;
+        pDataCursor.set(null);
+        pCountCursor.set(null);
+        vOffset = (pPageNum - 1) * pPageSize;
+        pDataCursorResult = gaussCompleteExamplesMapper.selectProcPaginatedQuery(pPageSize, pPageNum, vOffset);
+        pDataCursorIdx = 0;
+        if (pDataCursorResult == null) pDataCursorResult = new java.util.ArrayList<>();
+        pCountCursorResult = gaussCompleteExamplesMapper.selectProcPaginatedQuery_1(pPageSize, pPageNum);
+        pCountCursorIdx = 0;
+        if (pCountCursorResult == null) pCountCursorResult = new java.util.ArrayList<>();
+    }
+
+    // Source: pkg_dynamic_for_loop.proc_dynamic_for_processing (PROCEDURE) — gauss_complete_examples.sql:403-490
+    @Transactional
+    public void procDynamicForProcessing(String pTableName, String pSelectColumns, String pWhereClause, String pOrderBy, String pProcessType) {
+        String vSql = null;
+        String vProcessSql = null;
+        Integer vRowCount = Integer.valueOf(0);
+        Integer vBatchCommit = Integer.valueOf(200);
+        Integer vPkId = 0;
+        String vStatus = null;
+        java.math.BigDecimal vAmount = java.math.BigDecimal.ZERO;
+        String vName = null;
+        Integer vRec = 0;
+        int _sqlRowCount = 0;
+        try {
+            java.sql.Timestamp vStartTime = null;
+            java.sql.Timestamp vCreateTime = null;
+            vStartTime = new java.sql.Timestamp(System.currentTimeMillis());
+            _sqlRowCount = gaussCompleteExamplesMapper.insertProcDynamicForProcessing(pTableName, pSelectColumns, pWhereClause, pOrderBy, pProcessType, vSql);
+            // ERROR: 处理语句失败 - local variable 'list_var' referenced before assignment
+            // COMMIT — auto-committed by Spring @Transactional boundary
+            _sqlRowCount = gaussCompleteExamplesMapper.insertProcDynamicForProcessing_1(pTableName, pSelectColumns, pWhereClause, pOrderBy, pProcessType, vRowCount, vStartTime);
+        } catch (Exception e) { // OTHERS — src: gauss_complete_examples.sql:403
+            // Rollback
+            // SqlStatement
+            throw new BusinessException(e.getMessage());
+        }
+    }
+
+    // Source: pkg_cursor_advanced.proc_cursor_dynamic_using (PROCEDURE) — gauss_complete_examples.sql:543-597
+    @Transactional
+    public void procCursorDynamicUsing(String pTableName, String pStatusList, java.math.BigDecimal pMinAmount, java.sql.Date pStartDate, AtomicReference<List<Map<String, Object>>> pResult) {
+        String vSql = null;
+        Integer vStatusCount = 0;
+        String vInClause = null;
+        int _sqlRowCount = 0;
+        int pResultIdx = 0;
+        List<Map<String, Object>> pResultResult = null;
+        List<String> vStatusArray = new java.util.ArrayList<>();
+        pResult.set(null);
+        vStatusArray = java.util.Arrays.asList(String.valueOf(pStatusList).split(java.util.regex.Pattern.quote(",")));
+        vStatusCount = (vStatusArray).size();
+        if (vStatusCount == 1) {
+            pResultResult = gaussCompleteExamplesMapper.selectProcCursorDynamicUsing(pTableName, pStatusList, pMinAmount, pStartDate, vInClause);
+            pResultIdx = 0;
+            if (pResultResult == null) pResultResult = new java.util.ArrayList<>();
+        } else if (vStatusCount == 2) {
+            pResultResult = gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_1(pTableName, pStatusList, pMinAmount, pStartDate, vInClause);
+            pResultIdx = 0;
+            if (pResultResult == null) pResultResult = new java.util.ArrayList<>();
+        } else if (vStatusCount == 3) {
+            pResultResult = gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_2(pTableName, pStatusList, pMinAmount, pStartDate, vInClause);
+            pResultIdx = 0;
+            if (pResultResult == null) pResultResult = new java.util.ArrayList<>();
+        } else {
+            pResultResult = gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_3(pTableName, pStatusList, pMinAmount, pStartDate, vInClause);
+            pResultIdx = 0;
+            if (pResultResult == null) pResultResult = new java.util.ArrayList<>();
+        }
+        _sqlRowCount = gaussCompleteExamplesMapper.insertProcCursorDynamicUsing(pTableName, pStatusList, pMinAmount, pStartDate, vSql);
+    }
+
+    // Source: pkg_cursor_advanced.func_get_order_cursor (FUNCTION) — gauss_complete_examples.sql:599-623
+    public Map<String, Object> funcGetOrderCursor(Integer pCustomerId, java.sql.Date pDateFrom, java.sql.Date pDateTo) {
+        String vSql = null;
+        int vCursorIdx = 0;
+        List<Map<String, Object>> vCursorResult = null;
+        Map<String, Object> vCursor = new HashMap<>();
+        vSql = "SELECT\n                    o.order_id,\n                    c.customer_name,\n                    SUM(oi.quantity * oi.unit_price) AS total_amount,\n                    COUNT(DISTINCT oi.item_id) AS item_count,\n                    o.order_status\n                  FROM orders o\n                  JOIN customers c ON o.customer_id = c.customer_id\n                  JOIN order_items oi ON o.order_id = oi.order_id\n                  WHERE o.customer_id = :1\n                    AND o.order_date BETWEEN :2 AND :3\n                  GROUP BY o.order_id, c.customer_name, o.order_status\n                  ORDER BY total_amount DESC";
+        vCursorResult = gaussCompleteExamplesMapper.selectFuncGetOrderCursor(pCustomerId, pDateFrom, pDateTo);
+        vCursorIdx = 0;
+        if (vCursorResult == null) vCursorResult = new java.util.ArrayList<>();
+        return vCursor;
+    }
+
+    // Source: pkg_cursor_advanced.proc_multi_cursor_return (PROCEDURE) — gauss_complete_examples.sql:625-650
+    public void procMultiCursorReturn(Integer pQueryId, AtomicReference<List<Map<String, Object>>> pDataCursor, AtomicReference<List<Map<String, Object>>> pMetaCursor) {
+        int pDataCursorIdx = 0;
+        List<Map<String, Object>> pDataCursorResult = null;
+        int pMetaCursorIdx = 0;
+        List<Map<String, Object>> pMetaCursorResult = null;
+        pDataCursor.set(null);
+        pMetaCursor.set(null);
+        pDataCursorResult = gaussCompleteExamplesMapper.selectProcMultiCursorReturn(pQueryId);
+        pDataCursorIdx = 0;
+        if (pDataCursorResult == null) pDataCursorResult = new java.util.ArrayList<>();
+        pMetaCursorResult = gaussCompleteExamplesMapper.selectProcMultiCursorReturn_1(pQueryId);
+        pMetaCursorIdx = 0;
+        if (pMetaCursorResult == null) pMetaCursorResult = new java.util.ArrayList<>();
+    }
+
+    // Source: pkg_cursor_advanced.proc_paginate_with_using (PROCEDURE) — gauss_complete_examples.sql:652-671
+    public void procPaginateWithUsing(String pBaseSql, Integer pPageSize, Integer pPageNum, String pBindValues, AtomicReference<List<Map<String, Object>>> pDataCursor, AtomicReference<List<Map<String, Object>>> pTotalCursor) {
+        Integer vOffset = 0;
+        String vCountSql = null;
+        String vPageSql = null;
+        int pDataCursorIdx = 0;
+        List<Map<String, Object>> pDataCursorResult = null;
+        int pTotalCursorIdx = 0;
+        List<Map<String, Object>> pTotalCursorResult = null;
+        pDataCursor.set(null);
+        pTotalCursor.set(null);
+        vOffset = (pPageNum - 1) * pPageSize;
+        vCountSql = "SELECT COUNT(*) FROM (" + pBaseSql + ") t";
+        vPageSql = "SELECT * FROM (" + pBaseSql + ") t LIMIT :1 OFFSET :2";
+        pDataCursorResult = gaussCompleteExamplesMapper.selectProcPaginateWithUsing(pBaseSql, pPageSize, pPageNum, pBindValues, vOffset);
+        pDataCursorIdx = 0;
+        if (pDataCursorResult == null) pDataCursorResult = new java.util.ArrayList<>();
+        pTotalCursorResult = gaussCompleteExamplesMapper.selectProcPaginateWithUsing_1(pBaseSql, pPageSize, pPageNum, pBindValues);
+        pTotalCursorIdx = 0;
+        if (pTotalCursorResult == null) pTotalCursorResult = new java.util.ArrayList<>();
+    }
+
+    // Source: pkg_cursor_lifecycle.proc_get_raw_cursor (PROCEDURE) — gauss_complete_examples.sql:704-715
+    public void procGetRawCursor(Integer pDeptId, AtomicReference<List<Map<String, Object>>> pCursor) {
+        int pCursorIdx = 0;
+        List<Map<String, Object>> pCursorResult = null;
+        pCursor.set(null);
+        pCursorResult = gaussCompleteExamplesMapper.selectProcGetRawCursor(pDeptId);
+        pCursorIdx = 0;
+        if (pCursorResult == null) pCursorResult = new java.util.ArrayList<>();
+    }
+
+    // Source: pkg_cursor_lifecycle.proc_enhance_cursor (PROCEDURE) — gauss_complete_examples.sql:717-749
+    @Transactional
+    public void procEnhanceCursor(List<Map<String, Object>> pInCursor, AtomicReference<List<Map<String, Object>>> pOutCursor) {
+        Integer vId = 0;
+        String vName = null;
+        java.math.BigDecimal vSalary = java.math.BigDecimal.ZERO;
+        Integer vDeptId = 0;
+        String vTemp = "tmp_enhanced_" + new java.text.SimpleDateFormat("yyyyMMddHHmSSSs").format(new java.sql.Timestamp(System.currentTimeMillis()));
+        boolean found = false;
+        int _sqlRowCount = 0;
+        int pInCursorIdx = 0;
+        List<Map<String, Object>> pInCursorResult = null;
+        int pOutCursorIdx = 0;
+        List<Map<String, Object>> pOutCursorResult = null;
+        java.sql.Date vHireDate = null;
+        pOutCursor.set(null);
+        java.util.Map<String, Object> _row = null;
+        _sqlRowCount = gaussCompleteExamplesMapper.updateProcEnhanceCursor(vTemp);
+        while (true) {
+            found = pInCursorIdx < (pInCursorResult != null ? pInCursorResult.size() : 0);
+            if (found) {
+                _row = pInCursorResult.get(pInCursorIdx);
+                pInCursorIdx++;
+                vId = (_row.get("v_id") != null ? (_row.get("v_id") instanceof Number ? ((Number) _row.get("v_id")).intValue() : Integer.parseInt(String.valueOf(_row.get("v_id")))) : 0);
+                vName = (String) _row.get("v_name");
+                vSalary = (_row.get("v_salary") != null ? (_row.get("v_salary") instanceof java.math.BigDecimal ? (java.math.BigDecimal) _row.get("v_salary") : new java.math.BigDecimal(String.valueOf(_row.get("v_salary")))) : java.math.BigDecimal.ZERO);
+                vDeptId = (_row.get("v_dept_id") != null ? (_row.get("v_dept_id") instanceof Number ? ((Number) _row.get("v_dept_id")).intValue() : Integer.parseInt(String.valueOf(_row.get("v_dept_id")))) : 0);
+                vHireDate = (_row.get("v_hire_date") instanceof java.sql.Timestamp ? new java.sql.Date(((java.sql.Timestamp) _row.get("v_hire_date")).getTime()) : (java.sql.Date) _row.get("v_hire_date"));
+            }
+            if (!(pInCursorIdx < pInCursorResult.size())) { break; }
+            _sqlRowCount = gaussCompleteExamplesMapper.insertProcEnhanceCursor(vId, vName, vSalary, vDeptId, vHireDate, vTemp);
+        }
+        // cursor p_in_cursor closed
+        pOutCursorResult = gaussCompleteExamplesMapper.selectProcEnhanceCursor(pInCursor, vTemp);
+        pOutCursorIdx = 0;
+        if (pOutCursorResult == null) pOutCursorResult = new java.util.ArrayList<>();
+    }
+
+    // Source: pkg_cursor_lifecycle.proc_consume_cursor (PROCEDURE) — gauss_complete_examples.sql:751-783
+    public void procConsumeCursor(List<Map<String, Object>> pCursor, Map<String, Object> pMap, AtomicReference<String> pSummary) {
+        Integer vId = 0;
+        String vName = null;
+        java.math.BigDecimal vSalary = java.math.BigDecimal.ZERO;
+        String vLevel = null;
+        Integer vEligible = 0;
+        Integer vCount = Integer.valueOf(0);
+        java.math.BigDecimal vTotal = java.math.BigDecimal.valueOf(0);
+        Integer vSeniorCount = Integer.valueOf(0);
+        boolean found = false;
+        int pCursorIdx = 0;
+        List<Map<String, Object>> pCursorResult = null;
+        pSummary.set(null);
+        java.util.Map<String, Object> _row = null;
+        while (true) {
+            // CALL map_object.ad_item(...)
+            // CALL map_object.ad_item(...)
+            vLevel = /* TODO: funcGetFrameDate() */ null;
+            vLevel = /* TODO: funcGetFrameDate() */ null + "-sss";
+            found = pCursorIdx < (pCursorResult != null ? pCursorResult.size() : 0);
+            if (found) {
+                _row = pCursorResult.get(pCursorIdx);
+                pCursorIdx++;
+                vId = (_row.get("v_id") != null ? (_row.get("v_id") instanceof Number ? ((Number) _row.get("v_id")).intValue() : Integer.parseInt(String.valueOf(_row.get("v_id")))) : 0);
+                vName = (String) _row.get("v_name");
+                vSalary = (_row.get("v_salary") != null ? (_row.get("v_salary") instanceof java.math.BigDecimal ? (java.math.BigDecimal) _row.get("v_salary") : new java.math.BigDecimal(String.valueOf(_row.get("v_salary")))) : java.math.BigDecimal.ZERO);
+                vLevel = (String) _row.get("v_level");
+                vEligible = (_row.get("v_eligible") != null ? (_row.get("v_eligible") instanceof Number ? ((Number) _row.get("v_eligible")).intValue() : Integer.parseInt(String.valueOf(_row.get("v_eligible")))) : 0);
+            }
+            if (!(pCursorIdx < pCursorResult.size())) { break; }
+            vCount = vCount + 1;
+            vTotal = vTotal.add(vSalary);
+            if ("SENIOR".equals(vLevel)) {
+                vSeniorCount = vSeniorCount + 1;
+            }
+        }
+        // cursor p_cursor closed
+        pSummary.set("Total: " + vCount + ", Senior: " + vSeniorCount + ", Avg Salary: " + (vTotal.divide((java.util.Objects.equals(vCount, 0) ? null : java.math.BigDecimal.valueOf(vCount)))).setScale((int)(2), java.math.RoundingMode.HALF_UP));
+    }
+
+    // Source: pkg_cursor_lifecycle.proc_full_pipeline (PROCEDURE) — gauss_complete_examples.sql:785-794
+    public void procFullPipeline(Integer pDeptId) {
+        List<Map<String, Object>> vCursor1 = new java.util.ArrayList<>();
+        List<Map<String, Object>> vCursor2 = new java.util.ArrayList<>();
+        String vResult = null;
+        // CALL proc_get_raw_cursor(...)
+        // CALL proc_enhance_cursor(...)
+        // CALL proc_consume_cursor(...)
+        // CALL DBE_OUTPUT.PRINT_LINE(...)
+    }
+}

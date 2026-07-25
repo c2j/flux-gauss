@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.OrderMapper">
+
+    <!-- Source: pkg_order.sql:4-4 — pkg_order.create_order.insertCreateOrder -->
+    <insert id="insertCreateOrder">
+        insert into t_orders (user_id, product_id, qty, status, created_at) values (#{pUserId, jdbcType=BIGINT, javaType=Long}, #{pProductId, jdbcType=BIGINT, javaType=Long}, #{pQty, jdbcType=INTEGER, javaType=Integer}, 'CREATED', current_timestamp)
+    </insert>
+
+    <!-- Source: pkg_order.sql:6-6 — pkg_order.cancel_order.selectCancelOrder -->
+    <select id="selectCancelOrder" parameterType="long" resultType="java.util.LinkedHashMap">
+        select
+          product_id,
+          qty
+        from t_orders
+        where id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
+                LIMIT 1
+    </select>
+
+    <!-- Source: pkg_order.sql:10-10 — pkg_order.cancel_order.updateCancelOrder -->
+    <update id="updateCancelOrder" parameterType="long">
+        update t_orders set status = 'CANCELLED' where id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
+    </update>
+
+    <!-- Source: pkg_order.sql:3-3 — pkg_order.get_order_detail.selectGetOrderDetail -->
+    <select id="selectGetOrderDetail" parameterType="long" resultType="java.util.LinkedHashMap">
+        select
+          o.*,
+          p.name AS product_name
+        from t_orders AS o
+        inner join t_products AS p
+          on o.product_id = p.id
+        where o.id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
+    </select>
+
+    <!-- Source: pkg_order.sql:3-3 — pkg_order.complete_order.updateCompleteOrder -->
+    <update id="updateCompleteOrder" parameterType="long">
+        update t_orders set status = 'COMPLETED' where id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
+    </update>
+
+</mapper>

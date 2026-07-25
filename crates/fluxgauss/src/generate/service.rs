@@ -142,7 +142,9 @@ pub fn write_service_class(
     let written_package_vars: std::collections::HashSet<&str> = pkg.procedures.iter()
         .flat_map(|p| p.written_package_vars.iter().map(|s| s.as_str()))
         .collect();
-    for (var_name, var_info) in &pkg.package_vars {
+    let mut sorted_pkg_vars: Vec<_> = pkg.package_vars.iter().collect();
+    sorted_pkg_vars.sort_by_key(|(k, _)| *k);
+    for (var_name, var_info) in sorted_pkg_vars {
         let field_name = crate::naming::java_safe_identifier(&crate::naming::snake_to_camel(var_name));
         let is_readonly = var_info.is_constant || !written_package_vars.contains(var_name.as_str());
         let modifier = if is_readonly { "private static final" } else { "private static" };
@@ -537,7 +539,9 @@ fn build_service_method(
         let out_java_names: std::collections::HashSet<String> =
             out_params.iter().map(|p| snake_to_camel(&p.name)).collect();
 
-        for (var_name, var_type) in &proc.local_vars {
+        let mut sorted_local_vars: Vec<_> = proc.local_vars.iter().collect();
+        sorted_local_vars.sort_by_key(|(k, _)| *k);
+        for (var_name, var_type) in sorted_local_vars {
             let var_java = snake_to_camel(var_name);
             if !out_java_names.contains(&var_java) {
                 let is_loop_iter = proc.java_logic_lines.iter().any(|l| {
@@ -650,7 +654,9 @@ fn build_service_method(
             let mut l = line.replace("mapper.", &format!("{}.", mapper_name));
             l = append_local_vars_to_mapper_calls(&l, proc, mapper_name, package_vars);
             let is_self_call = l.trim().starts_with("this.");
-            for (vname, _inner_type) in &proc.out_local_vars {
+            let mut sorted_out_vars: Vec<_> = proc.out_local_vars.iter().collect();
+            sorted_out_vars.sort_by_key(|(k, _)| *k);
+            for (vname, _inner_type) in sorted_out_vars {
                 let vcamel = snake_to_camel(vname);
                 if !is_self_call {
                     l = l.replace(&format!("{},", vcamel), &format!("{}.get(),", vcamel));

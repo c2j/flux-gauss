@@ -1,0 +1,41 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.GaussCompleteExamplesMapper;
+import com.example.demo.service.GaussCompleteExamplesService;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/gauss_complete_examples.sql
+class GaussCompleteExamplesServiceTest {
+
+    @Mock
+    private GaussCompleteExamplesMapper gaussCompleteExamplesMapper;
+
+    @InjectMocks
+    private GaussCompleteExamplesService service;
+
+        @Test
+        @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+        void test_stringSplit_success() {
+            String pString = "test_pString";
+            String pDelimiter = "test_pDelimiter";
+            var result = service.stringSplit(pString, pDelimiter);
+        }
+
+        @Test
+        @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+        void test_arrayLength_success() {
+            Object pArray = java.util.Arrays.asList(1.0, 2.0, 3.0);
+            var result = service.arrayLength(pArray);
+        }
+}

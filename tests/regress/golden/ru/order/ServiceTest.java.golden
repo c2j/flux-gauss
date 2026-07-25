@@ -1,0 +1,92 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.OrderMapper;
+import com.example.demo.service.OrderService;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/pkg_order.sql
+class OrderServiceTest {
+
+    @Mock
+    private OrderMapper orderMapper;
+
+    @InjectMocks
+    private OrderService service;
+
+        @Test
+        @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+        void test_createOrder_success() {
+            Long pUserId = 1L;
+            Long pProductId = 1L;
+            Integer pQty = 5;
+            when(orderMapper.insertCreateOrder(any(), any(), any())).thenReturn(1);
+            { var m = new java.util.HashMap<String,Object>(); m.put("vProductId", 1L); m.put("vQty", java.math.BigDecimal.TEN); m.put("v_product_id", 1L); m.put("v_qty", java.math.BigDecimal.TEN); when(orderMapper.selectCancelOrder(any(), any(), any())).thenReturn(m); }
+            when(orderMapper.updateCancelOrder(any())).thenReturn(1);
+            { var m = new java.util.HashMap<String,Object>(); m.put("productName", "test"); when(orderMapper.selectGetOrderDetail(any())).thenReturn(java.util.List.of(m)); }
+            when(orderMapper.updateCompleteOrder(any())).thenReturn(1);
+            service.createOrder(pUserId, pProductId, pQty);
+            verify(orderMapper, atLeast(0)).insertCreateOrder(any(), any(), any());
+        }
+
+        @Test
+        @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+        void test_cancelOrder_success() {
+            Long pOrderId = 1L;
+            when(orderMapper.insertCreateOrder(any(), any(), any())).thenReturn(1);
+            { var m = new java.util.HashMap<String,Object>(); m.put("vProductId", 1L); m.put("vQty", java.math.BigDecimal.TEN); m.put("v_product_id", 1L); m.put("v_qty", java.math.BigDecimal.TEN); when(orderMapper.selectCancelOrder(any(), any(), any())).thenReturn(m); }
+            when(orderMapper.updateCancelOrder(any())).thenReturn(1);
+            { var m = new java.util.HashMap<String,Object>(); m.put("productName", "test"); when(orderMapper.selectGetOrderDetail(any())).thenReturn(java.util.List.of(m)); }
+            when(orderMapper.updateCompleteOrder(any())).thenReturn(1);
+            service.cancelOrder(pOrderId);
+            verify(orderMapper, atLeast(0)).updateCancelOrder(any());
+        }
+
+        @Test
+        @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+        void test_getOrderDetail_success() {
+            Long pOrderId = 1L;
+            when(orderMapper.insertCreateOrder(any(), any(), any())).thenReturn(1);
+            { var m = new java.util.HashMap<String,Object>(); m.put("vProductId", 1L); m.put("vQty", java.math.BigDecimal.TEN); m.put("v_product_id", 1L); m.put("v_qty", java.math.BigDecimal.TEN); when(orderMapper.selectCancelOrder(any(), any(), any())).thenReturn(m); }
+            when(orderMapper.updateCancelOrder(any())).thenReturn(1);
+            { var m = new java.util.HashMap<String,Object>(); m.put("productName", "test"); when(orderMapper.selectGetOrderDetail(any())).thenReturn(java.util.List.of(m)); }
+            when(orderMapper.updateCompleteOrder(any())).thenReturn(1);
+            service.getOrderDetail(pOrderId);
+        }
+
+        @Test
+        @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+        void test_batchCreateOrders_success() {
+            Long pUserId = 1L;
+            String pItems = "test_pItems";
+            when(orderMapper.insertCreateOrder(any(), any(), any())).thenReturn(1);
+            { var m = new java.util.HashMap<String,Object>(); m.put("vProductId", 1L); m.put("vQty", java.math.BigDecimal.TEN); m.put("v_product_id", 1L); m.put("v_qty", java.math.BigDecimal.TEN); when(orderMapper.selectCancelOrder(any(), any(), any())).thenReturn(m); }
+            when(orderMapper.updateCancelOrder(any())).thenReturn(1);
+            { var m = new java.util.HashMap<String,Object>(); m.put("productName", "test"); when(orderMapper.selectGetOrderDetail(any())).thenReturn(java.util.List.of(m)); }
+            when(orderMapper.updateCompleteOrder(any())).thenReturn(1);
+            service.batchCreateOrders(pUserId, pItems);
+        }
+
+        @Test
+        @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+        void test_completeOrder_success() {
+            Long pOrderId = 1L;
+            when(orderMapper.insertCreateOrder(any(), any(), any())).thenReturn(1);
+            { var m = new java.util.HashMap<String,Object>(); m.put("vProductId", 1L); m.put("vQty", java.math.BigDecimal.TEN); m.put("v_product_id", 1L); m.put("v_qty", java.math.BigDecimal.TEN); when(orderMapper.selectCancelOrder(any(), any(), any())).thenReturn(m); }
+            when(orderMapper.updateCancelOrder(any())).thenReturn(1);
+            { var m = new java.util.HashMap<String,Object>(); m.put("productName", "test"); when(orderMapper.selectGetOrderDetail(any())).thenReturn(java.util.List.of(m)); }
+            when(orderMapper.updateCompleteOrder(any())).thenReturn(1);
+            service.completeOrder(pOrderId);
+            verify(orderMapper, atLeast(0)).updateCompleteOrder(any());
+        }
+}

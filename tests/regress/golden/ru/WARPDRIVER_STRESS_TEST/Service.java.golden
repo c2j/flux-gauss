@@ -1,0 +1,610 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.WarpdriverStressTestMapper;
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
+
+@Service
+// Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql
+public class WarpdriverStressTestService {
+    private static final Logger log = LoggerFactory.getLogger(WarpdriverStressTestService.class);
+
+    private final WarpdriverStressTestMapper warpdriverStressTestMapper;
+    private static final Integer gBatchSize = 1000;
+    private static String gLastErrorCode = null;
+    private static final Integer gMaxRetry = 5;
+    private static Integer gSessionCounter = 0;
+    private static final String gVersion = "9.9.9-STRESS";
+
+    public WarpdriverStressTestService(WarpdriverStressTestMapper warpdriverStressTestMapper) {
+            this.warpdriverStressTestMapper = warpdriverStressTestMapper;
+    }
+
+    public static class ROrderItem {
+        public Long itemId;
+        public Object productCode;
+        public Object quantity;
+        public Object unitPrice;
+        public String metadata;
+    }
+
+        // Source: PKG_WARPDRIVER_STRESS_TEST.sp_autonomous_audit (PROCEDURE) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:106-118
+        @Transactional
+        public void spAutonomousAudit(String pAction, String pDetail) {
+            try {
+            warpdriverStressTestMapper.insertSpAutonomousAudit(pAction, pDetail);
+            // COMMIT;
+            } catch (Exception e) {
+            }
+        }
+
+        // Source: PKG_WARPDRIVER_STRESS_TEST.fn_dynamic_executor (FUNCTION) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:123-133
+        public Integer fnDynamicExecutor(String pSql, long pParam1, String pParam2) {
+            Integer vAffected = 0;
+            int __ROWCOUNT__ = 0;
+            // TODO: EXECUTE p_sql — could not resolve SQL string
+            vAffected = Integer.valueOf(__ROWCOUNT__);
+            return vAffected;
+        }
+
+        // Source: PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator (PROCEDURE) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:138-289
+        @Transactional
+        public void spMainOrchestrator(String pBizDate, String pMode, AtomicReference<java.math.BigDecimal> pTotalAmt, AtomicReference<Long> pLogId) {
+            Integer vCleaned = 0;
+            java.util.List<Object> vCurOrders = null;
+            java.sql.Date vDate = java.sql.Date.valueOf(String.valueOf(pBizDate));
+            Boolean vHasError = false;
+            Integer vIdx = 0;
+            List<String> vItemTab = null;
+            Map<String, Object> vRec = new HashMap<>();
+            String vSavepoint1 = null;
+            java.math.BigDecimal vSum = java.math.BigDecimal.ZERO;
+            List<Map<String, Object>> vCurOrdersResult = null;
+            int vCurOrdersIdx = 0;
+            boolean found = false;
+            String __SQLERRM__ = "";
+            int __SQLCODE__ = 0;
+            int __ROWCOUNT__ = 0;
+            try {
+            // State machine generated from GOTO labels
+            enum SpMainOrchestratorState { FetchLoop, ErrorHandler, CloseCursor }
+            SpMainOrchestratorState currentState = SpMainOrchestratorState.FetchLoop;
+            boolean running = true;
+            int _smGuard = 0;
+            while (running && _smGuard++ < 10000) {
+            gSessionCounter = gSessionCounter + 1;
+            pLogId.set(this.nextval("seq_log_master"));
+            this.spAutonomousAudit("ORCH_START", String.valueOf(String.valueOf(String.valueOf("Mode=").concat(String.valueOf(pMode))).concat(String.valueOf("|Date="))).concat(String.valueOf(pBizDate)));
+            if (java.util.Objects.equals(pMode, "FAST")) {
+            vCurOrdersResult = warpdriverStressTestMapper.selectSpMainOrchestrator(pBizDate, pMode, vDate, gBatchSize);
+            if (vCurOrdersResult == null) vCurOrdersResult = new java.util.ArrayList<>();
+            vCurOrdersIdx = 0;
+            } else {
+            vCurOrdersResult = warpdriverStressTestMapper.selectSpMainOrchestrator_1(pBizDate, pMode, vDate);
+            if (vCurOrdersResult == null) vCurOrdersResult = new java.util.ArrayList<>();
+            vCurOrdersIdx = 0;
+            }
+                switch (currentState) {
+                    case FetchLoop:
+            found = vCurOrdersIdx < vCurOrdersResult.size();
+            if (found) {
+                Map<String, Object> _row = vCurOrdersResult.get(vCurOrdersIdx);
+                vCurOrdersIdx++;
+                vRec = (Map<String, Object>) _row.get("v_rec");
+            }
+            if (!found) {
+            currentState = SpMainOrchestratorState.CloseCursor;
+            break;
+            }
+            if (java.util.Objects.equals(vRec.get("status"), "PENDING")) {
+            vSavepoint1 = String.valueOf("sp_").concat(String.valueOf(vRec.getOrDefault("orderId", vRec.get("order_id"))));
+            // SQL: SAVEPOINT ${vSavepoint1}
+            try {
+            vCleaned = ((Number) this.fnRecursiveTreeCleanup(Long.parseLong(String.valueOf(vRec.getOrDefault("orderId", vRec.get("order_id")))), 0)).intValue();
+            __ROWCOUNT__ = warpdriverStressTestMapper.updateSpMainOrchestrator(pBizDate, pMode, vRec);
+            if (java.util.Objects.equals(__ROWCOUNT__, 0)) {
+            // SQL: ROLLBACK TO SAVEPOINT ${vSavepoint1}
+            currentState = SpMainOrchestratorState.FetchLoop;
+            break;
+            }
+            vIdx = vIdx + 1;
+            // CALL itemTab(vIdx) — procedure not found in current package
+            // SQL: . item_id := v_rec . order_id
+            // CALL itemTab(vIdx) — procedure not found in current package
+            // SQL: . product_code := 'PROD_' || MOD ( v_rec . order_id , 100 )
+            // CALL itemTab(vIdx) — procedure not found in current package
+            // SQL: . quantity := v_rec . total_amount / 100
+            // CALL itemTab(vIdx) — procedure not found in current package
+            // SQL: . unit_price := 100
+            // CALL itemTab(vIdx) — procedure not found in current package
+            // SQL: . metadata := jsonb_build_object ( 'order_id' , v_rec . order_id , 'mode' , p_mode , 'seq' , g_session_counter )
+            vSum = vSum.add(java.math.BigDecimal.valueOf(((Number) vRec.getOrDefault("totalAmount", vRec.get("total_amount"))).doubleValue()));
+            if (java.util.Optional.ofNullable((Number) vRec.getOrDefault("totalAmount", vRec.get("total_amount"))).map(Number::longValue).orElse(0L) > 1000000) {
+            this.spDynamicSchedulerDispatch(String.valueOf(vRec.getOrDefault("orderId", vRec.get("order_id"))), "JOB_BIG_ORDER_");
+            } else if (java.util.Optional.ofNullable((Number) vRec.getOrDefault("totalAmount", vRec.get("total_amount"))).map(Number::longValue).orElse(0L) < 0) {
+            currentState = SpMainOrchestratorState.ErrorHandler;
+            break;
+            }
+            } catch (Exception e) {
+                __SQLERRM__ = e.getMessage();
+                __SQLCODE__ = -1;
+            gLastErrorCode = String.valueOf(__SQLERRM__);
+            // SQL: ROLLBACK TO SAVEPOINT ${vSavepoint1}
+            this.spAutonomousAudit("ORCH_ERROR", __SQLERRM__);
+            currentState = SpMainOrchestratorState.FetchLoop;
+            break;
+            }
+            } else if (java.util.Objects.equals(vRec.get("status"), "PROCESSING")) {
+            currentState = SpMainOrchestratorState.FetchLoop;
+            break;
+            }
+            if (java.util.Objects.equals((gSessionCounter % 100), 0)) {
+            // COMMIT;
+            this.spAutonomousAudit("ORCH_COMMIT", String.valueOf("Batch committed at counter=").concat(String.valueOf(gSessionCounter)));
+            }
+                        currentState = SpMainOrchestratorState.FetchLoop;
+                        break;
+                    case ErrorHandler:
+            __ROWCOUNT__ = warpdriverStressTestMapper.insertSpMainOrchestrator(pBizDate, pMode, pLogId.get(), vRec);
+            vHasError = true;
+                        currentState = SpMainOrchestratorState.FetchLoop;
+                        break;
+                    case CloseCursor:
+            // CLOSE vCurOrders;
+            if (vIdx > 0) {
+            for (int i = 1; i <= vIdx; i++) {
+            __ROWCOUNT__ = warpdriverStressTestMapper.insertSpMainOrchestrator_1(pBizDate, pMode, pLogId.get(), vItemTab);
+            }
+            }
+            pTotalAmt.set(vSum);
+            if (!vHasError) {
+            // COMMIT;
+            } else {
+            try { TransactionAspectSupport.currentTransactionStatus().setRollbackOnly(); } catch (Exception _tx) {}
+            }
+            this.spAutonomousAudit("ORCH_END", String.valueOf(String.valueOf(String.valueOf("Total=").concat(String.valueOf(vSum))).concat(String.valueOf("|Items="))).concat(String.valueOf(vIdx)));
+                        break;
+                    default:
+                        running = false;
+                        break;
+                }
+            }
+            } catch (Exception e) {
+            try { TransactionAspectSupport.currentTransactionStatus().setRollbackOnly(); } catch (Exception _tx) {}
+            pTotalAmt.set(java.math.BigDecimal.valueOf(-1L));
+            gLastErrorCode = String.valueOf(__SQLERRM__);
+            this.spAutonomousAudit("ORCH_FATAL", __SQLERRM__);
+            log.info("");
+            }
+        }
+
+        // Source: PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master (PROCEDURE) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294-351
+        @Transactional
+        public void spGotoCleanupMaster(long pOrderId, AtomicReference<String> pResult) {
+            Long vConnId = 0L;
+            String vLockKey = null;
+            java.math.BigDecimal vTempAmt = java.math.BigDecimal.ZERO;
+            boolean found = false;
+            String __SQLERRM__ = "";
+            int __ROWCOUNT__ = 0;
+            try {
+            try {
+            vLockKey = String.valueOf("LOCK_ORDER_").concat(String.valueOf(pOrderId));
+            vConnId = Thread.currentThread().getId();
+            __ROWCOUNT__ = warpdriverStressTestMapper.insertSpGotoCleanupMaster(pOrderId, vConnId, vLockKey);
+            { var _val = warpdriverStressTestMapper.selectSpGotoCleanupMaster(pOrderId); if (_val != null) vTempAmt = (java.math.BigDecimal) _val; }
+            if (!found) {
+            pResult.set("ORDER_NOT_FOUND");
+            return;
+            }
+            if ((vTempAmt == null || vTempAmt.compareTo(java.math.BigDecimal.valueOf(0)) <= 0)) {
+            pResult.set("INVALID_AMOUNT");
+            return;
+            }
+            __ROWCOUNT__ = warpdriverStressTestMapper.updateSpGotoCleanupMaster(pOrderId);
+            if (java.util.Objects.equals(__ROWCOUNT__, 0)) {
+            pResult.set("CONFLICT");
+            return;
+            }
+            __ROWCOUNT__ = warpdriverStressTestMapper.updateSpGotoCleanupMaster_1(pOrderId, vTempAmt);
+            __ROWCOUNT__ = warpdriverStressTestMapper.insertSpGotoCleanupMaster_1(pOrderId, vTempAmt);
+            pResult.set("SUCCESS");
+            } finally {
+            __ROWCOUNT__ = warpdriverStressTestMapper.deleteSpGotoCleanupMaster(pOrderId, vLockKey);
+            // COMMIT;
+            }
+            } catch (Exception e) {
+            __ROWCOUNT__ = warpdriverStressTestMapper.deleteSpGotoCleanupMaster_1(pOrderId, vLockKey);
+            pResult.set(String.valueOf(String.valueOf("ERROR:").concat(String.valueOf(__SQLERRM__))));
+            log.info("");
+            }
+        }
+
+        // Source: PKG_WARPDRIVER_STRESS_TEST.sp_goto_loop_purge (PROCEDURE) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:356-392
+        @Transactional
+        public void spGotoLoopPurge(int pRetentionDays, AtomicReference<Integer> pDeletedCnt) {
+            Integer vBatch = 500;
+            java.sql.Timestamp vCutoff = null;
+            Integer vDeleted = 0;
+            Integer vRowcount = 0;
+            int __ROWCOUNT__ = 0;
+            vCutoff = new java.sql.Timestamp(new java.sql.Timestamp(System.currentTimeMillis()).getTime() - (long)(Long.parseLong(String.valueOf(String.valueOf((String.valueOf(pRetentionDays)))))) * 24 * 60 * 60 * 1000);
+            do {
+            __ROWCOUNT__ = warpdriverStressTestMapper.deleteSpGotoLoopPurge(pRetentionDays, vBatch, vCutoff);
+            vRowcount = Integer.valueOf(__ROWCOUNT__);
+            vDeleted = vDeleted + vRowcount;
+            if (vRowcount > 0) {
+            // COMMIT;
+            this.spAutonomousAudit("PURGE_BATCH", String.valueOf(String.valueOf("Deleted ").concat(String.valueOf(vRowcount))).concat(String.valueOf(" rows")));
+            }
+            } while (vRowcount == vBatch);
+            pDeletedCnt.set(vDeleted);
+            // COMMIT;
+        }
+
+        // Source: PKG_WARPDRIVER_STRESS_TEST.sp_goto_skip_logic (PROCEDURE) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:397-437
+        public void spGotoSkipLogic(String pReportType, String pBizDate, AtomicReference<String> pContent) {
+            java.sql.Date vDate = java.sql.Date.valueOf(String.valueOf(pBizDate));
+            String vDetail = "";
+            String vHeader = null;
+            vHeader = String.valueOf(String.valueOf(String.valueOf("=== 清算报告 (").concat(String.valueOf(pBizDate))).concat(String.valueOf(") ==="))).concat(String.valueOf(String.valueOf((char)(10))));
+            if (!(java.util.Objects.equals(String.valueOf(pReportType).toUpperCase(), "SUMMARY"))) {
+            // for rec in query: (       SELECT region_code,              COUNT(*) AS cnt,              SUM(settle_amount) AS amt,              AVG(fee_rate) AS avg_fee       FROM settlement       WHERE settle_date = v_date       GROUP BY region_code       HAVING COUNT(*) > 10       ORDER BY amt DESC     )
+            List<Map<String, Object>> recList = warpdriverStressTestMapper.selectSpGotoSkipLogic(pReportType, pBizDate, vDate);
+            if (recList == null) recList = new ArrayList<>();
+            for (Map<String, Object> rec : recList) {
+            vDetail = String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(vDetail).concat(String.valueOf(rec.getOrDefault("regionCode", rec.get("region_code"))))).concat(String.valueOf("|"))).concat(String.valueOf(rec.get("cnt")))).concat(String.valueOf("|"))).concat(String.valueOf(rec.get("amt")))).concat(String.valueOf("|"))).concat(String.valueOf(rec.getOrDefault("avgFee", rec.get("avg_fee"))))).concat(String.valueOf(String.valueOf((char)(10))));
+            }
+            }
+            if (java.util.Objects.equals(String.valueOf(pReportType).toUpperCase(), "SUMMARY")) {
+            { var _val = warpdriverStressTestMapper.selectSpGotoSkipLogic_1(pReportType, pBizDate, vDate); if (_val != null) vDetail = (String) _val; }
+            }
+            pContent.set(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(vHeader).concat(String.valueOf(vDetail))).concat(String.valueOf(String.valueOf((char)(10))))).concat(String.valueOf("Generated at:"))).concat(String.valueOf(new java.sql.Timestamp(System.currentTimeMillis())))));
+        }
+
+        // Source: PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape (PROCEDURE) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:442-512
+        @Transactional
+        public void spGotoDeepEscape(long pBatchId, AtomicReference<Integer> pInvalidCnt) {
+            Map<String, Object> blackRec = new HashMap<>();
+            Map<String, Object> mainRec = new HashMap<>();
+            Map<String, Object> riskRec = new HashMap<>();
+            Map<String, Object> stockRec = new HashMap<>();
+            Integer vInvalid = 0;
+            Integer vScore = 0;
+            Integer vStock = 0;
+            mainLoop: while (true) {
+            for (Map<String, Object> _mainRec : java.util.Collections.<Map<String, Object>>emptyList()) {
+            mainRec = _mainRec;
+            for (Map<String, Object> _blackRec : java.util.Collections.<Map<String, Object>>emptyList()) {
+            blackRec = _blackRec;
+            vInvalid = vInvalid + 1;
+            warpdriverStressTestMapper.updateSpGotoDeepEscape(pBatchId, mainRec);
+            continue;
+            }
+            for (Map<String, Object> _riskRec : java.util.Collections.<Map<String, Object>>emptyList()) {
+            riskRec = _riskRec;
+            { var _val = warpdriverStressTestMapper.selectSpGotoDeepEscape(pBatchId, mainRec, riskRec); if (_val != null) vScore = (Integer) _val; }
+            if (vScore > java.util.Optional.ofNullable((Number) riskRec.get("threshold")).map(Number::longValue).orElse(0L)) {
+            vInvalid = vInvalid + 1;
+            warpdriverStressTestMapper.updateSpGotoDeepEscape_1(pBatchId, mainRec, riskRec);
+            continue;
+            }
+            }
+            for (Map<String, Object> _stockRec : java.util.Collections.<Map<String, Object>>emptyList()) {
+            stockRec = _stockRec;
+            { var _val = warpdriverStressTestMapper.selectSpGotoDeepEscape_1(pBatchId, stockRec); if (_val != null) vStock = (Integer) _val; }
+            if (vStock < java.util.Optional.ofNullable((Number) stockRec.getOrDefault("requiredQty", stockRec.get("required_qty"))).map(Number::longValue).orElse(0L)) {
+            vInvalid = vInvalid + 1;
+            warpdriverStressTestMapper.updateSpGotoDeepEscape_2(pBatchId, mainRec, stockRec);
+            continue;
+            }
+            }
+            warpdriverStressTestMapper.updateSpGotoDeepEscape_3(pBatchId, mainRec);
+            }
+            pInvalidCnt.set(vInvalid);
+            // COMMIT;
+                break mainLoop;
+            }
+        }
+
+        // Source: PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine (PROCEDURE) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632
+        @Transactional
+        public void spGotoStateMachine(long pOrderId, String pEvent, AtomicReference<String> pFinalState) {
+            String vDbState = null;
+            Integer vMaxRetry = 3;
+            Integer vRetry = 0;
+            String vState = "INIT";
+            // State machine generated from GOTO labels
+            enum SpGotoStateMachineState { StateInit, StatePending, StatePaid, StateShipped, StateRefunding, StateCheck, StateDone }
+            SpGotoStateMachineState currentState = SpGotoStateMachineState.StateInit;
+            boolean running = true;
+            int _smGuard = 0;
+            while (running && _smGuard++ < 10000) {
+                switch (currentState) {
+                    case StateInit:
+            if (java.util.Objects.equals(pEvent, "SUBMIT")) {
+            warpdriverStressTestMapper.updateSpGotoStateMachine(pOrderId, pEvent);
+            vState = "PENDING";
+            currentState = SpGotoStateMachineState.StatePending;
+            break;
+            } else if (java.util.Objects.equals(pEvent, "RESUME")) {
+            currentState = SpGotoStateMachineState.StateCheck;
+            break;
+            }
+                        currentState = SpGotoStateMachineState.StateDone;
+                        break;
+                    case StatePending:
+            if (java.util.Objects.equals(pEvent, "PAY")) {
+            warpdriverStressTestMapper.updateSpGotoStateMachine_1(pOrderId, pEvent);
+            vState = "PAID";
+            currentState = SpGotoStateMachineState.StatePaid;
+            break;
+            } else if (java.util.Objects.equals(pEvent, "CANCEL")) {
+            warpdriverStressTestMapper.updateSpGotoStateMachine_2(pOrderId, pEvent);
+            vState = "CANCELLED";
+            currentState = SpGotoStateMachineState.StateDone;
+            break;
+            } else if (java.util.Objects.equals(pEvent, "TIMEOUT")) {
+            if (vRetry < vMaxRetry) {
+            vRetry = vRetry + 1;
+            warpdriverStressTestMapper.updateSpGotoStateMachine_3(pOrderId, pEvent, vRetry);
+            currentState = SpGotoStateMachineState.StatePending;
+            break;
+            } else {
+            warpdriverStressTestMapper.updateSpGotoStateMachine_4(pOrderId, pEvent);
+            vState = "EXPIRED";
+            currentState = SpGotoStateMachineState.StateDone;
+            break;
+            }
+            }
+                        currentState = SpGotoStateMachineState.StateDone;
+                        break;
+                    case StatePaid:
+            if (java.util.Objects.equals(pEvent, "SHIP")) {
+            warpdriverStressTestMapper.updateSpGotoStateMachine_5(pOrderId, pEvent);
+            vState = "SHIPPED";
+            currentState = SpGotoStateMachineState.StateShipped;
+            break;
+            } else if (java.util.Objects.equals(pEvent, "REFUND_REQ")) {
+            warpdriverStressTestMapper.updateSpGotoStateMachine_6(pOrderId, pEvent);
+            vState = "REFUNDING";
+            currentState = SpGotoStateMachineState.StateRefunding;
+            break;
+            }
+                        currentState = SpGotoStateMachineState.StateDone;
+                        break;
+                    case StateShipped:
+            if (java.util.Objects.equals(pEvent, "DELIVER")) {
+            warpdriverStressTestMapper.updateSpGotoStateMachine_7(pOrderId, pEvent);
+            vState = "COMPLETED";
+            } else if (java.util.Objects.equals(pEvent, "RETURN")) {
+            warpdriverStressTestMapper.updateSpGotoStateMachine_8(pOrderId, pEvent);
+            vState = "REFUNDING";
+            currentState = SpGotoStateMachineState.StateRefunding;
+            break;
+            }
+                        currentState = SpGotoStateMachineState.StateDone;
+                        break;
+                    case StateRefunding:
+            if (java.util.Objects.equals(pEvent, "REFUND_APPROVE")) {
+            warpdriverStressTestMapper.updateSpGotoStateMachine_9(pOrderId, pEvent);
+            vState = "REFUNDED";
+            currentState = SpGotoStateMachineState.StateDone;
+            break;
+            } else if (java.util.Objects.equals(pEvent, "REFUND_REJECT")) {
+            warpdriverStressTestMapper.updateSpGotoStateMachine_10(pOrderId, pEvent);
+            vState = "PAID";
+            currentState = SpGotoStateMachineState.StatePaid;
+            break;
+            } else if (java.util.Objects.equals(pEvent, "PARTIAL_REFUND")) {
+            warpdriverStressTestMapper.updateSpGotoStateMachine_11(pOrderId, pEvent);
+            vState = "PAID";
+            currentState = SpGotoStateMachineState.StatePaid;
+            break;
+            }
+                        currentState = SpGotoStateMachineState.StateDone;
+                        break;
+                    case StateCheck:
+            { var _val = warpdriverStressTestMapper.selectSpGotoStateMachine(pOrderId, pEvent); if (_val != null) vDbState = (String) _val; }
+            vState = String.valueOf(vDbState);
+            if (java.util.Objects.equals(vDbState, "PENDING")) {
+            currentState = SpGotoStateMachineState.StatePending;
+            break;
+            }
+            if (java.util.Objects.equals(vDbState, "PAID")) {
+            currentState = SpGotoStateMachineState.StatePaid;
+            break;
+            }
+            if (java.util.Objects.equals(vDbState, "SHIPPED")) {
+            currentState = SpGotoStateMachineState.StateShipped;
+            break;
+            }
+            if (java.util.Objects.equals(vDbState, "REFUNDING")) {
+            currentState = SpGotoStateMachineState.StateRefunding;
+            break;
+            }
+                        currentState = SpGotoStateMachineState.StateDone;
+                        break;
+                    case StateDone:
+            pFinalState.set(String.valueOf(vState));
+            warpdriverStressTestMapper.insertSpGotoStateMachine(pOrderId, pEvent, vState);
+            // COMMIT;
+                        break;
+                    default:
+                        running = false;
+                        break;
+                }
+            }
+        }
+
+        // Source: PKG_WARPDRIVER_STRESS_TEST.sp_dynamic_scheduler_dispatch (PROCEDURE) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:637-692
+        @Transactional
+        public void spDynamicSchedulerDispatch(String pTaskList, String pJobPrefix) {
+            // TODO: Auto-generated stub — complex PL/pgSQL pattern requires manual implementation
+        }
+
+        // Source: PKG_WARPDRIVER_STRESS_TEST.fn_recursive_tree_cleanup (FUNCTION) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:697-725
+        @Transactional
+        public Integer fnRecursiveTreeCleanup(long pParentId, int pDepth) {
+            Long vChildId = 0L;
+            Integer vCount = 0;
+            List<Map<String, Object>> vCurResult = null;
+            int vCurIdx = 0;
+            boolean found = false;
+            if (pDepth > 10) {
+            return 0;
+            }
+            vCurResult = warpdriverStressTestMapper.selectFnRecursiveTreeCleanup(pParentId, pDepth);
+            if (vCurResult == null) vCurResult = new java.util.ArrayList<>();
+            vCurIdx = 0;
+            while (true) {
+            found = vCurIdx < vCurResult.size();
+            if (found) {
+                Map<String, Object> _row = vCurResult.get(vCurIdx);
+                vCurIdx++;
+                vChildId = (_row.get("v_child_id") instanceof Number ? ((Number) _row.get("v_child_id")).longValue() : 0L);
+            }
+            if (!found) { break; }
+            vCount = vCount + this.fnRecursiveTreeCleanup(Long.parseLong(String.valueOf(vChildId)), pDepth + 1);
+            warpdriverStressTestMapper.deleteFnRecursiveTreeCleanup(pParentId, pDepth, vChildId);
+            warpdriverStressTestMapper.deleteFnRecursiveTreeCleanup_1(pParentId, pDepth, vChildId);
+            vCount = vCount + 1;
+            }
+            // CLOSE vCur;
+            return vCount;
+        }
+
+        // Source: PKG_WARPDRIVER_STRESS_TEST.fn_array_jsonb_processor (FUNCTION) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:730-764
+        public String fnArrayJsonbProcessor(String pItems, java.math.BigDecimal pDiscount) {
+            String vArr = String.valueOf(pItems);
+            Integer vIdx = 0;
+            String vItem = null;
+            java.math.BigDecimal vNewPrice = java.math.BigDecimal.ZERO;
+            String vResult = String.valueOf("[]");
+            if (java.util.Objects.equals(this.jsonbArrayLength(vArr), 0)) {
+            return String.valueOf("{\"error\":\"empty_array\"}");
+            }
+            for (vIdx = 0; vIdx <= this.jsonbArrayLength(vArr) - 1; vIdx++) {
+            vItem = String.valueOf(this.jsonbGet(vArr, vIdx));
+            vNewPrice = java.math.BigDecimal.valueOf(((Number) java.util.Objects.requireNonNullElse((this.jsonbGetText(vItem, "price")), 0L)).longValue()).multiply((java.math.BigDecimal.valueOf(1).subtract(pDiscount)));
+            vResult = String.valueOf(vResult).concat(String.valueOf(this.jsonbBuildObject(String.valueOf("product_id"), this.jsonbGetText(vItem, "product_id"), String.valueOf("original_price"), java.math.BigDecimal.valueOf(((Number) java.util.Objects.requireNonNullElse((this.jsonbGetText(vItem, "price")), 0L)).longValue()), String.valueOf("discount_rate"), pDiscount, String.valueOf("final_price"), vNewPrice.setScale((int)2, java.math.RoundingMode.HALF_UP), String.valueOf("processed_at"), new java.sql.Timestamp(System.currentTimeMillis()))));
+            }
+            return this.jsonbBuildObject(String.valueOf("items"), vResult, String.valueOf("total_count"), this.jsonbArrayLength(vArr), String.valueOf("summary_discount"), pDiscount);
+        }
+
+        // Source: PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return (FUNCTION) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:769-796
+        public Integer fnMultiCursorReturn(long pCustomerId, AtomicReference<Object> pCurOrders, AtomicReference<Object> pCurPayments) {
+            Integer vOrderCnt = 0;
+            Integer vPayCnt = 0;
+            List<Map<String, Object>> pCurOrdersResult = null;
+            int pCurOrdersIdx = 0;
+            List<Map<String, Object>> pCurPaymentsResult = null;
+            int pCurPaymentsIdx = 0;
+            pCurOrdersResult = warpdriverStressTestMapper.selectFnMultiCursorReturn(pCustomerId);
+            if (pCurOrdersResult == null) pCurOrdersResult = new java.util.ArrayList<>();
+            pCurOrdersIdx = 0;
+            pCurPaymentsResult = warpdriverStressTestMapper.selectFnMultiCursorReturn_1(pCustomerId);
+            if (pCurPaymentsResult == null) pCurPaymentsResult = new java.util.ArrayList<>();
+            pCurPaymentsIdx = 0;
+            { var _val = warpdriverStressTestMapper.selectFnMultiCursorReturn_2(pCustomerId); if (_val != null) vOrderCnt = (Integer) _val; }
+            { var _val = warpdriverStressTestMapper.selectFnMultiCursorReturn_3(pCustomerId); if (_val != null) vPayCnt = (Integer) _val; }
+            return vOrderCnt + vPayCnt;
+        }
+
+        // Source: PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell (PROCEDURE) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801-863
+        @Transactional
+        public void spSavepointHell(long pAccountId, java.math.BigDecimal pAmount, AtomicReference<java.math.BigDecimal> pFinalBal) {
+            java.math.BigDecimal vBalance = java.math.BigDecimal.ZERO;
+            String vIns = null;
+            String vSp1 = null;
+            String vSp2 = null;
+            String vSp3 = null;
+            String __SQLERRM__ = "";
+            int __SQLCODE__ = 0;
+            try {
+            { var _val = warpdriverStressTestMapper.selectSpSavepointHell(pAccountId, pAmount); if (_val != null) vBalance = (java.math.BigDecimal) _val; }
+            vSp1 = String.valueOf("sp_pre_").concat(String.valueOf(pAccountId));
+            // SQL: SAVEPOINT ${vSp1}
+            warpdriverStressTestMapper.updateSpSavepointHell(pAccountId, pAmount);
+            vSp2 = String.valueOf("sp_acct_").concat(String.valueOf(pAccountId));
+            // SQL: SAVEPOINT ${vSp2}
+            warpdriverStressTestMapper.insertSpSavepointHell(pAccountId, pAmount);
+            if (pAmount.compareTo(vBalance) > 0) {
+            // SQL: ROLLBACK TO SAVEPOINT ${vSp1}
+            warpdriverStressTestMapper.updateSpSavepointHell_1(pAccountId, pAmount);
+            warpdriverStressTestMapper.insertSpSavepointHell_1(pAccountId, pAmount);
+            pFinalBal.set(vBalance);
+            // COMMIT;
+            return;
+            }
+            try {
+            // SAVEPOINT sp_notify — handled via JDBC Connection.setSavepoint() in @Transactional context
+            warpdriverStressTestMapper.insertSpSavepointHell_2(pAccountId, pAmount);
+            } catch (Exception e) {
+                __SQLERRM__ = e.getMessage();
+                __SQLCODE__ = -1;
+            warpdriverStressTestMapper.insertSpSavepointHell_3(pAccountId, pAmount);
+            // SQL: v_ins = "INSERT INTO"
+            vSp3 = String.valueOf(String.valueOf(String.valueOf(vIns).concat(String.valueOf(" notifications("))).concat(String.valueOf(pAccountId))).concat(String.valueOf(", notify_type, content)"));
+            // TODO: EXECUTE v_sp3 — could not resolve SQL string
+            }
+            // COMMIT;
+            pFinalBal.set(new java.math.BigDecimal(String.valueOf(warpdriverStressTestMapper.selectSpSavepointHell_1(pAccountId, pAmount))));
+            } catch (Exception e) {
+            try { TransactionAspectSupport.currentTransactionStatus().setRollbackOnly(); } catch (Exception _tx) {}
+            log.info("");
+            }
+        }
+
+    public java.util.List<String> stringToArray(String str, String delimiter) {
+        if (str == null || str.isEmpty()) return java.util.Collections.emptyList();
+        return java.util.Arrays.asList(str.split(java.util.regex.Pattern.quote(delimiter)));
+    }
+
+    public Integer jsonbArrayLength(String jsonb) {
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper().readValue(jsonb, com.fasterxml.jackson.databind.JsonNode.class).size();
+        } catch (Exception e) { return 0; }
+    }
+
+    public String jsonbBuildObject(Object... args) {
+        java.util.Map<String, Object> map = new java.util.LinkedHashMap<>();
+        for (int i = 0; i + 1 < args.length; i += 2) {
+            map.put(String.valueOf(args[i]), args[i + 1]);
+        }
+        try { return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(map); }
+        catch (Exception e) { throw new RuntimeException(e); }
+    }
+
+    public Object jsonbGet(String jsonb, Object key) {
+        try {
+            com.fasterxml.jackson.databind.JsonNode node = new com.fasterxml.jackson.databind.ObjectMapper().readValue(jsonb, com.fasterxml.jackson.databind.JsonNode.class);
+            if (key instanceof Integer) return node.get((Integer) key);
+            return node.get(String.valueOf(key));
+        } catch (Exception e) { return null; }
+    }
+
+    public String jsonbGetText(String jsonb, Object key) {
+        try {
+            com.fasterxml.jackson.databind.JsonNode node = new com.fasterxml.jackson.databind.ObjectMapper().readValue(jsonb, com.fasterxml.jackson.databind.JsonNode.class);
+            if (key instanceof Integer) return node.get((Integer) key).asText();
+            return node.get(String.valueOf(key)).asText();
+        } catch (Exception e) { return null; }
+    }
+
+    public Long nextval(String seqName) {
+        return warpdriverStressTestMapper.selectNextval(seqName);
+    }
+}

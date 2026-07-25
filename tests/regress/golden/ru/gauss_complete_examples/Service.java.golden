@@ -1,0 +1,54 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.GaussCompleteExamplesMapper;
+import java.util.Collections;
+import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/gauss_complete_examples.sql
+public class GaussCompleteExamplesService {
+    private static final Logger log = LoggerFactory.getLogger(GaussCompleteExamplesService.class);
+
+    private final GaussCompleteExamplesMapper gaussCompleteExamplesMapper;
+
+    public GaussCompleteExamplesService(GaussCompleteExamplesMapper gaussCompleteExamplesMapper) {
+            this.gaussCompleteExamplesMapper = gaussCompleteExamplesMapper;
+    }
+
+        // Source: string_split (FUNCTION) — {FIXTURES_ROOT}/gauss_complete_examples.sql:5-31
+        public Object stringSplit(String pString, String pDelimiter) {
+            List<String> vArray = null;
+            Integer vEnd = 0;
+            Integer vIdx = 1;
+            Integer vStart = 1;
+            if (pString == null) {
+            return vArray;
+            }
+            vEnd = String.valueOf(pString).indexOf(String.valueOf(pDelimiter), Math.max(0, (vStart) - 1)) + 1;
+            while (vEnd > 0) {
+            // CALL v_array(vIdx)
+            // SQL: := trim ( SUBSTR ( p_string , v_start , v_end - v_start ) )
+            vIdx = vIdx + 1;
+            vStart = vEnd + pDelimiter.length();
+            vEnd = String.valueOf(pString).indexOf(String.valueOf(pDelimiter), Math.max(0, (vStart) - 1)) + 1;
+            }
+            // CALL v_array(vIdx)
+            // SQL: := trim ( SUBSTR ( p_string , v_start ) )
+            return vArray;
+        }
+
+        // Source: array_length (FUNCTION) — {FIXTURES_ROOT}/gauss_complete_examples.sql:35-41
+        public Integer arrayLength(Object pArray) {
+            return ((java.util.List<?>) pArray).size();
+        }
+
+    public java.util.List<String> stringToArray(String str, String delimiter) {
+        if (str == null || str.isEmpty()) return java.util.Collections.emptyList();
+        return java.util.Arrays.asList(str.split(java.util.regex.Pattern.quote(delimiter)));
+    }
+}

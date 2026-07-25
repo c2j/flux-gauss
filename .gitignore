@@ -20,6 +20,9 @@ ogsql.broken
 .DS_Store
 target
 
+# Regression test AST cache
+tests/regress/.ast_cache/
+
 # PyInstaller
 build/
 dist/
