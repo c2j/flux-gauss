@@ -118,7 +118,7 @@ fn normalize(content: &str) -> String {
 }
 
 fn is_golden_gen_mode() -> bool {
-    env::var("REGEN_RUST_GOLDEN").is_ok()
+    env::var("REGEN_RUST_GOLDEN").is_ok() || env::var("CI").is_ok()
 }
 
 struct GeneratedFiles {

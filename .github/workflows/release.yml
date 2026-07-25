@@ -782,8 +782,6 @@ jobs:
         run: cargo build --release --bin fluxgauss
 
       - name: Run Rust tests
-        env:
-          REGEN_RUST_GOLDEN: "1"
         run: cargo test --workspace
 
       - name: Run Rust converter
