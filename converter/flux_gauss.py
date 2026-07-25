@@ -2253,9 +2253,8 @@ def _remove_dynamic_sql_build_lines(proc: ProcedureInfo, stmt_cp_map: dict):
                     lines_to_keep.add(idx)
                     continue
                 vn_java_checks = [snake_to_camel(vn) for vn in resolved_vars]
-                is_guard = line.startswith("if (") or line == "}"
                 is_dead_assign = any(line.startswith(f"{vn} =") for vn in vn_java_checks)
-                if is_guard or is_dead_assign:
+                if is_dead_assign:
                     lines_to_remove.add(idx)
             continue
         for idx in range(start, end):
