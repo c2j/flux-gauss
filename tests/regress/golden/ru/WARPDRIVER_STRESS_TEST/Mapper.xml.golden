@@ -3,8 +3,8 @@
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.example.demo.mapper.WarpdriverStressTestMapper">
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:106-118 — PKG_WARPDRIVER_STRESS_TEST.sp_autonomous_audit.insertSpAutonomousAudit -->
-<insert id="insertSpAutonomousAudit" parameterType="string">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:106-118 — PKG_WARPDRIVER_STRESS_TEST.sp_autonomous_audit.insertAuditTrail -->
+<insert id="insertAuditTrail" parameterType="string">
     INSERT INTO audit_trail(action_code, detail_info, created_at, session_id) VALUES(#{pAction, jdbcType=VARCHAR, javaType=String}, #{pDetail, jdbcType=VARCHAR, javaType=String}, current_timestamp, pg_backend_pid())
 </insert>
 
@@ -18,59 +18,59 @@
     SELECT order_id, total_amount, status FROM orders WHERE biz_date = #{vDate, jdbcType=DATE, javaType=java.sql.Date} ORDER BY create_time
 </select>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:138-289 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator.updateSpMainOrchestrator -->
-<update id="updateSpMainOrchestrator">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:138-289 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator.updateOrders -->
+<update id="updateOrders">
     UPDATE orders SET status = 'PROCESSING', process_time = current_timestamp WHERE order_id = #{vRec.orderId}
 </update>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:138-289 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator.insertSpMainOrchestrator -->
-<insert id="insertSpMainOrchestrator">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:138-289 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator.insertErrorLog -->
+<insert id="insertErrorLog">
     INSERT INTO error_log(log_id, order_id, err_msg, created_at) VALUES(#{pLogId, jdbcType=BIGINT, javaType=Long}, #{vRec.orderId}, 'NEGATIVE_AMOUNT', current_timestamp)
 </insert>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:138-289 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator.insertSpMainOrchestrator_1 -->
-<insert id="insertSpMainOrchestrator_1">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:138-289 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator.insertOrderItemSnapshot -->
+<insert id="insertOrderItemSnapshot">
     INSERT INTO order_item_snapshot(log_id, item_data, created_at) VALUES(#{pLogId, jdbcType=BIGINT, javaType=Long}, to_jsonb(#{vItemTab}(i)), current_timestamp)
 </insert>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294-351 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master.insertSpGotoCleanupMaster -->
-<insert id="insertSpGotoCleanupMaster">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294-351 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master.insertDistributedLocks -->
+<insert id="insertDistributedLocks">
     INSERT INTO distributed_locks(lock_key, holder_id, acquired_at) VALUES(#{vLockKey, jdbcType=VARCHAR, javaType=String}, #{vConnId, jdbcType=BIGINT, javaType=Long}, current_timestamp)
 </insert>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294-351 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master.selectSpGotoCleanupMaster -->
-<select id="selectSpGotoCleanupMaster" parameterType="long" resultType="java.math.BigDecimal">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294-351 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master.selectOrders -->
+<select id="selectOrders" parameterType="long" resultType="java.math.BigDecimal">
     select total_amount FROM orders WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
             LIMIT 1
 </select>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294-351 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master.updateSpGotoCleanupMaster -->
-<update id="updateSpGotoCleanupMaster" parameterType="long">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294-351 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master.updateOrders -->
+<update id="updateOrders" parameterType="long">
     UPDATE orders SET version = version + 1, update_time = current_timestamp WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long} AND version = ( SELECT version FROM orders WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long} )
 </update>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294-351 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master.updateSpGotoCleanupMaster_1 -->
-<update id="updateSpGotoCleanupMaster_1">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294-351 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master.updateAccounts -->
+<update id="updateAccounts">
     UPDATE accounts SET balance = balance - #{vTempAmt, jdbcType=NUMERIC, javaType=java.math.BigDecimal} WHERE account_id = (SELECT account_id FROM orders WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long})
 </update>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294-351 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master.insertSpGotoCleanupMaster_1 -->
-<insert id="insertSpGotoCleanupMaster_1">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294-351 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master.insertTransactionLog -->
+<insert id="insertTransactionLog">
     INSERT INTO transaction_log(order_id, amount, tx_type, tx_time) VALUES(#{pOrderId, jdbcType=BIGINT, javaType=Long}, #{vTempAmt, jdbcType=NUMERIC, javaType=java.math.BigDecimal}, 'DEBIT', current_timestamp)
 </insert>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294-351 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master.deleteSpGotoCleanupMaster -->
-<delete id="deleteSpGotoCleanupMaster">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294-351 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master.deleteDistributedLocks -->
+<delete id="deleteDistributedLocks">
     DELETE FROM distributed_locks WHERE lock_key = #{vLockKey, jdbcType=VARCHAR, javaType=String}
 </delete>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294-351 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master.deleteSpGotoCleanupMaster_1 -->
-<delete id="deleteSpGotoCleanupMaster_1">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294-351 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master.deleteDistributedLocks_1 -->
+<delete id="deleteDistributedLocks_1">
     DELETE FROM distributed_locks WHERE lock_key = #{vLockKey, jdbcType=VARCHAR, javaType=String}
 </delete>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:356-392 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_loop_purge.deleteSpGotoLoopPurge -->
-<delete id="deleteSpGotoLoopPurge">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:356-392 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_loop_purge.deleteOperationLogs -->
+<delete id="deleteOperationLogs">
     DELETE FROM operation_logs WHERE create_time &lt; #{vCutoff, jdbcType=TIMESTAMP, javaType=java.sql.Timestamp} AND log_id IN ( SELECT log_id FROM operation_logs WHERE create_time &lt; #{vCutoff, jdbcType=TIMESTAMP, javaType=java.sql.Timestamp} LIMIT #{vBatch, jdbcType=INTEGER, javaType=Integer} )
 </delete>
 
@@ -79,117 +79,117 @@
     ( SELECT region_code, COUNT(*) AS cnt, SUM(settle_amount) AS amt, AVG(fee_rate) AS avg_fee FROM settlement WHERE settle_date = #{vDate, jdbcType=DATE, javaType=java.sql.Date} GROUP BY region_code HAVING COUNT(*) &gt; 10 ORDER BY amt DESC )
 </select>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:397-437 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_skip_logic.selectSpGotoSkipLogic_1 -->
-<select id="selectSpGotoSkipLogic_1" resultType="string">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:397-437 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_skip_logic.selectSettlement -->
+<select id="selectSettlement" resultType="string">
     SELECT '总计:' || COUNT(*) || '笔,金额:' || COALESCE(SUM(settle_amount),0) FROM settlement WHERE settle_date = #{vDate, jdbcType=DATE, javaType=java.sql.Date}
             LIMIT 1
 </select>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:442-512 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.updateSpGotoDeepEscape -->
-<update id="updateSpGotoDeepEscape">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:442-512 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.updateBulkOrders -->
+<update id="updateBulkOrders">
     UPDATE bulk_orders SET process_flag = 'BLACKLIST', process_time = current_timestamp WHERE order_id = #{mainRec.orderId}
 </update>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:442-512 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.selectSpGotoDeepEscape -->
-<select id="selectSpGotoDeepEscape" resultType="int">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:442-512 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.selectCustomerRisk -->
+<select id="selectCustomerRisk" resultType="int">
     select risk_score FROM customer_risk WHERE customer_id = #{mainRec.customerId} AND rule_id = #{riskRec.ruleId}
             LIMIT 1
 </select>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:442-512 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.updateSpGotoDeepEscape_1 -->
-<update id="updateSpGotoDeepEscape_1">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:442-512 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.updateBulkOrders_1 -->
+<update id="updateBulkOrders_1">
     UPDATE bulk_orders SET process_flag = 'RISK_REJECT', reject_reason = 'RULE_' || #{riskRec.ruleId} WHERE order_id = #{mainRec.orderId}
 </update>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:442-512 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.selectSpGotoDeepEscape_1 -->
-<select id="selectSpGotoDeepEscape_1" resultType="int">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:442-512 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.selectInventory -->
+<select id="selectInventory" resultType="int">
     select available_qty FROM inventory WHERE product_id = #{stockRec.productId}
             LIMIT 1
 </select>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:442-512 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.updateSpGotoDeepEscape_2 -->
-<update id="updateSpGotoDeepEscape_2">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:442-512 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.updateBulkOrders_2 -->
+<update id="updateBulkOrders_2">
     UPDATE bulk_orders SET process_flag = 'NO_STOCK', reject_reason = 'PROD_' || #{stockRec.productId} WHERE order_id = #{mainRec.orderId}
 </update>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:442-512 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.updateSpGotoDeepEscape_3 -->
-<update id="updateSpGotoDeepEscape_3">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:442-512 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.updateBulkOrders_3 -->
+<update id="updateBulkOrders_3">
     UPDATE bulk_orders SET process_flag = 'PASSED', process_time = current_timestamp WHERE order_id = #{mainRec.orderId}
 </update>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateSpGotoStateMachine -->
-<update id="updateSpGotoStateMachine">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders -->
+<update id="updateOrders">
     UPDATE orders SET status = 'PENDING', submit_time = current_timestamp WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
 </update>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateSpGotoStateMachine_1 -->
-<update id="updateSpGotoStateMachine_1">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_1 -->
+<update id="updateOrders_1">
     UPDATE orders SET status = 'PAID', pay_time = current_timestamp WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
 </update>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateSpGotoStateMachine_2 -->
-<update id="updateSpGotoStateMachine_2">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_2 -->
+<update id="updateOrders_2">
     UPDATE orders SET status = 'CANCELLED', cancel_time = current_timestamp WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
 </update>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateSpGotoStateMachine_3 -->
-<update id="updateSpGotoStateMachine_3">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_3 -->
+<update id="updateOrders_3">
     UPDATE orders SET retry_count = #{vRetry, jdbcType=INTEGER, javaType=Integer}, last_retry = current_timestamp WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
 </update>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateSpGotoStateMachine_4 -->
-<update id="updateSpGotoStateMachine_4">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_4 -->
+<update id="updateOrders_4">
     UPDATE orders SET status = 'EXPIRED' WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
 </update>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateSpGotoStateMachine_5 -->
-<update id="updateSpGotoStateMachine_5">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_5 -->
+<update id="updateOrders_5">
     UPDATE orders SET status = 'SHIPPED', ship_time = current_timestamp WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
 </update>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateSpGotoStateMachine_6 -->
-<update id="updateSpGotoStateMachine_6">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_6 -->
+<update id="updateOrders_6">
     UPDATE orders SET status = 'REFUNDING', refund_apply_time = current_timestamp WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
 </update>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateSpGotoStateMachine_7 -->
-<update id="updateSpGotoStateMachine_7">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_7 -->
+<update id="updateOrders_7">
     UPDATE orders SET status = 'COMPLETED', complete_time = current_timestamp WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
 </update>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateSpGotoStateMachine_8 -->
-<update id="updateSpGotoStateMachine_8">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_8 -->
+<update id="updateOrders_8">
     UPDATE orders SET status = 'REFUNDING', refund_apply_time = current_timestamp WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
 </update>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateSpGotoStateMachine_9 -->
-<update id="updateSpGotoStateMachine_9">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_9 -->
+<update id="updateOrders_9">
     UPDATE orders SET status = 'REFUNDED', refund_time = current_timestamp WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
 </update>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateSpGotoStateMachine_10 -->
-<update id="updateSpGotoStateMachine_10">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_10 -->
+<update id="updateOrders_10">
     UPDATE orders SET status = 'PAID', refund_reject_time = current_timestamp WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
 </update>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateSpGotoStateMachine_11 -->
-<update id="updateSpGotoStateMachine_11">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_11 -->
+<update id="updateOrders_11">
     UPDATE orders SET status = 'PAID', partial_refund_amt = 100 WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
 </update>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.selectSpGotoStateMachine -->
-<select id="selectSpGotoStateMachine" resultType="string">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.selectOrders -->
+<select id="selectOrders" resultType="string">
     select status FROM orders WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
             LIMIT 1
 </select>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.insertSpGotoStateMachine -->
-<insert id="insertSpGotoStateMachine">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.insertStateTransitions -->
+<insert id="insertStateTransitions">
     INSERT INTO state_transitions(order_id, event, from_state, to_state, trans_time) VALUES(#{pOrderId, jdbcType=BIGINT, javaType=Long}, #{pEvent, jdbcType=VARCHAR, javaType=String}, 'AUTO', #{vState, jdbcType=VARCHAR, javaType=String}, current_timestamp)
 </insert>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:637-692 — PKG_WARPDRIVER_STRESS_TEST.sp_dynamic_scheduler_dispatch.insertSpDynamicSchedulerDispatch -->
-<insert id="insertSpDynamicSchedulerDispatch">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:637-692 — PKG_WARPDRIVER_STRESS_TEST.sp_dynamic_scheduler_dispatch.insertJobDispatchLog -->
+<insert id="insertJobDispatchLog">
     INSERT INTO job_dispatch_log(job_name, task_id, dispatch_time, status) VALUES(#{vJobName, jdbcType=VARCHAR, javaType=String}, #{vTaskId, jdbcType=BIGINT, javaType=Long}, current_timestamp, 'DISPATCHED')
 </insert>
 
@@ -198,13 +198,13 @@
     SELECT node_id FROM tree_nodes WHERE parent_id = #{pParentId, jdbcType=BIGINT, javaType=Long}
 </select>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:697-725 — PKG_WARPDRIVER_STRESS_TEST.fn_recursive_tree_cleanup.deleteFnRecursiveTreeCleanup -->
-<delete id="deleteFnRecursiveTreeCleanup">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:697-725 — PKG_WARPDRIVER_STRESS_TEST.fn_recursive_tree_cleanup.deleteTreeAttributes -->
+<delete id="deleteTreeAttributes">
     DELETE FROM tree_attributes WHERE node_id = #{vChildId, jdbcType=BIGINT, javaType=Long}
 </delete>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:697-725 — PKG_WARPDRIVER_STRESS_TEST.fn_recursive_tree_cleanup.deleteFnRecursiveTreeCleanup_1 -->
-<delete id="deleteFnRecursiveTreeCleanup_1">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:697-725 — PKG_WARPDRIVER_STRESS_TEST.fn_recursive_tree_cleanup.deleteTreeNodes -->
+<delete id="deleteTreeNodes">
     DELETE FROM tree_nodes WHERE node_id = #{vChildId, jdbcType=BIGINT, javaType=Long}
 </delete>
 
@@ -218,56 +218,56 @@
     SELECT payment_id, pay_amount, pay_channel, pay_time FROM payments WHERE customer_id = #{pCustomerId, jdbcType=BIGINT, javaType=Long} AND pay_status = 'SUCCESS' ORDER BY pay_time DESC LIMIT 100
 </select>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:769-796 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return.selectFnMultiCursorReturn_2 -->
-<select id="selectFnMultiCursorReturn_2" parameterType="long" resultType="int">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:769-796 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return.selectOrders -->
+<select id="selectOrders" parameterType="long" resultType="int">
     select COUNT(*) FROM orders WHERE customer_id = #{pCustomerId, jdbcType=BIGINT, javaType=Long}
             LIMIT 1
 </select>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:769-796 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return.selectFnMultiCursorReturn_3 -->
-<select id="selectFnMultiCursorReturn_3" parameterType="long" resultType="int">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:769-796 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return.selectPayments -->
+<select id="selectPayments" parameterType="long" resultType="int">
     select COUNT(*) FROM payments WHERE customer_id = #{pCustomerId, jdbcType=BIGINT, javaType=Long} AND pay_status = 'SUCCESS'
             LIMIT 1
 </select>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801-863 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.selectSpSavepointHell -->
-<select id="selectSpSavepointHell" resultType="java.math.BigDecimal">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801-863 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.selectAccounts -->
+<select id="selectAccounts" resultType="java.math.BigDecimal">
     select balance FROM accounts WHERE account_id = #{pAccountId, jdbcType=BIGINT, javaType=Long}
             LIMIT 1
 </select>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801-863 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.updateSpSavepointHell -->
-<update id="updateSpSavepointHell">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801-863 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.updateAccounts -->
+<update id="updateAccounts">
     UPDATE accounts SET balance = balance - #{pAmount, jdbcType=NUMERIC, javaType=java.math.BigDecimal}, pre_amount = #{pAmount, jdbcType=NUMERIC, javaType=java.math.BigDecimal} WHERE account_id = #{pAccountId, jdbcType=BIGINT, javaType=Long}
 </update>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801-863 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.insertSpSavepointHell -->
-<insert id="insertSpSavepointHell">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801-863 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.insertAccountJournal -->
+<insert id="insertAccountJournal">
     INSERT INTO account_journal(account_id, dr_amount, cr_amount, remark) VALUES(#{pAccountId, jdbcType=BIGINT, javaType=Long}, #{pAmount, jdbcType=NUMERIC, javaType=java.math.BigDecimal}, 0, 'PRE_DEBIT')
 </insert>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801-863 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.updateSpSavepointHell_1 -->
-<update id="updateSpSavepointHell_1">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801-863 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.updateAccounts_1 -->
+<update id="updateAccounts_1">
     UPDATE accounts SET frozen_flag = 'Y' WHERE account_id = #{pAccountId, jdbcType=BIGINT, javaType=Long}
 </update>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801-863 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.insertSpSavepointHell_1 -->
-<insert id="insertSpSavepointHell_1">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801-863 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.insertRiskEvents -->
+<insert id="insertRiskEvents">
     INSERT INTO risk_events(account_id, event_type, event_time) VALUES(#{pAccountId, jdbcType=BIGINT, javaType=Long}, 'OVERDRAW', current_timestamp)
 </insert>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801-863 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.insertSpSavepointHell_2 -->
-<insert id="insertSpSavepointHell_2">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801-863 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.insertNotifications -->
+<insert id="insertNotifications">
     INSERT INTO notifications(account_id, notify_type, content) VALUES(#{pAccountId, jdbcType=BIGINT, javaType=Long}, 'SMS', 'Debit ' || #{pAmount, jdbcType=NUMERIC, javaType=java.math.BigDecimal})
 </insert>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801-863 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.insertSpSavepointHell_3 -->
-<insert id="insertSpSavepointHell_3">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801-863 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.insertSpSavepointHell -->
+<insert id="insertSpSavepointHell">
     INSERT INTO notifications1(${pAccountId}, notify_type, content)
 </insert>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801-863 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.selectSpSavepointHell_1 -->
-<select id="selectSpSavepointHell_1" resultType="Object">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801-863 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.selectAccounts_1 -->
+<select id="selectAccounts_1" resultType="Object">
     select balance FROM accounts WHERE account_id = #{pAccountId, jdbcType=BIGINT, javaType=Long}
             LIMIT 1
 </select>

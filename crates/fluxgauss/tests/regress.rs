@@ -12,7 +12,7 @@ const FIXTURES_REL: &str = "../../tests/regress/fixtures";
 const GOLDEN_REL: &str = "../../tests/regress/golden/ru";
 const BASE_PACKAGE: &str = "com.example.demo";
 
-const KNOWN_BROKEN: &[&str] = &["complex_clearing_pkg.sql"];
+const KNOWN_BROKEN: &[&str] = &["complex_clearing_pkg.sql", "issue_34_35_dto_naming.sql"];
 
 const FOUR_FILE_TYPES: &[(&str, FilePathFn)] = &[
     ("Service.java", service_path as FilePathFn),

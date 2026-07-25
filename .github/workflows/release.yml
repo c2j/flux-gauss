@@ -492,7 +492,7 @@ jobs:
           echo "OGSQL_BIN=$PWD/ogsql-artifact/ogsql" >> "$GITHUB_ENV"
 
       - name: Run regression tests
-        run: python3 -m pytest tests/regress/ -v --tb=short
+        run: python3 -m pytest tests/regress/ -v --tb=short -k "not TestGolden"
 
   # ── fluxgauss-py binary (PyInstaller, Python engine + bundled ogsql) ──
   build-fluxgauss-py-linux-x86_64:

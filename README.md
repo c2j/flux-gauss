@@ -2,7 +2,7 @@
 
 将 OpenGauss / PostgreSQL 存储过程（PL/pgSQL）自动转换为 Spring Boot + MyBatis Java 项目。
 
-[![Version](https://img.shields.io/badge/version-0.6.19-blue)](crates/fluxgauss/Cargo.toml)
+[![Version](https://img.shields.io/badge/version-0.6.20-blue)](crates/fluxgauss/Cargo.toml)
 
 ## 功能亮点
 
