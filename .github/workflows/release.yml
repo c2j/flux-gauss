@@ -822,6 +822,9 @@ jobs:
       - build-fluxgauss-py-linux-arm64
       - build-fluxgauss-py-windows-x86_64
       - build-fluxgauss-py-macos-arm64
+      - test-python-engine
+      - test-python-regress
+      - test-rust-engine
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
