@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.DynamicXmlMapper">
+
+    <!-- Source: pkg_dynamic_xml.sql:74-74 — pkg_dynamic_xml.proc_conditional_query.selectProcConditionalQuery -->
+    <select id="selectProcConditionalQuery" resultType="java.util.LinkedHashMap">
+        SELECT id, name, amount, status, created_at FROM t_test_funcs
+        <where>
+            <if test="pWhereClause != null">AND ${pWhereClause}</if>
+        </where>
+        <if test="pOrderBy != null">ORDER BY ${pOrderBy}</if>
+        <if test="true">LIMIT ${pLimit}</if>
+    </select>
+
+    <!-- Source: pkg_dynamic_xml.sql:77-77 — pkg_dynamic_xml.proc_conditional_query.selectProcConditionalQuery_1 -->
+    <select id="selectProcConditionalQuery_1" resultType="int">
+        select COUNT(*)
+        from audit_log
+        where operation = 'QUERY'
+                LIMIT 1
+    </select>
+
+    <!-- Source: pkg_dynamic_xml.sql:118-118 — pkg_dynamic_xml.proc_conditional_update.updateProcConditionalUpdate -->
+    <update id="updateProcConditionalUpdate">
+        UPDATE ${pTableName}
+        <where>
+            <if test="true">AND id = #{pId}</if>
+        </where>
+        <set>
+            <if test="pStatus != null">status = #{pStatus}</if>
+            <if test="pAmount != null">amount = #{pAmount}</if>
+            <if test="pRemark != null">remark = #{pRemark}</if>
+        </set>
+    </update>
+
+    <!-- Source: pkg_dynamic_xml.sql:135-135 — pkg_dynamic_xml.proc_mixed_logic.insertProcMixedLogic -->
+    <insert id="insertProcMixedLogic" parameterType="string">
+        insert into ${pTableName}_hist select * from ${pTableName}
+    </insert>
+
+    <!-- Source: pkg_dynamic_xml.sql:137-137 — pkg_dynamic_xml.proc_mixed_logic.insertProcMixedLogic_1 -->
+    <insert id="insertProcMixedLogic_1">
+        insert into audit_log (log_time, operation, sql_text) values (current_timestamp, 'ARCHIVE', #{vSql, jdbcType=VARCHAR, javaType=String})
+    </insert>
+
+    <!-- Source: pkg_dynamic_xml.sql:142-142 — pkg_dynamic_xml.proc_mixed_logic.deleteProcMixedLogic -->
+    <delete id="deleteProcMixedLogic" parameterType="string">
+        delete from ${pTableName} where create_time &lt; current_date - 30
+    </delete>
+
+    <!-- Source: pkg_dynamic_xml.sql:144-144 — pkg_dynamic_xml.proc_mixed_logic.insertProcMixedLogic_2 -->
+    <insert id="insertProcMixedLogic_2">
+        insert into audit_log (log_time, operation, sql_text) values (current_timestamp, 'CLEAN', #{vSql, jdbcType=VARCHAR, javaType=String})
+    </insert>
+
+</mapper>

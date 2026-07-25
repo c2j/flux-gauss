@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "gauss_complete_examples.sql",
+  "package_name": "gauss_complete_examples",
+  "files": {
+    "Service.java": "329320161a4b7785",
+    "Mapper.java": "e3d4c070abc9ee67",
+    "Mapper.xml": "92146f3731d820cd",
+    "ServiceTest.java": "911dbd0d2779aea4"
+  }
+}

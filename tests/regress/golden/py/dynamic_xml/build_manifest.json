@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "pkg_dynamic_xml.sql",
+  "package_name": "dynamic_xml",
+  "files": {
+    "Service.java": "a8021bceae823f88",
+    "Mapper.java": "7569608a2d2d1652",
+    "Mapper.xml": "ad8824152e1d5c8b",
+    "ServiceTest.java": "3cfa94ab8a4d2a8f"
+  }
+}

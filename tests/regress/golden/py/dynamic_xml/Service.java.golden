@@ -1,0 +1,55 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.DynamicXmlMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class DynamicXmlService {
+    private static final Logger log = LoggerFactory.getLogger(DynamicXmlService.class);
+
+    private final DynamicXmlMapper dynamicXmlMapper;
+
+    public DynamicXmlService(DynamicXmlMapper dynamicXmlMapper) {
+        this.dynamicXmlMapper = dynamicXmlMapper;
+    }
+    // Source: pkg_dynamic_xml.proc_conditional_query (PROCEDURE) — pkg_dynamic_xml.sql:47-78
+    public void procConditionalQuery(String pTableName, String pWhereClause, String pOrderBy, Integer pLimit) {
+        String vSql = null;
+        Integer vCount = 0;
+        // CALL DBE_OUTPUT.PRINT_LINE(...)
+        dynamicXmlMapper.selectProcConditionalQuery(pWhereClause, pOrderBy, pLimit);
+        vCount = dynamicXmlMapper.selectProcConditionalQuery_1(pTableName, pWhereClause, pOrderBy, pLimit);
+        if (vCount == null) vCount = 0;
+    }
+
+    // Source: pkg_dynamic_xml.proc_conditional_update (PROCEDURE) — pkg_dynamic_xml.sql:83-120
+    @Transactional
+    public void procConditionalUpdate(String pTableName, Integer pId, String pStatus, Long pAmount, String pRemark) {
+        String vSql = null;
+        String vSetClause = "";
+        int _sqlRowCount = 0;
+        _sqlRowCount = dynamicXmlMapper.updateProcConditionalUpdate(pTableName, pId, pStatus, pAmount, pRemark);
+    }
+
+    // Source: pkg_dynamic_xml.proc_mixed_logic (PROCEDURE) — pkg_dynamic_xml.sql:126-150
+    @Transactional
+    public void procMixedLogic(String pTableName, String pMode) {
+        String vSql = null;
+        int _sqlRowCount = 0;
+        if ("ARCHIVE".equals(pMode)) {
+            vSql = "INSERT INTO " + pTableName + "_hist SELECT * FROM " + pTableName;
+            _sqlRowCount = dynamicXmlMapper.insertProcMixedLogic(pTableName);
+            _sqlRowCount = dynamicXmlMapper.insertProcMixedLogic_1(pTableName, pMode, vSql);
+        } else if ("CLEAN".equals(pMode)) {
+            vSql = "DELETE FROM " + pTableName + " WHERE create_time < SYSDATE - 30";
+            _sqlRowCount = dynamicXmlMapper.deleteProcMixedLogic(pTableName);
+            _sqlRowCount = dynamicXmlMapper.insertProcMixedLogic_2(pTableName, pMode, vSql);
+        } else {
+            // CALL DBE_OUTPUT.PRINT_LINE(...)
+        }
+    }
+}

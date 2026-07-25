@@ -1,0 +1,66 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.OrderMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class OrderService {
+    private static final Logger log = LoggerFactory.getLogger(OrderService.class);
+
+    private final OrderMapper orderMapper;
+
+    public OrderService(OrderMapper orderMapper) {
+        this.orderMapper = orderMapper;
+    }
+    // Source: pkg_order.create_order (PROCEDURE) — pkg_order.sql:1-12
+    @Transactional
+    public void createOrder(Long pUserId, Long pProductId, Integer pQty) {
+        int _sqlRowCount = 0;
+        // CALL pkg_inventory.reserve_stock(...)
+        _sqlRowCount = orderMapper.insertCreateOrder(pUserId, pProductId, pQty);
+        // PERFORM pkg_common . log_operation ( 'ORDER' , 'CREATE' , 0 )
+    }
+
+    // Source: pkg_order.cancel_order (PROCEDURE) — pkg_order.sql:14-29
+    @Transactional
+    public void cancelOrder(Long pOrderId) {
+        Long vProductId = 0L;
+        Integer vQty = 0;
+        int _sqlRowCount = 0;
+        java.util.Map<String, Object> _row = null;
+        _row = orderMapper.selectCancelOrder(pOrderId);
+        if (_row == null) _row = java.util.Collections.emptyMap();
+        _sqlRowCount = (_row != null && !_row.isEmpty()) ? 1 : 0;
+        vProductId = (_row.get("product_id") != null ? (_row.get("product_id") instanceof Number ? ((Number) _row.get("product_id")).longValue() : Long.parseLong(String.valueOf(_row.get("product_id")))) : 0L);
+        vQty = (_row.get("qty") != null ? (_row.get("qty") instanceof Number ? ((Number) _row.get("qty")).intValue() : Integer.parseInt(String.valueOf(_row.get("qty")))) : 0);
+        // CALL pkg_inventory.release_stock(...)
+        _sqlRowCount = orderMapper.updateCancelOrder(pOrderId);
+        // PERFORM pkg_common . log_operation ( 'ORDER' , 'CANCEL' , p_order_id )
+        // PERFORM pkg_common . send_notification ( 'SMS' , 'Order cancelled' )
+    }
+
+    // Source: pkg_order.get_order_detail (PROCEDURE) — pkg_order.sql:31-40
+    public void getOrderDetail(Long pOrderId) {
+        orderMapper.selectGetOrderDetail(pOrderId);
+    }
+
+    // Source: pkg_order.batch_create_orders (PROCEDURE) — pkg_order.sql:42-51
+    public void batchCreateOrders(Long pUserId, String pItems) {
+        // CALL pkg_order.create_order(...)
+        // PERFORM pkg_common . log_operation ( 'ORDER' , 'BATCH_CREATE' , p_user_id )
+        // PERFORM pkg_common . send_notification ( 'EMAIL' , 'Batch order created' )
+    }
+
+    // Source: pkg_order.complete_order (PROCEDURE) — pkg_order.sql:53-61
+    @Transactional
+    public void completeOrder(Long pOrderId) {
+        int _sqlRowCount = 0;
+        _sqlRowCount = orderMapper.updateCompleteOrder(pOrderId);
+        // PERFORM pkg_common . log_operation ( 'ORDER' , 'COMPLETE' , p_order_id )
+        // PERFORM pkg_common . send_notification ( 'EMAIL' , 'Order completed' )
+    }
+}

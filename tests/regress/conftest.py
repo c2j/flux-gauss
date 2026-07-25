@@ -1,0 +1,238 @@
+"""
+Shared fixtures for flux-gauss regression guard tests.
+
+Key concerns:
+1. flux_gauss.py has extensive module-level mutable state that MUST be
+   reset between tests (12 tracked containers, plus TYPE_OVERRIDES).
+2. ogsql binary may not be available locally — AST caching + pytest.skip
+   handles this gracefully.
+3. Golden file tests use --regress-save / --regress-update CLI flags.
+"""
+import json
+import os
+import subprocess
+import pytest
+import sys
+
+# Add project root so we can import converter.flux_gauss
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+
+import converter.flux_gauss as fg
+
+# ── Paths ───────────────────────────────────────────────────────
+FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
+AST_CACHE_DIR = os.path.join(os.path.dirname(__file__), ".ast_cache")
+GOLDEN_DIR = os.path.join(os.path.dirname(__file__), "golden")
+
+
+# ── CLI Flags for Golden Management ─────────────────────────────
+def pytest_addoption(parser):
+    parser.addoption(
+        "--regress-save", action="store_true", default=False,
+        help="Generate golden files from current output (first-time baseline)."
+    )
+    parser.addoption(
+        "--regress-update", action="store_true", default=False,
+        help="Overwrite golden files with current output (after intentional changes)."
+    )
+
+
+@pytest.fixture(scope="session")
+def regress_save(request):
+    return request.config.getoption("--regress-save")
+
+
+@pytest.fixture(scope="session")
+def regress_update(request):
+    return request.config.getoption("--regress-update")
+
+
+# ── Global State Reset ──────────────────────────────────────────
+# flux_gauss.py uses many module-level mutable containers.
+# Every test must start with clean state.
+# This is MORE thorough than tests/conftest.py — adds _SQL_FILE_CACHE
+# which is critical when regress tests re-parse the same SQL fixtures.
+
+@pytest.fixture(autouse=True)
+def _reset_global_state():
+    """Reset ALL module-level mutable state before each regress test."""
+    # Tracking lists
+    fg.UNRESOLVED_CALLS.clear()
+    fg.STUB_PROCEDURES.clear()
+    fg.UNSUPPORTED_FUNCTIONS.clear()
+    fg.TODO_SUMMARY.clear()
+
+    # Tracking dicts
+    fg.STUB_REASONS.clear()
+    fg._MISSING_OVERLOADS.clear()
+    fg._PACKAGE_CONSTANTS.clear()
+    fg._PACKAGE_VARIABLES.clear()
+    fg._UDF_RETURN_TYPES.clear()
+    fg._TABLE_DDL_SOURCE.clear()
+    fg._SQL_FILE_CACHE.clear()
+
+    # TYPE_OVERRIDES is a config dict — save/restore
+    original_overrides = dict(fg.TYPE_OVERRIDES)
+    yield
+    fg.TYPE_OVERRIDES.clear()
+    fg.TYPE_OVERRIDES.update(original_overrides)
+
+
+# ── ogsql Binary Detection ──────────────────────────────────────
+
+def _ogsql_available() -> bool:
+    """Check if the ogsql binary resolved by flux_gauss is callable."""
+    try:
+        result = subprocess.run(
+            [fg.OGSQL_BIN, "--version"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired, PermissionError):
+        return False
+
+
+_OGSQL_CHECKED = None
+
+def _check_ogsql():
+    """Cached check — only runs once per session."""
+    global _OGSQL_CHECKED
+    if _OGSQL_CHECKED is None:
+        _OGSQL_CHECKED = _ogsql_available()
+    return _OGSQL_CHECKED
+
+
+# ── AST Cache ───────────────────────────────────────────────────
+
+def _run_ogsql_parse(sql_path: str) -> dict:
+    """Call ogsql binary to parse a SQL file, return AST dict."""
+    raw, encoding = fg._read_sql_file(sql_path)
+    result = subprocess.run(
+        [fg.OGSQL_BIN, "parse", "-j"],
+        input=raw, capture_output=True, text=True, timeout=30,
+        encoding=encoding,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"ogsql parse failed for {sql_path}:\n{result.stderr[:500]}"
+        )
+    if not result.stdout.strip():
+        raise RuntimeError(f"ogsql produced empty output for {sql_path}")
+    return json.loads(result.stdout)
+
+
+def _get_cached_ast(sql_file: str) -> dict:
+    """Get AST for a SQL file. Reads from cache if available,
+    otherwise parses with ogsql and writes cache.
+
+    sql_file: base filename (e.g. "pkg_order.sql") located in FIXTURES_DIR.
+    """
+    cache_key = sql_file.replace("/", "_").replace("\\", "_")
+    cache_path = os.path.join(AST_CACHE_DIR, f"{cache_key}.json")
+
+    # 1. Try cache
+    if os.path.exists(cache_path):
+        with open(cache_path, encoding="utf-8") as f:
+            return json.load(f)
+
+    # 2. Need ogsql to parse
+    if not _check_ogsql():
+        pytest.skip(
+            f"ogsql binary not available and AST not cached for {sql_file}. "
+            f"Set OGSQL_BIN env var or place ogsql on PATH."
+        )
+
+    # 3. Parse and cache
+    sql_full = os.path.join(FIXTURES_DIR, sql_file) \
+        if not os.path.isabs(sql_file) else sql_file
+
+    if not os.path.isfile(sql_full):
+        # Try as relative to project root (fallback)
+        alt_path = os.path.join(
+            os.path.dirname(__file__), '..', '..', 'demo-project', 'sql', sql_file
+        )
+        if os.path.isfile(alt_path):
+            sql_full = alt_path
+        else:
+            pytest.skip(f"SQL fixture not found: {sql_full}")
+
+    ast = _run_ogsql_parse(sql_full)
+
+    os.makedirs(AST_CACHE_DIR, exist_ok=True)
+    with open(cache_path, "w", encoding="utf-8") as f:
+        json.dump(ast, f, indent=2)
+
+    return ast
+
+
+# ── Session-Scoped AST Fixtures ─────────────────────────────────
+
+@pytest.fixture(scope="session")
+def cached_ast():
+    """{filename: AST dict} mapping for all fixtures in FIXTURES_DIR."""
+    cache = {}
+    if os.path.isdir(FIXTURES_DIR):
+        for f in sorted(os.listdir(FIXTURES_DIR)):
+            if f.endswith(".sql"):
+                cache[f] = _get_cached_ast(f)
+    return cache
+
+
+@pytest.fixture(scope="session")
+def cached_ast_by_pkg():
+    """{pkg_name: AST dict} mapping.
+    pkg_name is derived from filename by stripping 'pkg_' prefix.
+    e.g. "pkg_order.sql" → "order"
+    """
+    cache = {}
+    if os.path.isdir(FIXTURES_DIR):
+        for f in sorted(os.listdir(FIXTURES_DIR)):
+            if f.endswith(".sql"):
+                name = os.path.splitext(f)[0]
+                if name.startswith("pkg_"):
+                    name = name[4:]
+                elif name.startswith("PKG_"):
+                    name = name[4:]
+                cache[name] = _get_cached_ast(f)
+    return cache
+
+
+# ── Fixture Discovery Helpers ───────────────────────────────────
+
+def _fixture_sql_files() -> list:
+    """Return sorted list of .sql fixture filenames (excluding known-broken)."""
+    if not os.path.isdir(FIXTURES_DIR):
+        return []
+    return sorted(
+        f for f in os.listdir(FIXTURES_DIR)
+        if f.endswith(".sql") and f not in KNOWN_BROKEN_FIXTURES
+    )
+
+
+def _fixture_pkg_name(sql_file: str) -> str:
+    """Derive package name from SQL filename.
+    e.g. "pkg_order.sql" → "order", "PKG_WARPDRIVER_STRESS_TEST.sql" → "WARPDRIVER_STRESS_TEST"
+    """
+    name = os.path.splitext(sql_file)[0]
+    if name.startswith("pkg_"):
+        return name[4:]
+    elif name.startswith("PKG_"):
+        return name[4:]
+    return name
+
+
+# ── Expected Baselines (per-fixture) ────────────────────────────
+# These are floor values, not exact — tests check "≥ expected".
+
+EXPECTED_BASELINES = {
+    "pkg_order.sql":                 {"min_procs": 5, "min_procs_with_dml": 3},
+    "pkg_dynamic_xml.sql":           {"min_procs": 2, "min_procs_with_dml": 1},
+    "complex_clearing_pkg.sql":      {"min_procs": 3, "min_procs_with_dml": 2},
+    "gauss_complete_examples.sql":   {"min_procs": 4, "min_procs_with_dml": 2},
+    "PKG_WARPDRIVER_STRESS_TEST.sql":{"min_procs": 5, "min_procs_with_dml": 1},
+}
+
+# complex_clearing_pkg.sql crashes ogsql v0.8.32's Python engine
+# (AttributeError in _expr_to_java with None procedure context).
+# Skip until upstream converter bug is fixed.
+KNOWN_BROKEN_FIXTURES = {"complex_clearing_pkg.sql"}

@@ -21,6 +21,9 @@ ogsql
 .sisyphus/
 target
 
+# Regression test AST cache
+tests/regress/.ast_cache/
+
 # PyInstaller
 build/
 dist/

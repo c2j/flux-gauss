@@ -1,0 +1,23 @@
+package com.example.demo.mapper;
+
+import java.util.Map;
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface DynamicXmlMapper {
+
+    // {FIXTURES_ROOT}/pkg_dynamic_xml.sql:47 — pkg_dynamic_xml.proc_conditional_query
+    Map<String, Object> selectProcConditionalQuery(@Param("pTableName") String pTableName, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("pLimit") Integer pLimit);
+    // {FIXTURES_ROOT}/pkg_dynamic_xml.sql:47 — pkg_dynamic_xml.proc_conditional_query
+    Integer selectProcConditionalQuery_1(@Param("pTableName") String pTableName, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("pLimit") Integer pLimit);
+    // {FIXTURES_ROOT}/pkg_dynamic_xml.sql:83 — pkg_dynamic_xml.proc_conditional_update
+    int updateProcConditionalUpdate(@Param("pTableName") String pTableName, @Param("pId") Integer pId, @Param("pStatus") String pStatus, @Param("pAmount") Long pAmount, @Param("pRemark") String pRemark);
+    // {FIXTURES_ROOT}/pkg_dynamic_xml.sql:126 — pkg_dynamic_xml.proc_mixed_logic
+    int insertProcMixedLogic(@Param("pTableName") String pTableName, @Param("pMode") String pMode);
+    // {FIXTURES_ROOT}/pkg_dynamic_xml.sql:126 — pkg_dynamic_xml.proc_mixed_logic
+    int insertProcMixedLogic_1(@Param("pTableName") String pTableName, @Param("pMode") String pMode, @Param("vSql") String vSql);
+    // {FIXTURES_ROOT}/pkg_dynamic_xml.sql:126 — pkg_dynamic_xml.proc_mixed_logic
+    int deleteProcMixedLogic(@Param("pTableName") String pTableName, @Param("pMode") String pMode);
+    // {FIXTURES_ROOT}/pkg_dynamic_xml.sql:126 — pkg_dynamic_xml.proc_mixed_logic
+    int insertProcMixedLogic_2(@Param("pTableName") String pTableName, @Param("pMode") String pMode, @Param("vSql") String vSql);
+}

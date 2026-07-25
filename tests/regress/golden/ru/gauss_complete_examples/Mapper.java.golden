@@ -1,0 +1,9 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface GaussCompleteExamplesMapper {
+
+    // No direct DML operations for gauss_complete_examples
+}

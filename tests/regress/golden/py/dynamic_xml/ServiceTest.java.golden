@@ -1,0 +1,77 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.DynamicXmlMapper;
+import com.example.demo.service.DynamicXmlService;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class DynamicXmlServiceTest {
+
+    @Mock
+    private DynamicXmlMapper dynamicXmlMapper;
+
+    @InjectMocks
+    private DynamicXmlService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procConditionalQuery_success() {
+        String pTableName = "test_pTableName";
+        String pWhereClause = "test_pWhereClause";
+        String pOrderBy = "test_pOrderBy";
+        Integer pLimit = 5;
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("created_at", "2025-01-01"); when(dynamicXmlMapper.selectProcConditionalQuery(any(), any(), any())).thenReturn(m).thenReturn(null); }
+        when(dynamicXmlMapper.selectProcConditionalQuery_1(any(), any(), any(), any())).thenReturn(999);
+        when(dynamicXmlMapper.updateProcConditionalUpdate(any(), any(), any(), any(), any())).thenReturn(1);
+        when(dynamicXmlMapper.insertProcMixedLogic(any())).thenReturn(1);
+        when(dynamicXmlMapper.insertProcMixedLogic_1(any(), any(), any())).thenReturn(1);
+        when(dynamicXmlMapper.deleteProcMixedLogic(any())).thenReturn(1);
+        when(dynamicXmlMapper.insertProcMixedLogic_2(any(), any(), any())).thenReturn(1);
+        service.procConditionalQuery(pTableName, pWhereClause, pOrderBy, pLimit);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procConditionalUpdate_success() {
+        String pTableName = "test_pTableName";
+        Integer pId = 1;
+        String pStatus = "test_pStatus";
+        Long pAmount = 100L;
+        String pRemark = "test_pRemark";
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("created_at", "2025-01-01"); when(dynamicXmlMapper.selectProcConditionalQuery(any(), any(), any())).thenReturn(m).thenReturn(null); }
+        when(dynamicXmlMapper.selectProcConditionalQuery_1(any(), any(), any(), any())).thenReturn(999);
+        when(dynamicXmlMapper.updateProcConditionalUpdate(any(), any(), any(), any(), any())).thenReturn(1);
+        when(dynamicXmlMapper.insertProcMixedLogic(any())).thenReturn(1);
+        when(dynamicXmlMapper.insertProcMixedLogic_1(any(), any(), any())).thenReturn(1);
+        when(dynamicXmlMapper.deleteProcMixedLogic(any())).thenReturn(1);
+        when(dynamicXmlMapper.insertProcMixedLogic_2(any(), any(), any())).thenReturn(1);
+        service.procConditionalUpdate(pTableName, pId, pStatus, pAmount, pRemark);
+        verify(dynamicXmlMapper, atLeast(0)).updateProcConditionalUpdate(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procMixedLogic_success() {
+        String pTableName = "test_pTableName";
+        String pMode = "test_pMode";
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("created_at", "2025-01-01"); when(dynamicXmlMapper.selectProcConditionalQuery(any(), any(), any())).thenReturn(m).thenReturn(null); }
+        when(dynamicXmlMapper.selectProcConditionalQuery_1(any(), any(), any(), any())).thenReturn(999);
+        when(dynamicXmlMapper.updateProcConditionalUpdate(any(), any(), any(), any(), any())).thenReturn(1);
+        when(dynamicXmlMapper.insertProcMixedLogic(any())).thenReturn(1);
+        when(dynamicXmlMapper.insertProcMixedLogic_1(any(), any(), any())).thenReturn(1);
+        when(dynamicXmlMapper.deleteProcMixedLogic(any())).thenReturn(1);
+        when(dynamicXmlMapper.insertProcMixedLogic_2(any(), any(), any())).thenReturn(1);
+        service.procMixedLogic(pTableName, pMode);
+        verify(dynamicXmlMapper, atLeast(0)).insertProcMixedLogic(any());
+    }
+}
