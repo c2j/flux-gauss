@@ -286,12 +286,26 @@ fn build_success_test(
         .find(|d| matches!(d.sql_type, DmlType::Insert | DmlType::Update | DmlType::Delete));
     if let Some(dml) = first_dml {
         let any_count = count_mapper_params_for_dml(proc, dml, pkg);
-        let any_args = if any_count > 0 {
+        let mut typed_args = Vec::new();
+        for p in proc.parameters.iter().filter(|pp| !pp.is_out()) {
+            typed_args.push(format!("({}) any()", any_matcher_type(&p.java_type)));
+        }
+        for (_, jt) in &dml.extra_params {
+            typed_args.push(format!("({}) any()", any_matcher_type(jt)));
+        }
+        let verify_is_overloaded = pkg.procedures.iter()
+            .flat_map(|pp| pp.dml_statements.iter())
+            .filter(|dd| dd.method_id == dml.method_id)
+            .count() > 1;
+        let verify_args = if verify_is_overloaded && !typed_args.is_empty() {
+            while typed_args.len() < any_count { typed_args.push("any()".to_string()); }
+            typed_args.join(", ")
+        } else if any_count > 0 {
             vec!["any()"; any_count].join(", ")
         } else {
             String::new()
         };
-        lines.push(format!("        verify({}, atLeast(0)).{}({});", mapper_name, dml.method_id, any_args));
+        lines.push(format!("        verify({}, atLeast(0)).{}({});", mapper_name, dml.method_id, verify_args));
     }
 
     lines.push("    }".to_string());
@@ -528,68 +542,71 @@ fn extract_map_access_keys(pkg: &PackageInfo) -> Vec<String> {
     result
 }
 
- fn mock_all_mapper_methods(mapper_name: &str, pkg: &PackageInfo) -> Vec<String> {
-      let extra_keys = extract_map_access_keys(pkg);
-      let mut all_dmls: Vec<(String, DmlType, usize, bool, Option<String>, String)> = Vec::new();
-      for proc in &pkg.procedures {
-          for dml in &proc.dml_statements {
-              let in_param_count = proc.parameters.iter().filter(|p| !p.is_out()).count();
-              // Mirror mapper.rs logic to compute total unique params
-              let mut all_names: std::collections::HashSet<String> = proc
-                  .parameters.iter()
-                  .filter(|p| !p.is_out())
-                  .map(|p| crate::naming::snake_to_camel(&p.name).to_lowercase())
-                  .collect();
+  fn mock_all_mapper_methods(mapper_name: &str, pkg: &PackageInfo) -> Vec<String> {
+       let extra_keys = extract_map_access_keys(pkg);
+       let mut all_dmls: Vec<(String, DmlType, usize, bool, Option<String>, String, Vec<String>)> = Vec::new();
+       for proc in &pkg.procedures {
+           for dml in &proc.dml_statements {
+               let mut param_types: Vec<String> = proc.parameters.iter()
+                   .filter(|p| !p.is_out())
+                   .map(|p| p.java_type.clone())
+                   .collect();
+               for (_, jt) in &dml.extra_params {
+                   param_types.push(jt.clone());
+               }
+               let in_param_count = proc.parameters.iter().filter(|p| !p.is_out()).count();
+               let mut all_names: std::collections::HashSet<String> = proc
+                   .parameters.iter()
+                   .filter(|p| !p.is_out())
+                   .map(|p| crate::naming::snake_to_camel(&p.name).to_lowercase())
+                   .collect();
 
-              // Step 2: dml.extra_params
-              for (jn, _) in &dml.extra_params {
-                  all_names.insert(jn.to_lowercase());
-              }
+               for (jn, _) in &dml.extra_params { all_names.insert(jn.to_lowercase()); }
 
-              // Step 3: local vars from SQL text
-              let re = IDENTIFIER_RE.get_or_init(|| regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap());
-              let proc_param_names: std::collections::HashSet<String> = proc
-                  .parameters.iter()
-                  .filter(|p| !p.is_out())
-                  .map(|p| p.name.to_lowercase())
-                  .collect();
-              for caps in re.captures_iter(&dml.sql_text) {
-                  let word = caps.get(1).unwrap().as_str();
-                  if proc.local_vars.contains_key(&word.to_lowercase()) && !proc_param_names.contains(&word.to_lowercase()) {
-                      all_names.insert(crate::naming::snake_to_camel(word).to_lowercase());
-                  }
-              }
-
-              // Step 4: package vars from SQL text
-               let local_var_names: std::collections::HashSet<String> = proc.local_vars.keys().map(|k| k.to_lowercase()).collect();
+               let re = IDENTIFIER_RE.get_or_init(|| regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap());
+               let proc_param_names: std::collections::HashSet<String> = proc
+                   .parameters.iter().filter(|p| !p.is_out()).map(|p| p.name.to_lowercase()).collect();
                for caps in re.captures_iter(&dml.sql_text) {
                    let word = caps.get(1).unwrap().as_str();
-                   if pkg.package_vars.contains_key(word)
-                       && !local_var_names.contains(&word.to_lowercase())
-                       && !proc_param_names.contains(&word.to_lowercase())
-                  {
-                      all_names.insert(crate::naming::snake_to_camel(word).to_lowercase());
-                  }
-              }
-
-              // Step 5: OUT params in SQL text
-              for p in &proc.parameters {
-                  if p.is_out() && case_insensitive_word_match(&dml.sql_text, &p.name) {
-                      all_names.insert(crate::naming::snake_to_camel(&p.name).to_lowercase());
-                  }
-              }
+                   if proc.local_vars.contains_key(&word.to_lowercase()) && !proc_param_names.contains(&word.to_lowercase()) {
+                       all_names.insert(crate::naming::snake_to_camel(word).to_lowercase());
+                   }
+               }
+                let local_var_names: std::collections::HashSet<String> = proc.local_vars.keys().map(|k| k.to_lowercase()).collect();
+                for caps in re.captures_iter(&dml.sql_text) {
+                    let word = caps.get(1).unwrap().as_str();
+                    if pkg.package_vars.contains_key(word) && !local_var_names.contains(&word.to_lowercase()) && !proc_param_names.contains(&word.to_lowercase()) {
+                       all_names.insert(crate::naming::snake_to_camel(word).to_lowercase());
+                   }
+               }
+               for p in &proc.parameters {
+                   if p.is_out() && case_insensitive_word_match(&dml.sql_text, &p.name) {
+                       all_names.insert(crate::naming::snake_to_camel(&p.name).to_lowercase());
+                   }
+               }
 
               let total_params = all_names.len();
-             if !all_dmls.iter().any(|(id, _, _, _, _, _)| id == &dml.method_id) {
-                 all_dmls.push((dml.method_id.clone(), dml.sql_type, total_params, dml.returns_list, dml.result_type.clone(), dml.sql_text.clone()));
-             }
-         }
-     }
+              all_dmls.push((dml.method_id.clone(), dml.sql_type, total_params, dml.returns_list, dml.result_type.clone(), dml.sql_text.clone(), param_types));
+          }
+      }
 
     let mut lines = Vec::new();
-    for (method_id, sql_type, param_count, returns_list, result_type, sql_text) in &all_dmls {
+    for (method_id, sql_type, param_count, returns_list, result_type, sql_text, param_types) in &all_dmls {
+        let is_overloaded = all_dmls.iter()
+            .filter(|(id, _, _, _, _, _, pts)| id == method_id && pts != param_types)
+            .count() > 0;
         let any_args = if *param_count > 0 {
-            (0..*param_count).map(|_| "any()".to_string()).collect::<Vec<_>>().join(", ")
+            if is_overloaded && !param_types.is_empty() {
+                let mut args: Vec<String> = param_types.iter()
+                    .map(|t| format!("({}) any()", any_matcher_type(t)))
+                    .collect();
+                while args.len() < *param_count {
+                    args.push("any()".to_string());
+                }
+                args.join(", ")
+            } else {
+                (0..*param_count).map(|_| "any()".to_string()).collect::<Vec<_>>().join(", ")
+            }
         } else {
             String::new()
         };
@@ -707,6 +724,20 @@ fn lowercase_first(s: &str) -> String {
     match c.next() {
         Some(f) => f.to_ascii_lowercase().to_string() + c.as_str(),
         None => String::new(),
+    }
+}
+
+fn any_matcher_type(java_type: &str) -> &str {
+    match java_type {
+        "String" => "String",
+        "Integer" | "int" => "Integer",
+        "Long" | "long" => "Long",
+        "Boolean" => "Boolean",
+        "BigDecimal" | "java.math.BigDecimal" => "java.math.BigDecimal",
+        "Date" | "java.sql.Date" => "java.sql.Date",
+        "Timestamp" | "java.sql.Timestamp" => "java.sql.Timestamp",
+        "Map<String, Object>" | "java.util.Map" => "java.util.Map",
+        _ => "Object",
     }
 }
 
