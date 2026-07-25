@@ -128,8 +128,8 @@ class TestSqlTypeToJava:
     # ── Dict types (PercentType, RefCursor, etc.) ──
     def test_percent_type_dict(self):
         result = fg.sql_type_to_java({"PercentType": {"table": "orders", "column": "order_id"}})
-        # order_id → bigint (heuristic: "id" → bigint)
-        assert result == "Long"
+        # order_id → varchar (id heuristic removed in #47/#49, safe default)
+        assert result == "String"
 
     def test_percent_row_type_dict(self):
         result = fg.sql_type_to_java({"PercentRowType": {"table": "orders"}})
@@ -146,7 +146,7 @@ class TestSqlTypeToJava:
     # ── %TYPE string syntax ──
     def test_percent_type_string(self):
         result = fg.sql_type_to_java("orders.order_id%type")
-        assert result == "Long"  # "id" heuristic → bigint
+        assert result == "String"  # #47/#49: heuristic removed, safe default
 
     def test_percent_type_string_with_override(self):
         fg.TYPE_OVERRIDES[("orders", "status")] = "varchar"
@@ -267,7 +267,7 @@ class TestInferTypeFromColumnName:
         assert fg._infer_type_from_column_name("user_name") == "varchar"
 
     def test_id_suffix(self):
-        assert fg._infer_type_from_column_name("order_id") == "bigint"
+        assert fg._infer_type_from_column_name("order_id") == "varchar"
 
     def test_amount_suffix(self):
         assert fg._infer_type_from_column_name("total_amount") == "numeric"
@@ -284,8 +284,8 @@ class TestInferTypeFromColumnName:
     def test_unknown_returns_varchar(self):
         assert fg._infer_type_from_column_name("xyz") == "varchar"
 
-    def test_num_in_name_returns_integer(self):
-        assert fg._infer_type_from_column_name("row_num") == "integer"
+    def test_num_in_name_returns_varchar(self):
+        assert fg._infer_type_from_column_name("row_num") == "varchar"
 
     def test_no_suffix_returns_varchar(self):
         assert fg._infer_type_from_column_name("value") == "varchar"

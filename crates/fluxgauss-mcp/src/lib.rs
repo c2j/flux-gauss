@@ -296,7 +296,7 @@ impl FluxGaussMcpServer {
                 stub_count: result.stub_count,
                 mappings,
                 errors: error_strings,
-                unresolved_calls: result.unresolved_calls,
+                unresolved_calls: result.unresolved_calls.iter().map(|c| c.callee.clone()).collect(),
             },
             report_paths,
             log_path,

@@ -213,7 +213,7 @@ class TestBuildMapperStatementDynamicXml:
         xml = fg._build_mapper_statement(proc, dml)
         assert "<where>" not in xml
         assert '<if test=' not in xml
-        assert "FROM orders" in xml
+        assert "from orders" in xml
         assert "status = #{status}" in xml
 
     def test_xml_escape_in_conditions(self):
