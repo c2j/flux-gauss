@@ -2,5 +2,13 @@
 members = ["crates/fluxgauss", "crates/fluxgauss-mcp"]
 resolver = "2"
 
+[workspace.package]
+version = "0.6.16"
+edition = "2021"
+
 [workspace.dependencies]
 ogsql-parser = { git = "https://github.com/c2j/ogsql-parser.git", tag = "v0.8.32" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }

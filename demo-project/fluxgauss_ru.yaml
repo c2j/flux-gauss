@@ -7,7 +7,7 @@ integration_test:
   mode: remote
   url: jdbc:postgresql://localhost:5432/postgres
   username: gaussdb
-  password: Enmo@123
+  password: ${DB_PASSWORD}  # Requires: export DB_PASSWORD=your_password
 
 # Optional: database connection (used to generate application.yml)
 # database:

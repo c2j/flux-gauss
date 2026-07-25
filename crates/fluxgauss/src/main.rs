@@ -7,7 +7,7 @@ use fluxgauss::config;
 use fluxgauss::incremental::IncrementalState;
 use fluxgauss::pipeline;
 
-const VERSION: &str = "1.0.0";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const LOGO: &str = r#"
 

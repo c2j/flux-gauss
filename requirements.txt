@@ -1,1 +1,6 @@
+# Runtime + optional dependencies (all-in-one install)
+# For minimal install: pip install pyyaml>=6.0
+# For development: pip install -e ".[dev,mcp]"
 pyyaml>=6.0
+pytest>=7.0
+mcp>=1.0
