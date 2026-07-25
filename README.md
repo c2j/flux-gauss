@@ -2,7 +2,7 @@
 
 将 OpenGauss / PostgreSQL 存储过程（PL/pgSQL）自动转换为 Spring Boot + MyBatis Java 项目。
 
-[![Version](https://img.shields.io/badge/version-0.6.13-blue)](crates/fluxgauss/Cargo.toml)
+[![Version](https://img.shields.io/badge/version-0.6.16-blue)](crates/fluxgauss/Cargo.toml)
 
 ## 功能亮点
 
@@ -34,8 +34,8 @@
 
 ```bash
 # 方式一：源码运行（推荐）
-git clone https://github.com/c2j/sp2java.git
-cd sp2java
+git clone https://github.com/c2j/flux-gauss.git
+cd flux-gauss
 
 # 方式二：独立二进制（无需 Python/Rust 环境）
 # 从 Releases 页面下载对应平台的 fluxgauss-py 二进制
@@ -75,6 +75,8 @@ cd dest
 mvn compile        # 编译检查
 mvn test           # 运行自动生成的单元测试
 ```
+
+> **Demo 配置文件说明**: `demo-project/` 下提供三份示例配置 — `fluxgauss_py.yaml`（Python 引擎）、`fluxgauss_ru.yaml`（Rust 引擎）、`fluxgauss_tu.yaml`（小规模测试集，`tu` = Test Unit）。输出目录分别为 `dest_py/`、`dest_ru/`、`dest_tu/`。
 
 ## 架构
 
@@ -410,13 +412,12 @@ GET  /api/health    — 健康检查
 ## 文档
 
 - [使用指南](使用指南.md) — 完整的配置说明、CLI 选项、PL/pgSQL 特性支持列表
-- [用户手册](docs/UserGuide.md) — 面向最终用户的详细操作手册
-- [贡献指南](CONTRIBUTION.md) — 如何参与开发、提交代码和测试
-- [开发者指南](docs/DeveloperGuide.md) — 架构详解、引擎内部原理、MCP/API 集成
+- [贡献指南](CONTRIBUTING.md) — 如何参与开发、提交代码和测试
+- [更新日志](CHANGELOG.md) — 版本变更记录
 - [迁移方案对比](docs/migration-comparison.md) — 存储过程迁移到 Java 的各种方案比较
 - [设计文档](docs/design-document.md) — 完整的数据模型、算法逻辑和代码生成规则
 - [AGENTS.md](AGENTS.md) — AI 辅助开发指南（项目架构和开发规范）
 
 ## License
 
-Private / Internal Use
+MIT — see [LICENSE](LICENSE)

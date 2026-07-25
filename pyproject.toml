@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "fluxgauss"
+version = "0.6.16"
+description = "PL/pgSQL → Spring Boot/MyBatis Java converter"
+requires-python = ">=3.9"
+dependencies = [
+    "pyyaml>=6.0",
+]
+[project.optional-dependencies]
+mcp = ["mcp>=1.0"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+fluxgauss = "converter.flux_gauss:main"
+
+[project.urls]
+Repository = "https://github.com/c2j/flux-gauss"
+
+[tool.setuptools]
+packages = ["converter"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

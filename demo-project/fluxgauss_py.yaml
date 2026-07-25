@@ -7,7 +7,7 @@ integration_test:
   mode: remote
   url: jdbc:postgresql://localhost:5432/pagila?currentSchema=gaussdb
   username: gaussdb
-  password: Enmo@123
+  password: ${DB_PASSWORD}  # Requires: export DB_PASSWORD=your_password
   init_sql:
     - demo-project/sql/missing_tables.sql
 
