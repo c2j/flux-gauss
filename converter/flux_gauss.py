@@ -9257,6 +9257,10 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                         right = f"Long.valueOf({right})"
                     elif _is_numeric_literal(val.get("left")):
                         left = f"Long.valueOf({left})"
+                    elif right_type == "String" and not _is_numeric_literal(val.get("right")):
+                        right = f"Long.parseLong({right})"
+                    elif left_type == "String" and not _is_numeric_literal(val.get("left")):
+                        left = f"Long.parseLong({left})"
                     return f"{left}.compareTo({right}) {cmp_map[op]} 0"
 
                 # ── General type alignment for mixed-type numeric comparisons ──
