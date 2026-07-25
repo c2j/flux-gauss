@@ -7848,7 +7848,7 @@ SQL_FUNCTION_MAP = {
     "rtrim": "__EXPR__String.valueOf({args0}).replaceAll(\"\\\\s+$\", \"\")",
     "ltrim": "__EXPR__String.valueOf({args0}).replaceAll(\"^\\\\s+\", \"\")",
     "chr": "__EXPR__String.valueOf((char)({args0}))",
-    "ascii": "__EXPR__(int) String.valueOf({args0}).charAt(0)",
+    "ascii": "__EXPR__String.valueOf({args0}).charAt(0)",
     "add_months": "__EXPR__java.time.LocalDate.now().plusMonths({args1})",
     "months_between": "__EXPR__java.time.Period.between(((java.time.LocalDate){args0}), ((java.time.LocalDate){args1})).toTotalMonths()",
     "last_day": "__EXPR__java.time.LocalDate.now().withDayOfMonth(java.time.LocalDate.now().lengthOfMonth())",
