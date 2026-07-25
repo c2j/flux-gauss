@@ -3414,10 +3414,17 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
                     for s in _iter_statements(stmt_data.get("body", [])):
                         _process_with_goto_replace(s)
                     _indent_last_lines(proc, 1)
-                    for handler in exc_block.get("handlers", []):
+                    handlers_block = exc_block.get("handlers", [])
+                    if handlers_block:
+                        all_conditions = []
+                        for h in handlers_block:
+                            conds = h.get("conditions", [])
+                            all_conditions.append(conds[0] if conds else "EXCEPTION")
+                        proc.java_logic_lines.append(f"}} catch (Exception e) {{ // {'; '.join(all_conditions)}")
+                    for handler in handlers_block:
                         conditions = handler.get("conditions", [])
                         cond_name = conditions[0] if conditions else "EXCEPTION"
-                        proc.java_logic_lines.append(f"}} catch (Exception e) {{ // {cond_name}")
+                        proc.java_logic_lines.append(f"    // WHEN {cond_name}")
                         for hs in _iter_statements(handler.get("statements", [])):
                             _process_with_goto_replace(hs)
                         _indent_last_lines(proc, 1)
@@ -6349,126 +6356,181 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
         proc.java_logic_lines.append(f"// CALL {full_name}(...)")
 
 
+def _wrap_handler_stmts(stmts, proc, all_packages,
+                         out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
+                         indent="    ", in_catch=True):
+    """Convert handler statements to Java lines, used by _wrap_try_catch."""
+    _lines = []
+    for s in _iter_statements(stmts):
+        for sk, sv in s.items():
+            if sk == "Assignment":
+                target = _expr_to_java(sv.get("target", {}), proc, as_read=False)
+                _exc_var_name = _extract_var_name_from_expr(sv.get("target", {}))
+                if _exc_var_name and _exc_var_name in _PACKAGE_VARIABLES:
+                    _PACKAGE_VAR_WRITTEN.add(_exc_var_name)
+                expr_raw = sv.get("expression", {})
+                expr = _expr_to_java(expr_raw, proc, all_packages=all_packages)
+                errm_repl = "e.getMessage()" if in_catch else '""'
+                expr = re.sub(r'\bsqlerrm\b', errm_repl, expr, flags=re.IGNORECASE)
+                expr = re.sub(r'\bsqlcode\b', 'String.valueOf(-1)', expr, flags=re.IGNORECASE)
+                if target in out_java_names:
+                    if target in out_string_names and not _is_string_expr(expr):
+                        expr = f"String.valueOf({expr})"
+                    elif target in out_long_names and _is_string_expr(expr) and not _is_long_expr(expr):
+                        expr = f"Long.valueOf({expr})"
+                    elif target in out_long_names and _is_bare_int_literal(expr):
+                        expr = f"Long.valueOf({expr})"
+                    elif target in out_long_names and not _is_long_expr(expr):
+                        expr = f"((Number) {expr}).longValue()"
+                    elif target in out_bigdecimal_names:
+                        if _is_bare_int_literal(expr):
+                            expr = f"java.math.BigDecimal.valueOf({expr})"
+                        elif "BigDecimal" in expr:
+                            pass
+                        elif _is_numeric_literal_expr(expr):
+                            pass
+                        elif "mapper." in expr:
+                            expr = f"((java.math.BigDecimal) {expr})"
+                        elif not _is_string_expr(expr):
+                            expr = f"new java.math.BigDecimal(String.valueOf({expr}))"
+                    _lines.append(f"{indent}{target}.set({expr});")
+                else:
+                    if target.startswith("__MAP_PUT__"):
+                        _, rest = target.split("__MAP_PUT__", 1)
+                        var_java, field_key = rest.split("__", 1)
+                        _lines.append(f'{indent}{var_java}.put("{field_key}", {expr});')
+                    else:
+                        _lines.append(f"{indent}{target} = {expr};")
+            elif sk == "Block":
+                # Process Block body statements inline (inner exception_block is handled at procedure level)
+                _blines = _wrap_handler_stmts(
+                    sv.get("body", []), proc, all_packages,
+                    out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
+                    indent, in_catch=in_catch)
+                _lines.extend(_blines)
+            elif sk == "Raise":
+                errm = "e.getMessage()" if in_catch else '"exception"'
+                _lines.append(f"{indent}throw new BusinessException({errm});")
+            elif sk == "Return":
+                _lines.append(f"{indent}return;")
+            elif sk == "ProcedureCall":
+                if all_packages:
+                    func_name_parts = sv.get("name", [])
+                    call_args = sv.get("arguments", [])
+                    if len(func_name_parts) >= 3:
+                        pkg = func_name_parts[-2]
+                        func = func_name_parts[-1]
+                    elif len(func_name_parts) == 2:
+                        pkg = func_name_parts[0]
+                        func = func_name_parts[1]
+                    elif len(func_name_parts) == 1 and proc.package:
+                        pkg = proc.package
+                        func = func_name_parts[0]
+                    else:
+                        _lines.append(f"{indent}// CALL {'.'.join(func_name_parts)}(...)")
+                        continue
+                    matched = _find_registered_pkg(pkg, all_packages)
+                    if matched:
+                        svc_name = f"{package_to_classname(matched).lower()}Service"
+                        method = java_method_name(func)
+                        target_proc_info = _find_target_proc(matched, func, all_packages, arg_count=len(call_args))
+                        _out_param_java_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out}
+                        _target_out_indices = set()
+                        if target_proc_info:
+                            _target_out_indices = {i for i, p in enumerate(target_proc_info.parameters) if p.is_out}
+                        _resolved = []
+                        for i, a in enumerate(call_args):
+                            if target_proc_info and i in _target_out_indices:
+                                raw_java = _expr_to_java(a, proc, as_read=False)
+                                if raw_java in _out_param_java_names:
+                                    _resolved.append(raw_java)
+                                else:
+                                    _resolved.append(_expr_to_java(a, proc, as_read=True))
+                            else:
+                                a_java = _expr_to_java(a, proc, as_read=True)
+                                if target_proc_info and i < len(target_proc_info.parameters):
+                                    tptype = target_proc_info.parameters[i].java_type
+                                    if tptype == "String":
+                                        if ".get(" in a_java:
+                                            a_java = f"(String) {a_java}"
+                                        elif not a_java.startswith('"'):
+                                            a_java_type = _infer_expr_type(a, proc)
+                                            if a_java_type in ("long", "Long", "int", "Integer", "double", "Double", "float", "Float", "java.math.BigDecimal"):
+                                                a_java = f"String.valueOf({a_java})"
+                                    else:
+                                        a_java = _coerce_java_arg(a_java, tptype)
+                                _resolved.append(a_java)
+                        args_java = ", ".join(_resolved)
+                        is_self_call = (matched.lower() == proc.package.lower())
+                        if not is_self_call:
+                            proc.service_calls.append(ServiceCall(svc_name, method, [], package_name=matched))
+                        call_target = f"this.{method}" if is_self_call else f"{svc_name}.{method}"
+                        _lines.append(f"{indent}{call_target}({args_java});")
+                    else:
+                        full_name = ".".join(func_name_parts)
+                        _lines.append(f"{indent}// CALL {full_name}(...)")
+                else:
+                    _lines.append(f"{indent}// log error")
+            elif sk == "Perform":
+                _lines.append(f"{indent}// log error")
+            else:
+                _lines.append(f"{indent}// {sk}")
+    return _lines
+
+
 def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_packages: dict = None) -> list:
     out_java_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out}
     out_string_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out and p.java_type == "String"}
     out_long_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out and p.java_type == "Long"}
     out_bigdecimal_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out and "BigDecimal" in p.java_type}
+
+    # Separate no_data_found handlers — they become null checks, not catch blocks
+    no_data_handlers = []
+    other_handlers = []
+    for handler in handlers:
+        conditions = handler.get("conditions", [])
+        if any(c.lower().replace(" ", "_") == "no_data_found" for c in conditions):
+            no_data_handlers.append(handler)
+        else:
+            other_handlers.append(handler)
+
+    # Process no_data_found handlers as null checks after the last mapper call
+    for nd_handler in no_data_handlers:
+        nd_lines = _wrap_handler_stmts(
+            nd_handler.get("statements", []), proc, all_packages,
+            out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
+            indent="    ", in_catch=False)
+
+        # Find the last mapper result variable
+        null_var = None
+        for line in reversed(body_lines):
+            m = re.match(r'^\s*(\w+)\s*=\s*mapper\.', line)
+            if m:
+                null_var = m.group(1)
+                break
+
+        if null_var and nd_lines:
+            # Insert null check after the mapper call
+            null_block = [f"if ({null_var} == null) {{"]
+            null_block.extend(nd_lines)
+            null_block.append("}")
+            for i, line in enumerate(body_lines):
+                if line.strip().startswith(f"{null_var} = mapper."):
+                    body_lines = body_lines[:i+1] + null_block + body_lines[i+1:]
+                    break
+
     result = ["try {"]
     result.extend(f"    {line}" for line in body_lines)
 
-    for handler in handlers:
-        conditions = handler.get("conditions", [])
-        stmts = handler.get("statements", [])
-        condition_name = conditions[0] if conditions else "EXCEPTION"
-        result.append(f"}} catch (Exception e) {{ // {condition_name} — src: {proc.source_file}:{proc.source_start_line}")
-        for s in _iter_statements(stmts):
-            for sk, sv in s.items():
-                if sk == "Assignment":
-                    target = _expr_to_java(sv.get("target", {}), proc, as_read=False)
-                    # Track package variable writes in exception handler assignments
-                    _exc_var_name = _extract_var_name_from_expr(sv.get("target", {}))
-                    if _exc_var_name and _exc_var_name in _PACKAGE_VARIABLES:
-                        _PACKAGE_VAR_WRITTEN.add(_exc_var_name)
-                    expr_raw = sv.get("expression", {})
-                    expr = _expr_to_java(expr_raw, proc, all_packages=all_packages)
-                    expr = re.sub(r'\bsqlerrm\b', 'e.getMessage()', expr, flags=re.IGNORECASE)
-                    expr = re.sub(r'\bsqlcode\b', 'String.valueOf(-1)', expr, flags=re.IGNORECASE)
-                    if target in out_java_names:
-                        if target in out_string_names and not _is_string_expr(expr):
-                            expr = f"String.valueOf({expr})"
-                        elif target in out_long_names and _is_string_expr(expr) and not _is_long_expr(expr):
-                            expr = f"Long.valueOf({expr})"
-                        elif target in out_long_names and _is_bare_int_literal(expr):
-                            expr = f"Long.valueOf({expr})"
-                        elif target in out_long_names and not _is_long_expr(expr):
-                            expr = f"((Number) {expr}).longValue()"
-                        elif target in out_bigdecimal_names:
-                            if _is_bare_int_literal(expr):
-                                expr = f"java.math.BigDecimal.valueOf({expr})"
-                            elif "BigDecimal" in expr:
-                                pass
-                            elif _is_numeric_literal_expr(expr):
-                                pass
-                            elif "mapper." in expr:
-                                expr = f"((java.math.BigDecimal) {expr})"
-                            elif not _is_string_expr(expr):
-                                expr = f"new java.math.BigDecimal(String.valueOf({expr}))"
-                        result.append(f"    {target}.set({expr});")
-                    else:
-                        # Resolve __MAP_PUT__ internal tokens (same logic as _emit_assignment line 4588)
-                        if target.startswith("__MAP_PUT__"):
-                            _, rest = target.split("__MAP_PUT__", 1)
-                            var_java, field_key = rest.split("__", 1)
-                            result.append(f'    {var_java}.put("{field_key}", {expr});')
-                        else:
-                            result.append(f"    {target} = {expr};")
-                elif sk == "Raise":
-                    result.append(f"    throw new BusinessException(e.getMessage());")
-                elif sk == "Return":
-                    result.append(f"    return;")
-                elif sk == "ProcedureCall":
-                    if all_packages:
-                        func_name_parts = sv.get("name", [])
-                        call_args = sv.get("arguments", [])
-                        if len(func_name_parts) >= 3:
-                            pkg = func_name_parts[-2]
-                            func = func_name_parts[-1]
-                        elif len(func_name_parts) == 2:
-                            pkg = func_name_parts[0]
-                            func = func_name_parts[1]
-                        elif len(func_name_parts) == 1 and proc.package:
-                            pkg = proc.package
-                            func = func_name_parts[0]
-                        else:
-                            result.append(f"    // CALL {'.'.join(func_name_parts)}(...)")
-                            continue
-                        matched = _find_registered_pkg(pkg, all_packages)
-                        if matched:
-                            svc_name = f"{package_to_classname(matched).lower()}Service"
-                            method = java_method_name(func)
-                            target_proc_info = _find_target_proc(matched, func, all_packages, arg_count=len(call_args))
-                            _out_param_java_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out}
-                            _target_out_indices = set()
-                            if target_proc_info:
-                                _target_out_indices = {i for i, p in enumerate(target_proc_info.parameters) if p.is_out}
-                            _resolved = []
-                            for i, a in enumerate(call_args):
-                                if target_proc_info and i in _target_out_indices:
-                                    raw_java = _expr_to_java(a, proc, as_read=False)
-                                    if raw_java in _out_param_java_names:
-                                        _resolved.append(raw_java)
-                                    else:
-                                        _resolved.append(_expr_to_java(a, proc, as_read=True))
-                                else:
-                                    a_java = _expr_to_java(a, proc, as_read=True)
-                                    if target_proc_info and i < len(target_proc_info.parameters):
-                                        tptype = target_proc_info.parameters[i].java_type
-                                        if tptype == "String":
-                                            if ".get(" in a_java:
-                                                a_java = f"(String) {a_java}"
-                                            elif not a_java.startswith('"'):
-                                                a_java_type = _infer_expr_type(a, proc)
-                                                if a_java_type in ("long", "Long", "int", "Integer", "double", "Double", "float", "Float", "java.math.BigDecimal"):
-                                                    a_java = f"String.valueOf({a_java})"
-                                        else:
-                                            a_java = _coerce_java_arg(a_java, tptype)
-                                    _resolved.append(a_java)
-                            args_java = ", ".join(_resolved)
-                            is_self_call = (matched.lower() == proc.package.lower())
-                            if not is_self_call:
-                                proc.service_calls.append(ServiceCall(svc_name, method, [], package_name=matched))
-                            call_target = f"this.{method}" if is_self_call else f"{svc_name}.{method}"
-                            result.append(f"    {call_target}({args_java});")
-                        else:
-                            full_name = ".".join(func_name_parts)
-                            result.append(f"    // CALL {full_name}(...)")
-                    else:
-                        result.append(f"    // log error")
-                elif sk == "Perform":
-                    result.append(f"    // log error")
-                else:
-                    result.append(f"    // {sk}")
+    if other_handlers:
+        result.append(f"}} catch (Exception e) {{ // EXCEPTION handlers — src: {proc.source_file}:{proc.source_start_line}")
+        for handler in other_handlers:
+            stmts = handler.get("statements", [])
+            h_lines = _wrap_handler_stmts(
+                stmts, proc, all_packages,
+                out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
+                indent="    ", in_catch=True)
+            result.extend(h_lines)
 
     result.append("}")
 
