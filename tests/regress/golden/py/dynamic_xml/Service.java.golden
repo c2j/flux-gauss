@@ -22,7 +22,7 @@ public class DynamicXmlService {
         Integer vCount = 0;
         // CALL DBE_OUTPUT.PRINT_LINE(...)
         dynamicXmlMapper.selectProcConditionalQuery(pWhereClause, pOrderBy, pLimit);
-        vCount = dynamicXmlMapper.selectProcConditionalQuery_1(pTableName, pWhereClause, pOrderBy, pLimit);
+        vCount = dynamicXmlMapper.selectAuditLogCount(pTableName, pWhereClause, pOrderBy, pLimit);
         if (vCount == null) vCount = 0;
     }
 
@@ -32,7 +32,9 @@ public class DynamicXmlService {
         String vSql = null;
         String vSetClause = "";
         int _sqlRowCount = 0;
-        _sqlRowCount = dynamicXmlMapper.updateProcConditionalUpdate(pTableName, pId, pStatus, pAmount, pRemark);
+        if (vSetClause != null && vSetClause != "") {
+            _sqlRowCount = dynamicXmlMapper.updateProcConditionalUpdate(pTableName, pId, pStatus, pAmount, pRemark);
+        }
     }
 
     // Source: pkg_dynamic_xml.proc_mixed_logic (PROCEDURE) — pkg_dynamic_xml.sql:126-150
@@ -43,11 +45,11 @@ public class DynamicXmlService {
         if ("ARCHIVE".equals(pMode)) {
             vSql = "INSERT INTO " + pTableName + "_hist SELECT * FROM " + pTableName;
             _sqlRowCount = dynamicXmlMapper.insertProcMixedLogic(pTableName);
-            _sqlRowCount = dynamicXmlMapper.insertProcMixedLogic_1(pTableName, pMode, vSql);
+            _sqlRowCount = dynamicXmlMapper.insertAuditLog(pTableName, pMode, vSql);
         } else if ("CLEAN".equals(pMode)) {
             vSql = "DELETE FROM " + pTableName + " WHERE create_time < SYSDATE - 30";
             _sqlRowCount = dynamicXmlMapper.deleteProcMixedLogic(pTableName);
-            _sqlRowCount = dynamicXmlMapper.insertProcMixedLogic_2(pTableName, pMode, vSql);
+            _sqlRowCount = dynamicXmlMapper.insertAuditLog_1(pTableName, pMode, vSql);
         } else {
             // CALL DBE_OUTPUT.PRINT_LINE(...)
         }

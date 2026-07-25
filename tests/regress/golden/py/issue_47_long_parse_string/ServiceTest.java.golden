@@ -1,0 +1,51 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue47LongParseStringMapper;
+import com.example.demo.service.Issue47LongParseStringService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class Issue47LongParseStringServiceTest {
+
+    @Mock
+    private Issue47LongParseStringMapper issue47LongParseStringMapper;
+
+    @InjectMocks
+    private Issue47LongParseStringService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procSetStepNo_success() {
+        Integer pSeq = 1;
+        Integer pSubSeq = 1;
+        AtomicReference<String> pStepNo = new AtomicReference<>(null);
+        service.procSetStepNo(pSeq, pSubSeq, pStepNo);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procProcessId_success() {
+        String pType = "test_pType";
+        AtomicReference<String> pProId = new AtomicReference<>(null);
+        service.procProcessId(pType, pProId);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procCorrectVarchar_success() {
+        String pLabel = "test_pLabel";
+        AtomicReference<String> pValue = new AtomicReference<>(null);
+        service.procCorrectVarchar(pLabel, pValue);
+    }
+}

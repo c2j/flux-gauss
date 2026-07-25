@@ -21,7 +21,7 @@ public class OrderService {
     public void createOrder(Long pUserId, Long pProductId, Integer pQty) {
         int _sqlRowCount = 0;
         // CALL pkg_inventory.reserve_stock(...)
-        _sqlRowCount = orderMapper.insertCreateOrder(pUserId, pProductId, pQty);
+        _sqlRowCount = orderMapper.insertTOrders(pUserId, pProductId, pQty);
         // PERFORM pkg_common . log_operation ( 'ORDER' , 'CREATE' , 0 )
     }
 
@@ -32,13 +32,13 @@ public class OrderService {
         Integer vQty = 0;
         int _sqlRowCount = 0;
         java.util.Map<String, Object> _row = null;
-        _row = orderMapper.selectCancelOrder(pOrderId);
+        _row = orderMapper.selectTOrders(pOrderId);
         if (_row == null) _row = java.util.Collections.emptyMap();
         _sqlRowCount = (_row != null && !_row.isEmpty()) ? 1 : 0;
         vProductId = (_row.get("product_id") != null ? (_row.get("product_id") instanceof Number ? ((Number) _row.get("product_id")).longValue() : Long.parseLong(String.valueOf(_row.get("product_id")))) : 0L);
         vQty = (_row.get("qty") != null ? (_row.get("qty") instanceof Number ? ((Number) _row.get("qty")).intValue() : Integer.parseInt(String.valueOf(_row.get("qty")))) : 0);
         // CALL pkg_inventory.release_stock(...)
-        _sqlRowCount = orderMapper.updateCancelOrder(pOrderId);
+        _sqlRowCount = orderMapper.updateTOrders(pOrderId);
         // PERFORM pkg_common . log_operation ( 'ORDER' , 'CANCEL' , p_order_id )
         // PERFORM pkg_common . send_notification ( 'SMS' , 'Order cancelled' )
     }
@@ -59,7 +59,7 @@ public class OrderService {
     @Transactional
     public void completeOrder(Long pOrderId) {
         int _sqlRowCount = 0;
-        _sqlRowCount = orderMapper.updateCompleteOrder(pOrderId);
+        _sqlRowCount = orderMapper.updateTOrders(pOrderId);
         // PERFORM pkg_common . log_operation ( 'ORDER' , 'COMPLETE' , p_order_id )
         // PERFORM pkg_common . send_notification ( 'EMAIL' , 'Order completed' )
     }

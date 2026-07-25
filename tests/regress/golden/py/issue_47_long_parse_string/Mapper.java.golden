@@ -1,0 +1,9 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue47LongParseStringMapper {
+
+    // No direct DML operations for issue_47_long_parse_string
+}

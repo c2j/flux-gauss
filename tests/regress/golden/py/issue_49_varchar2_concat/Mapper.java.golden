@@ -1,0 +1,9 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue49Varchar2ConcatMapper {
+
+    // No direct DML operations for issue_49_varchar2_concat
+}

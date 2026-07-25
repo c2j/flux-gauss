@@ -3,8 +3,8 @@
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.example.demo.mapper.GaussCompleteExamplesMapper">
 
-    <!-- Source: gauss_complete_examples.sql:80-80 — pkg_for_in_select.proc_sync_employee_bonus.insertProcSyncEmployeeBonus -->
-    <select id="insertProcSyncEmployeeBonus" resultType="java.util.LinkedHashMap">
+    <!-- Source: gauss_complete_examples.sql:80-80 — pkg_for_in_select.proc_sync_employee_bonus.insertBatchLog -->
+    <select id="insertBatchLog" resultType="java.util.LinkedHashMap">
         insert into batch_log (batch_id, batch_type, start_time, status) values (nextval('seq_batch_log'), 'BONUS_CALC', current_date, 'RUNNING') returning batch_id
     </select>
 
@@ -31,18 +31,18 @@
         order by e.department_id, e.salary desc
     </select>
 
-    <!-- Source: gauss_complete_examples.sql:116-116 — pkg_for_in_select.proc_sync_employee_bonus.insertProcSyncEmployeeBonus_1 -->
-    <insert id="insertProcSyncEmployeeBonus_1">
+    <!-- Source: gauss_complete_examples.sql:116-116 — pkg_for_in_select.proc_sync_employee_bonus.insertBonusLimitLog -->
+    <insert id="insertBonusLimitLog">
         insert into bonus_limit_log (log_time, emp_id, limit_reason) values (current_date, #{vEmp.employee_id}, 'Bonus capped at annual 20% limit')
     </insert>
 
-    <!-- Source: gauss_complete_examples.sql:122-122 — pkg_for_in_select.proc_sync_employee_bonus.insertProcSyncEmployeeBonus_2 -->
-    <select id="insertProcSyncEmployeeBonus_2" resultType="java.util.LinkedHashMap">
+    <!-- Source: gauss_complete_examples.sql:122-122 — pkg_for_in_select.proc_sync_employee_bonus.insertEmployeeBonus -->
+    <select id="insertEmployeeBonus" resultType="java.util.LinkedHashMap">
         insert into employee_bonus (bonus_id, emp_id, bonus_amount, bonus_month, bonus_year, calc_reason, create_time) values (nextval('seq_employee_bonus'), #{vEmp.employee_id}, #{vBonusAmt, jdbcType=NUMERIC, javaType=java.math.BigDecimal}, extract(month from current_date), extract(year from current_date), 'Q' || TO_CHAR(current_date, 'Q') || ' performance bonus', current_date) returning bonus_id
     </select>
 
-    <!-- Source: gauss_complete_examples.sql:165-165 — pkg_for_in_select.proc_sync_employee_bonus.updateProcSyncEmployeeBonus -->
-    <update id="updateProcSyncEmployeeBonus">
+    <!-- Source: gauss_complete_examples.sql:165-165 — pkg_for_in_select.proc_sync_employee_bonus.updateBatchLog -->
+    <update id="updateBatchLog">
         update batch_log set end_time = current_date, status = 'SUCCESS', record_count = #{vProcessed, jdbcType=INTEGER, javaType=Integer}, total_amount = #{vTotalBonus, jdbcType=NUMERIC, javaType=java.math.BigDecimal}, message = 'Processed ' || #{vProcessed, jdbcType=INTEGER, javaType=Integer} || ' employees, total bonus: ' || #{vTotalBonus, jdbcType=NUMERIC, javaType=java.math.BigDecimal} where batch_id = #{vLogId, jdbcType=INTEGER, javaType=Integer}
     </update>
 
@@ -68,8 +68,8 @@
         order by e.salary desc
     </select>
 
-    <!-- Source: gauss_complete_examples.sql:275-275 — pkg_open_cursor.proc_process_dynamic_query.insertProcProcessDynamicQuery -->
-    <insert id="insertProcProcessDynamicQuery">
+    <!-- Source: gauss_complete_examples.sql:275-275 — pkg_open_cursor.proc_process_dynamic_query.insertAuditLog -->
+    <insert id="insertAuditLog">
         insert into audit_log (log_time, operation, sql_text, user_name) values (current_timestamp, 'DYNAMIC_QUERY', #{vSql, jdbcType=VARCHAR, javaType=String}, "user" )
     </insert>
 
@@ -92,8 +92,8 @@
         update ${pTableName} set status = 'TIMEOUT', retry_count = nvl(retry_count, 0) + 1 where id = #{vRecId, jdbcType=INTEGER, javaType=Integer}
     </update>
 
-    <!-- Source: gauss_complete_examples.sql:303-303 — pkg_open_cursor.proc_process_dynamic_query.insertProcProcessDynamicQuery_1 -->
-    <insert id="insertProcProcessDynamicQuery_1">
+    <!-- Source: gauss_complete_examples.sql:303-303 — pkg_open_cursor.proc_process_dynamic_query.insertArchiveTable -->
+    <insert id="insertArchiveTable">
         insert into archive_table (id, name, amount, status, archived_time) values (#{vRecId, jdbcType=INTEGER, javaType=Integer}, #{vRecName, jdbcType=VARCHAR, javaType=String}, #{vRecValue, jdbcType=NUMERIC, javaType=java.math.BigDecimal}, #{vRecStatus, jdbcType=VARCHAR, javaType=String}, current_timestamp)
     </insert>
 
@@ -102,13 +102,13 @@
         delete from ${pTableName} where id = #{vRecId, jdbcType=INTEGER, javaType=Integer}
     </delete>
 
-    <!-- Source: gauss_complete_examples.sql:311-311 — pkg_open_cursor.proc_process_dynamic_query.insertProcProcessDynamicQuery_2 -->
-    <insert id="insertProcProcessDynamicQuery_2">
+    <!-- Source: gauss_complete_examples.sql:311-311 — pkg_open_cursor.proc_process_dynamic_query.insertExceptionLog -->
+    <insert id="insertExceptionLog">
         insert into exception_log (exception_time, record_id, exception_type, detail) values (current_timestamp, #{vRecId, jdbcType=INTEGER, javaType=Integer}, 'UNKNOWN_STATUS', #{vRecStatus, jdbcType=VARCHAR, javaType=String})
     </insert>
 
-    <!-- Source: gauss_complete_examples.sql:331-331 — pkg_open_cursor.proc_process_dynamic_query.insertProcProcessDynamicQuery_3 -->
-    <insert id="insertProcProcessDynamicQuery_3">
+    <!-- Source: gauss_complete_examples.sql:331-331 — pkg_open_cursor.proc_process_dynamic_query.insertPerformanceLog -->
+    <insert id="insertPerformanceLog">
         insert into performance_log (log_time, procedure_name, rows_processed, elapsed_ms) values (current_timestamp, 'proc_process_dynamic_query', #{vRowCount, jdbcType=INTEGER, javaType=Integer}, extract(EPOCH from (current_timestamp - #{vStartTime, jdbcType=TIMESTAMP, javaType=java.sql.Timestamp})) * 1000)
     </insert>
 
@@ -145,8 +145,8 @@
         where status = 'ACTIVE'
     </select>
 
-    <!-- Source: gauss_complete_examples.sql:431-431 — pkg_dynamic_for_loop.proc_dynamic_for_processing.insertProcDynamicForProcessing -->
-    <insert id="insertProcDynamicForProcessing">
+    <!-- Source: gauss_complete_examples.sql:431-431 — pkg_dynamic_for_loop.proc_dynamic_for_processing.insertAuditLog -->
+    <insert id="insertAuditLog">
         insert into audit_log (log_time, operation, sql_text, params) values (current_timestamp, 'DYNAMIC_FOR_LOOP', #{vSql, jdbcType=VARCHAR, javaType=String}, 'table=' || #{pTableName, jdbcType=VARCHAR, javaType=String} || ',type=' || #{pProcessType, jdbcType=VARCHAR, javaType=String})
     </insert>
 
@@ -159,8 +159,8 @@
         <if test="pOrderBy != null">ORDER BY ${pOrderBy}</if>
     </select>
 
-    <!-- Source: gauss_complete_examples.sql:480-480 — pkg_dynamic_for_loop.proc_dynamic_for_processing.insertProcDynamicForProcessing_1 -->
-    <insert id="insertProcDynamicForProcessing_1">
+    <!-- Source: gauss_complete_examples.sql:480-480 — pkg_dynamic_for_loop.proc_dynamic_for_processing.insertPerformanceLog -->
+    <insert id="insertPerformanceLog">
         insert into performance_log (log_time, operation, rows_affected, elapsed_ms) values (current_timestamp, 'dynamic_for_' || #{pProcessType, jdbcType=VARCHAR, javaType=String}, #{vRowCount, jdbcType=INTEGER, javaType=Integer}, extract(EPOCH from (current_timestamp - #{vStartTime, jdbcType=TIMESTAMP, javaType=java.sql.Timestamp})) * 1000)
     </insert>
 
@@ -248,8 +248,8 @@
         <if test="true">:${i}</if>
     </select>
 
-    <!-- Source: gauss_complete_examples.sql:594-594 — pkg_cursor_advanced.proc_cursor_dynamic_using.insertProcCursorDynamicUsing -->
-    <insert id="insertProcCursorDynamicUsing">
+    <!-- Source: gauss_complete_examples.sql:594-594 — pkg_cursor_advanced.proc_cursor_dynamic_using.insertAuditLog -->
+    <insert id="insertAuditLog">
         insert into audit_log (log_time, operation, sql_text, bind_params) values (current_timestamp, 'CURSOR_DYNAMIC_ USING', #{vSql, jdbcType=VARCHAR, javaType=String}, 'status=' || #{pStatusList, jdbcType=VARCHAR, javaType=String} || ',min=' || #{pMinAmount, jdbcType=NUMERIC, javaType=java.math.BigDecimal} || ',date=' || #{pStartDate, jdbcType=DATE, javaType=java.sql.Date})
     </insert>
 

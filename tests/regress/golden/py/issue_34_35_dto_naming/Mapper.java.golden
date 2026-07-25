@@ -1,0 +1,30 @@
+package com.example.demo.mapper;
+
+import java.math.BigDecimal;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue3435DtoNamingMapper {
+
+        // issue_34_35_dto_naming.sql:71 — pkg_issue34_order.proc_create_order
+String selectTIssue34OrderMaxOrderId(@Param("pCustomerName") String pCustomerName, @Param("pProductCode") String pProductCode, @Param("pQuantity") Integer pQuantity, @Param("pUnitPrice") java.math.BigDecimal pUnitPrice, @Param("pCreatedBy") String pCreatedBy);
+// issue_34_35_dto_naming.sql:71 — pkg_issue34_order.proc_create_order
+int insertTIssue34Order(@Param("pCustomerName") String pCustomerName, @Param("pProductCode") String pProductCode, @Param("pQuantity") Integer pQuantity, @Param("pUnitPrice") java.math.BigDecimal pUnitPrice, @Param("pCreatedBy") String pCreatedBy, @Param("vOrderId") String vOrderId, @Param("vAmount") java.math.BigDecimal vAmount);
+// issue_34_35_dto_naming.sql:71 — pkg_issue34_order.proc_create_order
+int insertTIssue34OrderLog(@Param("pCustomerName") String pCustomerName, @Param("pProductCode") String pProductCode, @Param("pQuantity") Integer pQuantity, @Param("pUnitPrice") java.math.BigDecimal pUnitPrice, @Param("pCreatedBy") String pCreatedBy, @Param("vOrderId") String vOrderId);
+// issue_34_35_dto_naming.sql:117 — pkg_issue34_order.proc_query_order_stats
+Object selectTIssue34OrderCount(@Param("pStatus") String pStatus, @Param("pMinAmount") java.math.BigDecimal pMinAmount);
+// issue_34_35_dto_naming.sql:117 — pkg_issue34_order.proc_query_order_stats
+Object selectTIssue34OrderSumTotalAmount(@Param("pStatus") String pStatus, @Param("pMinAmount") java.math.BigDecimal pMinAmount);
+// issue_34_35_dto_naming.sql:117 — pkg_issue34_order.proc_query_order_stats
+Object selectTIssue34OrderAvgTotalAmount(@Param("pStatus") String pStatus, @Param("pMinAmount") java.math.BigDecimal pMinAmount);
+// issue_34_35_dto_naming.sql:146 — pkg_issue34_order.proc_update_order
+Object selectTIssue34Order(@Param("pOrderId") Long pOrderId, @Param("pNewStatus") String pNewStatus, @Param("pUpdatedBy") String pUpdatedBy);
+// issue_34_35_dto_naming.sql:146 — pkg_issue34_order.proc_update_order
+int updateTIssue34Order(@Param("pOrderId") Long pOrderId, @Param("pNewStatus") String pNewStatus, @Param("pUpdatedBy") String pUpdatedBy);
+// issue_34_35_dto_naming.sql:146 — pkg_issue34_order.proc_update_order
+Object selectTIssue34OrderCount(@Param("pOrderId") Long pOrderId, @Param("pNewStatus") String pNewStatus, @Param("pUpdatedBy") String pUpdatedBy);
+// issue_34_35_dto_naming.sql:146 — pkg_issue34_order.proc_update_order
+int insertTIssue34OrderLog(@Param("pOrderId") Long pOrderId, @Param("pNewStatus") String pNewStatus, @Param("pUpdatedBy") String pUpdatedBy);
+}

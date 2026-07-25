@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.Issue41TypeSystemMapper">
+
+    <!-- Source: issue_41_type_system.sql:77-77 — pkg_issue41_types.proc_transfer.selectTIssue41Account -->
+    <select id="selectTIssue41Account" resultType="java.math.BigDecimal">
+        select balance
+        from t_issue41_account
+        where account_id = #{pFromAccount, jdbcType=BIGINT, javaType=Long}
+                LIMIT 1
+    </select>
+
+    <!-- Source: issue_41_type_system.sql:95-95 — pkg_issue41_types.proc_transfer.updateTIssue41Account -->
+    <update id="updateTIssue41Account">
+        update t_issue41_account set balance = #{vFromBalance, jdbcType=NUMERIC, javaType=java.math.BigDecimal} where account_id = #{pFromAccount, jdbcType=BIGINT, javaType=Long}
+    </update>
+
+    <!-- Source: issue_41_type_system.sql:99-99 — pkg_issue41_types.proc_transfer.selectTIssue41Account_1 -->
+    <select id="selectTIssue41Account_1" resultType="java.math.BigDecimal">
+        select balance
+        from t_issue41_account
+        where account_id = #{pToAccount, jdbcType=BIGINT, javaType=Long}
+                LIMIT 1
+    </select>
+
+    <!-- Source: issue_41_type_system.sql:106-106 — pkg_issue41_types.proc_transfer.updateTIssue41Account_1 -->
+    <update id="updateTIssue41Account_1">
+        update t_issue41_account set balance = #{vToBalance, jdbcType=NUMERIC, javaType=java.math.BigDecimal} where account_id = #{pToAccount, jdbcType=BIGINT, javaType=Long}
+    </update>
+
+    <!-- Source: issue_41_type_system.sql:123-123 — pkg_issue41_types.proc_withdraw.selectTIssue41Account -->
+    <select id="selectTIssue41Account" resultType="java.math.BigDecimal">
+        select
+          balance,
+          is_active
+        from t_issue41_account
+        where account_id = #{pAccountId, jdbcType=BIGINT, javaType=Long}
+                LIMIT 1
+    </select>
+
+    <!-- Source: issue_41_type_system.sql:138-138 — pkg_issue41_types.proc_withdraw.updateTIssue41Account -->
+    <update id="updateTIssue41Account">
+        update t_issue41_account set balance = #{vBalance, jdbcType=NUMERIC, javaType=java.math.BigDecimal} where account_id = #{pAccountId, jdbcType=BIGINT, javaType=Long}
+    </update>
+
+    <!-- Source: issue_41_type_system.sql:168-168 — pkg_issue41_types.proc_validate_account.selectTIssue41Account -->
+    <select id="selectTIssue41Account" parameterType="long" resultType="java.util.LinkedHashMap">
+        select
+          balance,
+          is_active
+        from t_issue41_account
+        where account_id = #{pAccountId, jdbcType=BIGINT, javaType=Long}
+                LIMIT 1
+    </select>
+
+</mapper>

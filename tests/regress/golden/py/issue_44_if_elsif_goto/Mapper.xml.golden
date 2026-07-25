@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.Issue44IfElsifGotoMapper">
+
+    <!-- Source: issue_44_if_elsif_goto.sql:75-75 — pkg_issue44_bugs.proc_dynamic_sql_if_else.selectTIssue44OrdersCount -->
+    <select id="selectTIssue44OrdersCount" parameterType="string" resultType="int">
+        select COUNT(*)
+        from t_issue44_orders
+        where status = coalesce(#{pStatus, jdbcType=VARCHAR, javaType=String}, status)
+                LIMIT 1
+    </select>
+
+    <!-- Source: issue_44_if_elsif_goto.sql:81-81 — pkg_issue44_bugs.proc_dynamic_sql_if_else.selectTIssue44Orders -->
+    <select id="selectTIssue44Orders" parameterType="string" resultType="string">
+        select order_name
+        from t_issue44_orders
+        where status = #{pStatus, jdbcType=VARCHAR, javaType=String}
+        limit 1
+    </select>
+
+    <!-- Source: issue_44_if_elsif_goto.sql:122-122 — pkg_issue44_bugs.proc_dynamic_sql_if_elsif.selectTIssue44OrdersCount -->
+    <select id="selectTIssue44OrdersCount" resultType="string">
+        select COUNT(*)
+        from t_issue44_orders
+        where order_name like '%' || #{pFilter, jdbcType=VARCHAR, javaType=String} || '%'
+                LIMIT 1
+    </select>
+
+    <!-- Source: issue_44_if_elsif_goto.sql:150-150 — pkg_issue44_bugs.proc_nested_dynamic_if.selectTIssue44OrdersSumAmount -->
+    <select id="selectTIssue44OrdersSumAmount" parameterType="string" resultType="java.math.BigDecimal">
+        select coalesce(SUM(amount), 0)
+        from t_issue44_orders
+                LIMIT 1
+    </select>
+
+    <!-- Source: issue_44_if_elsif_goto.sql:170-170 — pkg_issue44_bugs.proc_non_dynamic_if_else.selectTIssue44Orders -->
+    <select id="selectTIssue44Orders" parameterType="string" resultType="string">
+        select order_name
+        from t_issue44_orders
+        where status = 'ACTIVE'
+        limit 1
+    </select>
+
+    <!-- Source: issue_44_if_elsif_goto.sql:206-206 — pkg_issue44_bugs.proc_chained_if_with_concat.selectTIssue44OrdersCount -->
+    <select id="selectTIssue44OrdersCount" parameterType="string" resultType="string">
+        select COUNT(*)
+        from t_issue44_orders
+        where order_name like '%' || #{pCode, jdbcType=VARCHAR, javaType=String} || '%'
+                LIMIT 1
+    </select>
+
+</mapper>

@@ -1,0 +1,9 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue40StringCompareMapper {
+
+    // No direct DML operations for issue_40_string_compare
+}

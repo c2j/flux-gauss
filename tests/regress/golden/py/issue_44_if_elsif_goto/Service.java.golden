@@ -1,0 +1,142 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue44IfElsifGotoMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue44IfElsifGotoService {
+    private static final Logger log = LoggerFactory.getLogger(Issue44IfElsifGotoService.class);
+
+    private final Issue44IfElsifGotoMapper issue44IfElsifGotoMapper;
+
+    public Issue44IfElsifGotoService(Issue44IfElsifGotoMapper issue44IfElsifGotoMapper) {
+        this.issue44IfElsifGotoMapper = issue44IfElsifGotoMapper;
+    }
+    // Source: pkg_issue44_bugs.proc_dynamic_sql_if_else (PROCEDURE) — issue_44_if_elsif_goto.sql:56-95
+    public void procDynamicSqlIfElse(String pStatus, String pDate, AtomicReference<String> pResult) {
+        String vSql = null;
+        Integer vCount = 0;
+        String vName = null;
+        pResult.set(null);
+        vSql = "SELECT order_id, order_name FROM t_issue44_orders WHERE 1=1";
+        if (pStatus != null) {
+            vSql = vSql + " AND status = '" + pStatus + "'";
+        }
+        if (pDate != null) {
+            vSql = vSql + " AND created_at >= TO_DATE('" + pDate + "', 'YYYYMMDD')";
+        }
+        vCount = issue44IfElsifGotoMapper.selectTIssue44OrdersCount(pStatus, pDate);
+        if (vCount == null) vCount = 0;
+        if (vCount > 0) {
+            vName = issue44IfElsifGotoMapper.selectTIssue44Orders(pStatus, pDate);
+            pResult.set(String.valueOf(vName));
+        } else {
+            if ("ACTIVE".equals(pStatus)) {
+                pResult.set("NO_ACTIVE_ORDERS");
+            } else if ("PENDING".equals(pStatus)) {
+                pResult.set("NO_PENDING_ORDERS");
+            } else {
+                pResult.set("NO_ORDERS");
+            }
+        }
+    }
+
+    // Source: pkg_issue44_bugs.proc_dynamic_sql_if_elsif (PROCEDURE) — issue_44_if_elsif_goto.sql:98-129
+    public void procDynamicSqlIfElsif(String pFilter, Integer pMode, AtomicReference<String> pResult) {
+        String vSql = null;
+        Integer vCount = 0;
+        pResult.set(null);
+        vSql = "SELECT COUNT(*) FROM t_issue44_orders WHERE 1=1";
+        if (pMode == 1) {
+            vSql = vSql + " AND status = 'ACTIVE'";
+        } else if (pMode == 2) {
+            vSql = vSql + " AND status = 'PENDING'";
+        } else if (pMode == 3) {
+            if (pFilter != null) {
+                vSql = vSql + " AND order_name LIKE '%" + pFilter + "%'";
+            }
+            vSql = vSql + " AND amount > 1000";
+        } else {
+            vSql = vSql + " AND status = 'CLOSED'";
+        }
+        if (pFilter != null) {
+            { String _strResult = issue44IfElsifGotoMapper.selectTIssue44OrdersCount(pFilter, pMode); if (_strResult != null) { /* concatenated string assigned to Integer var */ } }
+            if (vCount == null) vCount = 0;
+            pResult.set("FILTERED: " + vCount);
+        } else {
+            pResult.set("ALL_MODE");
+        }
+    }
+
+    // Source: pkg_issue44_bugs.proc_nested_dynamic_if (PROCEDURE) — issue_44_if_elsif_goto.sql:132-160
+    public void procNestedDynamicIf(String pType, String pSubType, AtomicReference<String> pResult) {
+        String vSql = null;
+        java.math.BigDecimal vAmount = java.math.BigDecimal.ZERO;
+        pResult.set(null);
+        vSql = "SELECT COALESCE(SUM(amount), 0) FROM t_issue44_orders WHERE 1=1";
+        if ("SUMMARY".equals(pType)) {
+            vSql = vSql + " GROUP BY status";
+        } else {
+            if (pSubType != null) {
+                vSql = vSql + " AND order_name LIKE '%" + pSubType + "%'";
+            }
+        }
+        vAmount = ((java.math.BigDecimal) issue44IfElsifGotoMapper.selectTIssue44OrdersSumAmount(pType, pSubType));
+        if (vAmount == null) vAmount = java.math.BigDecimal.ZERO;
+        if (vAmount.compareTo(java.math.BigDecimal.valueOf(0)) > 0) {
+            pResult.set("AMOUNT: " + vAmount);
+        } else if ("SUMMARY".equals(pType)) {
+            pResult.set("ZERO_SUMMARY");
+        } else {
+            pResult.set("ZERO");
+        }
+    }
+
+    // Source: pkg_issue44_bugs.proc_non_dynamic_if_else (PROCEDURE) — issue_44_if_elsif_goto.sql:163-184
+    public void procNonDynamicIfElse(String pFlag, AtomicReference<String> pResult) {
+        String vName = null;
+        pResult.set(null);
+        if ("1".equals(pFlag)) {
+            vName = issue44IfElsifGotoMapper.selectTIssue44Orders(pFlag);
+            pResult.set(String.valueOf(vName));
+        } else if ("2".equals(pFlag)) {
+            if (vName == null) {
+                pResult.set("NULL_NAME");
+            } else {
+                pResult.set(String.valueOf(vName));
+            }
+        } else {
+            pResult.set("UNKNOWN");
+        }
+    }
+
+    // Source: pkg_issue44_bugs.proc_chained_if_with_concat (PROCEDURE) — issue_44_if_elsif_goto.sql:187-217
+    public void procChainedIfWithConcat(String pCode, AtomicReference<String> pResult) {
+        String vSql = null;
+        Integer vCount = 0;
+        pResult.set(null);
+        vSql = "SELECT COUNT(*) FROM t_issue44_orders WHERE 1=1";
+        if ("A".equals(pCode)) {
+            vSql = vSql + " AND status = 'ACTIVE'";
+        }
+        if (String.valueOf(pCode).length() > 1) {
+            vSql = vSql + " AND order_name LIKE '%" + pCode + "%'";
+        }
+        if (pCode != null) {
+            { String _strResult = issue44IfElsifGotoMapper.selectTIssue44OrdersCount(pCode); if (_strResult != null) { /* concatenated string assigned to Integer var */ } }
+            if (vCount == null) vCount = 0;
+            if (vCount > 10) {
+                pResult.set("MANY: " + vCount);
+            } else {
+                pResult.set("FEW: " + vCount);
+            }
+        } else {
+            pResult.set("NO_CODE");
+        }
+    }
+}

@@ -1,0 +1,9 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue38MapPutMapper {
+
+    // No direct DML operations for issue_38_map_put
+}

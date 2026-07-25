@@ -1,0 +1,43 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue39ThreadSafetyMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue39ThreadSafetyService {
+    private static final Logger log = LoggerFactory.getLogger(Issue39ThreadSafetyService.class);
+
+    private final Issue39ThreadSafetyMapper issue39ThreadSafetyMapper;
+
+    public Issue39ThreadSafetyService(Issue39ThreadSafetyMapper issue39ThreadSafetyMapper) {
+        this.issue39ThreadSafetyMapper = issue39ThreadSafetyMapper;
+    }
+    // Source: pkg_issue39_config.proc_set_session (PROCEDURE) — issue_39_thread_safety.sql:44-57
+    public void procSetSession(String pUser, String pSession) {
+        // Source SQL: issue_39_thread_safety.sql (lines 44-57)
+        // TODO: Auto-generated stub — complex PL/pgSQL pattern requires manual implementation
+        //   Reason: 赋值目标 'g_current_user' 不是局部变量/参数/包变量/常量
+        //   Reason: 赋值目标 'g_session_id' 不是局部变量/参数/包变量/常量
+        //   Reason: 赋值目标 'g_debug_mode' 不是局部变量/参数/包变量/常量
+        //   Reason: 赋值目标 'g_batch_status' 不是局部变量/参数/包变量/常量
+    }
+
+    // Source: pkg_issue39_config.proc_enable_debug (PROCEDURE) — issue_39_thread_safety.sql:59-62
+    public void procEnableDebug() {
+        // Source SQL: issue_39_thread_safety.sql (lines 59-62)
+        // TODO: Auto-generated stub — complex PL/pgSQL pattern requires manual implementation
+        //   Reason: 赋值目标 'g_debug_mode' 不是局部变量/参数/包变量/常量
+    }
+
+    // Source: pkg_issue39_config.proc_run_batch (PROCEDURE) — issue_39_thread_safety.sql:64-80
+    public void procRunBatch(String pBatchName, AtomicReference<String> pStatus) {
+        // Source SQL: issue_39_thread_safety.sql (lines 64-80)
+        // TODO: Auto-generated stub — complex PL/pgSQL pattern requires manual implementation
+        //   Reason: 赋值目标 'g_batch_status' 不是局部变量/参数/包变量/常量
+    }
+}

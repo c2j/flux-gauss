@@ -1,0 +1,88 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue3435DtoNamingMapper;
+import com.example.demo.service.Issue3435DtoNamingService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class Issue3435DtoNamingServiceTest {
+
+    @Mock
+    private Issue3435DtoNamingMapper issue3435DtoNamingMapper;
+
+    @InjectMocks
+    private Issue3435DtoNamingService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procCreateOrder_success() {
+        String pCustomerName = "test_pCustomerName";
+        String pProductCode = "test_pProductCode";
+        Integer pQuantity = 1;
+        java.math.BigDecimal pUnitPrice = new java.math.BigDecimal("99.99");
+        String pCreatedBy = "test_pCreatedBy";
+        AtomicReference<Long> pOrderId = new AtomicReference<>(null);
+        AtomicReference<java.math.BigDecimal> pTotalAmount = new AtomicReference<>(null);
+        AtomicReference<String> pStatusMsg = new AtomicReference<>(null);
+        when(issue3435DtoNamingMapper.selectTIssue34OrderMaxOrderId(any(), any(), any(), any(), any())).thenReturn("test");
+        when(issue3435DtoNamingMapper.insertTIssue34Order(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue3435DtoNamingMapper.insertTIssue34OrderLog(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue3435DtoNamingMapper.selectTIssue34OrderCount(any(), any())).thenReturn(null);
+        when(issue3435DtoNamingMapper.selectTIssue34OrderSumTotalAmount(any(), any())).thenReturn(null);
+        when(issue3435DtoNamingMapper.selectTIssue34OrderAvgTotalAmount(any(), any())).thenReturn(null);
+        when(issue3435DtoNamingMapper.selectTIssue34Order(any(), any(), any())).thenReturn(null);
+        when(issue3435DtoNamingMapper.updateTIssue34Order(any(), any(), any())).thenReturn(1);
+        service.procCreateOrder(pCustomerName, pProductCode, pQuantity, pUnitPrice, pCreatedBy, pOrderId, pTotalAmount, pStatusMsg);
+        verify(issue3435DtoNamingMapper, atLeast(0)).insertTIssue34Order(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procQueryOrderStats_success() {
+        String pStatus = "test_pStatus";
+        java.math.BigDecimal pMinAmount = new java.math.BigDecimal("99.99");
+        AtomicReference<Integer> pOrderCount = new AtomicReference<>(null);
+        AtomicReference<java.math.BigDecimal> pTotalRevenue = new AtomicReference<>(null);
+        AtomicReference<java.math.BigDecimal> pAvgAmount = new AtomicReference<>(null);
+        when(issue3435DtoNamingMapper.selectTIssue34OrderMaxOrderId(any(), any(), any(), any(), any())).thenReturn("test");
+        when(issue3435DtoNamingMapper.insertTIssue34Order(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue3435DtoNamingMapper.insertTIssue34OrderLog(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue3435DtoNamingMapper.selectTIssue34OrderCount(any(), any())).thenReturn(null);
+        when(issue3435DtoNamingMapper.selectTIssue34OrderSumTotalAmount(any(), any())).thenReturn(null);
+        when(issue3435DtoNamingMapper.selectTIssue34OrderAvgTotalAmount(any(), any())).thenReturn(null);
+        when(issue3435DtoNamingMapper.selectTIssue34Order(any(), any(), any())).thenReturn(null);
+        when(issue3435DtoNamingMapper.updateTIssue34Order(any(), any(), any())).thenReturn(1);
+        service.procQueryOrderStats(pStatus, pMinAmount, pOrderCount, pTotalRevenue, pAvgAmount);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procUpdateOrder_success() {
+        Long pOrderId = 1L;
+        String pNewStatus = "test_pNewStatus";
+        String pUpdatedBy = "2024-01-01";
+        AtomicReference<String> pOldStatus = new AtomicReference<>(null);
+        AtomicReference<Integer> pRowsUpdated = new AtomicReference<>(null);
+        when(issue3435DtoNamingMapper.selectTIssue34OrderMaxOrderId(any(), any(), any(), any(), any())).thenReturn("test");
+        when(issue3435DtoNamingMapper.insertTIssue34Order(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue3435DtoNamingMapper.insertTIssue34OrderLog(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue3435DtoNamingMapper.selectTIssue34OrderCount(any(), any())).thenReturn(null);
+        when(issue3435DtoNamingMapper.selectTIssue34OrderSumTotalAmount(any(), any())).thenReturn(null);
+        when(issue3435DtoNamingMapper.selectTIssue34OrderAvgTotalAmount(any(), any())).thenReturn(null);
+        when(issue3435DtoNamingMapper.selectTIssue34Order(any(), any(), any())).thenReturn(null);
+        when(issue3435DtoNamingMapper.updateTIssue34Order(any(), any(), any())).thenReturn(1);
+        service.procUpdateOrder(pOrderId, pNewStatus, pUpdatedBy, pOldStatus, pRowsUpdated);
+        verify(issue3435DtoNamingMapper, atLeast(0)).updateTIssue34Order(any(), any(), any());
+    }
+}

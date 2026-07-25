@@ -1,0 +1,80 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue48LongComparetoStringMapper;
+import java.math.BigDecimal;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue48LongComparetoStringService {
+    private static final Logger log = LoggerFactory.getLogger(Issue48LongComparetoStringService.class);
+
+    private final Issue48LongComparetoStringMapper issue48LongComparetoStringMapper;
+
+    public Issue48LongComparetoStringService(Issue48LongComparetoStringMapper issue48LongComparetoStringMapper) {
+        this.issue48LongComparetoStringMapper = issue48LongComparetoStringMapper;
+    }
+    // Source: pkg_issue48_compare.proc_check_pro_id (PROCEDURE) — issue_48_long_compareto_string.sql:51-75
+    public void procCheckProId(Long pProId, AtomicReference<String> pResult) {
+        Long vProId = 0L;
+        Integer vCount = 0;
+        pResult.set(null);
+        vProId = pProId;
+        if (vProId.compareTo(Long.parseLong("9999")) == 0) {
+            pResult.set("MATCH_9999");
+        } else if (vProId.compareTo(Long.parseLong("350")) == 0) {
+            pResult.set("MATCH_350");
+        } else {
+            pResult.set("NO_MATCH");
+        }
+        vCount = issue48LongComparetoStringMapper.selectDualCount(pProId);
+        if (vCount == null) vCount = 0;
+        if (vCount == 0) {
+            pResult.set(String.valueOf((String) pResult.get() + "_ZERO"));
+        }
+    }
+
+    // Source: pkg_issue48_compare.proc_check_count (PROCEDURE) — issue_48_long_compareto_string.sql:80-95
+    public void procCheckCount(Long pCount, AtomicReference<String> pLabel) {
+        pLabel.set(null);
+        if (pCount.compareTo(Long.valueOf(0)) == 0) {
+            pLabel.set("ZERO");
+        } else if (pCount.compareTo(Long.valueOf(100)) == 0) {
+            pLabel.set("HUNDRED");
+        } else if (pCount.compareTo(Long.valueOf(1000)) > 0) {
+            pLabel.set("LARGE");
+        } else {
+            pLabel.set("OTHER");
+        }
+    }
+
+    // Source: pkg_issue48_compare.proc_check_status (PROCEDURE) — issue_48_long_compareto_string.sql:100-116
+    public void procCheckStatus(String pStatus, AtomicReference<Integer> pCode) {
+        pCode.set(null);
+        if ("0".equals(pStatus)) {
+            pCode.set(Integer.valueOf(0));
+        } else if ("1".equals(pStatus)) {
+            pCode.set(Integer.valueOf(1));
+        } else if ("2".equals(pStatus)) {
+            pCode.set(Integer.valueOf(2));
+        } else {
+            pCode.set(Integer.valueOf(-1));
+        }
+    }
+
+    // Source: pkg_issue48_compare.proc_compare_level (PROCEDURE) — issue_48_long_compareto_string.sql:122-135
+    public void procCompareLevel(java.math.BigDecimal pLevel, String pThreshold, AtomicReference<String> pResult) {
+        pResult.set(null);
+        if (pLevel.compareTo(pThreshold) >= 0) {
+            pResult.set("ABOVE");
+        } else if (pLevel.compareTo(java.math.BigDecimal.valueOf(0)) > 0) {
+            pResult.set("POSITIVE");
+        } else {
+            pResult.set("ZERO_OR_NEGATIVE");
+        }
+    }
+}

@@ -1,0 +1,84 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue44IfElsifGotoMapper;
+import com.example.demo.service.Issue44IfElsifGotoService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class Issue44IfElsifGotoServiceTest {
+
+    @Mock
+    private Issue44IfElsifGotoMapper issue44IfElsifGotoMapper;
+
+    @InjectMocks
+    private Issue44IfElsifGotoService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procDynamicSqlIfElse_success() {
+        String pStatus = "test_pStatus";
+        String pDate = "2024-01-01";
+        AtomicReference<String> pResult = new AtomicReference<>(null);
+        when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount(any(), any())).thenReturn(999);
+        when(issue44IfElsifGotoMapper.selectTIssue44Orders(any(), any())).thenReturn("test");
+        when(issue44IfElsifGotoMapper.selectTIssue44OrdersSumAmount(any(), any())).thenReturn(java.math.BigDecimal.TEN);
+        service.procDynamicSqlIfElse(pStatus, pDate, pResult);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procDynamicSqlIfElsif_success() {
+        String pFilter = "test_pFilter";
+        Integer pMode = 1;
+        AtomicReference<String> pResult = new AtomicReference<>(null);
+        when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount(any(), any())).thenReturn(999);
+        when(issue44IfElsifGotoMapper.selectTIssue44Orders(any(), any())).thenReturn("test");
+        when(issue44IfElsifGotoMapper.selectTIssue44OrdersSumAmount(any(), any())).thenReturn(java.math.BigDecimal.TEN);
+        service.procDynamicSqlIfElsif(pFilter, pMode, pResult);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procNestedDynamicIf_success() {
+        String pType = "test_pType";
+        String pSubType = "test_pSubType";
+        AtomicReference<String> pResult = new AtomicReference<>(null);
+        when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount(any(), any())).thenReturn(999);
+        when(issue44IfElsifGotoMapper.selectTIssue44Orders(any(), any())).thenReturn("test");
+        when(issue44IfElsifGotoMapper.selectTIssue44OrdersSumAmount(any(), any())).thenReturn(java.math.BigDecimal.TEN);
+        service.procNestedDynamicIf(pType, pSubType, pResult);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procNonDynamicIfElse_success() {
+        String pFlag = "1";
+        AtomicReference<String> pResult = new AtomicReference<>(null);
+        when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount(any(), any())).thenReturn(999);
+        when(issue44IfElsifGotoMapper.selectTIssue44Orders(any(), any())).thenReturn("test");
+        when(issue44IfElsifGotoMapper.selectTIssue44OrdersSumAmount(any(), any())).thenReturn(java.math.BigDecimal.TEN);
+        service.procNonDynamicIfElse(pFlag, pResult);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procChainedIfWithConcat_success() {
+        String pCode = "test_pCode";
+        AtomicReference<String> pResult = new AtomicReference<>(null);
+        when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount(any(), any())).thenReturn(999);
+        when(issue44IfElsifGotoMapper.selectTIssue44Orders(any(), any())).thenReturn("test");
+        when(issue44IfElsifGotoMapper.selectTIssue44OrdersSumAmount(any(), any())).thenReturn(java.math.BigDecimal.TEN);
+        service.procChainedIfWithConcat(pCode, pResult);
+    }
+}

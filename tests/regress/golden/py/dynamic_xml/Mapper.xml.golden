@@ -13,8 +13,8 @@
         <if test="true">LIMIT ${pLimit}</if>
     </select>
 
-    <!-- Source: pkg_dynamic_xml.sql:77-77 — pkg_dynamic_xml.proc_conditional_query.selectProcConditionalQuery_1 -->
-    <select id="selectProcConditionalQuery_1" resultType="int">
+    <!-- Source: pkg_dynamic_xml.sql:77-77 — pkg_dynamic_xml.proc_conditional_query.selectAuditLogCount -->
+    <select id="selectAuditLogCount" resultType="int">
         select COUNT(*)
         from audit_log
         where operation = 'QUERY'
@@ -39,8 +39,8 @@
         insert into ${pTableName}_hist select * from ${pTableName}
     </insert>
 
-    <!-- Source: pkg_dynamic_xml.sql:137-137 — pkg_dynamic_xml.proc_mixed_logic.insertProcMixedLogic_1 -->
-    <insert id="insertProcMixedLogic_1">
+    <!-- Source: pkg_dynamic_xml.sql:137-137 — pkg_dynamic_xml.proc_mixed_logic.insertAuditLog -->
+    <insert id="insertAuditLog">
         insert into audit_log (log_time, operation, sql_text) values (current_timestamp, 'ARCHIVE', #{vSql, jdbcType=VARCHAR, javaType=String})
     </insert>
 
@@ -49,8 +49,8 @@
         delete from ${pTableName} where create_time &lt; current_date - 30
     </delete>
 
-    <!-- Source: pkg_dynamic_xml.sql:144-144 — pkg_dynamic_xml.proc_mixed_logic.insertProcMixedLogic_2 -->
-    <insert id="insertProcMixedLogic_2">
+    <!-- Source: pkg_dynamic_xml.sql:144-144 — pkg_dynamic_xml.proc_mixed_logic.insertAuditLog_1 -->
+    <insert id="insertAuditLog_1">
         insert into audit_log (log_time, operation, sql_text) values (current_timestamp, 'CLEAN', #{vSql, jdbcType=VARCHAR, javaType=String})
     </insert>
 

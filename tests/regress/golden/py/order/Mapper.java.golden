@@ -9,13 +9,13 @@ import java.util.Map;
         public interface OrderMapper {
 
                 // pkg_order.sql:1 — pkg_order.create_order
-        int insertCreateOrder(@Param("pUserId") Long pUserId, @Param("pProductId") Long pProductId, @Param("pQty") Integer pQty);
+        int insertTOrders(@Param("pUserId") Long pUserId, @Param("pProductId") Long pProductId, @Param("pQty") Integer pQty);
         // pkg_order.sql:14 — pkg_order.cancel_order
-        Map<String, Object> selectCancelOrder(@Param("pOrderId") Long pOrderId);
+        Map<String, Object> selectTOrders(@Param("pOrderId") Long pOrderId);
         // pkg_order.sql:14 — pkg_order.cancel_order
-        int updateCancelOrder(@Param("pOrderId") Long pOrderId);
+        int updateTOrders(@Param("pOrderId") Long pOrderId);
         // pkg_order.sql:31 — pkg_order.get_order_detail
         List<Map<String, Object>> selectGetOrderDetail(@Param("pOrderId") Long pOrderId);
         // pkg_order.sql:53 — pkg_order.complete_order
-        int updateCompleteOrder(@Param("pOrderId") Long pOrderId);
+        int updateTOrders(@Param("pOrderId") Long pOrderId);
         }

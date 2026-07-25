@@ -1,0 +1,54 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue45ExceptionHandlingMapper;
+import com.example.demo.service.Issue45ExceptionHandlingService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class Issue45ExceptionHandlingServiceTest {
+
+    @Mock
+    private Issue45ExceptionHandlingMapper issue45ExceptionHandlingMapper;
+
+    @InjectMocks
+    private Issue45ExceptionHandlingService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procLinkEtfRepay_success() {
+        String pSecurityCode = "test_pSecurityCode";
+        AtomicReference<String> pOSucceed = new AtomicReference<>(null);
+        AtomicReference<String> pOSecurityId = new AtomicReference<>(null);
+        when(issue45ExceptionHandlingMapper.selectTIssue45Security(any())).thenReturn("test");
+        service.procLinkEtfRepay(pSecurityCode, pOSucceed, pOSecurityId);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procSimpleException_success() {
+        String pSecurityCode = "test_pSecurityCode";
+        AtomicReference<String> pResult = new AtomicReference<>(null);
+        when(issue45ExceptionHandlingMapper.selectTIssue45Security(any())).thenReturn("test");
+        service.procSimpleException(pSecurityCode, pResult);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procNestedException_success() {
+        String pCode = "test_pCode";
+        AtomicReference<String> pMsg = new AtomicReference<>(null);
+        when(issue45ExceptionHandlingMapper.selectTIssue45Security(any())).thenReturn("test");
+        service.procNestedException(pCode, pMsg);
+    }
+}

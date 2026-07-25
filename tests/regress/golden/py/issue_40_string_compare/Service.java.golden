@@ -1,0 +1,57 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue40StringCompareMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue40StringCompareService {
+    private static final Logger log = LoggerFactory.getLogger(Issue40StringCompareService.class);
+
+    private final Issue40StringCompareMapper issue40StringCompareMapper;
+
+    public Issue40StringCompareService(Issue40StringCompareMapper issue40StringCompareMapper) {
+        this.issue40StringCompareMapper = issue40StringCompareMapper;
+    }
+    // Source: pkg_issue40_compare.proc_check_status (PROCEDURE) — issue_40_string_compare.sql:38-53
+    public void procCheckStatus(String pStatus, AtomicReference<String> pResult) {
+        pResult.set(null);
+        if ("ACTIVE".equals(pStatus)) {
+            pResult.set("OK");
+        } else if ("INACTIVE".equals(pStatus)) {
+            pResult.set("DISABLED");
+        } else if ("PENDING".equals(pStatus)) {
+            pResult.set("WAIT");
+        } else {
+            pResult.set("UNKNOWN");
+        }
+    }
+
+    // Source: pkg_issue40_compare.proc_validate_level (PROCEDURE) — issue_40_string_compare.sql:57-70
+    public void procValidateLevel(String pLevel, String pMinLevel, AtomicReference<Boolean> pIsValid) {
+        pIsValid.set(null);
+        if (pLevel.compareTo(pMinLevel) >= 0) {
+            pIsValid.set(true);
+        } else {
+            pIsValid.set(false);
+        }
+    }
+
+    // Source: pkg_issue40_compare.proc_compare_versions (PROCEDURE) — issue_40_string_compare.sql:74-92
+    public void procCompareVersions(String pVersion, String pMinVer, AtomicReference<Boolean> pOk) {
+        pOk.set(null);
+        if ("0".equals(pVersion)) {
+            pOk.set(false);
+            return;
+        }
+        if (pVersion.compareTo(pMinVer) >= 0) {
+            pOk.set(true);
+        } else {
+            pOk.set(false);
+        }
+    }
+}

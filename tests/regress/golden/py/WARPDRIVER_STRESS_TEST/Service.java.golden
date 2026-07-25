@@ -54,9 +54,9 @@ public class WarpdriverStressTestService {
     public void spAutonomousAudit(String pAction, String pDetail) {
         int _sqlRowCount = 0;
         try {
-            _sqlRowCount = warpdriverStressTestMapper.insertSpAutonomousAudit(pAction, pDetail);
+            _sqlRowCount = warpdriverStressTestMapper.insertAuditTrail(pAction, pDetail);
             // COMMIT — auto-committed by @Transactional(propagation = REQUIRES_NEW)
-        } catch (Exception e) { // OTHERS — src: PKG_WARPDRIVER_STRESS_TEST.sql:106
+        } catch (Exception e) { // EXCEPTION handlers — src: PKG_WARPDRIVER_STRESS_TEST.sql:106
         }
     }
 
@@ -124,7 +124,7 @@ public class WarpdriverStressTestService {
                     }
                     break;
                     case ErrorHandler:
-                    _sqlRowCount = warpdriverStressTestMapper.insertSpMainOrchestrator(pBizDate, pMode, vRec);
+                    _sqlRowCount = warpdriverStressTestMapper.insertErrorLog(pBizDate, pMode, vRec);
                     vHasError = true;
                     currentState = SpMainOrchestratorState.FetchLoop;
                     break;
@@ -132,7 +132,7 @@ public class WarpdriverStressTestService {
                     // cursor v_cur_orders closed
                     if (vIdx > 0) {
                         for (int i = 1; i <= vIdx; i++) {
-                            _sqlRowCount = warpdriverStressTestMapper.insertSpMainOrchestrator_1(pBizDate, pMode, vItemTab, i);
+                            _sqlRowCount = warpdriverStressTestMapper.insertOrderItemSnapshot(pBizDate, pMode, vItemTab, i);
                         }
                     }
                     pTotalAmt.set(new java.math.BigDecimal(String.valueOf(vSum)));
@@ -149,7 +149,7 @@ public class WarpdriverStressTestService {
                     break;
                 }
             }
-        } catch (Exception e) { // OTHERS — src: PKG_WARPDRIVER_STRESS_TEST.sql:138
+        } catch (Exception e) { // EXCEPTION handlers — src: PKG_WARPDRIVER_STRESS_TEST.sql:138
             // Rollback
             pTotalAmt.set(java.math.BigDecimal.valueOf(-1));
             /* TODO: gLastErrorCode() */ null = e.getMessage();
@@ -196,35 +196,36 @@ public class WarpdriverStressTestService {
             if (blackRecList_6 == null) blackRecList_6 = new ArrayList<>();
             for (Map<String, Object> blackRec : blackRecList_6) {
                 vInvalid = vInvalid + 1;
-                _sqlRowCount = warpdriverStressTestMapper.updateSpGotoDeepEscape(pBatchId, mainRec);
+                _sqlRowCount = warpdriverStressTestMapper.updateBulkOrders(pBatchId, mainRec);
                 continue;
             }
             List<Map<String, Object>> riskRecList_7 = warpdriverStressTestMapper.selectSpGotoDeepEscape_2(pBatchId, mainRec);
             if (riskRecList_7 == null) riskRecList_7 = new ArrayList<>();
             for (Map<String, Object> riskRec : riskRecList_7) {
                 try {
-                    vScore = warpdriverStressTestMapper.selectSpGotoDeepEscape_3(pBatchId, mainRec, riskRec);
+                    vScore = warpdriverStressTestMapper.selectCustomerRisk(pBatchId, mainRec, riskRec);
                     if (vScore == null) vScore = 0;
                     if (vScore > ((Number) (riskRec.get("threshold") != null ? riskRec.get("threshold") : 0)).intValue()) {
                         vInvalid = vInvalid + 1;
-                        _sqlRowCount = warpdriverStressTestMapper.updateSpGotoDeepEscape_1(pBatchId, mainRec, riskRec);
+                        _sqlRowCount = warpdriverStressTestMapper.updateBulkOrders_1(pBatchId, mainRec, riskRec);
                         continue;
                     }
                 } catch (Exception e) { // NO_DATA
+                    // WHEN NO_DATA
                 }
             }
-            List<Map<String, Object>> stockRecList_8 = warpdriverStressTestMapper.selectSpGotoDeepEscape_4(pBatchId, mainRec);
+            List<Map<String, Object>> stockRecList_8 = warpdriverStressTestMapper.selectSpGotoDeepEscape_3(pBatchId, mainRec);
             if (stockRecList_8 == null) stockRecList_8 = new ArrayList<>();
             for (Map<String, Object> stockRec : stockRecList_8) {
-                vStock = warpdriverStressTestMapper.selectSpGotoDeepEscape_5(pBatchId, stockRec);
+                vStock = warpdriverStressTestMapper.selectInventory(pBatchId, stockRec);
                 if (vStock == null) vStock = 0;
                 if (java.math.BigDecimal.valueOf(vStock).compareTo(java.math.BigDecimal.valueOf(((Number) (stockRec.get("required_qty") != null ? stockRec.get("required_qty") : 0L)).longValue())) < 0) {
                     vInvalid = vInvalid + 1;
-                    _sqlRowCount = warpdriverStressTestMapper.updateSpGotoDeepEscape_2(pBatchId, mainRec, stockRec);
+                    _sqlRowCount = warpdriverStressTestMapper.updateBulkOrders_2(pBatchId, mainRec, stockRec);
                     continue;
                 }
             }
-            _sqlRowCount = warpdriverStressTestMapper.updateSpGotoDeepEscape_3(pBatchId, mainRec);
+            _sqlRowCount = warpdriverStressTestMapper.updateBulkOrders_3(pBatchId, mainRec);
         }
         pInvalidCnt.set(Integer.valueOf(vInvalid));
         // COMMIT — auto-committed by Spring @Transactional boundary
@@ -248,7 +249,7 @@ public class WarpdriverStressTestService {
             switch (currentState) {
                 case StateInit:
                 if ("SUBMIT".equals(pEvent)) {
-                    _sqlRowCount = warpdriverStressTestMapper.updateSpGotoStateMachine(pOrderId, pEvent);
+                    _sqlRowCount = warpdriverStressTestMapper.updateOrders(pOrderId, pEvent);
                     vState = "PENDING";
                     currentState = SpGotoStateMachineState.StatePending;
                     break;
@@ -258,23 +259,23 @@ public class WarpdriverStressTestService {
                 }
                 case StatePending:
                 if ("PAY".equals(pEvent)) {
-                    _sqlRowCount = warpdriverStressTestMapper.updateSpGotoStateMachine_1(pOrderId, pEvent);
+                    _sqlRowCount = warpdriverStressTestMapper.updateOrders_1(pOrderId, pEvent);
                     vState = "PAID";
                     currentState = SpGotoStateMachineState.StatePaid;
                     break;
                 } else if ("CANCEL".equals(pEvent)) {
-                    _sqlRowCount = warpdriverStressTestMapper.updateSpGotoStateMachine_2(pOrderId, pEvent);
+                    _sqlRowCount = warpdriverStressTestMapper.updateOrders_2(pOrderId, pEvent);
                     vState = "CANCELLED";
                     currentState = SpGotoStateMachineState.StateDone;
                     break;
                 } else if ("TIMEOUT".equals(pEvent)) {
                     if (vRetry < vMaxRetry) {
                         vRetry = vRetry + 1;
-                        _sqlRowCount = warpdriverStressTestMapper.updateSpGotoStateMachine_3(pOrderId, pEvent, vRetry);
+                        _sqlRowCount = warpdriverStressTestMapper.updateOrders_3(pOrderId, pEvent, vRetry);
                         currentState = SpGotoStateMachineState.StatePending;
                         break;
                     } else {
-                        _sqlRowCount = warpdriverStressTestMapper.updateSpGotoStateMachine_4(pOrderId, pEvent);
+                        _sqlRowCount = warpdriverStressTestMapper.updateOrders_4(pOrderId, pEvent);
                         vState = "EXPIRED";
                         currentState = SpGotoStateMachineState.StateDone;
                         break;
@@ -282,45 +283,45 @@ public class WarpdriverStressTestService {
                 }
                 case StatePaid:
                 if ("SHIP".equals(pEvent)) {
-                    _sqlRowCount = warpdriverStressTestMapper.updateSpGotoStateMachine_5(pOrderId, pEvent);
+                    _sqlRowCount = warpdriverStressTestMapper.updateOrders_5(pOrderId, pEvent);
                     vState = "SHIPPED";
                     currentState = SpGotoStateMachineState.StateShipped;
                     break;
                 } else if ("REFUND_REQ".equals(pEvent)) {
-                    _sqlRowCount = warpdriverStressTestMapper.updateSpGotoStateMachine_6(pOrderId, pEvent);
+                    _sqlRowCount = warpdriverStressTestMapper.updateOrders_6(pOrderId, pEvent);
                     vState = "REFUNDING";
                     currentState = SpGotoStateMachineState.StateRefunding;
                     break;
                 }
                 case StateShipped:
                 if ("DELIVER".equals(pEvent)) {
-                    _sqlRowCount = warpdriverStressTestMapper.updateSpGotoStateMachine_7(pOrderId, pEvent);
+                    _sqlRowCount = warpdriverStressTestMapper.updateOrders_7(pOrderId, pEvent);
                     vState = "COMPLETED";
                 } else if ("RETURN".equals(pEvent)) {
-                    _sqlRowCount = warpdriverStressTestMapper.updateSpGotoStateMachine_8(pOrderId, pEvent);
+                    _sqlRowCount = warpdriverStressTestMapper.updateOrders_8(pOrderId, pEvent);
                     vState = "REFUNDING";
                     currentState = SpGotoStateMachineState.StateRefunding;
                     break;
                 }
                 case StateRefunding:
                 if ("REFUND_APPROVE".equals(pEvent)) {
-                    _sqlRowCount = warpdriverStressTestMapper.updateSpGotoStateMachine_9(pOrderId, pEvent);
+                    _sqlRowCount = warpdriverStressTestMapper.updateOrders_9(pOrderId, pEvent);
                     vState = "REFUNDED";
                     currentState = SpGotoStateMachineState.StateDone;
                     break;
                 } else if ("REFUND_REJECT".equals(pEvent)) {
-                    _sqlRowCount = warpdriverStressTestMapper.updateSpGotoStateMachine_10(pOrderId, pEvent);
+                    _sqlRowCount = warpdriverStressTestMapper.updateOrders_10(pOrderId, pEvent);
                     vState = "PAID";
                     currentState = SpGotoStateMachineState.StatePaid;
                     break;
                 } else if ("PARTIAL_REFUND".equals(pEvent)) {
-                    _sqlRowCount = warpdriverStressTestMapper.updateSpGotoStateMachine_11(pOrderId, pEvent);
+                    _sqlRowCount = warpdriverStressTestMapper.updateOrders_11(pOrderId, pEvent);
                     vState = "PAID";
                     currentState = SpGotoStateMachineState.StatePaid;
                     break;
                 }
                 case StateCheck:
-                vDbState = warpdriverStressTestMapper.selectSpGotoStateMachine(pOrderId, pEvent);
+                vDbState = warpdriverStressTestMapper.selectOrders(pOrderId, pEvent);
                 vState = vDbState;
                 if ("PENDING".equals(vDbState)) {
                     currentState = SpGotoStateMachineState.StatePending;
@@ -342,7 +343,7 @@ public class WarpdriverStressTestService {
                 break;
                 case StateDone:
                 pFinalState.set(String.valueOf(vState));
-                _sqlRowCount = warpdriverStressTestMapper.insertSpGotoStateMachine(pOrderId, pEvent, vState);
+                _sqlRowCount = warpdriverStressTestMapper.insertStateTransitions(pOrderId, pEvent, vState);
                 // COMMIT — auto-committed by Spring @Transactional boundary
                 running = false;
                 break;
@@ -368,10 +369,10 @@ public class WarpdriverStressTestService {
                 vJobName = pJobPrefix + vTaskId + "_" + new java.text.SimpleDateFormat("HHmSSSs").format(new java.sql.Timestamp(System.currentTimeMillis()));
                 // Originally: DBE_SCHEDULER job for spGotoCleanupMaster
                 this.spGotoCleanupMaster(vTaskId, new java.util.concurrent.atomic.AtomicReference<>());
-                _sqlRowCount = warpdriverStressTestMapper.insertSpDynamicSchedulerDispatch(pTaskList, pJobPrefix, vTaskId, vJobName);
+                _sqlRowCount = warpdriverStressTestMapper.insertJobDispatchLog(pTaskList, pJobPrefix, vTaskId, vJobName);
             }
             // COMMIT — auto-committed by Spring @Transactional boundary
-        } catch (Exception e) { // OTHERS — src: PKG_WARPDRIVER_STRESS_TEST.sql:637
+        } catch (Exception e) { // EXCEPTION handlers — src: PKG_WARPDRIVER_STRESS_TEST.sql:637
             // CALL sp_autonomous_audit(...)
             throw new BusinessException(e.getMessage());
         }
@@ -402,8 +403,8 @@ public class WarpdriverStressTestService {
             }
             if (!found) { break; }
             vCount = vCount + this.fnRecursiveTreeCleanup(((Number) (vChildId)).longValue(), pDepth + 1);
-            _sqlRowCount = warpdriverStressTestMapper.deleteFnRecursiveTreeCleanup(pParentId, pDepth, vChildId);
-            _sqlRowCount = warpdriverStressTestMapper.deleteFnRecursiveTreeCleanup_1(pParentId, pDepth, vChildId);
+            _sqlRowCount = warpdriverStressTestMapper.deleteTreeAttributes(pParentId, pDepth, vChildId);
+            _sqlRowCount = warpdriverStressTestMapper.deleteTreeNodes(pParentId, pDepth, vChildId);
             vCount = vCount + 1;
         }
         // cursor v_cur closed
@@ -443,9 +444,9 @@ public class WarpdriverStressTestService {
         pCurPaymentsResult = warpdriverStressTestMapper.selectFnMultiCursorReturn_1(pCustomerId);
         pCurPaymentsIdx = 0;
         if (pCurPaymentsResult == null) pCurPaymentsResult = new java.util.ArrayList<>();
-        vOrderCnt = warpdriverStressTestMapper.selectFnMultiCursorReturn_2(pCustomerId);
+        vOrderCnt = warpdriverStressTestMapper.selectOrdersCount(pCustomerId);
         if (vOrderCnt == null) vOrderCnt = 0;
-        vPayCnt = warpdriverStressTestMapper.selectFnMultiCursorReturn_3(pCustomerId);
+        vPayCnt = warpdriverStressTestMapper.selectPaymentsCount(pCustomerId);
         if (vPayCnt == null) vPayCnt = 0;
         return vOrderCnt + vPayCnt;
     }
@@ -461,27 +462,27 @@ public class WarpdriverStressTestService {
         int _sqlRowCount = 0;
         try {
             pFinalBal.set(null);
-            vBalance = ((java.math.BigDecimal) warpdriverStressTestMapper.selectSpSavepointHell(pAccountId, pAmount));
+            vBalance = ((java.math.BigDecimal) warpdriverStressTestMapper.selectAccounts(pAccountId, pAmount));
             if (vBalance == null) vBalance = java.math.BigDecimal.ZERO;
             vSp1 = "sp_pre_" + pAccountId;
             // SAVEPOINT vSp1 — use TransactionAspectSupport.currentTransactionStatus().createSavepoint() if needed
-            _sqlRowCount = warpdriverStressTestMapper.updateSpSavepointHell(pAccountId, pAmount);
+            _sqlRowCount = warpdriverStressTestMapper.updateAccounts(pAccountId, pAmount);
             vSp2 = "sp_acct_" + pAccountId;
             // SAVEPOINT vSp2 — use TransactionAspectSupport.currentTransactionStatus().createSavepoint() if needed
-            _sqlRowCount = warpdriverStressTestMapper.insertSpSavepointHell(pAccountId, pAmount);
+            _sqlRowCount = warpdriverStressTestMapper.insertAccountJournal(pAccountId, pAmount);
             if (pAmount.compareTo(vBalance) > 0) {
                 // ROLLBACK TO SAVEPOINT vSp1 — use TransactionAspectSupport.currentTransactionStatus().rollbackToSavepoint() if needed
-                _sqlRowCount = warpdriverStressTestMapper.updateSpSavepointHell_1(pAccountId, pAmount);
-                _sqlRowCount = warpdriverStressTestMapper.insertSpSavepointHell_1(pAccountId, pAmount);
+                _sqlRowCount = warpdriverStressTestMapper.updateAccounts_1(pAccountId, pAmount);
+                _sqlRowCount = warpdriverStressTestMapper.insertRiskEvents(pAccountId, pAmount);
                 pFinalBal.set(new java.math.BigDecimal(String.valueOf(vBalance)));
                 // COMMIT — auto-committed by Spring @Transactional boundary
                 return;
             }
             // SAVEPOINT sp_notify — handled via JDBC Connection.setSavepoint() in @Transactional context
-            _sqlRowCount = warpdriverStressTestMapper.insertSpSavepointHell_2(pAccountId, pAmount);
+            _sqlRowCount = warpdriverStressTestMapper.insertNotifications(pAccountId, pAmount);
             // COMMIT — auto-committed by Spring @Transactional boundary
-            pFinalBal.set(((java.math.BigDecimal) warpdriverStressTestMapper.selectSpSavepointHell_1(pAccountId, pAmount)));
-        } catch (Exception e) { // OTHERS — src: PKG_WARPDRIVER_STRESS_TEST.sql:801
+            pFinalBal.set(((java.math.BigDecimal) warpdriverStressTestMapper.selectAccounts_1(pAccountId, pAmount)));
+        } catch (Exception e) { // EXCEPTION handlers — src: PKG_WARPDRIVER_STRESS_TEST.sql:801
             // Rollback
             throw new BusinessException(e.getMessage());
         }

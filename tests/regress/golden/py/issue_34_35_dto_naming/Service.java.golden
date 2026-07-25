@@ -1,0 +1,65 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue3435DtoNamingMapper;
+import java.math.BigDecimal;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue3435DtoNamingService {
+    private static final Logger log = LoggerFactory.getLogger(Issue3435DtoNamingService.class);
+
+    private final Issue3435DtoNamingMapper issue3435DtoNamingMapper;
+
+    public Issue3435DtoNamingService(Issue3435DtoNamingMapper issue3435DtoNamingMapper) {
+        this.issue3435DtoNamingMapper = issue3435DtoNamingMapper;
+    }
+    // Source: pkg_issue34_order.proc_create_order (PROCEDURE) — issue_34_35_dto_naming.sql:71-114
+    @Transactional
+    public void procCreateOrder(String pCustomerName, String pProductCode, Integer pQuantity, java.math.BigDecimal pUnitPrice, String pCreatedBy, AtomicReference<Long> pOrderId, AtomicReference<java.math.BigDecimal> pTotalAmount, AtomicReference<String> pStatusMsg) {
+        String vOrderId = null;
+        java.math.BigDecimal vAmount = java.math.BigDecimal.ZERO;
+        int _sqlRowCount = 0;
+        try {
+            pOrderId.set(null);
+            pTotalAmount.set(null);
+            pStatusMsg.set(null);
+            vOrderId = issue3435DtoNamingMapper.selectTIssue34OrderMaxOrderId(pCustomerName, pProductCode, pQuantity, pUnitPrice, pCreatedBy);
+            vAmount = java.math.BigDecimal.valueOf(pQuantity).multiply(pUnitPrice);
+            _sqlRowCount = issue3435DtoNamingMapper.insertTIssue34Order(pCustomerName, pProductCode, pQuantity, pUnitPrice, pCreatedBy, vOrderId, vAmount);
+            _sqlRowCount = issue3435DtoNamingMapper.insertTIssue34OrderLog(pCustomerName, pProductCode, pQuantity, pUnitPrice, pCreatedBy, vOrderId);
+            pOrderId.set(Long.parseLong(vOrderId));
+            pTotalAmount.set(new java.math.BigDecimal(String.valueOf(vAmount)));
+            pStatusMsg.set("Order created successfully");
+        } catch (Exception e) { // EXCEPTION handlers — src: issue_34_35_dto_naming.sql:71
+            pStatusMsg.set("Error: " + e.getMessage());
+            // Rollback
+        }
+    }
+
+    // Source: pkg_issue34_order.proc_query_order_stats (PROCEDURE) — issue_34_35_dto_naming.sql:117-143
+    public void procQueryOrderStats(String pStatus, java.math.BigDecimal pMinAmount, AtomicReference<Integer> pOrderCount, AtomicReference<java.math.BigDecimal> pTotalRevenue, AtomicReference<java.math.BigDecimal> pAvgAmount) {
+        pOrderCount.set(null);
+        pTotalRevenue.set(null);
+        pAvgAmount.set(null);
+        pOrderCount.set(((Number) issue3435DtoNamingMapper.selectTIssue34OrderCount(pStatus, pMinAmount)).intValue());
+        pTotalRevenue.set(((java.math.BigDecimal) issue3435DtoNamingMapper.selectTIssue34OrderSumTotalAmount(pStatus, pMinAmount)));
+        pAvgAmount.set(((java.math.BigDecimal) issue3435DtoNamingMapper.selectTIssue34OrderAvgTotalAmount(pStatus, pMinAmount)));
+    }
+
+    // Source: pkg_issue34_order.proc_update_order (PROCEDURE) — issue_34_35_dto_naming.sql:146-175
+    @Transactional
+    public void procUpdateOrder(Long pOrderId, String pNewStatus, String pUpdatedBy, AtomicReference<String> pOldStatus, AtomicReference<Integer> pRowsUpdated) {
+        int _sqlRowCount = 0;
+        pOldStatus.set(null);
+        pRowsUpdated.set(null);
+        pOldStatus.set(String.valueOf(issue3435DtoNamingMapper.selectTIssue34Order(pOrderId, pNewStatus, pUpdatedBy)));
+        _sqlRowCount = issue3435DtoNamingMapper.updateTIssue34Order(pOrderId, pNewStatus, pUpdatedBy);
+        pRowsUpdated.set(((Number) issue3435DtoNamingMapper.selectTIssue34OrderCount(pOrderId, pNewStatus, pUpdatedBy)).intValue());
+        _sqlRowCount = issue3435DtoNamingMapper.insertTIssue34OrderLog(pOrderId, pNewStatus, pUpdatedBy);
+    }
+}

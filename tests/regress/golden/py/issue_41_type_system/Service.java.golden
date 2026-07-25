@@ -1,0 +1,106 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue41TypeSystemMapper;
+import java.math.BigDecimal;
+import java.sql.Date;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue41TypeSystemService {
+    private static final Logger log = LoggerFactory.getLogger(Issue41TypeSystemService.class);
+
+    private final Issue41TypeSystemMapper issue41TypeSystemMapper;
+
+    public Issue41TypeSystemService(Issue41TypeSystemMapper issue41TypeSystemMapper) {
+        this.issue41TypeSystemMapper = issue41TypeSystemMapper;
+    }
+    // Source: pkg_issue41_types.proc_transfer (PROCEDURE) — issue_41_type_system.sql:64-112
+    @Transactional
+    public void procTransfer(Long pFromAccount, Long pToAccount, java.math.BigDecimal pAmount, java.sql.Date pTransferDate, Boolean pIsUrgent, AtomicReference<java.math.BigDecimal> pNewBalance, AtomicReference<String> pStatus) {
+        java.math.BigDecimal vFromBalance = java.math.BigDecimal.ZERO;
+        java.math.BigDecimal vToBalance = java.math.BigDecimal.ZERO;
+        int _sqlRowCount = 0;
+        pNewBalance.set(null);
+        pStatus.set(null);
+        vFromBalance = ((java.math.BigDecimal) issue41TypeSystemMapper.selectTIssue41Account(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent));
+        if (vFromBalance == null) vFromBalance = java.math.BigDecimal.ZERO;
+        if (vFromBalance.compareTo(pAmount) < 0) {
+            throw new BusinessException("RAISE None");
+        }
+        if (pIsUrgent) {
+            pStatus.set("URGENT TRANSFER");
+        }
+        vFromBalance = vFromBalance.subtract(pAmount);
+        _sqlRowCount = issue41TypeSystemMapper.updateTIssue41Account(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent, vFromBalance);
+        vToBalance = ((java.math.BigDecimal) issue41TypeSystemMapper.selectTIssue41Account_1(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent));
+        if (vToBalance == null) vToBalance = java.math.BigDecimal.ZERO;
+        vToBalance = vToBalance.add(pAmount);
+        _sqlRowCount = issue41TypeSystemMapper.updateTIssue41Account_1(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent, vToBalance);
+        pNewBalance.set(new java.math.BigDecimal(String.valueOf(vFromBalance)));
+        pStatus.set("TRANSFER COMPLETE");
+    }
+
+    // Source: pkg_issue41_types.proc_withdraw (PROCEDURE) — issue_41_type_system.sql:115-155
+    @Transactional
+    public void procWithdraw(Long pAccountId, java.math.BigDecimal pAmount, AtomicReference<java.math.BigDecimal> pNewBalance, AtomicReference<String> pStatus) {
+        java.math.BigDecimal vBalance = java.math.BigDecimal.ZERO;
+        int _sqlRowCount = 0;
+        try {
+            pNewBalance.set(null);
+            pStatus.set(null);
+            vBalance = ((java.math.BigDecimal) issue41TypeSystemMapper.selectTIssue41Account(pAccountId, pAmount));
+            if (vBalance == null) vBalance = java.math.BigDecimal.ZERO;
+            if (pAmount.compareTo(java.math.BigDecimal.valueOf(0)) <= 0) {
+                throw new BusinessException("RAISE None");
+            }
+            if (vBalance.compareTo(pAmount) < 0) {
+                throw new BusinessException("RAISE None");
+            }
+            vBalance = vBalance.subtract(pAmount);
+            _sqlRowCount = issue41TypeSystemMapper.updateTIssue41Account(pAccountId, pAmount, vBalance);
+            pNewBalance.set(new java.math.BigDecimal(String.valueOf(vBalance)));
+            pStatus.set("WITHDRAWAL SUCCESS");
+        } catch (Exception e) { // EXCEPTION handlers — src: issue_41_type_system.sql:115
+            pStatus.set("Insufficient funds");
+            pNewBalance.set(new java.math.BigDecimal(String.valueOf(vBalance)));
+            pStatus.set("Invalid amount");
+            pNewBalance.set(new java.math.BigDecimal(String.valueOf(vBalance)));
+            pStatus.set("Error: " + e.getMessage());
+            pNewBalance.set(new java.math.BigDecimal(String.valueOf(vBalance)));
+        }
+    }
+
+    // Source: pkg_issue41_types.proc_validate_account (PROCEDURE) — issue_41_type_system.sql:158-186
+    public void procValidateAccount(Long pAccountId, AtomicReference<Boolean> pIsValid, AtomicReference<java.math.BigDecimal> pBalance) {
+        java.math.BigDecimal vBalance = java.math.BigDecimal.ZERO;
+        int _sqlRowCount = 0;
+        try {
+            Throwable eAccountClosed = null;
+            Boolean vActive = false;
+            pIsValid.set(null);
+            pBalance.set(null);
+            java.util.Map<String, Object> _row = null;
+            _row = issue41TypeSystemMapper.selectTIssue41Account(pAccountId);
+            if (_row == null) {
+                throw new BusinessException("exception");
+            }
+            if (_row == null) _row = java.util.Collections.emptyMap();
+            _sqlRowCount = (_row != null && !_row.isEmpty()) ? 1 : 0;
+            vBalance = (_row.get("balance") != null ? (_row.get("balance") instanceof java.math.BigDecimal ? (java.math.BigDecimal) _row.get("balance") : new java.math.BigDecimal(String.valueOf(_row.get("balance")))) : java.math.BigDecimal.ZERO);
+            vActive = (Boolean) _row.get("is_active");
+            if (!vActive) {
+                throw new BusinessException("RAISE None");
+            }
+            pIsValid.set(true);
+            pBalance.set(new java.math.BigDecimal(String.valueOf(vBalance)));
+        } catch (Exception e) { // EXCEPTION handlers — src: issue_41_type_system.sql:158
+            pIsValid.set(false);
+            pBalance.set(java.math.BigDecimal.valueOf(0));
+        }
+    }
+}

@@ -1,0 +1,57 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue49Varchar2ConcatMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue49Varchar2ConcatService {
+    private static final Logger log = LoggerFactory.getLogger(Issue49Varchar2ConcatService.class);
+
+    private final Issue49Varchar2ConcatMapper issue49Varchar2ConcatMapper;
+
+    public Issue49Varchar2ConcatService(Issue49Varchar2ConcatMapper issue49Varchar2ConcatMapper) {
+        this.issue49Varchar2ConcatMapper = issue49Varchar2ConcatMapper;
+    }
+    // Source: pkg_issue49_concat.proc_build_id_list (PROCEDURE) — issue_49_varchar2_concat.sql:46-73
+    public void procBuildIdList(String pBaseIds, String pExtraIds, AtomicReference<String> pResult) {
+        String vProId = null;
+        pResult.set(null);
+        if (pBaseIds != null) {
+            vProId = pBaseIds;
+        } else {
+            vProId = "6034";
+        }
+        vProId = vProId + "8208, 9, 354, 360, 370, 5821";
+        if (pExtraIds != null) {
+            vProId = vProId + ", " + pExtraIds;
+        }
+        pResult.set(String.valueOf(vProId));
+    }
+
+    // Source: pkg_issue49_concat.proc_append_trade_ids (PROCEDURE) — issue_49_varchar2_concat.sql:78-93
+    public void procAppendTradeIds(String pNewId, AtomicReference<String> pResult) {
+        String vTradeIds = null;
+        pResult.set(null);
+        vTradeIds = "1001, 1002, 1003";
+        if (pNewId != null) {
+            vTradeIds = vTradeIds + "," + pNewId;
+        }
+        pResult.set(String.valueOf(vTradeIds));
+    }
+
+    // Source: pkg_issue49_concat.proc_concat_labels (PROCEDURE) — issue_49_varchar2_concat.sql:98-110
+    public void procConcatLabels(String pPrefix, String pSuffix, AtomicReference<String> pResult) {
+        String vLabels = null;
+        pResult.set(null);
+        vLabels = pPrefix;
+        if (pSuffix != null) {
+            vLabels = vLabels + "_" + pSuffix;
+        }
+        pResult.set(String.valueOf(vLabels));
+    }
+}

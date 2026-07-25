@@ -1623,7 +1623,7 @@ mod tests {
         let schema_path = dir.path().join("src/test/resources/itest-schema.sql");
         assert!(schema_path.exists());
         let content = std::fs::read_to_string(&schema_path).unwrap();
-        assert!(content.contains("CREATE TABLE \"inventory\""));
+        assert!(content.contains("CREATE TABLE inventory"));
     }
 
     #[test]

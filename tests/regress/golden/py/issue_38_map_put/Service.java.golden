@@ -1,0 +1,52 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue38MapPutMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue38MapPutService {
+    private static final Logger log = LoggerFactory.getLogger(Issue38MapPutService.class);
+
+    private final Issue38MapPutMapper issue38MapPutMapper;
+    private final java.util.Map<String, Object> pkgIssue38Shared = new java.util.HashMap<>();
+
+    public Issue38MapPutService(Issue38MapPutMapper issue38MapPutMapper) {
+        this.issue38MapPutMapper = issue38MapPutMapper;
+    }
+    // Source: pkg_issue38_main.proc_do_work (PROCEDURE) — issue_38_map_put.sql:40-61
+    public void procDoWork(String pInput, AtomicReference<String> pStatus) {
+        pStatus.set(null);
+        pkgIssue38Shared.put("out_status", "PROCESSING");
+        pkgIssue38Shared.put("out_error_code", "");
+        pkgIssue38Shared.put("out_error_msg", "");
+        if (pInput == null) {
+            pkgIssue38Shared.put("out_status", "FAILED");
+            pkgIssue38Shared.put("out_error_code", "E001");
+            pkgIssue38Shared.put("out_error_msg", "Input is null");
+            pStatus.set("FAILED");
+        } else {
+            pkgIssue38Shared.put("out_status", "SUCCESS");
+            pkgIssue38Shared.put("global_counter", (((Number) (((Number) (pkgIssue38Shared.get("global_counter") != null ? pkgIssue38Shared.get("global_counter") : 0)).intValue() != null ? ((Number) (pkgIssue38Shared.get("global_counter") != null ? pkgIssue38Shared.get("global_counter") : 0)).intValue() : 0.0d)).doubleValue() + ((Number) 1).doubleValue()));
+            pStatus.set("SUCCESS");
+        }
+    }
+
+    // Source: pkg_issue38_main.proc_cross_set_error (PROCEDURE) — issue_38_map_put.sql:64-72
+    public void procCrossSetError(String pCode, String pMsg) {
+        pkgIssue38Shared.put("out_error_code", pCode);
+        pkgIssue38Shared.put("out_error_msg", pMsg);
+    }
+
+    // Source: pkg_issue38_main.proc_increment_counter (PROCEDURE) — issue_38_map_put.sql:75-82
+    public void procIncrementCounter() {
+        pkgIssue38Shared.put("global_counter", (((Number) (((Number) (pkgIssue38Shared.get("global_counter") != null ? pkgIssue38Shared.get("global_counter") : 0)).intValue() != null ? ((Number) (pkgIssue38Shared.get("global_counter") != null ? pkgIssue38Shared.get("global_counter") : 0)).intValue() : 0.0d)).doubleValue() + ((Number) 1).doubleValue()));
+        if (((Number) (pkgIssue38Shared.get("global_counter") != null ? pkgIssue38Shared.get("global_counter") : 0)).intValue() > 1000) {
+            pkgIssue38Shared.put("out_status", "OVERFLOW");
+        }
+    }
+}

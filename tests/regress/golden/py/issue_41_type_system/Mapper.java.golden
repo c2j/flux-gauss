@@ -1,0 +1,26 @@
+        package com.example.demo.mapper;
+
+        import java.math.BigDecimal;
+import java.sql.Date;
+import java.util.Map;
+
+        import org.apache.ibatis.annotations.*;
+
+        @Mapper
+        public interface Issue41TypeSystemMapper {
+
+                // issue_41_type_system.sql:64 — pkg_issue41_types.proc_transfer
+        java.math.BigDecimal selectTIssue41Account(@Param("pFromAccount") Long pFromAccount, @Param("pToAccount") Long pToAccount, @Param("pAmount") java.math.BigDecimal pAmount, @Param("pTransferDate") java.sql.Date pTransferDate, @Param("pIsUrgent") Boolean pIsUrgent);
+        // issue_41_type_system.sql:64 — pkg_issue41_types.proc_transfer
+        int updateTIssue41Account(@Param("pFromAccount") Long pFromAccount, @Param("pToAccount") Long pToAccount, @Param("pAmount") java.math.BigDecimal pAmount, @Param("pTransferDate") java.sql.Date pTransferDate, @Param("pIsUrgent") Boolean pIsUrgent, @Param("vFromBalance") java.math.BigDecimal vFromBalance);
+        // issue_41_type_system.sql:64 — pkg_issue41_types.proc_transfer
+        java.math.BigDecimal selectTIssue41Account_1(@Param("pFromAccount") Long pFromAccount, @Param("pToAccount") Long pToAccount, @Param("pAmount") java.math.BigDecimal pAmount, @Param("pTransferDate") java.sql.Date pTransferDate, @Param("pIsUrgent") Boolean pIsUrgent);
+        // issue_41_type_system.sql:64 — pkg_issue41_types.proc_transfer
+        int updateTIssue41Account_1(@Param("pFromAccount") Long pFromAccount, @Param("pToAccount") Long pToAccount, @Param("pAmount") java.math.BigDecimal pAmount, @Param("pTransferDate") java.sql.Date pTransferDate, @Param("pIsUrgent") Boolean pIsUrgent, @Param("vToBalance") java.math.BigDecimal vToBalance);
+        // issue_41_type_system.sql:115 — pkg_issue41_types.proc_withdraw
+        java.math.BigDecimal selectTIssue41Account(@Param("pAccountId") Long pAccountId, @Param("pAmount") java.math.BigDecimal pAmount);
+        // issue_41_type_system.sql:115 — pkg_issue41_types.proc_withdraw
+        int updateTIssue41Account(@Param("pAccountId") Long pAccountId, @Param("pAmount") java.math.BigDecimal pAmount, @Param("vBalance") java.math.BigDecimal vBalance);
+        // issue_41_type_system.sql:158 — pkg_issue41_types.proc_validate_account
+        Map<String, Object> selectTIssue41Account(@Param("pAccountId") Long pAccountId);
+        }

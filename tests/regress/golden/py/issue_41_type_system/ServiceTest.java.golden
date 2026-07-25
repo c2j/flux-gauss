@@ -1,0 +1,125 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue41TypeSystemMapper;
+import com.example.demo.service.Issue41TypeSystemService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class Issue41TypeSystemServiceTest {
+
+    @Mock
+    private Issue41TypeSystemMapper issue41TypeSystemMapper;
+
+    @InjectMocks
+    private Issue41TypeSystemService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procTransfer_throwsBusinessException() {
+        org.junit.jupiter.api.Assumptions.assumeTrue(false, "auto-generated error test requires domain-specific test data");
+        Long pFromAccount = 100L;
+        Long pToAccount = 100L;
+        java.math.BigDecimal pAmount = new java.math.BigDecimal("99.99");
+        java.sql.Date pTransferDate = java.sql.Date.valueOf("2024-01-01");
+        Boolean pIsUrgent = true;
+        AtomicReference<java.math.BigDecimal> pNewBalance = new AtomicReference<>(null);
+        AtomicReference<String> pStatus = new AtomicReference<>(null);
+        when(issue41TypeSystemMapper.selectTIssue41Account(any(), any(), any(), any(), any())).thenReturn(java.math.BigDecimal.ZERO);
+        when(issue41TypeSystemMapper.updateTIssue41Account(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue41TypeSystemMapper.selectTIssue41Account_1(any(), any(), any(), any(), any())).thenReturn(java.math.BigDecimal.ZERO);
+        when(issue41TypeSystemMapper.updateTIssue41Account_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        assertThrows(BusinessException.class, () -> {
+            service.procTransfer(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent, pNewBalance, pStatus);
+        });
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procTransfer_success() {
+        Long pFromAccount = 100L;
+        Long pToAccount = 100L;
+        java.math.BigDecimal pAmount = new java.math.BigDecimal("99.99");
+        java.sql.Date pTransferDate = java.sql.Date.valueOf("2024-01-01");
+        Boolean pIsUrgent = true;
+        AtomicReference<java.math.BigDecimal> pNewBalance = new AtomicReference<>(null);
+        AtomicReference<String> pStatus = new AtomicReference<>(null);
+        when(issue41TypeSystemMapper.selectTIssue41Account(any(), any(), any(), any(), any())).thenReturn(java.math.BigDecimal.TEN);
+        when(issue41TypeSystemMapper.updateTIssue41Account(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue41TypeSystemMapper.selectTIssue41Account_1(any(), any(), any(), any(), any())).thenReturn(java.math.BigDecimal.TEN);
+        when(issue41TypeSystemMapper.updateTIssue41Account_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        service.procTransfer(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent, pNewBalance, pStatus);
+        verify(issue41TypeSystemMapper, atLeast(0)).updateTIssue41Account(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procWithdraw_throwsBusinessException() {
+        org.junit.jupiter.api.Assumptions.assumeTrue(false, "auto-generated error test requires domain-specific test data");
+        Long pAccountId = 1L;
+        java.math.BigDecimal pAmount = new java.math.BigDecimal("99.99");
+        AtomicReference<java.math.BigDecimal> pNewBalance = new AtomicReference<>(null);
+        AtomicReference<String> pStatus = new AtomicReference<>(null);
+        when(issue41TypeSystemMapper.selectTIssue41Account(any(), any(), any(), any(), any())).thenReturn(java.math.BigDecimal.ZERO);
+        when(issue41TypeSystemMapper.updateTIssue41Account(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue41TypeSystemMapper.selectTIssue41Account_1(any(), any(), any(), any(), any())).thenReturn(java.math.BigDecimal.ZERO);
+        when(issue41TypeSystemMapper.updateTIssue41Account_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        assertThrows(BusinessException.class, () -> {
+            service.procWithdraw(pAccountId, pAmount, pNewBalance, pStatus);
+        });
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procWithdraw_success() {
+        Long pAccountId = 1L;
+        java.math.BigDecimal pAmount = new java.math.BigDecimal("99.99");
+        AtomicReference<java.math.BigDecimal> pNewBalance = new AtomicReference<>(null);
+        AtomicReference<String> pStatus = new AtomicReference<>(null);
+        when(issue41TypeSystemMapper.selectTIssue41Account(any(), any(), any(), any(), any())).thenReturn(java.math.BigDecimal.TEN);
+        when(issue41TypeSystemMapper.updateTIssue41Account(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue41TypeSystemMapper.selectTIssue41Account_1(any(), any(), any(), any(), any())).thenReturn(java.math.BigDecimal.TEN);
+        when(issue41TypeSystemMapper.updateTIssue41Account_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        service.procWithdraw(pAccountId, pAmount, pNewBalance, pStatus);
+        verify(issue41TypeSystemMapper, atLeast(0)).updateTIssue41Account(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procValidateAccount_throwsBusinessException() {
+        org.junit.jupiter.api.Assumptions.assumeTrue(false, "auto-generated error test requires domain-specific test data");
+        Long pAccountId = 1L;
+        AtomicReference<Boolean> pIsValid = new AtomicReference<>(null);
+        AtomicReference<java.math.BigDecimal> pBalance = new AtomicReference<>(null);
+        when(issue41TypeSystemMapper.selectTIssue41Account(any(), any(), any(), any(), any())).thenReturn(java.math.BigDecimal.ZERO);
+        when(issue41TypeSystemMapper.updateTIssue41Account(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue41TypeSystemMapper.selectTIssue41Account_1(any(), any(), any(), any(), any())).thenReturn(java.math.BigDecimal.ZERO);
+        when(issue41TypeSystemMapper.updateTIssue41Account_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        assertThrows(BusinessException.class, () -> {
+            service.procValidateAccount(pAccountId, pIsValid, pBalance);
+        });
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procValidateAccount_success() {
+        Long pAccountId = 1L;
+        AtomicReference<Boolean> pIsValid = new AtomicReference<>(null);
+        AtomicReference<java.math.BigDecimal> pBalance = new AtomicReference<>(null);
+        when(issue41TypeSystemMapper.selectTIssue41Account(any(), any(), any(), any(), any())).thenReturn(java.math.BigDecimal.TEN);
+        when(issue41TypeSystemMapper.updateTIssue41Account(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue41TypeSystemMapper.selectTIssue41Account_1(any(), any(), any(), any(), any())).thenReturn(java.math.BigDecimal.TEN);
+        when(issue41TypeSystemMapper.updateTIssue41Account_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        service.procValidateAccount(pAccountId, pIsValid, pBalance);
+    }
+}
