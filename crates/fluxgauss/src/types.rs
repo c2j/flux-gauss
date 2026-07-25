@@ -403,6 +403,17 @@ pub struct SkippedItem {
     pub reason: String,
 }
 
+// ── Unresolved Cross-Package Call ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnresolvedCall {
+    pub caller: String,
+    pub callee: String,
+    pub caller_file: String,
+    pub args: String,
+    pub hint: String,
+}
+
 // ── Procedure Mapping (for conversion report) ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -23,7 +23,7 @@ import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from typing import Optional
 
 try:
@@ -1056,6 +1056,15 @@ class ConversionReport:
     total_procedures: int = 0
     total_dml: int = 0
     total_cross_calls: int = 0
+
+
+UnresolvedCall = namedtuple('UnresolvedCall', [
+    'caller',        # "pkg_order.create_order"
+    'callee',        # "pkg_inventory.reserve_stock" or "PERFORM pkg_common.log_operation(...)"
+    'caller_file',   # "pkg_order.sql"
+    'args',          # "BIGINT, INT" or ""
+    'hint',          # "add pkg_inventory.sql to sources"
+])
 
 
 @dataclass
@@ -3825,10 +3834,20 @@ def _generate_state_machine_goto(proc, analysis, body_stmts, all_packages, dml_c
         delattr(proc, '_sm_labels')
 
 
-def _dml_method_name(dml_type: str, proc_name: str, counter: dict) -> str:
-    n = counter.get(dml_type, 0)
-    counter[dml_type] = n + 1
-    return f"{dml_type}{snake_to_pascal(proc_name)}" + (f"_{n}" if n > 0 else "")
+def _dml_method_name(dml_type: str, proc_name: str, counter: dict, semantic_key: str = None) -> str:
+    # Issue #35: Use semantic key (target table + operation) for naming.
+    # This produces names like "selectOrderByStatus" instead of "selectProcX_2".
+    if semantic_key:
+        # Use (dml_type, semantic_key) as counter key for deduplication
+        composite_key = f"{dml_type}_{semantic_key}"
+        n = counter.get(composite_key, 0)
+        counter[composite_key] = n + 1
+        base = f"{dml_type}{snake_to_pascal(semantic_key)}"
+    else:
+        n = counter.get(dml_type, 0)
+        counter[dml_type] = n + 1
+        base = f"{dml_type}{snake_to_pascal(proc_name)}"
+    return base + (f"_{n}" if n > 0 else "")
 
 
 def _strip_into_clause(sql: str) -> str:
@@ -3920,6 +3939,30 @@ def _process_raw_dml(sql: str, proc: ProcedureInfo, dml_counter: dict):
 
 def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: dict):
     """Process a parsed SQL DML statement."""
+    # Issue #35: extract target table for semantic method naming
+    _dml_target = "unknown"
+    for _sql_type_key in stmt_data:
+        if _sql_type_key not in ("sql_text",):
+            _dml_target = _extract_dml_target(stmt_data[_sql_type_key], _sql_type_key)
+            break
+    # Fall back to proc_name if target could not be resolved
+    if _dml_target == "unknown":
+        _dml_target = proc.proc_name
+    # Enhance semantic key with aggregate info for SELECT statements
+    _sql_text = stmt_data.get("sql_text", "")
+    if _sql_text:
+        _agg_match = re.search(
+            r'\b(count|sum|avg|max|min)\s*\(\s*(?:distinct\s+)?(\w+(?:\.\w+)?)?',
+            _sql_text, re.IGNORECASE
+        )
+        if _agg_match:
+            _agg_func = _agg_match.group(1).lower()
+            _agg_col = _agg_match.group(2) or ""
+            if _agg_col:
+                _dml_target = f"{_dml_target}_{_agg_func}_{_agg_col}"
+            else:
+                _dml_target = f"{_dml_target}_{_agg_func}"
+
     for sql_type, sql_details in stmt_data.items():
         if sql_type == "sql_text":
             continue
@@ -3936,7 +3979,7 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
             for t in from_tables:
                 proc.table_refs.add(t)
 
-            mapper_method = _dml_method_name("select", proc.proc_name, dml_counter)
+            mapper_method = _dml_method_name("select", proc.proc_name, dml_counter, semantic_key=_dml_target)
             _is_bulk = sql_details.get("bulk_collect", False)
 
             if into_targets:
@@ -4067,7 +4110,7 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                 if sql_text:
                     sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
             if sql_text:
-                mapper_method = _dml_method_name("update", proc.proc_name, dml_counter)
+                mapper_method = _dml_method_name("update", proc.proc_name, dml_counter, semantic_key=_dml_target)
                 _add_dml(proc, DmlStatement(
                     sql_type="update",
                     method_id=mapper_method,
@@ -4082,7 +4125,7 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
             for t in from_tables:
                 proc.table_refs.add(t)
 
-            mapper_method = _dml_method_name("insert", proc.proc_name, dml_counter)
+            mapper_method = _dml_method_name("insert", proc.proc_name, dml_counter, semantic_key=_dml_target)
             _ret_cols = _extract_returning_cols(sql_details.get("returning"))
             _into_targets = _extract_returning_into_targets(sql_details.get("into_targets"))
             _into_vars = [v for v, _ in _into_targets]
@@ -4129,7 +4172,7 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
             for t in from_tables:
                 proc.table_refs.add(t)
 
-            mapper_method = _dml_method_name("update", proc.proc_name, dml_counter)
+            mapper_method = _dml_method_name("update", proc.proc_name, dml_counter, semantic_key=_dml_target)
             _ret_cols = _extract_returning_cols(sql_details.get("returning"))
             _into_targets = _extract_returning_into_targets(sql_details.get("into_targets"))
             _into_vars = [v for v, _ in _into_targets]
@@ -4167,7 +4210,7 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
             table_name = _extract_table_name_from_dml(sql_details)
             proc.table_refs.add(table_name)
 
-            mapper_method = _dml_method_name("delete", proc.proc_name, dml_counter)
+            mapper_method = _dml_method_name("delete", proc.proc_name, dml_counter, semantic_key=_dml_target)
             _ret_cols = _extract_returning_cols(sql_details.get("returning"))
             _into_targets = _extract_returning_into_targets(sql_details.get("into_targets"))
             _into_vars = [v for v, _ in _into_targets]
@@ -4726,12 +4769,32 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
             if tk in ("ColumnRef", "PlVariable"):
                 parts = tv if isinstance(tv, list) else [tv]
                 raw_name = parts[0] if parts else ""
+                # Handle dotted targets: pkg_name.var_name
+                _dotted_pkg = None
+                _dotted_var = None
+                if len(parts) >= 2:
+                    _dotted_pkg = parts[0]
+                    _dotted_var = parts[1]
+                    _dotted_pkg_lower = _dotted_pkg.lower() if _dotted_pkg else ""
+                    _dotted_var_lower = _dotted_var.lower() if _dotted_var else ""
+                    _pkg_info = all_packages.get(_dotted_pkg_lower) if all_packages else None
+                    if _pkg_info and hasattr(_pkg_info, 'package_vars'):
+                        _is_dotted_pkg_var = _dotted_var_lower in {k.lower(): k for k in _pkg_info.package_vars}
+                    else:
+                        # Cross-package target with unknown package: treat as Map-based access
+                        # rather than stubbing, so the generated code is functional
+                        _is_dotted_pkg_var = True
+                        # Register the variable so service generation knows about it
+                        if _dotted_var not in _PACKAGE_VARIABLES:
+                            _PACKAGE_VARIABLES[_dotted_var] = {"java_type": "String", "default": "null"}
+                else:
+                    _is_dotted_pkg_var = False
                 if raw_name and proc:
                     is_local = raw_name in proc.local_vars
                     is_param = any(p.name.lower() == raw_name.lower() for p in proc.parameters)
                     is_const = raw_name in _PACKAGE_CONSTANTS
                     is_pkg_var = raw_name in _PACKAGE_VARIABLES and not is_local
-                    if not is_local and not is_param and not is_const and not is_pkg_var:
+                    if not is_local and not is_param and not is_const and not is_pkg_var and not _is_dotted_pkg_var:
                         _stub_key = (proc.name, len(proc.parameters))
                         _add_stub_reason(proc, f"赋值目标 '{raw_name}' 不是局部变量/参数/包变量/常量")
                         if _stub_key not in STUB_PROCEDURES:
@@ -4739,6 +4802,11 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
                     # Track package variable writes (handles both ColumnRef and PlVariable targets)
                     if is_pkg_var:
                         _PACKAGE_VAR_WRITTEN.add(raw_name)
+                    if _is_dotted_pkg_var and _dotted_var:
+                        _PACKAGE_VAR_WRITTEN.add(_dotted_var)
+                        # Also ensure the dotted var is in _PACKAGE_VARIABLES for service generation
+                        if _dotted_var not in _PACKAGE_VARIABLES:
+                            _PACKAGE_VARIABLES[_dotted_var] = {"java_type": "String", "default": "null"}
 
     if isinstance(expression, dict):
         for k, v in expression.items():
@@ -5142,7 +5210,13 @@ def _process_perform(perform_data: dict, proc: ProcedureInfo, all_packages: dict
                             p.proc_name.lower() == func.lower() for p in pkg_info.procedures
                         ) if pkg_info else False
                         if not proc_exists:
-                            UNRESOLVED_CALLS.append(f"{proc.package}.{proc.proc_name} -> PERFORM {query}")
+                            UNRESOLVED_CALLS.append(UnresolvedCall(
+                                caller=f"{proc.package}.{proc.proc_name}",
+                                callee=f"PERFORM {query}",
+                                caller_file=proc.source_file or "",
+                                args="",
+                                hint=f"add {matched_pkg}.sql to sources",
+                            ))
                             proc.java_logic_lines.append(_comment_perform(f"PERFORM {query}"))
                             return
                         proc.java_logic_lines.append(f"this.{method}({args});")
@@ -5150,7 +5224,13 @@ def _process_perform(perform_data: dict, proc: ProcedureInfo, all_packages: dict
                         proc.service_calls.append(ServiceCall(svc_name, method, [], package_name=matched_pkg))
                         proc.java_logic_lines.append(f"{svc_name}.{method}({args});")
                 else:
-                    UNRESOLVED_CALLS.append(f"{proc.package}.{proc.proc_name} -> PERFORM {query}")
+                    UNRESOLVED_CALLS.append(UnresolvedCall(
+                        caller=f"{proc.package}.{proc.proc_name}",
+                        callee=f"PERFORM {query}",
+                        caller_file=proc.source_file or "",
+                        args="",
+                        hint="add the defining SQL file to fluxgauss.yaml sources",
+                    ))
                     proc.java_logic_lines.append(_comment_perform(f"PERFORM {query}"))
                 return
         proc.java_logic_lines.append(f"found = true; // PERFORM {query or 'query'}")
@@ -6244,7 +6324,13 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
             ) if pkg_info else False
             if not proc_exists:
                 full_name = ".".join(func_name_parts)
-                UNRESOLVED_CALLS.append(f"{proc.package}.{proc.proc_name} -> {full_name}")
+                UNRESOLVED_CALLS.append(UnresolvedCall(
+                    caller=f"{proc.package}.{proc.proc_name}",
+                    callee=full_name,
+                    caller_file=proc.source_file or "",
+                    args=args_java,
+                    hint=f"procedure not found in package {matched_pkg}",
+                ))
                 proc.java_logic_lines.append(f"// CALL {full_name}({args_java})")
                 return
         if not is_self_call:
@@ -6253,7 +6339,13 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
         proc.java_logic_lines.append(f"{call_target}({args_java});")
     else:
         full_name = ".".join(func_name_parts)
-        UNRESOLVED_CALLS.append(f"{proc.package}.{proc.proc_name} -> {full_name}")
+        UNRESOLVED_CALLS.append(UnresolvedCall(
+            caller=f"{proc.package}.{proc.proc_name}",
+            callee=full_name,
+            caller_file=proc.source_file or "",
+            args="",
+            hint="add the defining SQL file to fluxgauss.yaml sources",
+        ))
         proc.java_logic_lines.append(f"// CALL {full_name}(...)")
 
 
@@ -7656,7 +7748,13 @@ def _process_call_text(sql: str, proc: ProcedureInfo, all_packages: dict):
             call_target = f"this.{method}" if is_self_call else f"{svc_name}.{method}"
             proc.java_logic_lines.append(f"{call_target}({java_args});")
         else:
-            UNRESOLVED_CALLS.append(f"{proc.package}.{proc.proc_name} -> {full_name}({args_str})")
+            UNRESOLVED_CALLS.append(UnresolvedCall(
+                caller=f"{proc.package}.{proc.proc_name}",
+                callee=f"{full_name}({args_str})",
+                caller_file=proc.source_file or "",
+                args=args_str,
+                hint=f"add the SQL file defining {pkg} to fluxgauss.yaml sources",
+            ))
             proc.java_logic_lines.append(f"// CALL {full_name}({args_str})")
 
 
@@ -9116,6 +9214,34 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     return f"{left}.compareTo({right}) {cmp_map[op]} 0"
 
                 if is_str and not is_bd and op in (">", "<", ">=", "<="):
+                    # Issue #40: String.compareTo() is lexicographic ("10" < "3").
+                    # Use BigDecimal when at least one operand is a numeric literal.
+                    right_raw = val.get("right")
+                    left_raw = val.get("left")
+                    _should_use_bigdecimal = False
+                    # Check if right operand is a numeric string literal
+                    if isinstance(right_raw, dict) and "Literal" in right_raw:
+                        lit = right_raw["Literal"]
+                        if isinstance(lit, dict) and "String" in lit:
+                            try:
+                                float(lit["String"])
+                                _should_use_bigdecimal = True
+                            except ValueError:
+                                pass
+                    # Check if left operand is a numeric string literal
+                    if isinstance(left_raw, dict) and "Literal" in left_raw:
+                        lit = left_raw["Literal"]
+                        if isinstance(lit, dict) and "String" in lit:
+                            try:
+                                float(lit["String"])
+                                _should_use_bigdecimal = True
+                            except ValueError:
+                                pass
+                    if _should_use_bigdecimal:
+                        left_bd = f"new java.math.BigDecimal({left})"
+                        right_bd = f"new java.math.BigDecimal({right})"
+                        cmp_map = {"<": "<", ">": ">", "<=": "<=", ">=": ">="}
+                        return f"{left_bd}.compareTo({right_bd}) {cmp_map[op]} 0"
                     cmp_map = {"<": "<", ">": ">", "<=": "<=", ">=": ">="}
                     return f"{left}.compareTo({right}) {cmp_map[op]} 0"
 
@@ -10071,6 +10197,9 @@ def generate_project(output_dir: str, packages: list, changed_packages: set = No
     if not _be_java.exists():
         _write_business_exception(base_path)
 
+    # Issue #34: Generate Entity classes from DDL
+    _write_entity_classes(base_path, _TABLE_DDL_SOURCE)
+
     if changed_packages is not None and not changed_packages:
         return
 
@@ -10359,6 +10488,34 @@ def _write_business_exception(base_path: Path):
         }}
     """)
     _write_source_file(java_dir / "exception" / "BusinessException.java", content)
+
+
+def _write_entity_classes(base_path: Path, table_ddl_source: dict):
+    """Issue #34: Generate Entity POJO classes from parsed DDL table info."""
+    if not table_ddl_source:
+        return
+    entity_dir = base_path / BASE_DIR / "entity"
+    entity_dir.mkdir(parents=True, exist_ok=True)
+    for table_name, columns in table_ddl_source.items():
+        if not isinstance(columns, dict) or not columns:
+            continue
+        class_name = snake_to_pascal(table_name)
+        fields = []
+        for col_name, sql_type in columns.items():
+            java_type = sql_type_to_java(sql_type)
+            java_name = snake_to_camel(col_name)
+            fields.append(f"    private {java_type} {java_name};")
+        if not fields:
+            continue
+        fields_str = "\n".join(fields)
+        content = textwrap.dedent(f"""\
+            package {BASE_PACKAGE}.entity;
+
+            public class {class_name} {{
+            {fields_str}
+            }}
+        """)
+        _write_source_file(entity_dir / f"{class_name}.java", content)
 
 
 def _write_mapper_interface(base_path: Path, pkg: PackageInfo):
@@ -11399,6 +11556,16 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
             svc_class = f"{package_to_classname(svc_class_part)}Service"
         lines.append(f"    private final {svc_class} {svc_var};")
 
+    # Issue #38: Declare Map fields for cross-package state variables
+    _pkg_state_maps = set()
+    for proc in pkg.procedures:
+        for line in proc.java_logic_lines:
+            for m in re.finditer(r'\b(pkg\w+)\.(?:put|get)\(', line):
+                _pkg_state_maps.add(m.group(1))
+    for _map_name in sorted(_pkg_state_maps):
+        _camel = snake_to_camel(_map_name) if '_' in _map_name else _map_name
+        lines.append(f"    private final java.util.Map<String, Object> {_camel} = new java.util.HashMap<>();")
+
     lines.append("")
     params_str = ", ".join(constructor_params)
     lines.append(f"    public {class_name}({params_str}) {{")
@@ -11421,7 +11588,18 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
             if var_name in _PACKAGE_CONSTANTS or var_name not in _PACKAGE_VAR_WRITTEN:
                 lines.append(f"    private static final {java_type} {java_name} = {default_expr};")
             else:
-                lines.append(f"    private {java_type} {java_name} = {default_expr};")
+                # Issue #39: Mutable package vars use ThreadLocal for thread safety
+                lines.append(f"    private static final ThreadLocal<{java_type}> {java_name} = ThreadLocal.withInitial(() -> {default_expr});")
+        # Issue #39: ThreadLocal fields MUST be cleaned up after each request to prevent
+        # cross-request data leaks in thread-pooled servlet containers (Tomcat/Jetty).
+        # Add a Servlet Filter or HandlerInterceptor that calls .remove() on each ThreadLocal.
+        _has_threadlocal = any(
+            var_name not in _PACKAGE_CONSTANTS and var_name in _PACKAGE_VAR_WRITTEN
+            for var_name in pkg.package_vars
+        )
+        if _has_threadlocal:
+            lines.append("    // TODO: Add ThreadLocal cleanup (e.g. @AfterCompletion or Filter.remove())")
+            lines.append("    // to prevent cross-request data leaks in thread-pooled containers.")
 
     # Generate inner static classes for RECORD custom types
     for type_name, type_info in pkg.custom_types.items():
@@ -12293,7 +12471,9 @@ def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureI
             var_name = m.group(1)
             local_java = {snake_to_camel(v) for v in proc.local_vars.keys()}
             param_java = {p.java_name for p in proc.parameters}
-            if var_name not in local_java and var_name not in param_java and var_name not in ('_row', 'result', '_brow'):
+            # Allow cross-package state Map variables (pkgXxx camelCase pattern)
+            _is_pkg_state_map = bool(re.match(r'^pkg[A-Z]', var_name))
+            if var_name not in local_java and var_name not in param_java and not _is_pkg_state_map and var_name not in ('_row', 'result', '_brow'):
                 failed.append(f"未声明的包状态变量 '{var_name}' 调用了 .put()")
                 break
 
@@ -14709,7 +14889,18 @@ def _render_report_markdown(report: ConversionReport) -> str:
             lines.append("以下存储过程调用了未包含在输入中的包，请在配置中添加对应的 SQL 文件。")
             lines.append("")
             for uc in report.unresolved_calls:
-                lines.append(f"- `{uc}`")
+                if hasattr(uc, 'caller') and hasattr(uc, 'callee'):
+                    lines.append(f"- **调用者**: `{uc.caller}`")
+                    lines.append(f"  **被调用**: `{uc.callee}`")
+                    if uc.caller_file:
+                        lines.append(f"  **源文件**: `{uc.caller_file}`")
+                    if uc.args:
+                        lines.append(f"  **参数**: `{uc.args}`")
+                    if uc.hint:
+                        lines.append(f"  **建议**: {uc.hint}")
+                    lines.append("")
+                else:
+                    lines.append(f"- `{uc}`")
             lines.append("")
 
         stubs = [m for m in report.procedure_mappings if m.is_stub]

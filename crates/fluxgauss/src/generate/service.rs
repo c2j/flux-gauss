@@ -147,10 +147,14 @@ pub fn write_service_class(
     for (var_name, var_info) in sorted_pkg_vars {
         let field_name = crate::naming::java_safe_identifier(&crate::naming::snake_to_camel(var_name));
         let is_readonly = var_info.is_constant || !written_package_vars.contains(var_name.as_str());
-        let modifier = if is_readonly { "private static final" } else { "private static" };
         let default_val = var_info.default_value.as_deref().unwrap_or_else(|| default_for_type(&var_info.java_type));
         let coerced_default = coerce_default_value(&var_info.java_type, default_val);
-        w.line(&format!("{} {} {} = {};", modifier, var_info.java_type, field_name, coerced_default));
+        if is_readonly {
+            w.line(&format!("private static final {} {} = {};", var_info.java_type, field_name, coerced_default));
+        } else {
+            // Issue #39: Mutable package vars use ThreadLocal for thread safety
+            w.line(&format!("private static final ThreadLocal<{}> {} = ThreadLocal.withInitial(() -> {});", var_info.java_type, field_name, coerced_default));
+        }
         if var_info.java_type == "BigDecimal" {
             all_imports.insert("import java.math.BigDecimal;".to_string());
         }
@@ -853,14 +857,19 @@ fn append_local_vars_to_mapper_calls(
 
             for word_caps in word_re.captures_iter(&dml.sql_text) {
                 let word = word_caps.get(1).unwrap().as_str();
-                if let Some(_) = package_vars.get(word) {
+                if let Some(var_info) = package_vars.get(word) {
                     let jn = snake_to_camel(word);
                     let jn_lower = jn.to_lowercase();
                     if !param_java_names.iter().any(|pn| pn.to_lowercase() == jn_lower)
                         && !local_args.iter().any(|a| a.to_lowercase() == jn_lower)
                         && !extra_param_names.contains(&jn_lower)
                     {
-                        pkg_args.push(jn);
+                        if var_info.is_constant {
+                            pkg_args.push(jn);
+                        } else {
+                            // Issue #39: Mutable package vars are ThreadLocal, use .get()
+                            pkg_args.push(format!("{}.get()", jn));
+                        }
                     }
                 }
             }

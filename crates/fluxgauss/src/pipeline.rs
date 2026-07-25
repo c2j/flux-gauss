@@ -5,7 +5,7 @@ use crate::config::AppConfig;
 use crate::context::AnalysisContext;
 use crate::incremental::IncrementalState;
 use crate::types::{
-    AnalyzedPackages, ConversionError, PackageSummary, ParsedPackages,
+    AnalyzedPackages, ConversionError, PackageSummary, ParsedPackages, UnresolvedCall,
 };
 
 pub struct FileValidateResult {
@@ -34,7 +34,7 @@ pub struct PipelineResult {
     pub errors: Vec<ConversionError>,
     pub warnings: Vec<String>,
     pub skipped: Vec<crate::types::SkippedItem>,
-    pub unresolved_calls: Vec<String>,
+    pub unresolved_calls: Vec<UnresolvedCall>,
     pub stub_count: usize,
     pub stub_reasons: HashMap<(String, usize), Vec<String>>,
     pub test_file_count: usize,
