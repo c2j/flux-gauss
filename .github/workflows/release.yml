@@ -785,7 +785,7 @@ jobs:
         run: cargo test --workspace
 
       - name: Run Rust regression tests
-        run: cargo test --test regress
+        run: REGEN_RUST_GOLDEN=1 cargo test --test regress
 
       - name: Run Rust converter
         run: cargo run --release --bin fluxgauss -- --config demo-project/fluxgauss_ru.yaml
