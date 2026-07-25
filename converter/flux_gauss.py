@@ -612,10 +612,6 @@ def _infer_type_from_column_name(column_name: str) -> str:
     col = column_name.lower()
     if any(s in col for s in ("name", "txt", "text", "info", "desc", "msg", "remark", "comment")):
         return "varchar"
-    if any(s in col for s in ("id", "no", "num", "seq")):
-        if "num" in col and "varchar" not in col:
-            return "integer"
-        return "bigint"
     if any(s in col for s in ("amount", "balance", "price", "qty", "quantity", "total", "salary")):
         return "numeric"
     if any(s in col for s in ("date", "time", "stamp")):
