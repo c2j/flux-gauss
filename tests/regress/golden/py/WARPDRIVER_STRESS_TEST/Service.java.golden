@@ -438,10 +438,10 @@ public class WarpdriverStressTestService {
         List<Map<String, Object>> pCurPaymentsResult = null;
         pCurOrders.set(null);
         pCurPayments.set(null);
-        pCurOrdersResult = warpdriverStressTestMapper.selectFnMultiCursorReturn(pCustomerId);
+        pCurOrdersResult = warpdriverStressTestMapper.selectFnMultiCursorReturn_1(pCustomerId);
         pCurOrdersIdx = 0;
         if (pCurOrdersResult == null) pCurOrdersResult = new java.util.ArrayList<>();
-        pCurPaymentsResult = warpdriverStressTestMapper.selectFnMultiCursorReturn_1(pCustomerId);
+        pCurPaymentsResult = warpdriverStressTestMapper.selectFnMultiCursorReturn_2(pCustomerId);
         pCurPaymentsIdx = 0;
         if (pCurPaymentsResult == null) pCurPaymentsResult = new java.util.ArrayList<>();
         vOrderCnt = warpdriverStressTestMapper.selectOrdersCount(pCustomerId);
@@ -478,8 +478,22 @@ public class WarpdriverStressTestService {
                 // COMMIT — auto-committed by Spring @Transactional boundary
                 return;
             }
-            // SAVEPOINT sp_notify — handled via JDBC Connection.setSavepoint() in @Transactional context
-            _sqlRowCount = warpdriverStressTestMapper.insertNotifications(pAccountId, pAmount);
+            try {
+                // SAVEPOINT sp_notify — handled via JDBC Connection.setSavepoint() in @Transactional context
+                _sqlRowCount = warpdriverStressTestMapper.insertNotifications(pAccountId, pAmount);
+            } catch (Exception e) { // OTHERS
+                // WHEN OTHERS
+                _sqlRowCount = warpdriverStressTestMapper.insertSpSavepointHell(pAccountId);
+                vSp3 = vIns + " notifications(" + pAccountId + ", notify_type, content)";
+                // Dynamic SQL could not be resolved at conversion time
+                // Original: EXECUTE IMMEDIATE v_sp3
+                // Resolved variables:
+                //   SQL: vSp3 (determined at runtime)
+                // Manual implementation:
+                //   1. Resolve the SQL string in vSp3 at runtime
+                //   2. Execute via mapper method or JdbcTemplate
+                // Example: jdbcTemplate.update(vSp3);
+            }
             // COMMIT — auto-committed by Spring @Transactional boundary
             pFinalBal.set(((java.math.BigDecimal) warpdriverStressTestMapper.selectAccounts_1(pAccountId, pAmount)));
         } catch (Exception e) { // EXCEPTION handlers — src: PKG_WARPDRIVER_STRESS_TEST.sql:801

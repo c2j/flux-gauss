@@ -24,7 +24,7 @@ Object selectTIssue34Order(@Param("pOrderId") Long pOrderId, @Param("pNewStatus"
 // issue_34_35_dto_naming.sql:146 — pkg_issue34_order.proc_update_order
 int updateTIssue34Order(@Param("pOrderId") Long pOrderId, @Param("pNewStatus") String pNewStatus, @Param("pUpdatedBy") String pUpdatedBy);
 // issue_34_35_dto_naming.sql:146 — pkg_issue34_order.proc_update_order
-Object selectTIssue34OrderCount(@Param("pOrderId") Long pOrderId, @Param("pNewStatus") String pNewStatus, @Param("pUpdatedBy") String pUpdatedBy);
+Object selectTIssue34OrderCount_1(@Param("pOrderId") Long pOrderId, @Param("pNewStatus") String pNewStatus, @Param("pUpdatedBy") String pUpdatedBy);
 // issue_34_35_dto_naming.sql:146 — pkg_issue34_order.proc_update_order
-int insertTIssue34OrderLog(@Param("pOrderId") Long pOrderId, @Param("pNewStatus") String pNewStatus, @Param("pUpdatedBy") String pUpdatedBy);
+int insertTIssue34OrderLog_1(@Param("pOrderId") Long pOrderId, @Param("pNewStatus") String pNewStatus, @Param("pUpdatedBy") String pUpdatedBy);
 }

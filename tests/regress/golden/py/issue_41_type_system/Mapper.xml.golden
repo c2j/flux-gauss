@@ -29,8 +29,8 @@
         update t_issue41_account set balance = #{vToBalance, jdbcType=NUMERIC, javaType=java.math.BigDecimal} where account_id = #{pToAccount, jdbcType=BIGINT, javaType=Long}
     </update>
 
-    <!-- Source: issue_41_type_system.sql:123-123 — pkg_issue41_types.proc_withdraw.selectTIssue41Account -->
-    <select id="selectTIssue41Account" resultType="java.math.BigDecimal">
+    <!-- Source: issue_41_type_system.sql:123-123 — pkg_issue41_types.proc_withdraw.selectTIssue41Account_2 -->
+    <select id="selectTIssue41Account_2" resultType="java.math.BigDecimal">
         select
           balance,
           is_active
@@ -39,13 +39,13 @@
                 LIMIT 1
     </select>
 
-    <!-- Source: issue_41_type_system.sql:138-138 — pkg_issue41_types.proc_withdraw.updateTIssue41Account -->
-    <update id="updateTIssue41Account">
+    <!-- Source: issue_41_type_system.sql:138-138 — pkg_issue41_types.proc_withdraw.updateTIssue41Account_2 -->
+    <update id="updateTIssue41Account_2">
         update t_issue41_account set balance = #{vBalance, jdbcType=NUMERIC, javaType=java.math.BigDecimal} where account_id = #{pAccountId, jdbcType=BIGINT, javaType=Long}
     </update>
 
-    <!-- Source: issue_41_type_system.sql:168-168 — pkg_issue41_types.proc_validate_account.selectTIssue41Account -->
-    <select id="selectTIssue41Account" parameterType="long" resultType="java.util.LinkedHashMap">
+    <!-- Source: issue_41_type_system.sql:168-168 — pkg_issue41_types.proc_validate_account.selectTIssue41Account_3 -->
+    <select id="selectTIssue41Account_3" parameterType="long" resultType="java.util.LinkedHashMap">
         select
           balance,
           is_active

@@ -27,6 +27,8 @@ def _reset_global_state():
     fg._MISSING_OVERLOADS.clear()
     fg._PACKAGE_CONSTANTS.clear()
     fg._PACKAGE_VARIABLES.clear()
+    fg._PACKAGE_VAR_WRITTEN.clear()
+    fg._DML_COUNTER_BY_PKG.clear()
     fg._UDF_RETURN_TYPES.clear()
     fg._TABLE_DDL_SOURCE.clear()
 

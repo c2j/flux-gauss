@@ -59,7 +59,7 @@ public class OrderService {
     @Transactional
     public void completeOrder(Long pOrderId) {
         int _sqlRowCount = 0;
-        _sqlRowCount = orderMapper.updateTOrders(pOrderId);
+        _sqlRowCount = orderMapper.updateTOrders_1(pOrderId);
         // PERFORM pkg_common . log_operation ( 'ORDER' , 'COMPLETE' , p_order_id )
         // PERFORM pkg_common . send_notification ( 'EMAIL' , 'Order completed' )
     }

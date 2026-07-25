@@ -1,0 +1,56 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue44IfElsifGoto2Mapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue44IfElsifGoto2Service {
+    private static final Logger log = LoggerFactory.getLogger(Issue44IfElsifGoto2Service.class);
+
+    private final Issue44IfElsifGoto2Mapper issue44IfElsifGoto2Mapper;
+
+    public Issue44IfElsifGoto2Service(Issue44IfElsifGoto2Mapper issue44IfElsifGoto2Mapper) {
+        this.issue44IfElsifGoto2Mapper = issue44IfElsifGoto2Mapper;
+    }
+    // Source: pkg_issue44_nested_exc.proc_nested_exception_blocks (PROCEDURE) — issue_44_if_elsif_goto_2.sql:30-87
+    public void procNestedExceptionBlocks() {
+        Integer vCount = 0;
+        String vFlag = null;
+        String vFlag2 = null;
+        String vMsg = null;
+        String vConfig = null;
+        String vDate = new java.text.SimpleDateFormat("yyyyMMdd").format(new java.sql.Timestamp(System.currentTimeMillis()));
+        try {
+            vFlag = "0";
+            vMsg = "success";
+            vCount = issue44IfElsifGoto2Mapper.selectTIssue44ConfigCount1();
+            if (vCount == null) vCount = 0;
+            if (vCount > 0) {
+                try {
+                    vConfig = issue44IfElsifGoto2Mapper.selectTIssue44Config();
+                    if ("0".equals(vFlag)) {
+                        vConfig = vConfig + ",extra";
+                        try {
+                            vFlag2 = issue44IfElsifGoto2Mapper.selectTIssue44Config_1(vDate);
+                        } catch (Exception e) { // OTHERS
+                            // WHEN OTHERS
+                            vFlag2 = "0";
+                        }
+                        if ("0".equals(vFlag2)) {
+                            vMsg = "log_written_first_time";
+                        }
+                    }
+                } catch (Exception e) { // OTHERS
+                    // WHEN OTHERS
+                    vMsg = "inner_block_error";
+                }
+            }
+        } catch (Exception e) { // EXCEPTION handlers — src: issue_44_if_elsif_goto_2.sql:30
+            vMsg = "outer_error:" + e.getMessage();
+        }
+    }
+}

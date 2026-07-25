@@ -60,6 +60,11 @@ pub fn analyze_procedure(
             proc.java_logic_lines.push("try {".into());
         }
         let mut stmt_ctx = crate::context::StatementContext::new(summaries);
+        let pkg_key = proc.package.to_lowercase();
+        if !ctx.dml_counters.contains_key(&pkg_key) {
+            ctx.dml_counters.insert(pkg_key.clone(), std::collections::HashMap::new());
+        }
+        stmt_ctx.dml_counter = ctx.dml_counters.get(&pkg_key).cloned().unwrap_or_default();
         stmt_ctx.debug = debug;
         if debug {
             stmt_ctx.stmt_lines = crate::debug::find_body_stmt_lines(proc, ctx);
@@ -73,6 +78,7 @@ pub fn analyze_procedure(
                 break;
             }
         }
+        ctx.dml_counters.insert(pkg_key, stmt_ctx.dml_counter.clone());
         // After normal processing, if GOTO pattern detected, rewrite the procedure body
         if proc.goto_analysis.as_ref().map_or(false, |a| a.pattern.is_some()) {
             let analysis = proc.goto_analysis.take().unwrap();

@@ -24,7 +24,7 @@ public class OrderService {
         @Transactional
         public void createOrder(long pUserId, long pProductId, int pQty) {
             // CALL pkg_inventory.reserve_stock(pProductId, pQty)
-            orderMapper.insertCreateOrder(pUserId, pProductId, pQty);
+            orderMapper.insertTOrders(pUserId, pProductId, pQty);
             commonService.logOperation("ORDER", "CREATE", 0);
         }
 
@@ -33,13 +33,13 @@ public class OrderService {
         public void cancelOrder(long pOrderId) {
             Long vProductId = 0L;
             Integer vQty = 0;
-            Map<String, Object> _row = orderMapper.selectCancelOrder(pOrderId, vProductId, vQty);
+            Map<String, Object> _row = orderMapper.selectTOrders(pOrderId, vProductId, vQty);
             if (_row != null) {
                 vProductId = (_row.get("v_product_id") instanceof Number ? ((Number) _row.get("v_product_id")).longValue() : 0L);
                 vQty = (_row.get("v_qty") instanceof Number ? ((Number) _row.get("v_qty")).intValue() : 0);
             }
             // CALL pkg_inventory.release_stock(vProductId, vQty)
-            orderMapper.updateCancelOrder(pOrderId);
+            orderMapper.updateTOrders(pOrderId);
             commonService.logOperation("ORDER", "CANCEL", pOrderId);
             commonService.sendNotification("SMS", "Order cancelled");
         }
@@ -59,7 +59,7 @@ public class OrderService {
         // Source: pkg_order.complete_order (PROCEDURE) — {FIXTURES_ROOT}/pkg_order.sql:53-61
         @Transactional
         public void completeOrder(long pOrderId) {
-            orderMapper.updateCompleteOrder(pOrderId);
+            orderMapper.updateTOrders(pOrderId);
             commonService.logOperation("ORDER", "COMPLETE", pOrderId);
             commonService.sendNotification("EMAIL", "Order completed");
         }

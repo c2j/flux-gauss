@@ -138,21 +138,11 @@ pub fn assignment_to_java(target: &ogsql_parser::ast::Expr, value: &ogsql_parser
                     .find(|(k, _)| k.to_lowercase().replace("_", "") == ref_lower)
                     .map(|(_, vi)| vi.java_type.clone())
             });
-        // Check if this is a mutable package var (ThreadLocal)
-        let ref_lower = ref_name.to_lowercase().replace("_", "");
-        let is_mutable_pkg_var = !proc.local_vars.contains_key(&ref_name.to_lowercase())
-            && proc.package_vars.iter().any(|(k, vi)| {
-                k.to_lowercase().replace("_", "") == ref_lower && !vi.is_constant
-            });
         let mut val = expr_to_java(value, proc);
         let skip_coerce = var_type.as_ref().map_or(false, |t| t.contains("BigDecimal"))
             && is_bigdecimal_var(&val, proc);
         if !skip_coerce {
             val = coerce_for_type(&val, var_type.as_deref());
-        }
-        if is_mutable_pkg_var {
-            // Issue #39: Mutable package vars are ThreadLocal, use .set()
-            return format!("{}.set({});", camel, val);
         }
         return format!("{} = {};", camel, val);
     }
@@ -552,12 +542,7 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
                         });
                         if let Some((_, vi)) = matched {
                             let field_camel = crate::naming::snake_to_camel(field_candidate);
-                            if vi.is_constant {
-                                return format!("this.{}", field_camel);
-                            } else {
-                                // Issue #39: Mutable package vars are ThreadLocal, use .get()
-                                return format!("this.{}.get()", field_camel);
-                            }
+                            return format!("this.{}", field_camel);
                         }
                     }
                 }
@@ -631,18 +616,7 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
                         flatten_comment(&proc.proc_name)
                     );
                 }
-                // Check if this is a mutable package var (ThreadLocal)
-                let name_lower = name.to_lowercase().replace("_", "");
-                let is_mutable_pkg_var = proc.package_vars.iter().any(|(k, vi)| {
-                    let k_lower = k.to_lowercase().replace("_", "");
-                    k_lower == name_lower && !vi.is_constant
-                });
-                if is_mutable_pkg_var {
-                    // Issue #39: Mutable package vars are ThreadLocal, use .get()
-                    format!("{}.get()", camel)
-                } else {
-                    camel
-                }
+                camel
             }
         }
     }

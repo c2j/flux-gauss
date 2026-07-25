@@ -65,7 +65,7 @@ public class Issue44IfElsifGotoService {
             vSql = vSql + " AND status = 'CLOSED'";
         }
         if (pFilter != null) {
-            { String _strResult = issue44IfElsifGotoMapper.selectTIssue44OrdersCount(pFilter, pMode); if (_strResult != null) { /* concatenated string assigned to Integer var */ } }
+            { String _strResult = issue44IfElsifGotoMapper.selectTIssue44OrdersCount_1(pFilter, pMode); if (_strResult != null) { /* concatenated string assigned to Integer var */ } }
             if (vCount == null) vCount = 0;
             pResult.set("FILTERED: " + vCount);
         } else {
@@ -102,7 +102,7 @@ public class Issue44IfElsifGotoService {
         String vName = null;
         pResult.set(null);
         if ("1".equals(pFlag)) {
-            vName = issue44IfElsifGotoMapper.selectTIssue44Orders(pFlag);
+            vName = issue44IfElsifGotoMapper.selectTIssue44Orders_1(pFlag);
             pResult.set(String.valueOf(vName));
         } else if ("2".equals(pFlag)) {
             if (vName == null) {
@@ -128,7 +128,7 @@ public class Issue44IfElsifGotoService {
             vSql = vSql + " AND order_name LIKE '%" + pCode + "%'";
         }
         if (pCode != null) {
-            { String _strResult = issue44IfElsifGotoMapper.selectTIssue44OrdersCount(pCode); if (_strResult != null) { /* concatenated string assigned to Integer var */ } }
+            { String _strResult = issue44IfElsifGotoMapper.selectTIssue44OrdersCount_2(pCode); if (_strResult != null) { /* concatenated string assigned to Integer var */ } }
             if (vCount == null) vCount = 0;
             if (vCount > 10) {
                 pResult.set("MANY: " + vCount);

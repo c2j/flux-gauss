@@ -11,16 +11,16 @@
                 LIMIT 1
     </select>
 
-    <!-- Source: issue_45_exception_handling.sql:110-110 — pkg_issue45_exception.proc_simple_exception.selectTIssue45Security -->
-    <select id="selectTIssue45Security" parameterType="string" resultType="string">
+    <!-- Source: issue_45_exception_handling.sql:110-110 — pkg_issue45_exception.proc_simple_exception.selectTIssue45Security_1 -->
+    <select id="selectTIssue45Security_1" parameterType="string" resultType="string">
         select t.security_id
         from t_issue45_security AS t
         where t.security_name = #{pSecurityCode, jdbcType=VARCHAR, javaType=String}
                 LIMIT 1
     </select>
 
-    <!-- Source: issue_45_exception_handling.sql:130-130 — pkg_issue45_exception.proc_nested_exception.selectTIssue45Security -->
-    <select id="selectTIssue45Security" parameterType="string" resultType="string">
+    <!-- Source: issue_45_exception_handling.sql:130-130 — pkg_issue45_exception.proc_nested_exception.selectTIssue45Security_2 -->
+    <select id="selectTIssue45Security_2" parameterType="string" resultType="string">
         select t.security_name
         from t_issue45_security AS t
         where t.security_id = #{pCode, jdbcType=VARCHAR, javaType=String}

@@ -3,9 +3,9 @@
   "fixture": "gauss_complete_examples.sql",
   "package_name": "gauss_complete_examples",
   "files": {
-    "Service.java": "329320161a4b7785",
-    "Mapper.java": "e3d4c070abc9ee67",
-    "Mapper.xml": "92146f3731d820cd",
-    "ServiceTest.java": "911dbd0d2779aea4"
+    "Service.java": "7059d22682d1ed50",
+    "Mapper.java": "cb0f41bc13bb6052",
+    "Mapper.xml": "9a59a606a60d489d",
+    "ServiceTest.java": "3869f74e1bcd80e2"
   }
 }

@@ -522,6 +522,7 @@ def _add_stub_reason(proc, reason: str):
 _PACKAGE_CONSTANTS = {}  # module-level: maps snake_case name → java_type for recovered constants
 _PACKAGE_VARIABLES = {}  # module-level: maps snake_case name → {"java_type": str, "default": str, "package": str}
 _PACKAGE_VAR_WRITTEN: set = set()  # module-level: set of package variable names (snake_case) that are assigned to during analysis
+_DML_COUNTER_BY_PKG: dict = {}  # module-level: shared DML method name counters per package
 _UDF_RETURN_TYPES = {}  # module-level: maps (func_name_lower, arg_count) → java_type for user-defined functions
 _LOG_FH = None
 
@@ -2366,7 +2367,10 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
 
     # Process body statements
     body_stmts = block.get("body", [])
-    dml_counter = {}
+    pkg_key = proc.package.lower() if proc.package else "default"
+    if pkg_key not in _DML_COUNTER_BY_PKG:
+        _DML_COUNTER_BY_PKG[pkg_key] = {}
+    dml_counter = _DML_COUNTER_BY_PKG[pkg_key]
     stmt_checkpoints = []  # [(java_line_start_idx, java_line_end_idx), ...]
     _stmt_cp_map = {}
     for i, stmt in enumerate(_iter_statements(body_stmts)):
@@ -2810,8 +2814,31 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
                         if parsed_q:
                             proc.cursor_decls[cursor_name] = parsed_q
                             proc.cursor_decls[cursor_name.lower()] = parsed_q
-            for s in _iter_statements(stmt_data.get("body", [])):
-                _process_statement(s, proc, all_packages, dml_counter)
+            # Handle exception_block: nested BEGIN...EXCEPTION...END inside control structures
+            exc_block = stmt_data.get("exception_block")
+            if exc_block and exc_block.get("handlers"):
+                proc.java_logic_lines.append("try {")
+                for s in _iter_statements(stmt_data.get("body", [])):
+                    _process_statement(s, proc, all_packages, dml_counter)
+                _indent_last_lines(proc, 1)
+                handlers_block = exc_block.get("handlers", [])
+                if handlers_block:
+                    all_conditions = []
+                    for h in handlers_block:
+                        conds = h.get("conditions", [])
+                        all_conditions.append(conds[0] if conds else "EXCEPTION")
+                    proc.java_logic_lines.append(f"}} catch (Exception e) {{ // {'; '.join(all_conditions)}")
+                for handler in handlers_block:
+                    conditions = handler.get("conditions", [])
+                    cond_name = conditions[0] if conditions else "EXCEPTION"
+                    proc.java_logic_lines.append(f"    // WHEN {cond_name}")
+                    for hs in _iter_statements(handler.get("statements", [])):
+                        _process_statement(hs, proc, all_packages, dml_counter)
+                    _indent_last_lines(proc, 1)
+                proc.java_logic_lines.append("}")
+            else:
+                for s in _iter_statements(stmt_data.get("body", [])):
+                    _process_statement(s, proc, all_packages, dml_counter)
         elif stmt_type == "Commit":
             if proc.is_autonomous:
                 proc.java_logic_lines.append("// COMMIT — auto-committed by @Transactional(propagation = REQUIRES_NEW)")
@@ -6514,10 +6541,9 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
                     body_lines = body_lines[:i+1] + null_block + body_lines[i+1:]
                     break
 
-    result = ["try {"]
-    result.extend(f"    {line}" for line in body_lines)
-
     if other_handlers:
+        result = ["try {"]
+        result.extend(f"    {line}" for line in body_lines)
         result.append(f"}} catch (Exception e) {{ // EXCEPTION handlers — src: {proc.source_file}:{proc.source_start_line}")
         for handler in other_handlers:
             stmts = handler.get("statements", [])
@@ -6526,8 +6552,9 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
                 out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
                 indent="    ", in_catch=True)
             result.extend(h_lines)
-
-    result.append("}")
+        result.append("}")
+    else:
+        result = body_lines
 
     resolved = []
     in_catch = False
@@ -10592,6 +10619,23 @@ def _write_mapper_interface(base_path: Path, pkg: PackageInfo):
             method_sig = _build_mapper_method(proc, dml, imports)
             methods.append(method_sig)
 
+    # De-duplicate methods with identical signatures (name + param types, not param names)
+    sig_map = {}
+    deduped = []
+    for m in methods:
+        sig = m.strip()
+        sig_line = sig
+        if '\n' in sig:
+            sig_line = [l for l in sig.split('\n') if l.strip() and not l.strip().startswith('//')][-1]
+        norm = re.sub(r'@Param\("[^"]*"\)\s*', '', sig_line)
+        norm = re.sub(r'\b([\w.]+(?:<[^>]+>)?)\s+(\w+)([,)])', r'\1 \3', norm)
+        if norm in sig_map:
+            deduped.append(f"    // [DUPLICATE] {sig_line.strip()}")
+        else:
+            sig_map[norm] = True
+            deduped.append(m)
+    methods = deduped
+
     if not methods:
         methods = [f"// No direct DML operations for {pkg.package_name}"]
 
@@ -11649,8 +11693,8 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
             if var_name in _PACKAGE_CONSTANTS or var_name not in _PACKAGE_VAR_WRITTEN:
                 lines.append(f"    private static final {java_type} {java_name} = {default_expr};")
             else:
-                # Issue #39: Mutable package vars use ThreadLocal for thread safety
-                lines.append(f"    private static final ThreadLocal<{java_type}> {java_name} = ThreadLocal.withInitial(() -> {default_expr});")
+                # Mutable package vars use non-final static fields
+                lines.append(f"    private static {java_type} {java_name} = {default_expr};")
         # Issue #39: ThreadLocal fields MUST be cleaned up after each request to prevent
         # cross-request data leaks in thread-pooled servlet containers (Tomcat/Jetty).
         # Add a Servlet Filter or HandlerInterceptor that calls .remove() on each ThreadLocal.

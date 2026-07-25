@@ -31,7 +31,7 @@ import org.apache.ibatis.annotations.Param;
         // PKG_WARPDRIVER_STRESS_TEST.sql:294 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master
         java.math.BigDecimal selectOrders(@Param("pOrderId") Long pOrderId);
         // PKG_WARPDRIVER_STRESS_TEST.sql:294 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master
-        int updateOrders(@Param("pOrderId") Long pOrderId);
+        int updateOrders_1(@Param("pOrderId") Long pOrderId);
         // PKG_WARPDRIVER_STRESS_TEST.sql:294 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master
         int updateAccounts(@Param("pOrderId") Long pOrderId, @Param("vTempAmt") java.math.BigDecimal vTempAmt);
         // PKG_WARPDRIVER_STRESS_TEST.sql:294 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master
@@ -41,7 +41,7 @@ import org.apache.ibatis.annotations.Param;
         // PKG_WARPDRIVER_STRESS_TEST.sql:356 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_loop_purge
         int deleteOperationLogs(@Param("pRetentionDays") Integer pRetentionDays, @Param("vBatch") Integer vBatch, @Param("vCutoff") java.sql.Timestamp vCutoff);
         // PKG_WARPDRIVER_STRESS_TEST.sql:397 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_skip_logic
-        List<Map<String, Object>> selectSpGotoSkipLogic(@Param("pReportType") String pReportType, @Param("pBizDate") String pBizDate, @Param("vDate") java.sql.Date vDate);
+        List<Map<String, Object>> selectSpGotoSkipLogic_2(@Param("pReportType") String pReportType, @Param("pBizDate") String pBizDate, @Param("vDate") java.sql.Date vDate);
         // PKG_WARPDRIVER_STRESS_TEST.sql:397 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_skip_logic
         String selectSettlementCount(@Param("pReportType") String pReportType, @Param("pBizDate") String pBizDate, @Param("vDate") java.sql.Date vDate);
         // PKG_WARPDRIVER_STRESS_TEST.sql:442 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape
@@ -101,17 +101,16 @@ import org.apache.ibatis.annotations.Param;
         // PKG_WARPDRIVER_STRESS_TEST.sql:697 — PKG_WARPDRIVER_STRESS_TEST.fn_recursive_tree_cleanup
         int deleteTreeNodes(@Param("pParentId") Long pParentId, @Param("pDepth") Integer pDepth, @Param("vChildId") Long vChildId);
         // PKG_WARPDRIVER_STRESS_TEST.sql:769 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return
-        List<Map<String, Object>> selectFnMultiCursorReturn(@Param("pCustomerId") Long pCustomerId);
-        // PKG_WARPDRIVER_STRESS_TEST.sql:769 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return
         List<Map<String, Object>> selectFnMultiCursorReturn_1(@Param("pCustomerId") Long pCustomerId);
+        // PKG_WARPDRIVER_STRESS_TEST.sql:769 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return
+        List<Map<String, Object>> selectFnMultiCursorReturn_2(@Param("pCustomerId") Long pCustomerId);
         // PKG_WARPDRIVER_STRESS_TEST.sql:769 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return
         Integer selectOrdersCount(@Param("pCustomerId") Long pCustomerId);
         // PKG_WARPDRIVER_STRESS_TEST.sql:769 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return
         Integer selectPaymentsCount(@Param("pCustomerId") Long pCustomerId);
         // PKG_WARPDRIVER_STRESS_TEST.sql:801 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell
         java.math.BigDecimal selectAccounts(@Param("pAccountId") Long pAccountId, @Param("pAmount") java.math.BigDecimal pAmount);
-        // PKG_WARPDRIVER_STRESS_TEST.sql:801 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell
-        int updateAccounts(@Param("pAccountId") Long pAccountId, @Param("pAmount") java.math.BigDecimal pAmount);
+        // [DUPLICATE] int updateAccounts(@Param("pAccountId") Long pAccountId, @Param("pAmount") java.math.BigDecimal pAmount);
         // PKG_WARPDRIVER_STRESS_TEST.sql:801 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell
         int insertAccountJournal(@Param("pAccountId") Long pAccountId, @Param("pAmount") java.math.BigDecimal pAmount);
         // PKG_WARPDRIVER_STRESS_TEST.sql:801 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell
@@ -120,6 +119,8 @@ import org.apache.ibatis.annotations.Param;
         int insertRiskEvents(@Param("pAccountId") Long pAccountId, @Param("pAmount") java.math.BigDecimal pAmount);
         // PKG_WARPDRIVER_STRESS_TEST.sql:801 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell
         int insertNotifications(@Param("pAccountId") Long pAccountId, @Param("pAmount") java.math.BigDecimal pAmount);
+        // PKG_WARPDRIVER_STRESS_TEST.sql:801 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell
+        int insertSpSavepointHell(@Param("pAccountId") Long pAccountId);
         // PKG_WARPDRIVER_STRESS_TEST.sql:801 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell
         Object selectAccounts_1(@Param("pAccountId") Long pAccountId, @Param("pAmount") java.math.BigDecimal pAmount);
     Long selectNextval(@Param("seqName") String seqName);

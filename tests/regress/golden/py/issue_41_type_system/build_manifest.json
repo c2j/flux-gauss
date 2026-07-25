@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_41_type_system.sql",
+  "package_name": "issue_41_type_system",
+  "files": {
+    "Service.java": "2b95b61ae0ec839c",
+    "Mapper.java": "db925a5f8e358641",
+    "Mapper.xml": "a1281756bc2fe987",
+    "ServiceTest.java": "ea7112524872f510"
+  }
+}

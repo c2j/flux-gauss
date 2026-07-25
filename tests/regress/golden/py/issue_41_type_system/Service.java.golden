@@ -53,7 +53,7 @@ public class Issue41TypeSystemService {
         try {
             pNewBalance.set(null);
             pStatus.set(null);
-            vBalance = ((java.math.BigDecimal) issue41TypeSystemMapper.selectTIssue41Account(pAccountId, pAmount));
+            vBalance = ((java.math.BigDecimal) issue41TypeSystemMapper.selectTIssue41Account_2(pAccountId, pAmount));
             if (vBalance == null) vBalance = java.math.BigDecimal.ZERO;
             if (pAmount.compareTo(java.math.BigDecimal.valueOf(0)) <= 0) {
                 throw new BusinessException("RAISE None");
@@ -62,7 +62,7 @@ public class Issue41TypeSystemService {
                 throw new BusinessException("RAISE None");
             }
             vBalance = vBalance.subtract(pAmount);
-            _sqlRowCount = issue41TypeSystemMapper.updateTIssue41Account(pAccountId, pAmount, vBalance);
+            _sqlRowCount = issue41TypeSystemMapper.updateTIssue41Account_2(pAccountId, pAmount, vBalance);
             pNewBalance.set(new java.math.BigDecimal(String.valueOf(vBalance)));
             pStatus.set("WITHDRAWAL SUCCESS");
         } catch (Exception e) { // EXCEPTION handlers — src: issue_41_type_system.sql:115
@@ -85,7 +85,7 @@ public class Issue41TypeSystemService {
             pIsValid.set(null);
             pBalance.set(null);
             java.util.Map<String, Object> _row = null;
-            _row = issue41TypeSystemMapper.selectTIssue41Account(pAccountId);
+            _row = issue41TypeSystemMapper.selectTIssue41Account_3(pAccountId);
             if (_row == null) {
                 throw new BusinessException("exception");
             }

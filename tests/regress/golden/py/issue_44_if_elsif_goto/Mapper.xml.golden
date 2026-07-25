@@ -19,8 +19,8 @@
         limit 1
     </select>
 
-    <!-- Source: issue_44_if_elsif_goto.sql:122-122 — pkg_issue44_bugs.proc_dynamic_sql_if_elsif.selectTIssue44OrdersCount -->
-    <select id="selectTIssue44OrdersCount" resultType="string">
+    <!-- Source: issue_44_if_elsif_goto.sql:122-122 — pkg_issue44_bugs.proc_dynamic_sql_if_elsif.selectTIssue44OrdersCount_1 -->
+    <select id="selectTIssue44OrdersCount_1" resultType="string">
         select COUNT(*)
         from t_issue44_orders
         where order_name like '%' || #{pFilter, jdbcType=VARCHAR, javaType=String} || '%'
@@ -34,16 +34,16 @@
                 LIMIT 1
     </select>
 
-    <!-- Source: issue_44_if_elsif_goto.sql:170-170 — pkg_issue44_bugs.proc_non_dynamic_if_else.selectTIssue44Orders -->
-    <select id="selectTIssue44Orders" parameterType="string" resultType="string">
+    <!-- Source: issue_44_if_elsif_goto.sql:170-170 — pkg_issue44_bugs.proc_non_dynamic_if_else.selectTIssue44Orders_1 -->
+    <select id="selectTIssue44Orders_1" parameterType="string" resultType="string">
         select order_name
         from t_issue44_orders
         where status = 'ACTIVE'
         limit 1
     </select>
 
-    <!-- Source: issue_44_if_elsif_goto.sql:206-206 — pkg_issue44_bugs.proc_chained_if_with_concat.selectTIssue44OrdersCount -->
-    <select id="selectTIssue44OrdersCount" parameterType="string" resultType="string">
+    <!-- Source: issue_44_if_elsif_goto.sql:206-206 — pkg_issue44_bugs.proc_chained_if_with_concat.selectTIssue44OrdersCount_2 -->
+    <select id="selectTIssue44OrdersCount_2" parameterType="string" resultType="string">
         select COUNT(*)
         from t_issue44_orders
         where order_name like '%' || #{pCode, jdbcType=VARCHAR, javaType=String} || '%'

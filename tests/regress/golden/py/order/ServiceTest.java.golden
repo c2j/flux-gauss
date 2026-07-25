@@ -33,6 +33,7 @@ class OrderServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("qty", 5); when(orderMapper.selectTOrders(any())).thenReturn(m).thenReturn(null); }
         when(orderMapper.updateTOrders(any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("product_name", "test"); when(orderMapper.selectGetOrderDetail(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(orderMapper.updateTOrders_1(any())).thenReturn(1);
         service.createOrder(pUserId, pProductId, pQty);
         verify(orderMapper, atLeast(0)).insertTOrders(any(), any(), any());
     }
@@ -45,6 +46,7 @@ class OrderServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("qty", 5); when(orderMapper.selectTOrders(any())).thenReturn(m).thenReturn(null); }
         when(orderMapper.updateTOrders(any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("product_name", "test"); when(orderMapper.selectGetOrderDetail(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(orderMapper.updateTOrders_1(any())).thenReturn(1);
         service.cancelOrder(pOrderId);
         verify(orderMapper, atLeast(0)).updateTOrders(any());
     }
@@ -57,6 +59,7 @@ class OrderServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("qty", 5); when(orderMapper.selectTOrders(any())).thenReturn(m).thenReturn(null); }
         when(orderMapper.updateTOrders(any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("product_name", "test"); when(orderMapper.selectGetOrderDetail(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(orderMapper.updateTOrders_1(any())).thenReturn(1);
         service.getOrderDetail(pOrderId);
     }
 
@@ -69,6 +72,7 @@ class OrderServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("qty", 5); when(orderMapper.selectTOrders(any())).thenReturn(m).thenReturn(null); }
         when(orderMapper.updateTOrders(any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("product_name", "test"); when(orderMapper.selectGetOrderDetail(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(orderMapper.updateTOrders_1(any())).thenReturn(1);
         service.batchCreateOrders(pUserId, pItems);
     }
 
@@ -80,7 +84,8 @@ class OrderServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("qty", 5); when(orderMapper.selectTOrders(any())).thenReturn(m).thenReturn(null); }
         when(orderMapper.updateTOrders(any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("product_name", "test"); when(orderMapper.selectGetOrderDetail(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(orderMapper.updateTOrders_1(any())).thenReturn(1);
         service.completeOrder(pOrderId);
-        verify(orderMapper, atLeast(0)).updateTOrders(any());
+        verify(orderMapper, atLeast(0)).updateTOrders_1(any());
     }
 }

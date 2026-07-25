@@ -152,8 +152,7 @@ pub fn write_service_class(
         if is_readonly {
             w.line(&format!("private static final {} {} = {};", var_info.java_type, field_name, coerced_default));
         } else {
-            // Issue #39: Mutable package vars use ThreadLocal for thread safety
-            w.line(&format!("private static final ThreadLocal<{}> {} = ThreadLocal.withInitial(() -> {});", var_info.java_type, field_name, coerced_default));
+            w.line(&format!("private static {} {} = {};", var_info.java_type, field_name, coerced_default));
         }
         if var_info.java_type == "BigDecimal" {
             all_imports.insert("import java.math.BigDecimal;".to_string());
@@ -657,27 +656,6 @@ fn build_service_method(
         for line in &proc.java_logic_lines {
             let mut l = line.replace("mapper.", &format!("{}.", mapper_name));
             l = append_local_vars_to_mapper_calls(&l, proc, mapper_name, package_vars);
-            let is_self_call = l.trim().starts_with("this.");
-            let mut sorted_out_vars: Vec<_> = proc.out_local_vars.iter().collect();
-            sorted_out_vars.sort_by_key(|(k, _)| *k);
-            for (vname, _inner_type) in sorted_out_vars {
-                let vcamel = snake_to_camel(vname);
-                if !is_self_call {
-                    l = l.replace(&format!("{},", vcamel), &format!("{}.get(),", vcamel));
-                    l = l.replace(&format!("{})", vcamel), &format!("{}.get())", vcamel));
-                }
-                l = l.replace(&format!("String.valueOf({})", vcamel), &format!("String.valueOf({}.get())", vcamel));
-                let assign_pat = format!("{} = ", vcamel);
-                if l.contains(&assign_pat) && !l.contains(&format!("{}.set(", vcamel)) {
-                    l = l.replace(&assign_pat, &format!("{}.set(", vcamel));
-                    if l.trim().ends_with(";") {
-                        let trimmed = l.trim();
-                        l = format!("{});", &trimmed[..trimmed.len()-1]);
-                    }
-                }
-                l = l.replace(&format!("{} != null", vcamel), &format!("{}.get() != null", vcamel));
-                l = l.replace(&format!("{} == null", vcamel), &format!("{}.get() == null", vcamel));
-            }
             let trimmed = l.trim().to_string();
             if trimmed == "null;" || trimmed == "null" {
                 l = format!("// {}", trimmed);
@@ -864,12 +842,7 @@ fn append_local_vars_to_mapper_calls(
                         && !local_args.iter().any(|a| a.to_lowercase() == jn_lower)
                         && !extra_param_names.contains(&jn_lower)
                     {
-                        if var_info.is_constant {
-                            pkg_args.push(jn);
-                        } else {
-                            // Issue #39: Mutable package vars are ThreadLocal, use .get()
-                            pkg_args.push(format!("{}.get()", jn));
-                        }
+                        pkg_args.push(jn);
                     }
                 }
             }
