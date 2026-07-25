@@ -31,6 +31,8 @@ class Issue45ExceptionHandlingServiceTest {
         AtomicReference<String> pOSucceed = new AtomicReference<>(null);
         AtomicReference<String> pOSecurityId = new AtomicReference<>(null);
         when(issue45ExceptionHandlingMapper.selectTIssue45Security(any())).thenReturn("test");
+        when(issue45ExceptionHandlingMapper.selectTIssue45Security_1(any())).thenReturn("test");
+        when(issue45ExceptionHandlingMapper.selectTIssue45Security_2(any())).thenReturn("test");
         service.procLinkEtfRepay(pSecurityCode, pOSucceed, pOSecurityId);
     }
 
@@ -40,6 +42,8 @@ class Issue45ExceptionHandlingServiceTest {
         String pSecurityCode = "test_pSecurityCode";
         AtomicReference<String> pResult = new AtomicReference<>(null);
         when(issue45ExceptionHandlingMapper.selectTIssue45Security(any())).thenReturn("test");
+        when(issue45ExceptionHandlingMapper.selectTIssue45Security_1(any())).thenReturn("test");
+        when(issue45ExceptionHandlingMapper.selectTIssue45Security_2(any())).thenReturn("test");
         service.procSimpleException(pSecurityCode, pResult);
     }
 
@@ -49,6 +53,8 @@ class Issue45ExceptionHandlingServiceTest {
         String pCode = "test_pCode";
         AtomicReference<String> pMsg = new AtomicReference<>(null);
         when(issue45ExceptionHandlingMapper.selectTIssue45Security(any())).thenReturn("test");
+        when(issue45ExceptionHandlingMapper.selectTIssue45Security_1(any())).thenReturn("test");
+        when(issue45ExceptionHandlingMapper.selectTIssue45Security_2(any())).thenReturn("test");
         service.procNestedException(pCode, pMsg);
     }
 }

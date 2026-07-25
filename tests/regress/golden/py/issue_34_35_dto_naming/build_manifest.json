@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_34_35_dto_naming.sql",
+  "package_name": "issue_34_35_dto_naming",
+  "files": {
+    "Service.java": "6ad2f2bc94ad3a8a",
+    "Mapper.java": "a905528166d82252",
+    "Mapper.xml": "e1824a1295715aa8",
+    "ServiceTest.java": "8ba2419281b8e730"
+  }
+}

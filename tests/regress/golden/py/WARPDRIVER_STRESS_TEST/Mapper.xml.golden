@@ -65,8 +65,8 @@
                 LIMIT 1
     </select>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:323-323 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master.updateOrders -->
-    <update id="updateOrders" parameterType="long">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:323-323 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master.updateOrders_1 -->
+    <update id="updateOrders_1" parameterType="long">
         update orders set version = version + 1, update_time = current_timestamp where order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long} AND version = (select version from orders where order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long})
     </update>
 
@@ -90,8 +90,8 @@
         delete from operation_logs where create_time &lt; #{vCutoff, jdbcType=TIMESTAMP, javaType=java.sql.Timestamp} AND log_id in (select log_id from operation_logs where create_time &lt; #{vCutoff, jdbcType=TIMESTAMP, javaType=java.sql.Timestamp} limit #{vBatch, jdbcType=INTEGER, javaType=Integer})
     </delete>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:414-414 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_skip_logic.selectSpGotoSkipLogic -->
-    <select id="selectSpGotoSkipLogic" resultType="java.util.LinkedHashMap">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:414-414 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_skip_logic.selectSpGotoSkipLogic_2 -->
+    <select id="selectSpGotoSkipLogic_2" resultType="java.util.LinkedHashMap">
         select
           region_code,
           COUNT(*) AS cnt,
@@ -281,8 +281,8 @@
         delete from tree_nodes where node_id = #{vChildId, jdbcType=BIGINT, javaType=Long}
     </delete>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:777-777 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return.selectFnMultiCursorReturn -->
-    <select id="selectFnMultiCursorReturn" parameterType="long" resultType="java.util.LinkedHashMap">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:777-777 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return.selectFnMultiCursorReturn_1 -->
+    <select id="selectFnMultiCursorReturn_1" parameterType="long" resultType="java.util.LinkedHashMap">
         select
           order_id,
           total_amount,
@@ -294,8 +294,8 @@
         limit 100
     </select>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:784-784 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return.selectFnMultiCursorReturn_1 -->
-    <select id="selectFnMultiCursorReturn_1" parameterType="long" resultType="java.util.LinkedHashMap">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:784-784 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return.selectFnMultiCursorReturn_2 -->
+    <select id="selectFnMultiCursorReturn_2" parameterType="long" resultType="java.util.LinkedHashMap">
         select
           payment_id,
           pay_amount,
@@ -356,6 +356,13 @@
     <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:843-843 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.insertNotifications -->
     <insert id="insertNotifications">
         insert into notifications (account_id, notify_type, content) values (#{pAccountId, jdbcType=BIGINT, javaType=Long}, 'SMS', 'Debit ' || #{pAmount, jdbcType=NUMERIC, javaType=java.math.BigDecimal})
+    </insert>
+
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:847-847 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.insertSpSavepointHell -->
+    <insert id="insertSpSavepointHell">
+        INSERT INTO notifications1(${pAccountId},
+            notify_type,
+            content)
     </insert>
 
     <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:857-857 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.selectAccounts_1 -->

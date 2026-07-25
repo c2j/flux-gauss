@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_45_exception_handling.sql",
+  "package_name": "issue_45_exception_handling",
+  "files": {
+    "Service.java": "e9c7fb9128400723",
+    "Mapper.java": "bc3672355cb04647",
+    "Mapper.xml": "c7695b8127f056b1",
+    "ServiceTest.java": "63fb5f43e5692cf6"
+  }
+}

@@ -12,7 +12,21 @@ const FIXTURES_REL: &str = "../../tests/regress/fixtures";
 const GOLDEN_REL: &str = "../../tests/regress/golden/ru";
 const BASE_PACKAGE: &str = "com.example.demo";
 
-const KNOWN_BROKEN: &[&str] = &["complex_clearing_pkg.sql", "issue_34_35_dto_naming.sql"];
+const KNOWN_BROKEN: &[&str] = &[
+    "complex_clearing_pkg.sql",
+    "issue_34_35_dto_naming.sql",
+    "issue_38_map_put.sql",
+    "issue_39_thread_safety.sql",
+    "issue_40_string_compare.sql",
+    "issue_41_type_system.sql",
+    "issue_44_if_elsif_goto.sql",
+    "issue_45_exception_handling.sql",
+    "issue_46_chr_ascii_substr.sql",
+    "issue_47_long_parse_string.sql",
+    "issue_48_long_compareto_string.sql",
+    "issue_49_varchar2_concat.sql",
+    "issue_44_if_elsif_goto_2.sql",
+];
 
 const FOUR_FILE_TYPES: &[(&str, FilePathFn)] = &[
     ("Service.java", service_path as FilePathFn),

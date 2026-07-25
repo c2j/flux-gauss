@@ -26,7 +26,7 @@ public class DynamicXmlService {
             vSql = String.valueOf(String.valueOf(vSql).concat(String.valueOf(" LIMIT "))).concat(String.valueOf(pLimit));
             // CALL DBE_OUTPUT.PRINT_LINE(String.valueOf(String.valueOf("Generated SQL: ").concat(String.valueOf(pTableName))).concat(String.valueOf(vSql)))
             dynamicXmlMapper.selectProcConditionalQuery(pTableName, pWhereClause, pOrderBy, pLimit);
-            { var _val = dynamicXmlMapper.selectProcConditionalQuery_1(pTableName, pWhereClause, pOrderBy, pLimit); if (_val != null) vCount = (Integer) _val; }
+            { var _val = dynamicXmlMapper.selectAuditLog(pTableName, pWhereClause, pOrderBy, pLimit); if (_val != null) vCount = (Integer) _val; }
         }
 
         // Source: pkg_dynamic_xml.proc_conditional_update (PROCEDURE) — {FIXTURES_ROOT}/pkg_dynamic_xml.sql:83-120
@@ -57,11 +57,11 @@ public class DynamicXmlService {
             if (java.util.Objects.equals(pMode, "ARCHIVE")) {
             vSql = String.valueOf(String.valueOf(String.valueOf("INSERT INTO ").concat(String.valueOf(pTableName))).concat(String.valueOf("_hist SELECT * FROM "))).concat(String.valueOf(pTableName));
             dynamicXmlMapper.insertProcMixedLogic(pTableName, pMode);
-            dynamicXmlMapper.insertProcMixedLogic_1(pTableName, pMode, vSql);
+            dynamicXmlMapper.insertAuditLog(pTableName, pMode, vSql);
             } else if (java.util.Objects.equals(pMode, "CLEAN")) {
             vSql = String.valueOf(String.valueOf("DELETE FROM ").concat(String.valueOf(pTableName))).concat(String.valueOf(" WHERE create_time < SYSDATE - 30"));
             dynamicXmlMapper.deleteProcMixedLogic(pTableName, pMode);
-            dynamicXmlMapper.insertProcMixedLogic_2(pTableName, pMode, vSql);
+            dynamicXmlMapper.insertAuditLog_1(pTableName, pMode, vSql);
             } else {
             // CALL DBE_OUTPUT.PRINT_LINE(String.valueOf("Unknown mode: ").concat(String.valueOf(pMode)))
             }

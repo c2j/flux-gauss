@@ -3,9 +3,9 @@
   "fixture": "pkg_order.sql",
   "package_name": "order",
   "files": {
-    "Service.java": "5abc74732040ad09",
-    "Mapper.java": "6385e4e2e8839335",
-    "Mapper.xml": "1e962d84beaeb0a5",
-    "ServiceTest.java": "ae06b03fd5df6c64"
+    "Service.java": "7a6983610077c188",
+    "Mapper.java": "b3920232466255c6",
+    "Mapper.xml": "81461e0803a0c0e2",
+    "ServiceTest.java": "9cf726b8824d8dcf"
   }
 }

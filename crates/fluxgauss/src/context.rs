@@ -32,6 +32,7 @@ pub struct AnalysisContext {
     pub source_cache: HashMap<String, Vec<String>>,
     /// Debug mode enabled (--debug CLI flag)
     pub debug: bool,
+    pub dml_counters: HashMap<String, HashMap<String, usize>>,
 }
 
 impl AnalysisContext {
@@ -46,6 +47,7 @@ impl AnalysisContext {
             unresolved_calls: Vec::new(),
             source_cache: HashMap::new(),
             debug: false,
+            dml_counters: HashMap::new(),
         }
     }
 }

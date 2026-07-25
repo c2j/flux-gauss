@@ -225,7 +225,7 @@ mod tests {
         report.total_packages = 2;
         report.total_procedures = 10;
         let md = report.to_markdown();
-        assert!(md.contains("5"));
+        assert!(md.contains("10"));
         assert!(!md.contains("## SQL"));
     }
 

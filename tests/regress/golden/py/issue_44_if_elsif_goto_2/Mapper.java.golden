@@ -1,0 +1,14 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue44IfElsifGoto2Mapper {
+
+        // issue_44_if_elsif_goto_2.sql:30 — pkg_issue44_nested_exc.proc_nested_exception_blocks
+Integer selectTIssue44ConfigCount1();
+// issue_44_if_elsif_goto_2.sql:30 — pkg_issue44_nested_exc.proc_nested_exception_blocks
+String selectTIssue44Config();
+// issue_44_if_elsif_goto_2.sql:30 — pkg_issue44_nested_exc.proc_nested_exception_blocks
+String selectTIssue44Config_1(@Param("vDate") String vDate);
+}

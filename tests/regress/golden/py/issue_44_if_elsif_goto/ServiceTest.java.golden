@@ -32,7 +32,10 @@ class Issue44IfElsifGotoServiceTest {
         AtomicReference<String> pResult = new AtomicReference<>(null);
         when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount(any(), any())).thenReturn(999);
         when(issue44IfElsifGotoMapper.selectTIssue44Orders(any(), any())).thenReturn("test");
+        when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount_1(any(), any())).thenReturn("test");
         when(issue44IfElsifGotoMapper.selectTIssue44OrdersSumAmount(any(), any())).thenReturn(java.math.BigDecimal.TEN);
+        when(issue44IfElsifGotoMapper.selectTIssue44Orders_1(any())).thenReturn("test");
+        when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount_2(any())).thenReturn("test");
         service.procDynamicSqlIfElse(pStatus, pDate, pResult);
     }
 
@@ -44,7 +47,10 @@ class Issue44IfElsifGotoServiceTest {
         AtomicReference<String> pResult = new AtomicReference<>(null);
         when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount(any(), any())).thenReturn(999);
         when(issue44IfElsifGotoMapper.selectTIssue44Orders(any(), any())).thenReturn("test");
+        when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount_1(any(), any())).thenReturn("test");
         when(issue44IfElsifGotoMapper.selectTIssue44OrdersSumAmount(any(), any())).thenReturn(java.math.BigDecimal.TEN);
+        when(issue44IfElsifGotoMapper.selectTIssue44Orders_1(any())).thenReturn("test");
+        when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount_2(any())).thenReturn("test");
         service.procDynamicSqlIfElsif(pFilter, pMode, pResult);
     }
 
@@ -56,7 +62,10 @@ class Issue44IfElsifGotoServiceTest {
         AtomicReference<String> pResult = new AtomicReference<>(null);
         when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount(any(), any())).thenReturn(999);
         when(issue44IfElsifGotoMapper.selectTIssue44Orders(any(), any())).thenReturn("test");
+        when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount_1(any(), any())).thenReturn("test");
         when(issue44IfElsifGotoMapper.selectTIssue44OrdersSumAmount(any(), any())).thenReturn(java.math.BigDecimal.TEN);
+        when(issue44IfElsifGotoMapper.selectTIssue44Orders_1(any())).thenReturn("test");
+        when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount_2(any())).thenReturn("test");
         service.procNestedDynamicIf(pType, pSubType, pResult);
     }
 
@@ -67,7 +76,10 @@ class Issue44IfElsifGotoServiceTest {
         AtomicReference<String> pResult = new AtomicReference<>(null);
         when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount(any(), any())).thenReturn(999);
         when(issue44IfElsifGotoMapper.selectTIssue44Orders(any(), any())).thenReturn("test");
+        when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount_1(any(), any())).thenReturn("test");
         when(issue44IfElsifGotoMapper.selectTIssue44OrdersSumAmount(any(), any())).thenReturn(java.math.BigDecimal.TEN);
+        when(issue44IfElsifGotoMapper.selectTIssue44Orders_1(any())).thenReturn("test");
+        when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount_2(any())).thenReturn("test");
         service.procNonDynamicIfElse(pFlag, pResult);
     }
 
@@ -78,7 +90,10 @@ class Issue44IfElsifGotoServiceTest {
         AtomicReference<String> pResult = new AtomicReference<>(null);
         when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount(any(), any())).thenReturn(999);
         when(issue44IfElsifGotoMapper.selectTIssue44Orders(any(), any())).thenReturn("test");
+        when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount_1(any(), any())).thenReturn("test");
         when(issue44IfElsifGotoMapper.selectTIssue44OrdersSumAmount(any(), any())).thenReturn(java.math.BigDecimal.TEN);
+        when(issue44IfElsifGotoMapper.selectTIssue44Orders_1(any())).thenReturn("test");
+        when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount_2(any())).thenReturn("test");
         service.procChainedIfWithConcat(pCode, pResult);
     }
 }

@@ -59,7 +59,7 @@ public class Issue3435DtoNamingService {
         pRowsUpdated.set(null);
         pOldStatus.set(String.valueOf(issue3435DtoNamingMapper.selectTIssue34Order(pOrderId, pNewStatus, pUpdatedBy)));
         _sqlRowCount = issue3435DtoNamingMapper.updateTIssue34Order(pOrderId, pNewStatus, pUpdatedBy);
-        pRowsUpdated.set(((Number) issue3435DtoNamingMapper.selectTIssue34OrderCount(pOrderId, pNewStatus, pUpdatedBy)).intValue());
-        _sqlRowCount = issue3435DtoNamingMapper.insertTIssue34OrderLog(pOrderId, pNewStatus, pUpdatedBy);
+        pRowsUpdated.set(((Number) issue3435DtoNamingMapper.selectTIssue34OrderCount_1(pOrderId, pNewStatus, pUpdatedBy)).intValue());
+        _sqlRowCount = issue3435DtoNamingMapper.insertTIssue34OrderLog_1(pOrderId, pNewStatus, pUpdatedBy);
     }
 }

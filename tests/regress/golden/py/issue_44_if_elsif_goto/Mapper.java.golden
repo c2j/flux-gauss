@@ -12,11 +12,11 @@ Integer selectTIssue44OrdersCount(@Param("pStatus") String pStatus, @Param("pDat
 // issue_44_if_elsif_goto.sql:56 — pkg_issue44_bugs.proc_dynamic_sql_if_else
 String selectTIssue44Orders(@Param("pStatus") String pStatus, @Param("pDate") String pDate);
 // issue_44_if_elsif_goto.sql:98 — pkg_issue44_bugs.proc_dynamic_sql_if_elsif
-String selectTIssue44OrdersCount(@Param("pFilter") String pFilter, @Param("pMode") Integer pMode);
+String selectTIssue44OrdersCount_1(@Param("pFilter") String pFilter, @Param("pMode") Integer pMode);
 // issue_44_if_elsif_goto.sql:132 — pkg_issue44_bugs.proc_nested_dynamic_if
 java.math.BigDecimal selectTIssue44OrdersSumAmount(@Param("pType") String pType, @Param("pSubType") String pSubType);
 // issue_44_if_elsif_goto.sql:163 — pkg_issue44_bugs.proc_non_dynamic_if_else
-String selectTIssue44Orders(@Param("pFlag") String pFlag);
+String selectTIssue44Orders_1(@Param("pFlag") String pFlag);
 // issue_44_if_elsif_goto.sql:187 — pkg_issue44_bugs.proc_chained_if_with_concat
-String selectTIssue44OrdersCount(@Param("pCode") String pCode);
+String selectTIssue44OrdersCount_2(@Param("pCode") String pCode);
 }

@@ -39,6 +39,9 @@ class Issue41TypeSystemServiceTest {
         when(issue41TypeSystemMapper.updateTIssue41Account(any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(issue41TypeSystemMapper.selectTIssue41Account_1(any(), any(), any(), any(), any())).thenReturn(java.math.BigDecimal.ZERO);
         when(issue41TypeSystemMapper.updateTIssue41Account_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue41TypeSystemMapper.selectTIssue41Account_2(any(), any())).thenReturn(java.math.BigDecimal.ZERO);
+        when(issue41TypeSystemMapper.updateTIssue41Account_2(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); m.put("emp_id", 1L); m.put("product_id", 1L); m.put("v_product_id", 1L); m.put("v_qty", 10); m.put("total", 0); m.put("v_total", 0); m.put("stock_qty", 0); m.put("name", ""); m.put("emp_name", ""); m.put("status", "REJECTED"); m.put("v_status", "REJECTED"); m.put("v_amount", java.math.BigDecimal.ZERO); m.put("base_salary", java.math.BigDecimal.ZERO); m.put("bonus_pct", 0.0d); m.put("allowance", 0); m.put("count", 0); when(issue41TypeSystemMapper.selectTIssue41Account_3(any())).thenReturn(m); }
         assertThrows(BusinessException.class, () -> {
             service.procTransfer(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent, pNewBalance, pStatus);
         });
@@ -58,6 +61,9 @@ class Issue41TypeSystemServiceTest {
         when(issue41TypeSystemMapper.updateTIssue41Account(any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(issue41TypeSystemMapper.selectTIssue41Account_1(any(), any(), any(), any(), any())).thenReturn(java.math.BigDecimal.TEN);
         when(issue41TypeSystemMapper.updateTIssue41Account_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue41TypeSystemMapper.selectTIssue41Account_2(any(), any())).thenReturn(java.math.BigDecimal.TEN);
+        when(issue41TypeSystemMapper.updateTIssue41Account_2(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("balance", java.math.BigDecimal.TEN); m.put("is_active", 1); when(issue41TypeSystemMapper.selectTIssue41Account_3(any())).thenReturn(m).thenReturn(null); }
         service.procTransfer(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent, pNewBalance, pStatus);
         verify(issue41TypeSystemMapper, atLeast(0)).updateTIssue41Account(any(), any(), any(), any(), any(), any());
     }
@@ -74,6 +80,9 @@ class Issue41TypeSystemServiceTest {
         when(issue41TypeSystemMapper.updateTIssue41Account(any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(issue41TypeSystemMapper.selectTIssue41Account_1(any(), any(), any(), any(), any())).thenReturn(java.math.BigDecimal.ZERO);
         when(issue41TypeSystemMapper.updateTIssue41Account_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue41TypeSystemMapper.selectTIssue41Account_2(any(), any())).thenReturn(java.math.BigDecimal.ZERO);
+        when(issue41TypeSystemMapper.updateTIssue41Account_2(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); m.put("emp_id", 1L); m.put("product_id", 1L); m.put("v_product_id", 1L); m.put("v_qty", 10); m.put("total", 0); m.put("v_total", 0); m.put("stock_qty", 0); m.put("name", ""); m.put("emp_name", ""); m.put("status", "REJECTED"); m.put("v_status", "REJECTED"); m.put("v_amount", java.math.BigDecimal.ZERO); m.put("base_salary", java.math.BigDecimal.ZERO); m.put("bonus_pct", 0.0d); m.put("allowance", 0); m.put("count", 0); when(issue41TypeSystemMapper.selectTIssue41Account_3(any())).thenReturn(m); }
         assertThrows(BusinessException.class, () -> {
             service.procWithdraw(pAccountId, pAmount, pNewBalance, pStatus);
         });
@@ -90,8 +99,11 @@ class Issue41TypeSystemServiceTest {
         when(issue41TypeSystemMapper.updateTIssue41Account(any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(issue41TypeSystemMapper.selectTIssue41Account_1(any(), any(), any(), any(), any())).thenReturn(java.math.BigDecimal.TEN);
         when(issue41TypeSystemMapper.updateTIssue41Account_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue41TypeSystemMapper.selectTIssue41Account_2(any(), any())).thenReturn(java.math.BigDecimal.TEN);
+        when(issue41TypeSystemMapper.updateTIssue41Account_2(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("balance", java.math.BigDecimal.TEN); m.put("is_active", 1); when(issue41TypeSystemMapper.selectTIssue41Account_3(any())).thenReturn(m).thenReturn(null); }
         service.procWithdraw(pAccountId, pAmount, pNewBalance, pStatus);
-        verify(issue41TypeSystemMapper, atLeast(0)).updateTIssue41Account(any(), any(), any(), any(), any(), any());
+        verify(issue41TypeSystemMapper, atLeast(0)).updateTIssue41Account_2(any(), any(), any());
     }
 
     @Test
@@ -105,6 +117,9 @@ class Issue41TypeSystemServiceTest {
         when(issue41TypeSystemMapper.updateTIssue41Account(any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(issue41TypeSystemMapper.selectTIssue41Account_1(any(), any(), any(), any(), any())).thenReturn(java.math.BigDecimal.ZERO);
         when(issue41TypeSystemMapper.updateTIssue41Account_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue41TypeSystemMapper.selectTIssue41Account_2(any(), any())).thenReturn(java.math.BigDecimal.ZERO);
+        when(issue41TypeSystemMapper.updateTIssue41Account_2(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); m.put("emp_id", 1L); m.put("product_id", 1L); m.put("v_product_id", 1L); m.put("v_qty", 10); m.put("total", 0); m.put("v_total", 0); m.put("stock_qty", 0); m.put("name", ""); m.put("emp_name", ""); m.put("status", "REJECTED"); m.put("v_status", "REJECTED"); m.put("v_amount", java.math.BigDecimal.ZERO); m.put("base_salary", java.math.BigDecimal.ZERO); m.put("bonus_pct", 0.0d); m.put("allowance", 0); m.put("count", 0); when(issue41TypeSystemMapper.selectTIssue41Account_3(any())).thenReturn(m); }
         assertThrows(BusinessException.class, () -> {
             service.procValidateAccount(pAccountId, pIsValid, pBalance);
         });
@@ -120,6 +135,9 @@ class Issue41TypeSystemServiceTest {
         when(issue41TypeSystemMapper.updateTIssue41Account(any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(issue41TypeSystemMapper.selectTIssue41Account_1(any(), any(), any(), any(), any())).thenReturn(java.math.BigDecimal.TEN);
         when(issue41TypeSystemMapper.updateTIssue41Account_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue41TypeSystemMapper.selectTIssue41Account_2(any(), any())).thenReturn(java.math.BigDecimal.TEN);
+        when(issue41TypeSystemMapper.updateTIssue41Account_2(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("balance", java.math.BigDecimal.TEN); m.put("is_active", 1); when(issue41TypeSystemMapper.selectTIssue41Account_3(any())).thenReturn(m).thenReturn(null); }
         service.procValidateAccount(pAccountId, pIsValid, pBalance);
     }
 }

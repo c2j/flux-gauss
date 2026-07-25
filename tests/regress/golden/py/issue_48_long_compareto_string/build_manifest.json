@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_48_long_compareto_string.sql",
+  "package_name": "issue_48_long_compareto_string",
+  "files": {
+    "Service.java": "3ceee6ffaad9e934",
+    "Mapper.java": "73e518220f707245",
+    "Mapper.xml": "a0d4df5d13ed67c3",
+    "ServiceTest.java": "7a247b321a3f2571"
+  }
+}

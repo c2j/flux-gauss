@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_38_map_put.sql",
+  "package_name": "issue_38_map_put",
+  "files": {
+    "Service.java": "372fdfeb0d4e1db0",
+    "Mapper.java": "a62825b1ebec02db",
+    "Mapper.xml": "605ffdcf433293ba",
+    "ServiceTest.java": "9981dd1468beef11"
+  }
+}

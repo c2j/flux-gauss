@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_46_chr_ascii_substr.sql",
+  "package_name": "issue_46_chr_ascii_substr",
+  "files": {
+    "Service.java": "06cbb26fa5c948cc",
+    "Mapper.java": "628ee946a6b339c9",
+    "Mapper.xml": "ff1b01095d0c2c4a",
+    "ServiceTest.java": "e81d4d956bb52246"
+  }
+}

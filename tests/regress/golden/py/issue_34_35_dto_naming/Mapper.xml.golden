@@ -58,8 +58,8 @@
         update t_issue34_order set status = #{pNewStatus, jdbcType=VARCHAR, javaType=String} where order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
     </update>
 
-    <!-- Source: issue_34_35_dto_naming.sql:166-166 — pkg_issue34_order.proc_update_order.selectTIssue34OrderCount -->
-    <select id="selectTIssue34OrderCount" resultType="object">
+    <!-- Source: issue_34_35_dto_naming.sql:166-166 — pkg_issue34_order.proc_update_order.selectTIssue34OrderCount_1 -->
+    <select id="selectTIssue34OrderCount_1" resultType="object">
         select COUNT(*)
         from t_issue34_order
         where order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
@@ -67,8 +67,8 @@
                 LIMIT 1
     </select>
 
-    <!-- Source: issue_34_35_dto_naming.sql:173-173 — pkg_issue34_order.proc_update_order.insertTIssue34OrderLog -->
-    <insert id="insertTIssue34OrderLog">
+    <!-- Source: issue_34_35_dto_naming.sql:173-173 — pkg_issue34_order.proc_update_order.insertTIssue34OrderLog_1 -->
+    <insert id="insertTIssue34OrderLog_1">
         insert into t_issue34_order_log (log_id, order_id, action, old_status, new_status, log_time) values (#{pOrderId, jdbcType=BIGINT, javaType=Long}, #{pOrderId, jdbcType=BIGINT, javaType=Long}, 'STATUS_CHANGE', #{pOldStatus, jdbcType=VARCHAR, javaType=String}, #{pNewStatus, jdbcType=VARCHAR, javaType=String}, current_timestamp)
     </insert>
 
