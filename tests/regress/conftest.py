@@ -236,6 +236,13 @@ EXPECTED_BASELINES = {
     "issue_39_thread_safety.sql":    {"min_procs": 3, "min_procs_with_dml": 0},
     "issue_40_string_compare.sql":   {"min_procs": 3, "min_procs_with_dml": 0},
     "issue_41_type_system.sql":      {"min_procs": 3, "min_procs_with_dml": 2},
+    # Issue regression fixtures (#44–#49)
+    "issue_44_if_elsif_goto.sql":    {"min_procs": 5, "min_procs_with_dml": 3},
+    "issue_45_exception_handling.sql":{"min_procs": 3, "min_procs_with_dml": 3},
+    "issue_46_chr_ascii_substr.sql": {"min_procs": 5, "min_procs_with_dml": 0},
+    "issue_47_long_parse_string.sql":{"min_procs": 3, "min_procs_with_dml": 0},
+    "issue_48_long_compareto_string.sql":{"min_procs": 4, "min_procs_with_dml": 1},
+    "issue_49_varchar2_concat.sql":  {"min_procs": 3, "min_procs_with_dml": 0},
 }
 
 # complex_clearing_pkg.sql crashes ogsql v0.8.32's Python engine

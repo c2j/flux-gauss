@@ -503,6 +503,323 @@ class TestIssue41_TypeSystem:
             )
 
 
+# ── Issue #44: IF condition loss via _remove_dynamic_sql_build_lines ─
+
+class TestIssue44_IfConditionLoss:
+    """Issue #44: _remove_dynamic_sql_build_lines() at L2260 removes
+    `if (` lines as "guard" when dynamic SQL concat is detected.
+    Trigger: v_sql := v_sql || '...' + IF + mapper calls."""
+
+    def _gen_svc(self, cached_ast, tmp_path):
+        sql_file = "issue_44_if_elsif_goto.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+        return svc
+
+    @pytest.mark.xfail(reason="Issue #44 OPEN — L2260 removes if( as guard when dynamic SQL detected")
+    def test_dynamic_if_keeps_condition(self, cached_ast, tmp_path):
+        svc = self._gen_svc(cached_ast, tmp_path)
+        assert 'if (vCount > 0)' in svc or 'if (vCount.compareTo(0) > 0)' in svc, (
+            "Issue #44: if (vCount > 0) removed by _remove_dynamic_sql_build_lines"
+        )
+
+    @pytest.mark.xfail(reason="Issue #44 OPEN — elsif + dynamic SQL loses conditions")
+    def test_dynamic_elsif_keeps_conditions(self, cached_ast, tmp_path):
+        svc = self._gen_svc(cached_ast, tmp_path)
+        assert bool(re.search(r'if\s*\(.*pFilter.*!=.*null', svc)), (
+            "Issue #44: if (pFilter != null) removed by dynamic SQL cleanup"
+        )
+
+    @pytest.mark.xfail(reason="Issue #44 OPEN — nested dynamic IF loses conditions")
+    def test_nested_dynamic_keeps_ifs(self, cached_ast, tmp_path):
+        svc = self._gen_svc(cached_ast, tmp_path)
+        if_count = len(re.findall(r'\bif\s*\(', svc))
+        assert if_count >= 4, (
+            f"Issue #44: only {if_count} if keywords — dynamic SQL cleanup removed them"
+        )
+
+    @pytest.mark.xfail(reason="Issue #44 OPEN — chained concat + final IF loses condition")
+    def test_chained_concat_keeps_final_if(self, cached_ast, tmp_path):
+        svc = self._gen_svc(cached_ast, tmp_path)
+        assert bool(re.search(r'if\s*\(.*pCode.*!=.*null', svc)), (
+            "Issue #44: final IF lost after chained dynamic SQL concats"
+        )
+
+    def test_non_dynamic_preserves_if(self, cached_ast, tmp_path):
+        svc = self._gen_svc(cached_ast, tmp_path)
+        assert 'if (pFlag' in svc or 'if ("1".equals(pFlag)' in svc
+
+    def test_if_else_balance(self, cached_ast, tmp_path):
+        svc = self._gen_svc(cached_ast, tmp_path)
+        ifs = len(re.findall(r'\bif\s*\(', svc))
+        elses = len(re.findall(r'\}\s*else\s*\{', svc))
+        assert elses <= ifs + 3, (
+            f"Issue #44: {elses} else vs {ifs} if — dynamic SQL cleanup removed conditions"
+        )
+
+
+# ── Issue #45: EXCEPTION WHEN no_data_found THEN ... WHEN OTHERS ─
+
+class TestIssue45_ExceptionHandling:
+    """Issue #45: EXCEPTION block with multiple WHEN clauses split into
+    peer-level catch blocks — Java disallows duplicate catch at same level."""
+
+    @pytest.mark.xfail(reason="Issue #45 OPEN — EXCEPTION WHEN ... WHEN converted to peer catch blocks")
+    def test_no_peer_catch_for_multi_when(self, cached_ast, tmp_path):
+        sql_file = "issue_45_exception_handling.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+
+        # Count catch blocks in proc_link_etf_repay — should NOT have
+        # two catch at the same level
+        catch_blocks = re.findall(r'\bcatch\s*\(', svc)
+        assert len(catch_blocks) <= 2, (
+            f"Issue #45: Found {len(catch_blocks)} catch blocks. "
+            "Multiple WHEN should not produce peer-level catch blocks."
+        )
+
+    def test_simple_exception_has_catch(self, cached_ast, tmp_path):
+        """Control: single EXCEPTION WHEN OTHERS should produce try-catch."""
+        sql_file = "issue_45_exception_handling.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+
+        assert bool(re.search(r'try\s*\{', svc)), (
+            "Issue #45: No try block found for EXCEPTION handling."
+        )
+        assert bool(re.search(r'\bcatch\s*\(', svc)), (
+            "Issue #45: No catch block found for EXCEPTION handling."
+        )
+
+    @pytest.mark.xfail(reason="Issue #45 OPEN — no_data_found should use null-check, not catch")
+    def test_no_data_found_is_null_check_not_catch(self, cached_ast, tmp_path):
+        sql_file = "issue_45_exception_handling.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+
+        # no_data_found should NOT generate catch(Exception e) — 
+        # it should use if(result == null) instead
+        no_data_catches = re.findall(
+            r'catch\s*\(Exception\s+e\).*?no.data.found', svc, re.IGNORECASE | re.DOTALL
+        )
+        assert len(no_data_catches) == 0, (
+            "Issue #45: no_data_found treated as catch block. "
+            "Should use null check for MyBatis null return."
+        )
+
+
+# ── Issue #46: CHR/ASCII/SUBSTR malformed Java ───────────────────
+
+class TestIssue46_ChrAsciiSubstr:
+    """Issue #46: CHR(ASCII(SUBSTR(...))) produces 'int String.valueOf(...)'
+    — two type keywords back-to-back is invalid Java syntax."""
+
+    @pytest.mark.xfail(reason="Issue #46 OPEN — ascii template produces 'int String.valueOf(...)'")
+    def test_no_double_type_keywords(self, cached_ast, tmp_path):
+        sql_file = "issue_46_chr_ascii_substr.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+
+        # Check for "int String.valueOf" — two type keywords together
+        double_type = re.findall(r'\bint\s+String\.valueOf', svc)
+        assert len(double_type) == 0, (
+            f"Issue #46: Found {len(double_type)} 'int String.valueOf' patterns. "
+            "ascii() conversion produced malformed Java cast."
+        )
+
+    @pytest.mark.xfail(reason="Issue #46 OPEN — chr template fails with String args")
+    def test_chr_output_compiles(self, cached_ast, tmp_path):
+        sql_file = "issue_46_chr_ascii_substr.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+
+        # CHR output should not contain invalid casts
+        # Pattern: (char)(String expr) is invalid Java
+        bogus_chr = re.findall(r'\(char\)\s*\(\s*String\.valueOf', svc)
+        assert len(bogus_chr) == 0, (
+            f"Issue #46: Found {len(bogus_chr)} '(char)(String.valueOf...)' patterns."
+        )
+
+    @pytest.mark.xfail(reason="Issue #46 OPEN — SUBSTR String offset not coerced to int")
+    def test_substr_string_offset_coerced(self, cached_ast, tmp_path):
+        sql_file = "issue_46_chr_ascii_substr.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+
+        # String-typed offset/length → substring(stringVar - 1) is invalid
+        # Must exclude integer literals (5 - 1 is fine, pStart - 1 is not when pStart is String)
+        bogus_substr = re.findall(r'\.substring\s*\(\s*[A-Za-z_]\w*\s*-\s*1', svc)
+        assert len(bogus_substr) == 0, (
+            f"Issue #46: Found {len(bogus_substr)} 'substring(var - 1)' with "
+            "potentially String-typed var. Need int coercion."
+        )
+
+
+# ── Issue #47: Long.parseLong on non-numeric strings ─────────────
+
+class TestIssue47_LongParseString:
+    """Issue #47: VARCHAR2 variables named like *step_no*, *pro_id*
+    are mistyped as Long, causing Long.parseLong("2.5.1") — runtime error."""
+
+    @pytest.mark.xfail(reason="Issue #47 OPEN — VARCHAR2 heuristic maps *no*→Long")
+    def test_step_no_is_string_not_long(self, cached_ast, tmp_path):
+        sql_file = "issue_47_long_parse_string.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+
+        # v_step_no should be String, not Long
+        # Check for Long vStepNo (wrong) vs String vStepNo (correct)
+        has_long_step = bool(re.search(r'\bLong\s+vStepNo\b', svc))
+        assert not has_long_step, (
+            "Issue #47: v_step_no mistyped as Long. "
+            "VARCHAR2 should map to String regardless of naming heuristic."
+        )
+
+    @pytest.mark.xfail(reason="Issue #47 OPEN — parseLong on non-numeric string")
+    def test_no_parselong_on_dotted_string(self, cached_ast, tmp_path):
+        sql_file = "issue_47_long_parse_string.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+
+        # Should NOT have parseLong("2.5.1") — non-numeric
+        dotted_parse = re.findall(r'Long\.parseLong\s*\(\s*"[^"]*\.[^"]*"', svc)
+        assert len(dotted_parse) == 0, (
+            f"Issue #47: Found {len(dotted_parse)} parseLong on dotted strings. "
+            f"e.g.: {dotted_parse[:3]}"
+        )
+
+    @pytest.mark.xfail(reason="Issue #47 OPEN — all VARCHAR2 vars with *id/*no may get Long.parseLong")
+    def test_no_parselong_for_any_id_vars(self, cached_ast, tmp_path):
+        """Collect test: count parseLong calls on string-literal arguments."""
+        sql_file = "issue_47_long_parse_string.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+
+        all_parse = re.findall(r'Long\.parseLong\s*\(', svc)
+        assert len(all_parse) == 0, (
+            f"Issue #47: Found {len(all_parse)} Long.parseLong calls. "
+            "All variables are VARCHAR2 — no parseLong should be needed."
+        )
+
+
+# ── Issue #48: Long.compareTo(String) type mismatch ──────────────
+
+class TestIssue48_LongCompareToString:
+    """Issue #48: Long variable compared against string literal produces
+    Long.compareTo(String) — won't compile due to type mismatch."""
+
+    @pytest.mark.xfail(reason="Issue #48 OPEN — BinaryOp early-return for Long blocks String coercion")
+    def test_no_compareto_with_string_literal(self, cached_ast, tmp_path):
+        sql_file = "issue_48_long_compareto_string.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+
+        # Long.compareTo("9999") — Long.compareTo with quoted string arg
+        long_cmp_string = re.findall(
+            r'\b\w+\.compareTo\s*\(\s*"', svc
+        )
+        assert len(long_cmp_string) == 0, (
+            f"Issue #48: Found {len(long_cmp_string)} compareTo with string literal. "
+            f"Long variable should not be compared to string: {long_cmp_string[:5]}"
+        )
+
+    def test_long_compare_to_long_is_fine(self, cached_ast, tmp_path):
+        """Control: Long.compareTo(Long) is correct Java."""
+        sql_file = "issue_48_long_compareto_string.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+
+        # proc_check_count should have Long or == comparisons, not string
+        has_long_compare = bool(re.search(
+            r'compareTo\s*\(\s*Long\.valueOf|compareTo\s*\(\s*\d+L?\s*\)|==\s*\d+L?\b',
+            svc
+        ))
+        assert has_long_compare, (
+            "Issue #48: Long-to-Long comparison not using correct Java pattern."
+        )
+
+    @pytest.mark.xfail(reason="Issue #48 OPEN — string literal '9999' not coerced to Long")
+    def test_string_literal_coerced_in_long_compare(self, cached_ast, tmp_path):
+        sql_file = "issue_48_long_compareto_string.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+
+        # For IF v_pro_id = '9999', should produce Long.valueOf(9999) or 9999L
+        assert bool(re.search(r'9999\s*L?\b', svc)), (
+            "Issue #48: String literal '9999' not coerced to numeric. "
+            "Expected Long.valueOf(9999) or 9999L in Long comparison."
+        )
+
+
+# ── Issue #49: VARCHAR2→Long used as String concatenation ────────
+
+class TestIssue49_Varchar2Concat:
+    """Issue #49: vProId (VARCHAR2) mistyped as Long due to *id* heuristic,
+    then used in string concatenation — semantic type error."""
+
+    @pytest.mark.xfail(reason="Issue #49 OPEN — *id* heuristic maps VARCHAR2 to Long")
+    def test_pro_id_is_string_not_long(self, cached_ast, tmp_path):
+        sql_file = "issue_49_varchar2_concat.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+
+        # v_pro_id should be String type, not Long
+        has_long_pro = bool(re.search(r'\bLong\s+vProId\b', svc))
+        assert not has_long_pro, (
+            "Issue #49: v_pro_id declared as Long but is VARCHAR2. "
+            "Should be String type."
+        )
+
+        # Verify it is actually String
+        has_string_pro = bool(re.search(r'\bString\s+vProId\b', svc))
+        assert has_string_pro, (
+            "Issue #49: v_pro_id not found as String type. "
+            "VARCHAR2 should map to String."
+        )
+
+    @pytest.mark.xfail(reason="Issue #49 OPEN — trade_ids also mistyped")
+    def test_trade_ids_is_string_not_long(self, cached_ast, tmp_path):
+        sql_file = "issue_49_varchar2_concat.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+
+        # v_trade_ids should also be String
+        has_long_trade = bool(re.search(r'\bLong\s+vTradeIds\b', svc))
+        assert not has_long_trade, (
+            "Issue #49: v_trade_ids declared as Long but is VARCHAR2."
+        )
+
+    def test_concat_uses_string_not_long_arithmetic(self, cached_ast, tmp_path):
+        """Control: string concatenation should use + or StringBuilder, not
+        arithmetic that would fail with Long type."""
+        sql_file = "issue_49_varchar2_concat.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+
+        # String concatenation should be present (|| → +)
+        concat_pattern = re.findall(r'vProId\s*\+\s*"', svc)
+        assert len(concat_pattern) > 0, (
+            "Issue #49: No string concatenation found for vProId || '...' "
+            "Expected vProId + \"...\" pattern."
+        )
+
+
 # ── Meta: Verify all issue fixtures parse correctly ──────────────
 
 class TestIssueFixturesParse:
@@ -514,6 +831,12 @@ class TestIssueFixturesParse:
         "issue_39_thread_safety.sql",
         "issue_40_string_compare.sql",
         "issue_41_type_system.sql",
+        "issue_44_if_elsif_goto.sql",
+        "issue_45_exception_handling.sql",
+        "issue_46_chr_ascii_substr.sql",
+        "issue_47_long_parse_string.sql",
+        "issue_48_long_compareto_string.sql",
+        "issue_49_varchar2_concat.sql",
     ]
 
     @pytest.mark.parametrize("sql_file", ISSUE_FIXTURES)
