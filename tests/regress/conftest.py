@@ -230,6 +230,12 @@ EXPECTED_BASELINES = {
     "complex_clearing_pkg.sql":      {"min_procs": 3, "min_procs_with_dml": 2},
     "gauss_complete_examples.sql":   {"min_procs": 4, "min_procs_with_dml": 2},
     "PKG_WARPDRIVER_STRESS_TEST.sql":{"min_procs": 5, "min_procs_with_dml": 1},
+    # Issue regression fixtures (#34–#41)
+    "issue_34_35_dto_naming.sql":    {"min_procs": 3, "min_procs_with_dml": 2},
+    "issue_38_map_put.sql":          {"min_procs": 3, "min_procs_with_dml": 0},
+    "issue_39_thread_safety.sql":    {"min_procs": 3, "min_procs_with_dml": 0},
+    "issue_40_string_compare.sql":   {"min_procs": 3, "min_procs_with_dml": 0},
+    "issue_41_type_system.sql":      {"min_procs": 3, "min_procs_with_dml": 2},
 }
 
 # complex_clearing_pkg.sql crashes ogsql v0.8.32's Python engine

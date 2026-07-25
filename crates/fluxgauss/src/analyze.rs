@@ -106,6 +106,7 @@ pub fn analyze_procedure(
             }
             proc.java_logic_lines.push("}".into());
         }
+        ctx.unresolved_calls.extend(stmt_ctx.unresolved_calls.drain(..));
     }
     proc.body = body;
     result

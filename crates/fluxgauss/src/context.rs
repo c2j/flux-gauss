@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::types::{PackageSummary, VarInfo};
+use crate::types::{PackageSummary, UnresolvedCall, VarInfo};
 
 pub struct ScanContext {
     pub type_overrides: HashMap<(String, String), String>,
@@ -27,7 +27,7 @@ pub struct AnalysisContext {
     pub stub_procedures: HashSet<(String, usize)>,
     pub stub_reasons: HashMap<(String, usize), Vec<String>>,
     pub unsupported_functions: Vec<String>,
-    pub unresolved_calls: Vec<String>,
+    pub unresolved_calls: Vec<UnresolvedCall>,
     /// Cache for source file contents: path → lines. Avoids re-reading files per procedure.
     pub source_cache: HashMap<String, Vec<String>>,
     /// Debug mode enabled (--debug CLI flag)
@@ -78,6 +78,7 @@ pub struct StatementContext<'a> {
     pub debug: bool,
     pub current_stmt_idx: usize,
     pub stmt_lines: Vec<u32>,
+    pub unresolved_calls: Vec<UnresolvedCall>,
 }
 
 impl<'a> StatementContext<'a> {
@@ -90,6 +91,7 @@ impl<'a> StatementContext<'a> {
             debug: false,
             current_stmt_idx: 0,
             stmt_lines: Vec::new(),
+            unresolved_calls: Vec::new(),
         }
     }
 }

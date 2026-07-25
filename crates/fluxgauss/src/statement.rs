@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 use regex::Regex;
 use crate::context::StatementContext;
-use crate::types::{ConversionError, DmlType, DmlStatement, Parameter, ProcedureInfo, ServiceCall};
+use crate::types::{ConversionError, DmlType, DmlStatement, Parameter, ProcedureInfo, ServiceCall, UnresolvedCall};
 
 fn ident_string(id: &ogsql_parser::Ident) -> String {
     id.as_str().to_string()
@@ -236,12 +236,40 @@ fn strip_out_param_get(java: &str, proc: &ProcedureInfo) -> String {
     java.to_string()
 }
 
-fn dml_method_name(dml_type: &str, proc_name: &str, counter: &mut HashMap<String, usize>) -> String {
-    let key = format!("{}_{}", dml_type, proc_name);
-    let n = counter.entry(key.clone()).or_insert(0);
-    let suffix = if *n > 0 { format!("_{}", n) } else { String::new() };
-    *n += 1;
-    format!("{}{}{}", dml_type, snake_to_pascal(proc_name), suffix)
+fn dml_method_name(dml_type: &str, proc_name: &str, counter: &mut HashMap<String, usize>, semantic_key: Option<&str>) -> String {
+    if let Some(sk) = semantic_key {
+        let key = format!("{}_{}", dml_type, sk);
+        let n = counter.entry(key).or_insert(0);
+        let suffix = if *n > 0 { format!("_{}", n) } else { String::new() };
+        *n += 1;
+        format!("{}{}{}", dml_type, snake_to_pascal(sk), suffix)
+    } else {
+        let key = format!("{}_{}", dml_type, proc_name);
+        let n = counter.entry(key).or_insert(0);
+        let suffix = if *n > 0 { format!("_{}", n) } else { String::new() };
+        *n += 1;
+        format!("{}{}{}", dml_type, snake_to_pascal(proc_name), suffix)
+    }
+}
+
+fn extract_dml_target_table(stmt: &ogsql_parser::ast::Statement) -> Option<String> {
+    use ogsql_parser::ast::Statement;
+    use ogsql_parser::ast::TableRef;
+    match stmt {
+        Statement::Select(s) => extract_first_table_name(&s.node.from),
+        Statement::Insert(s) => s.node.table.last().map(|i| ident_string(i)),
+        Statement::Update(s) => extract_first_table_name(&s.node.tables),
+        Statement::Delete(s) => extract_first_table_name(&s.node.tables),
+        _ => None,
+    }
+}
+
+fn extract_first_table_name(tables: &[ogsql_parser::ast::TableRef]) -> Option<String> {
+    use ogsql_parser::ast::TableRef;
+    tables.first().and_then(|t| match t {
+        TableRef::Table { name, .. } => name.last().map(|i| ident_string(i)),
+        _ => None,
+    })
 }
 
 fn build_mapper_call_args(proc: &ProcedureInfo) -> String {
@@ -751,6 +779,7 @@ fn handle_resolved_execute_sql(
             }
         }
 
+        let semantic_key = execute.parsed_query.as_ref().and_then(|q| extract_dml_target_table(q));
         let method_id = dml_method_name(
             match dml_type {
                 DmlType::Select => "select",
@@ -760,6 +789,7 @@ fn handle_resolved_execute_sql(
             },
             &proc.proc_name,
             &mut ctx.dml_counter,
+            semantic_key.as_deref(),
         );
 
         let mut extra_params: Vec<(String, String)> = Vec::new();
@@ -838,6 +868,13 @@ fn process_execute_stmt(
 
         if dml_type == Some(DmlType::Select) && execute.into_targets.is_empty() {
             push_logic_line(proc, format!("// PERFORM: {};", sql_text.replace('\n', " ")));
+            ctx.unresolved_calls.push(UnresolvedCall {
+                caller: format!("{}.{}", proc.package, proc.proc_name),
+                callee: format!("PERFORM {}", sql_text.replace('\n', " ")),
+                caller_file: proc.source_file.clone(),
+                args: String::new(),
+                hint: "add the defining SQL file to fluxgauss.yaml sources".to_string(),
+            });
             return;
         }
 
@@ -940,6 +977,7 @@ fn process_execute_stmt(
         }
 
         let dml_type = dml_type.unwrap_or(DmlType::Select);
+        let semantic_key = execute.parsed_query.as_ref().and_then(|q| extract_dml_target_table(q));
         let method_id = dml_method_name(
             match dml_type {
                 DmlType::Select => "select",
@@ -949,6 +987,7 @@ fn process_execute_stmt(
             },
             &proc.proc_name,
             &mut ctx.dml_counter,
+            semantic_key.as_deref(),
         );
         let args = build_mapper_call_args(proc);
 
@@ -1062,6 +1101,7 @@ fn process_execute_stmt(
                     },
                     &proc.proc_name,
                     &mut ctx.dml_counter,
+                    None,
                 );
                 let args = build_mapper_call_args(proc);
                 let clean_sql = clean_sql_for_mapper(&sql_text, dml_type);
@@ -1173,7 +1213,8 @@ fn process_sql_statement(
     match statement {
         Statement::Select(select_stmt) => {
             let into_targets = &select_stmt.node.into_targets;
-            let method_id = dml_method_name("select", &proc.proc_name, &mut ctx.dml_counter);
+            let semantic_key = extract_dml_target_table(statement);
+            let method_id = dml_method_name("select", &proc.proc_name, &mut ctx.dml_counter, semantic_key.as_deref());
             let clean_sql = clean_sql_for_mapper(sql_text, DmlType::Select);
             let args = build_mapper_call_args(proc);
 
@@ -1304,7 +1345,8 @@ fn process_sql_statement(
             }
         }
         Statement::Insert(_insert_stmt) => {
-            let method_id = dml_method_name("insert", &proc.proc_name, &mut ctx.dml_counter);
+            let semantic_key = extract_dml_target_table(statement);
+            let method_id = dml_method_name("insert", &proc.proc_name, &mut ctx.dml_counter, semantic_key.as_deref());
             let args = build_mapper_call_args(proc);
             proc.dml_statements.push(DmlStatement {
                         sql_type: DmlType::Insert,
@@ -1316,7 +1358,8 @@ fn process_sql_statement(
             push_logic_line(proc, format!("mapper.{}({});", method_id, args));
         }
         Statement::Update(_update_stmt) => {
-            let method_id = dml_method_name("update", &proc.proc_name, &mut ctx.dml_counter);
+            let semantic_key = extract_dml_target_table(statement);
+            let method_id = dml_method_name("update", &proc.proc_name, &mut ctx.dml_counter, semantic_key.as_deref());
             let args = build_mapper_call_args(proc);
             proc.dml_statements.push(DmlStatement {
                         sql_type: DmlType::Update,
@@ -1328,7 +1371,8 @@ fn process_sql_statement(
             push_logic_line(proc, format!("mapper.{}({});", method_id, args));
         }
         Statement::Delete(_delete_stmt) => {
-            let method_id = dml_method_name("delete", &proc.proc_name, &mut ctx.dml_counter);
+            let semantic_key = extract_dml_target_table(statement);
+            let method_id = dml_method_name("delete", &proc.proc_name, &mut ctx.dml_counter, semantic_key.as_deref());
             let args = build_mapper_call_args(proc);
             proc.dml_statements.push(DmlStatement {
                         sql_type: DmlType::Delete,
@@ -1403,6 +1447,13 @@ fn process_procedure_call(
     } else {
         let full_name = name_parts.join(".");
         push_logic_line(proc, format!("// CALL {}(...)", full_name));
+        ctx.unresolved_calls.push(UnresolvedCall {
+            caller: format!("{}.{}", proc.package, proc.proc_name),
+            callee: full_name.clone(),
+            caller_file: proc.source_file.clone(),
+            args: String::new(),
+            hint: "add the defining SQL file to fluxgauss.yaml sources".to_string(),
+        });
         return;
     };
 
@@ -1526,6 +1577,13 @@ fn process_procedure_call(
                 push_logic_line(proc, format!("this.{}({});", method, args_java));
             } else {
                 push_logic_line(proc, format!("// CALL {}({}) — procedure not found in current package", method, args_java));
+                ctx.unresolved_calls.push(UnresolvedCall {
+                    caller: format!("{}.{}", proc.package, proc.proc_name),
+                    callee: format!("{}.{}", proc.package, func),
+                    caller_file: proc.source_file.clone(),
+                    args: args_java.clone(),
+                    hint: "procedure not found in package".to_string(),
+                });
             }
         } else {
             proc.service_calls.push(ServiceCall {
@@ -1542,6 +1600,13 @@ fn process_procedure_call(
             .collect();
         let full_name = name_parts.join(".");
         push_logic_line(proc, format!("// CALL {}({})", full_name, args_fallback.join(", ")));
+        ctx.unresolved_calls.push(UnresolvedCall {
+            caller: format!("{}.{}", proc.package, proc.proc_name),
+            callee: full_name.clone(),
+            caller_file: proc.source_file.clone(),
+            args: args_fallback.join(", "),
+            hint: "add the defining SQL file to fluxgauss.yaml sources".to_string(),
+        });
     }
 }
 
@@ -1778,7 +1843,7 @@ fn process_forall_stmt(
     }
 
     // Build mapper method name
-    let mapper_method = dml_method_name(&dml_type_str, &proc.proc_name, &mut ctx.dml_counter);
+    let mapper_method = dml_method_name(&dml_type_str, &proc.proc_name, &mut ctx.dml_counter, None);
 
     let dml_type = match dml_type_str.as_str() {
         "insert" => DmlType::Insert,
@@ -2018,11 +2083,25 @@ pub fn process_statement(
                 if resolved {
                 } else if trimmed.starts_with(|c: char| c.is_ascii_digit()) || trimmed == "null" {
                     push_logic_line(proc, format!("// PERFORM: {};", query.replace('\n', " ")));
+                    ctx.unresolved_calls.push(UnresolvedCall {
+                        caller: format!("{}.{}", proc.package, proc.proc_name),
+                        callee: format!("PERFORM {}", query.replace('\n', " ")),
+                        caller_file: proc.source_file.clone(),
+                        args: String::new(),
+                        hint: "add the defining SQL file to fluxgauss.yaml sources".to_string(),
+                    });
                 } else {
                     push_logic_line(proc, format!("{};", val));
                 }
             } else {
                 push_logic_line(proc, format!("// PERFORM: {};", query.replace('\n', " ")));
+                ctx.unresolved_calls.push(UnresolvedCall {
+                    caller: format!("{}.{}", proc.package, proc.proc_name),
+                    callee: format!("PERFORM {}", query.replace('\n', " ")),
+                    caller_file: proc.source_file.clone(),
+                    args: String::new(),
+                    hint: "add the defining SQL file to fluxgauss.yaml sources".to_string(),
+                });
             }
             Ok(())
         }
@@ -2270,7 +2349,7 @@ pub fn process_statement(
                     proc.imports.insert("import java.util.Map;".to_string());
                     proc.imports.insert("import java.util.ArrayList;".to_string());
 
-                    let method_id = dml_method_name("select", &proc.proc_name, &mut ctx.dml_counter);
+                    let method_id = dml_method_name("select", &proc.proc_name, &mut ctx.dml_counter, None);
                     let args = build_mapper_call_args(proc);
 
                     proc.dml_statements.push(DmlStatement {
@@ -2319,7 +2398,7 @@ pub fn process_statement(
 
                     if let Some(query_sql) = cursor_query {
                         let clean_sql = query_sql.replace('\n', " ");
-                        let method_id = dml_method_name("select", &proc.proc_name, &mut ctx.dml_counter);
+                        let method_id = dml_method_name("select", &proc.proc_name, &mut ctx.dml_counter, None);
                         let args = build_mapper_call_args(proc);
 
                         proc.dml_statements.push(DmlStatement {
@@ -2478,7 +2557,7 @@ pub fn process_statement(
 
               if let Some(raw_sql) = sql_text_opt {
                    let sql_text = preprocess_cursor_sql(&raw_sql, &using_args, proc);
-                  let method_id = dml_method_name("select", &proc.proc_name, &mut ctx.dml_counter);
+                  let method_id = dml_method_name("select", &proc.proc_name, &mut ctx.dml_counter, None);
                   let result_var = format!("{}Result", raw_cursor_java);
                    let index_var = format!("{}Idx", raw_cursor_java);
 
@@ -2673,6 +2752,7 @@ pub fn process_statement(
                     },
                     &proc.proc_name,
                     &mut ctx.dml_counter,
+                    None,
                 );
                 let args = build_mapper_call_args(proc);
                 let clean_sql = clean_sql_for_mapper(sql_text, dml_type);
@@ -2840,6 +2920,7 @@ mod tests {
             debug: false,
             current_stmt_idx: 0,
             stmt_lines: Vec::new(),
+            unresolved_calls: Vec::new(),
         }
     }
 

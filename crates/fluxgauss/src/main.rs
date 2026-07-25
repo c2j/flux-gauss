@@ -226,6 +226,10 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     if !result.unresolved_calls.is_empty() {
         println!("    Unresolved:  {} (cross-package calls, 详见转换报告)",
                  result.unresolved_calls.len());
+        for call in &result.unresolved_calls {
+            log.log(&format!("    Unresolved call: {} -> {} (args: {}) [{}] — {}",
+                call.caller, call.callee, call.args, call.caller_file, call.hint));
+        }
     }
 
     if result.stub_count > 0 {

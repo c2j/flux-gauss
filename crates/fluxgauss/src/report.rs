@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::types::{PackageInfo, ProcedureMapping, SkippedItem};
+use crate::types::{PackageInfo, ProcedureMapping, SkippedItem, UnresolvedCall};
 
 #[derive(Debug, Clone)]
 pub struct ConversionReport {
@@ -16,7 +16,7 @@ pub struct ConversionReport {
     pub mappings: Vec<ProcedureMapping>,
     pub skipped: Vec<SkippedItem>,
     pub errors: Vec<String>,
-    pub unresolved_calls: Vec<String>,
+    pub unresolved_calls: Vec<UnresolvedCall>,
     pub stub_count: usize,
 }
 
@@ -104,8 +104,13 @@ impl ConversionReport {
             lines.push(String::new());
             lines.push("## ⚠️ 未解析的跨包调用".into());
             lines.push(String::new());
+            lines.push("| 调用方 | 被调用方 | 文件 | 参数 | 提示 |".into());
+            lines.push("|---|---|---|---|---|".into());
             for call in &self.unresolved_calls {
-                lines.push(format!("- {}", call));
+                lines.push(format!(
+                    "| `{}` | `{}` | `{}` | `{}` | {} |",
+                    call.caller, call.callee, call.caller_file, call.args, call.hint
+                ));
             }
             lines.push(String::new());
         }
@@ -154,7 +159,7 @@ impl ConversionReport {
 pub fn build_report(
     packages: &[PackageInfo],
     skipped: Vec<SkippedItem>,
-    unresolved_calls: Vec<String>,
+    unresolved_calls: Vec<UnresolvedCall>,
     stub_count: usize,
     config_path: &str,
     output_dir: &str,
