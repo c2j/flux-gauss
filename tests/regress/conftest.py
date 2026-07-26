@@ -248,7 +248,7 @@ EXPECTED_BASELINES = {
     # Issue regression fixtures (#54)
     "issue_54_nested_exception.sql":{"min_procs": 2, "min_procs_with_dml": 1},
     # Issue regression fixtures (#56)
-    "issue_56_return_in_handler.sql":{"min_procs": 3, "min_procs_with_dml": 3},
+    "pkg_issue56_return_handler.sql":{"min_procs": 3, "min_procs_with_dml": 3},
 }
 
 # complex_clearing_pkg.sql crashes ogsql v0.8.32's Python engine

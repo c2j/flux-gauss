@@ -877,7 +877,7 @@ class TestIssue56_ReturnInHandler:
     the bracket mismatch root cause."""
 
     def _gen_svc(self, cached_ast, tmp_path):
-        sql_file = "issue_56_return_in_handler.sql"
+        sql_file = "pkg_issue56_return_handler.sql"
         out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
         svc = _read_generated(out_dir, _service_path(out_dir, cls))
         assert svc, "Service file not generated"
@@ -949,7 +949,7 @@ class TestIssueFixturesParse:
         "issue_48_long_compareto_string.sql",
         "issue_49_varchar2_concat.sql",
         "issue_54_nested_exception.sql",
-        "issue_56_return_in_handler.sql",
+        "pkg_issue56_return_handler.sql",
     ]
 
     @pytest.mark.parametrize("sql_file", ISSUE_FIXTURES)
