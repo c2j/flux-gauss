@@ -383,6 +383,7 @@ pub fn write_mapper_xml(
     w.line(&format!("<mapper namespace=\"{}\">", namespace));
     w.blank();
 
+    w.push_indent();
     for (i, stmt) in statements.iter().enumerate() {
         if i > 0 {
             w.blank();
@@ -398,6 +399,7 @@ pub fn write_mapper_xml(
         w.line(&format!("    {}", sql_text));
         w.line("</select>");
     }
+    w.pop_indent();
 
     w.blank();
     w.line("</mapper>");
