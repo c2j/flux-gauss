@@ -864,6 +864,78 @@ class TestIssue54_NestedException:
         assert len(orphaned) == 0, f"Found {len(orphaned)} empty try blocks"
 
 
+# ── Issue #56: RETURN in EXCEPTION handler → unreachable code ──
+
+class TestIssue56_ReturnInHandler:
+    """Issue #56: RETURN in EXCEPTION WHEN handler makes subsequent
+    handler code unreachable due to sequential concatenation."""
+
+    def _gen_svc(self, cached_ast, tmp_path):
+        sql_file = "issue_56_return_in_handler.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+        return svc
+
+    def _no_unreachable_after_return_in_catch(self, svc, proc_name):
+        lines = svc.split('\n')
+        in_catch = False
+        catch_depth = 0
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith('} catch ('):
+                in_catch = True
+                catch_depth = 1
+                continue
+            if in_catch:
+                opens = stripped.count('{')
+                closes = stripped.count('}')
+                catch_depth += opens - closes
+                if catch_depth <= 0:
+                    in_catch = False
+                    continue
+                if stripped == 'return;' or stripped.startswith('throw '):
+                    for j in range(i + 1, len(lines)):
+                        ns = lines[j].strip()
+                        if not ns or ns.startswith('//'):
+                            continue
+                        od = ns.count('{')
+                        cd = ns.count('}')
+                        if cd > od and catch_depth + (od - cd) <= 0:
+                            break
+                        assert False, (
+                            f"{proc_name}: unreachable code after return/throw "
+                            f"at line {i + 1}: '{ns[:80]}'"
+                        )
+
+    def test_two_handlers_no_unreachable(self, cached_ast, tmp_path):
+        svc = self._gen_svc(cached_ast, tmp_path)
+        self._no_unreachable_after_return_in_catch(
+            svc, 'proc_two_handlers_first_returns')
+
+    def test_nested_block_no_unreachable(self, cached_ast, tmp_path):
+        svc = self._gen_svc(cached_ast, tmp_path)
+        self._no_unreachable_after_return_in_catch(
+            svc, 'proc_nested_block_then_return')
+
+    def test_three_handlers_no_unreachable(self, cached_ast, tmp_path):
+        svc = self._gen_svc(cached_ast, tmp_path)
+        self._no_unreachable_after_return_in_catch(
+            svc, 'proc_three_handlers_returns')
+
+    def test_handlers_are_conditional(self, cached_ast, tmp_path):
+        svc = self._gen_svc(cached_ast, tmp_path)
+        catch_sections = re.findall(
+            r'} catch \(Exception e\) \{([^}]*(?:\{[^}]*\}[^}]*)*)\}',
+            svc, re.DOTALL)
+        for section in catch_sections:
+            if section.count('// WHEN') > 1:
+                assert '} else {' in section or 'else if' in section, (
+                    "Multi-handler catch lacks conditional branching: "
+                    f"{section[:120]}..."
+                )
+
+
 # ── Meta: Verify all issue fixtures parse correctly ──────────────
 
 class TestIssueFixturesParse:
@@ -882,6 +954,7 @@ class TestIssueFixturesParse:
         "issue_48_long_compareto_string.sql",
         "issue_49_varchar2_concat.sql",
         "issue_54_nested_exception.sql",
+        "issue_56_return_in_handler.sql",
     ]
 
     @pytest.mark.parametrize("sql_file", ISSUE_FIXTURES)
