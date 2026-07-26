@@ -1,0 +1,104 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue56ReturnHandlerMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/pkg_issue56_return_handler.sql
+public class Issue56ReturnHandlerService {
+    private static final Logger log = LoggerFactory.getLogger(Issue56ReturnHandlerService.class);
+
+    private final Issue56ReturnHandlerMapper issue56ReturnHandlerMapper;
+
+    public Issue56ReturnHandlerService(Issue56ReturnHandlerMapper issue56ReturnHandlerMapper) {
+        this.issue56ReturnHandlerMapper = issue56ReturnHandlerMapper;
+    }
+
+    // Source: pkg_issue56_return_handler.proc_two_handlers_first_returns (PROCEDURE) — {FIXTURES_ROOT}/pkg_issue56_return_handler.sql:20-34
+    public void procTwoHandlersFirstReturns(AtomicReference<String> pResult) {
+        String vData = null;
+        String __SQLERRM__ = "";
+        int __SQLCODE__ = 0;
+        try {
+            { var _val = issue56ReturnHandlerMapper.selectTIssue56Data(); if (_val != null) vData = (String) _val; }
+            pResult.set(String.valueOf(vData));
+        } catch (BusinessException e) { // no_data_found
+            __SQLERRM__ = e.getMessage();
+            __SQLCODE__ = -1;
+            pResult.set("not_found");
+            return;
+        }
+        } catch (Exception e) {
+            __SQLERRM__ = e.getMessage();
+            __SQLCODE__ = -1;
+            pResult.set("error");
+            return;
+        }
+    }
+
+    // Source: pkg_issue56_return_handler.proc_nested_block_then_return (PROCEDURE) — {FIXTURES_ROOT}/pkg_issue56_return_handler.sql:36-62
+    public void procNestedBlockThenReturn(AtomicReference<String> pResult) {
+        String vData = null;
+        String vTmp = null;
+        String __SQLERRM__ = "";
+        int __SQLCODE__ = 0;
+        try {
+            { var _val = issue56ReturnHandlerMapper.selectTIssue56Data_1(); if (_val != null) vData = (String) _val; }
+            if (vData == null) {
+                vData = "default";
+            }
+            pResult.set(String.valueOf(vData));
+        } catch (BusinessException e) { // no_data_found
+            __SQLERRM__ = e.getMessage();
+            __SQLCODE__ = -1;
+            try {
+                { var _val = issue56ReturnHandlerMapper.selectTIssue56Data_2(); if (_val != null) vTmp = (String) _val; }
+                pResult.set(String.valueOf(vTmp));
+            } catch (Exception e) {
+                __SQLERRM__ = e.getMessage();
+                __SQLCODE__ = -1;
+                pResult.set("nested_fallback_failed");
+            }
+            return;
+        }
+        } catch (Exception e) {
+            __SQLERRM__ = e.getMessage();
+            __SQLCODE__ = -1;
+            pResult.set("outer_error");
+            return;
+        }
+    }
+
+    // Source: pkg_issue56_return_handler.proc_three_handlers_returns (PROCEDURE) — {FIXTURES_ROOT}/pkg_issue56_return_handler.sql:64-81
+    public void procThreeHandlersReturns(AtomicReference<String> pResult) {
+        String vData = null;
+        String __SQLERRM__ = "";
+        int __SQLCODE__ = 0;
+        try {
+            { var _val = issue56ReturnHandlerMapper.selectTIssue56Data_2(); if (_val != null) vData = (String) _val; }
+            pResult.set(String.valueOf(vData));
+        } catch (BusinessException e) { // no_data_found
+            __SQLERRM__ = e.getMessage();
+            __SQLCODE__ = -1;
+            pResult.set("not_found");
+            return;
+        }
+        } catch (BusinessException e) { // too_many_rows
+            __SQLERRM__ = e.getMessage();
+            __SQLCODE__ = -1;
+            pResult.set("too_many");
+            return;
+        }
+        } catch (Exception e) {
+            __SQLERRM__ = e.getMessage();
+            __SQLCODE__ = -1;
+            pResult.set("error");
+            return;
+        }
+    }
+}

@@ -524,10 +524,10 @@ public class WarpdriverStressTestService {
     public Integer fnMultiCursorReturn(long pCustomerId, AtomicReference<Object> pCurOrders, AtomicReference<Object> pCurPayments) {
         Integer vOrderCnt = 0;
         Integer vPayCnt = 0;
-        List<Map<String, Object>> pCurPaymentsResult = null;
-        int pCurPaymentsIdx = 0;
         List<Map<String, Object>> pCurOrdersResult = null;
         int pCurOrdersIdx = 0;
+        List<Map<String, Object>> pCurPaymentsResult = null;
+        int pCurPaymentsIdx = 0;
         pCurOrdersResult = warpdriverStressTestMapper.selectFnMultiCursorReturn(pCustomerId);
         if (pCurOrdersResult == null) pCurOrdersResult = new java.util.ArrayList<>();
         pCurOrdersIdx = 0;
