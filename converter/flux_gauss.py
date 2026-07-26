@@ -13042,25 +13042,84 @@ def _build_success_test(proc: ProcedureInfo, mapper_name: str,
     _dml_insert_update_delete = [d for d in proc.dml_statements if d.sql_type in ("insert", "update", "delete")]
     if _dml_insert_update_delete and not is_stubbed and not has_empty_body and not has_body_error:
         first_dml = _dml_insert_update_delete[0]
-        dml_info = all_dmls.get(first_dml.method_id)
+        first_pt = tuple(_get_dml_mapper_param_types(proc, first_dml))
+        dml_info = all_dmls.get((first_dml.method_id, first_pt))
         if dml_info:
-            _, _, _, _, dml_param_count, _, _, _, dml_is_forall_batch = dml_info
+            _, _, _, _, dml_param_count, _, _, _, dml_is_forall_batch = dml_info[:9]
+            param_types = dml_info[9] if len(dml_info) > 9 else []
             if dml_is_forall_batch:
                 lines.append(f"        verify({mapper_name}, atLeast(0)).{first_dml.method_id}(anyList());")
             else:
-                method_any = ", ".join(["any()"] * dml_param_count) if dml_param_count > 0 else ""
+                if first_dml.method_id in _detect_overloaded_ids(all_dmls):
+                    if param_types:
+                        method_any = ", ".join(f"any({_any_type_class(pt)})" for pt in param_types)
+                    else:
+                        method_any = ", ".join(["any()"] * dml_param_count) if dml_param_count > 0 else ""
+                else:
+                    method_any = ", ".join(["any()"] * dml_param_count) if dml_param_count > 0 else ""
                 lines.append(f"        verify({mapper_name}, atLeast(0)).{first_dml.method_id}({method_any});")
 
     lines.append("    }")
     return "\n".join(lines)
 
 
+def _get_dml_mapper_param_types(proc: ProcedureInfo, dml: DmlStatement) -> list:
+    """Compute Java param types for a DML mapper method, matching _build_mapper_method order."""
+    sql_raw = dml.sql_text or ""
+    _sql_refs = set(re.findall(r'[#\$]\{(\w+)', sql_raw))
+    if dml.is_dynamic and dml.dynamic_conditions:
+        for dc in dml.dynamic_conditions:
+            _sql_refs.update(re.findall(r'[#\$]\{(\w+)', dc.sql_fragment))
+
+    types = []
+    _extra_java_names = {jn for jn, _ in dml.extra_params}
+
+    for p in proc.parameters:
+        if p.mode and p.mode.upper() == "OUT":
+            continue
+        if dml.is_dynamic and p.java_name not in _sql_refs and p.java_name not in _extra_java_names:
+            continue
+        types.append(p.java_type)
+
+    for java_name, java_type in _dml_used_local_vars(proc, dml):
+        mapper_type = re.sub(r'^AtomicReference<(.+)>$', r'\1', java_type) if java_type else java_type
+        types.append(mapper_type)
+
+    seen_java = {p.java_name for p in proc.parameters if not (p.mode and p.mode.upper() == "OUT")}
+    seen_java.update(jn for jn, _ in _dml_used_local_vars(proc, dml))
+    for java_name, java_type in dml.extra_params:
+        if java_name not in seen_java:
+            seen_java.add(java_name)
+            types.append(java_type)
+
+    return types
+
+
+_PRIMITIVE_BOXING = {"boolean": "Boolean", "int": "Integer", "long": "Long", "double": "Double", "float": "Float", "short": "Short", "byte": "Byte", "char": "Character"}
+
+_SIMPLE_TO_FQ = {
+    "Map": "java.util.Map",
+    "List": "java.util.List",
+    "AtomicReference": "java.util.concurrent.atomic.AtomicReference",
+}
+
+
+def _any_type_class(java_type: str) -> str:
+    base = re.sub(r'<.*>', '', java_type).strip()
+    base = _PRIMITIVE_BOXING.get(base, base)
+    if "." not in base:
+        base = _SIMPLE_TO_FQ.get(base, base)
+    return f"{base}.class"
+
+
 def _collect_all_dmls(pkg: PackageInfo) -> dict:
-    all_dmls = {}
+    all_dmls = {}  # key: (method_id, tuple(param_types)) — includes param types for overload disambiguation
     for p in pkg.procedures:
         in_param_count = sum(1 for param in p.parameters if not (param.mode and param.mode.upper() == "OUT"))
         for dml in p.dml_statements:
-            if dml.method_id not in all_dmls:
+            param_types = _get_dml_mapper_param_types(p, dml)
+            key = (dml.method_id, tuple(param_types))
+            if key not in all_dmls:
                 local_var_names = {jn for jn, _ in _dml_used_local_vars(p, dml)}
                 extra_param_count = sum(1 for jn, _ in dml.extra_params if jn not in local_var_names)
                 local_var_count = len(local_var_names)
@@ -13074,7 +13133,7 @@ def _collect_all_dmls(pkg: PackageInfo) -> dict:
                     total = dyn_param_count + local_var_count + extra_param_count
                 else:
                     total = in_param_count + local_var_count + extra_param_count
-                all_dmls[dml.method_id] = (dml.method_id, dml.sql_type, dml.result_type, dml.returns_list, total, dml.sql_text, dml.returning_cols, dml.returning_into_vars, dml.is_forall_batch)
+                all_dmls[key] = (dml.method_id, dml.sql_type, dml.result_type, dml.returns_list, total, dml.sql_text, dml.returning_cols, dml.returning_into_vars, dml.is_forall_batch, list(param_types))
     return all_dmls
 
 
@@ -13268,17 +13327,43 @@ def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bo
     return f"        {{ var m = new java.util.HashMap<String,Object>(); m.put(\"id\", 1L); m.put(\"emp_id\", 1L); m.put(\"product_id\", 1L); m.put(\"v_product_id\", 1L); m.put(\"v_qty\", 10); m.put(\"total\", 100); m.put(\"v_total\", 100); m.put(\"stock_qty\", 999); m.put(\"name\", \"test\"); m.put(\"emp_name\", \"test\"); m.put(\"status\", \"ACTIVE\"); m.put(\"v_status\", \"PENDING\"); m.put(\"v_amount\", java.math.BigDecimal.TEN); m.put(\"base_salary\", java.math.BigDecimal.TEN); m.put(\"bonus_pct\", 0.10d); m.put(\"allowance\", 1000); m.put(\"count\", 1); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m).thenReturn(null); }}"
 
 
+def _detect_overloaded_ids(all_dmls: dict) -> set:
+    method_id_entries = {}
+    for key in all_dmls:
+        mid = key[0]
+        pts = key[1]
+        if mid not in method_id_entries:
+            method_id_entries[mid] = []
+        method_id_entries[mid].append(pts)
+
+    overloaded = set()
+    for mid, entries in method_id_entries.items():
+        if len(entries) > 1:
+            counts = set(len(e) for e in entries)
+            if len(counts) == 1 and len(entries) > 1:
+                overloaded.add(mid)
+    return overloaded
+
+
 def _mock_all_mapper_methods(mapper_name: str, pkg: PackageInfo, lines: list, error_mode: bool = False):
     all_dmls = _collect_all_dmls(pkg)
+    overloaded = _detect_overloaded_ids(all_dmls)
     for dml_key, dml_info in all_dmls.items():
-        dml_method_id, dml_sql_type, dml_result_type, dml_returns_list, dml_param_count, dml_sql_text, dml_returning_cols, dml_returning_into_vars, dml_is_forall_batch = dml_info
+        dml_method_id, dml_sql_type, dml_result_type, dml_returns_list, dml_param_count, dml_sql_text, dml_returning_cols, dml_returning_into_vars, dml_is_forall_batch = dml_info[:9]
+        param_types = dml_info[9] if len(dml_info) > 9 else []
         if dml_is_forall_batch:
             if error_mode:
                 lines.append(f"        when({mapper_name}.{dml_method_id}(anyList())).thenReturn(0);")
             else:
                 lines.append(f"        when({mapper_name}.{dml_method_id}(anyList())).thenReturn(1);")
             continue
-        method_any = ", ".join(["any()"] * dml_param_count) if dml_param_count > 0 else ""
+        if dml_param_count > 0:
+            if dml_method_id in overloaded:
+                method_any = ", ".join(f"any({_any_type_class(pt)})" for pt in param_types)
+            else:
+                method_any = ", ".join(["any()"] * dml_param_count)
+        else:
+            method_any = ""
         if error_mode and dml_sql_type == "select":
             if dml_returns_list:
                 lines.append(f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of());")
