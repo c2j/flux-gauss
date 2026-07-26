@@ -54,7 +54,6 @@ jobs:
       - name: Package
         run: |
           cd target/x86_64-unknown-linux-gnu/release
-          tar czf ${{ github.workspace }}/ogsql-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz ogsql
           zip ${{ github.workspace }}/ogsql-${{ steps.version.outputs.version }}-linux-x86_64.zip ogsql
 
       - name: Upload artifact
@@ -62,9 +61,7 @@ jobs:
         with:
           name: ogsql-linux-x86_64
           retention-days: 1
-          path: |
-            ogsql-*.tar.gz
-            ogsql-*.zip
+          path: ogsql-*.zip
 
   build-ogsql-linux-arm64:
     name: Build ogsql linux-arm64 (glibc >= 2.17)
@@ -106,7 +103,6 @@ jobs:
       - name: Package
         run: |
           cd target/aarch64-unknown-linux-gnu/release
-          tar czf ${{ github.workspace }}/ogsql-${{ steps.version.outputs.version }}-linux-arm64.tar.gz ogsql
           zip ${{ github.workspace }}/ogsql-${{ steps.version.outputs.version }}-linux-arm64.zip ogsql
 
       - name: Upload artifact
@@ -114,9 +110,7 @@ jobs:
         with:
           name: ogsql-linux-arm64
           retention-days: 1
-          path: |
-            ogsql-*.tar.gz
-            ogsql-*.zip
+          path: ogsql-*.zip
 
   build-ogsql-windows-x86_64:
     name: Build ogsql windows-x86_64
@@ -204,7 +198,6 @@ jobs:
       - name: Package
         run: |
           cd target/release
-          tar czf ${{ github.workspace }}/ogsql-${{ steps.version.outputs.version }}-macos-arm64.tar.gz ogsql
           zip ${{ github.workspace }}/ogsql-${{ steps.version.outputs.version }}-macos-arm64.zip ogsql
 
       - name: Upload artifact
@@ -212,9 +205,7 @@ jobs:
         with:
           name: ogsql-macos-arm64
           retention-days: 1
-          path: |
-            ogsql-*.tar.gz
-            ogsql-*.zip
+          path: ogsql-*.zip
 
   # ── fluxgauss binary (from this repo, uses ogsql-parser git dep) ─
   build-fluxgauss-linux-x86_64:
@@ -250,7 +241,6 @@ jobs:
       - name: Package
         run: |
           cd target/x86_64-unknown-linux-gnu/release
-          tar czf ${{ github.workspace }}/fluxgauss-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz fluxgauss
           zip ${{ github.workspace }}/fluxgauss-${{ steps.version.outputs.version }}-linux-x86_64.zip fluxgauss
 
       - name: Upload artifact
@@ -258,9 +248,7 @@ jobs:
         with:
           name: fluxgauss-linux-x86_64
           retention-days: 1
-          path: |
-            fluxgauss-*.tar.gz
-            fluxgauss-*.zip
+          path: fluxgauss-*.zip
 
   build-fluxgauss-linux-arm64:
     name: Build fluxgauss linux-arm64 (glibc >= 2.17)
@@ -299,7 +287,6 @@ jobs:
       - name: Package
         run: |
           cd target/aarch64-unknown-linux-gnu/release
-          tar czf ${{ github.workspace }}/fluxgauss-${{ steps.version.outputs.version }}-linux-arm64.tar.gz fluxgauss
           zip ${{ github.workspace }}/fluxgauss-${{ steps.version.outputs.version }}-linux-arm64.zip fluxgauss
 
       - name: Upload artifact
@@ -307,9 +294,7 @@ jobs:
         with:
           name: fluxgauss-linux-arm64
           retention-days: 1
-          path: |
-            fluxgauss-*.tar.gz
-            fluxgauss-*.zip
+          path: fluxgauss-*.zip
 
   build-fluxgauss-windows-x86_64:
     name: Build fluxgauss windows-x86_64
@@ -391,7 +376,6 @@ jobs:
       - name: Package
         run: |
           cd target/release
-          tar czf ${{ github.workspace }}/fluxgauss-${{ steps.version.outputs.version }}-macos-arm64.tar.gz fluxgauss
           zip ${{ github.workspace }}/fluxgauss-${{ steps.version.outputs.version }}-macos-arm64.zip fluxgauss
 
       - name: Upload artifact
@@ -399,100 +383,7 @@ jobs:
         with:
           name: fluxgauss-macos-arm64
           retention-days: 1
-          path: |
-            fluxgauss-*.tar.gz
-            fluxgauss-*.zip
-
-  # ── Python engine CI ──────────────────────────────────────────
-  test-python-engine:
-    name: Python engine test (Linux x86_64)
-    runs-on: ubuntu-22.04
-    needs: [build-ogsql-linux-x86_64]
-    steps:
-      - name: Checkout flux-gauss
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: pip install pyyaml pytest
-
-      - name: Download ogsql binary
-        uses: actions/download-artifact@v4
-        with:
-          name: ogsql-linux-x86_64
-          path: ogsql-artifact
-
-      - name: Extract and prepare ogsql
-        run: |
-          if [ -f ogsql-artifact/ogsql-*.zip ]; then
-            unzip ogsql-artifact/ogsql-*.zip -d ogsql-artifact
-          else
-            tar xzf ogsql-artifact/ogsql-*.tar.gz -C ogsql-artifact
-          fi
-          chmod +x ogsql-artifact/ogsql
-          echo "OGSQL_BIN=$PWD/ogsql-artifact/ogsql" >> "$GITHUB_ENV"
-
-      - name: Run Python unit tests
-        run: python3 -m pytest tests/ -v --tb=short --ignore=tests/regress
-
-      - name: Run Python converter
-        run: python3 converter/flux_gauss.py -c demo-project/fluxgauss_py.yaml
-
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          java-version: "17"
-          distribution: "temurin"
-
-      - name: Compile generated output
-        run: cd dest_py && mvn compile --batch-mode --quiet
-
-      - name: Upload Python output
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-engine-output
-          retention-days: 1
-          path: dest_py/
-
-  # ── Python regression guard ────────────────────────────────────
-  test-python-regress:
-    name: Python regression guard (Linux x86_64)
-    runs-on: ubuntu-22.04
-    needs: [build-ogsql-linux-x86_64]
-    steps:
-      - name: Checkout flux-gauss
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: pip install pyyaml pytest
-
-      - name: Download ogsql binary
-        uses: actions/download-artifact@v4
-        with:
-          name: ogsql-linux-x86_64
-          path: ogsql-artifact
-
-      - name: Extract and prepare ogsql
-        run: |
-          if [ -f ogsql-artifact/ogsql-*.zip ]; then
-            unzip ogsql-artifact/ogsql-*.zip -d ogsql-artifact
-          else
-            tar xzf ogsql-artifact/ogsql-*.tar.gz -C ogsql-artifact
-          fi
-          chmod +x ogsql-artifact/ogsql
-          echo "OGSQL_BIN=$PWD/ogsql-artifact/ogsql" >> "$GITHUB_ENV"
-
-      - name: Run regression tests
-        run: python3 -m pytest tests/regress/ -v --tb=short -k "not TestGolden"
+          path: fluxgauss-*.zip
 
   # ── fluxgauss-py binary (PyInstaller, Python engine + bundled ogsql) ──
   build-fluxgauss-py-linux-x86_64:
@@ -532,11 +423,7 @@ jobs:
 
       - name: Extract ogsql
         run: |
-          if [ -f ogsql-artifact/ogsql-*.zip ]; then
-            unzip ogsql-artifact/ogsql-*.zip -d ogsql-artifact
-          else
-            tar xzf ogsql-artifact/ogsql-*.tar.gz -C ogsql-artifact
-          fi
+          unzip ogsql-artifact/ogsql-*.zip -d ogsql-artifact
           chmod +x ogsql-artifact/ogsql
           echo "OGSQL_BIN_PATH=$PWD/ogsql-artifact/ogsql" >> "$GITHUB_ENV"
 
@@ -551,7 +438,6 @@ jobs:
           mkdir -p bundle
           cp dist/fluxgauss-py bundle/
           cp ogsql-artifact/ogsql bundle/
-          tar czf ${{ github.workspace }}/fluxgauss-py-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz -C bundle fluxgauss-py ogsql
           zip ${{ github.workspace }}/fluxgauss-py-${{ steps.version.outputs.version }}-linux-x86_64.zip -j bundle/fluxgauss-py bundle/ogsql
 
       - name: Upload artifact
@@ -559,9 +445,7 @@ jobs:
         with:
           name: fluxgauss-py-linux-x86_64
           retention-days: 1
-          path: |
-            fluxgauss-py-*.tar.gz
-            fluxgauss-py-*.zip
+          path: fluxgauss-py-*.zip
 
   build-fluxgauss-py-linux-arm64:
     name: Build fluxgauss-py linux-arm64 (glibc >= 2.31)
@@ -591,11 +475,7 @@ jobs:
 
       - name: Extract ogsql
         run: |
-          if [ -f ogsql-artifact/ogsql-*.zip ]; then
-            unzip ogsql-artifact/ogsql-*.zip -d ogsql-artifact
-          else
-            tar xzf ogsql-artifact/ogsql-*.tar.gz -C ogsql-artifact
-          fi
+          unzip ogsql-artifact/ogsql-*.zip -d ogsql-artifact
           chmod +x ogsql-artifact/ogsql
 
       - name: Set up QEMU
@@ -619,8 +499,6 @@ jobs:
           mkdir -p bundle
           cp dist/fluxgauss-py bundle/
           cp ogsql-artifact/ogsql bundle/
-          tar czf "$GITHUB_WORKSPACE/fluxgauss-py-${{ steps.version.outputs.version }}-linux-arm64.tar.gz" \
-            -C bundle fluxgauss-py ogsql
           zip "$GITHUB_WORKSPACE/fluxgauss-py-${{ steps.version.outputs.version }}-linux-arm64.zip" \
             -j bundle/fluxgauss-py bundle/ogsql
 
@@ -629,9 +507,7 @@ jobs:
         with:
           name: fluxgauss-py-linux-arm64
           retention-days: 1
-          path: |
-            fluxgauss-py-*.tar.gz
-            fluxgauss-py-*.zip
+          path: fluxgauss-py-*.zip
 
   build-fluxgauss-py-windows-x86_64:
     name: Build fluxgauss-py windows-x86_64
@@ -736,11 +612,7 @@ jobs:
 
       - name: Extract ogsql
         run: |
-          if [ -f ogsql-artifact/ogsql-*.zip ]; then
-            unzip ogsql-artifact/ogsql-*.zip -d ogsql-artifact
-          else
-            tar xzf ogsql-artifact/ogsql-*.tar.gz -C ogsql-artifact
-          fi
+          unzip ogsql-artifact/ogsql-*.zip -d ogsql-artifact
           chmod +x ogsql-artifact/ogsql
           echo "OGSQL_BIN_PATH=$PWD/ogsql-artifact/ogsql" >> "$GITHUB_ENV"
 
@@ -755,7 +627,6 @@ jobs:
           mkdir -p bundle
           cp dist/fluxgauss-py bundle/
           cp ogsql-artifact/ogsql bundle/
-          tar czf ${{ github.workspace }}/fluxgauss-py-${{ steps.version.outputs.version }}-macos-arm64.tar.gz -C bundle fluxgauss-py ogsql
           zip ${{ github.workspace }}/fluxgauss-py-${{ steps.version.outputs.version }}-macos-arm64.zip -j bundle/fluxgauss-py bundle/ogsql
 
       - name: Upload artifact
@@ -763,45 +634,7 @@ jobs:
         with:
           name: fluxgauss-py-macos-arm64
           retention-days: 1
-          path: |
-            fluxgauss-py-*.tar.gz
-            fluxgauss-py-*.zip
-
-  # ── Rust engine CI ────────────────────────────────────────────
-  test-rust-engine:
-    name: Rust engine test (Linux x86_64)
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout flux-gauss
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Build
-        run: cargo build --release --bin fluxgauss
-
-      - name: Run Rust tests
-        run: cargo test --workspace
-
-      - name: Run Rust converter
-        run: cargo run --release --bin fluxgauss -- --config demo-project/fluxgauss_ru.yaml
-
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          java-version: "17"
-          distribution: "temurin"
-
-      - name: Compile generated output
-        run: cd dest_ru && mvn compile --batch-mode --quiet
-
-      - name: Upload Rust output
-        uses: actions/upload-artifact@v4
-        with:
-          name: rust-engine-output
-          retention-days: 1
-          path: dest_ru/
+          path: fluxgauss-py-*.zip
 
   # ── Release ───────────────────────────────────────────────────
   release:
@@ -819,9 +652,6 @@ jobs:
       - build-fluxgauss-py-linux-arm64
       - build-fluxgauss-py-windows-x86_64
       - build-fluxgauss-py-macos-arm64
-      - test-python-engine
-      - test-python-regress
-      - test-rust-engine
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -845,7 +675,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          find . -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec sha256sum {} \; > ../SHA256SUMS.txt
+          find . -type f -name '*.zip' -exec sha256sum {} \; > ../SHA256SUMS.txt
           mv ../SHA256SUMS.txt .
 
       - name: Create release
@@ -854,6 +684,5 @@ jobs:
           tag_name: ${{ steps.tag.outputs.tag }}
           generate_release_notes: true
           files: |
-            artifacts/**/*.tar.gz
             artifacts/**/*.zip
             artifacts/**/SHA256SUMS.txt

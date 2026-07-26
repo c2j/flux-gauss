@@ -62,6 +62,20 @@ jobs:
       - name: Run Rust regression tests
         run: cargo test --test regress
 
+      - name: Build and run Rust converter
+        run: |
+          cargo build --release --bin fluxgauss
+          cargo run --release --bin fluxgauss -- --config demo-project/fluxgauss_ru.yaml
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Compile generated Rust converter output
+        run: cd dest_ru && mvn compile --batch-mode --quiet
+
   # ── Python tests ───────────────────────────────────────────────
   test-python:
     name: Python tests
