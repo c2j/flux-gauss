@@ -817,6 +817,57 @@ class TestIssue49_Varchar2Concat:
         )
 
 
+# ── Issue #54: Nested BEGIN-EXCEPTION missing catch ─────────
+
+class TestIssue54_NestedException:
+    """Issue #54: Nested BEGIN-EXCEPTION (3+ levels) loses inner catch blocks."""
+
+    def _gen_svc(self, cached_ast, tmp_path):
+        sql_file = "issue_54_nested_exception.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+        return svc
+
+    def test_handler_body_has_nested_try_catch(self, cached_ast, tmp_path):
+        """proc_nested_block_in_handler: handler body Block with exc must
+        produce inner try/catch."""
+        svc = self._gen_svc(cached_ast, tmp_path)
+        catch_count = len(re.findall(r'\bcatch\s*\(', svc))
+        assert catch_count >= 2, (
+            f"Issue #54: Expected >=2 catch blocks for nested handler, got {catch_count}"
+        )
+
+    def test_three_level_nested_has_all_catches(self, cached_ast, tmp_path):
+        """proc_three_level_nested: 3-level nesting must have
+        catch at every level, no orphaned try."""
+        svc = self._gen_svc(cached_ast, tmp_path)
+        catch_count = len(re.findall(r'\bcatch\s*\(', svc))
+        assert catch_count >= 3, (
+            f"Issue #54: Expected >=3 catch blocks for 3-level nesting, got {catch_count}"
+        )
+
+    def test_no_orphaned_try_without_catch(self, cached_ast, tmp_path):
+        """Verify every try has a matching catch or finally."""
+        svc = self._gen_svc(cached_ast, tmp_path)
+        try_count = len(re.findall(r'\btry\s*\{', svc))
+        catch_count = len(re.findall(r'\bcatch\s*\(', svc))
+        finally_count = len(re.findall(r'\bfinally\s*\{', svc))
+        assert try_count <= catch_count + finally_count, (
+            f"Issue #54: {try_count} try blocks but only {catch_count} catch + "
+            f"{finally_count} finally. Orphaned try without handler."
+        )
+
+    def test_no_parse_error_try_in_service(self, cached_ast, tmp_path):
+        """No SyntaxError-level try-without-catch patterns that fail javac."""
+        svc = self._gen_svc(cached_ast, tmp_path)
+        assert 'try {' in svc, "No try block at all"
+        assert 'catch (' in svc, "No catch block at all"
+        # There shouldn't be try followed immediately by catch-less construct
+        orphaned = re.findall(r'try\s*\{\s*\}', svc)
+        assert len(orphaned) == 0, f"Found {len(orphaned)} empty try blocks"
+
+
 # ── Meta: Verify all issue fixtures parse correctly ──────────────
 
 class TestIssueFixturesParse:
@@ -834,6 +885,7 @@ class TestIssueFixturesParse:
         "issue_47_long_parse_string.sql",
         "issue_48_long_compareto_string.sql",
         "issue_49_varchar2_concat.sql",
+        "issue_54_nested_exception.sql",
     ]
 
     @pytest.mark.parametrize("sql_file", ISSUE_FIXTURES)

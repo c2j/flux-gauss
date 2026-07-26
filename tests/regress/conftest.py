@@ -245,6 +245,8 @@ EXPECTED_BASELINES = {
     "issue_47_long_parse_string.sql":{"min_procs": 3, "min_procs_with_dml": 0},
     "issue_48_long_compareto_string.sql":{"min_procs": 4, "min_procs_with_dml": 1},
     "issue_49_varchar2_concat.sql":  {"min_procs": 3, "min_procs_with_dml": 0},
+    # Issue regression fixtures (#54)
+    "issue_54_nested_exception.sql":{"min_procs": 2, "min_procs_with_dml": 1},
 }
 
 # complex_clearing_pkg.sql crashes ogsql v0.8.32's Python engine
