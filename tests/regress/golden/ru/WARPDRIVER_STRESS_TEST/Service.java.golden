@@ -23,9 +23,9 @@ public class WarpdriverStressTestService {
 
     private final WarpdriverStressTestMapper warpdriverStressTestMapper;
     private static final Integer gBatchSize = 1000;
-    private static final ThreadLocal<String> gLastErrorCode = ThreadLocal.withInitial(() -> null);
+    private static String gLastErrorCode = null;
     private static final Integer gMaxRetry = 5;
-    private static final ThreadLocal<Integer> gSessionCounter = ThreadLocal.withInitial(() -> 0);
+    private static Integer gSessionCounter = 0;
     private static final String gVersion = "9.9.9-STRESS";
 
     public WarpdriverStressTestService(WarpdriverStressTestMapper warpdriverStressTestMapper) {
@@ -84,7 +84,7 @@ public class WarpdriverStressTestService {
             boolean running = true;
             int _smGuard = 0;
             while (running && _smGuard++ < 10000) {
-            gSessionCounter.set(((Number) java.util.Optional.ofNullable((Number) gSessionCounter.get()).map(Number::longValue).orElse(0L) + 1).intValue());
+            gSessionCounter = gSessionCounter + 1;
             pLogId.set(this.nextval("seq_log_master"));
             this.spAutonomousAudit("ORCH_START", String.valueOf(String.valueOf(String.valueOf("Mode=").concat(String.valueOf(pMode))).concat(String.valueOf("|Date="))).concat(String.valueOf(pBizDate)));
             if (java.util.Objects.equals(pMode, "FAST")) {
@@ -140,7 +140,7 @@ public class WarpdriverStressTestService {
             } catch (Exception e) {
                 __SQLERRM__ = e.getMessage();
                 __SQLCODE__ = -1;
-            gLastErrorCode.set(String.valueOf(__SQLERRM__));
+            gLastErrorCode = String.valueOf(__SQLERRM__);
             // SQL: ROLLBACK TO SAVEPOINT ${vSavepoint1}
             this.spAutonomousAudit("ORCH_ERROR", __SQLERRM__);
             currentState = SpMainOrchestratorState.FetchLoop;
@@ -150,9 +150,9 @@ public class WarpdriverStressTestService {
             currentState = SpMainOrchestratorState.FetchLoop;
             break;
             }
-            if (java.util.Objects.equals((gSessionCounter.get() % 100), 0)) {
+            if (java.util.Objects.equals((gSessionCounter % 100), 0)) {
             // COMMIT;
-            this.spAutonomousAudit("ORCH_COMMIT", String.valueOf("Batch committed at counter=").concat(String.valueOf(gSessionCounter.get())));
+            this.spAutonomousAudit("ORCH_COMMIT", String.valueOf("Batch committed at counter=").concat(String.valueOf(gSessionCounter)));
             }
                         currentState = SpMainOrchestratorState.FetchLoop;
                         break;
@@ -184,7 +184,7 @@ public class WarpdriverStressTestService {
             } catch (Exception e) {
             try { TransactionAspectSupport.currentTransactionStatus().setRollbackOnly(); } catch (Exception _tx) {}
             pTotalAmt.set(java.math.BigDecimal.valueOf(-1L));
-            gLastErrorCode.set(String.valueOf(__SQLERRM__));
+            gLastErrorCode = String.valueOf(__SQLERRM__);
             this.spAutonomousAudit("ORCH_FATAL", __SQLERRM__);
             log.info("");
             }
@@ -508,17 +508,17 @@ public class WarpdriverStressTestService {
         public Integer fnMultiCursorReturn(long pCustomerId, AtomicReference<Object> pCurOrders, AtomicReference<Object> pCurPayments) {
             Integer vOrderCnt = 0;
             Integer vPayCnt = 0;
-            List<Map<String, Object>> pCurOrdersResult = null;
-            int pCurOrdersIdx = 0;
             List<Map<String, Object>> pCurPaymentsResult = null;
             int pCurPaymentsIdx = 0;
+            List<Map<String, Object>> pCurOrdersResult = null;
+            int pCurOrdersIdx = 0;
             pCurOrdersResult = warpdriverStressTestMapper.selectFnMultiCursorReturn(pCustomerId);
             if (pCurOrdersResult == null) pCurOrdersResult = new java.util.ArrayList<>();
             pCurOrdersIdx = 0;
             pCurPaymentsResult = warpdriverStressTestMapper.selectFnMultiCursorReturn_1(pCustomerId);
             if (pCurPaymentsResult == null) pCurPaymentsResult = new java.util.ArrayList<>();
             pCurPaymentsIdx = 0;
-            { var _val = warpdriverStressTestMapper.selectOrders(pCustomerId); if (_val != null) vOrderCnt = (Integer) _val; }
+            { var _val = warpdriverStressTestMapper.selectOrders_2(pCustomerId); if (_val != null) vOrderCnt = (Integer) _val; }
             { var _val = warpdriverStressTestMapper.selectPayments(pCustomerId); if (_val != null) vPayCnt = (Integer) _val; }
             return vOrderCnt + vPayCnt;
         }
@@ -537,13 +537,13 @@ public class WarpdriverStressTestService {
             { var _val = warpdriverStressTestMapper.selectAccounts(pAccountId, pAmount); if (_val != null) vBalance = (java.math.BigDecimal) _val; }
             vSp1 = String.valueOf("sp_pre_").concat(String.valueOf(pAccountId));
             // SQL: SAVEPOINT ${vSp1}
-            warpdriverStressTestMapper.updateAccounts(pAccountId, pAmount);
+            warpdriverStressTestMapper.updateAccounts_1(pAccountId, pAmount);
             vSp2 = String.valueOf("sp_acct_").concat(String.valueOf(pAccountId));
             // SQL: SAVEPOINT ${vSp2}
             warpdriverStressTestMapper.insertAccountJournal(pAccountId, pAmount);
             if (pAmount.compareTo(vBalance) > 0) {
             // SQL: ROLLBACK TO SAVEPOINT ${vSp1}
-            warpdriverStressTestMapper.updateAccounts_1(pAccountId, pAmount);
+            warpdriverStressTestMapper.updateAccounts_2(pAccountId, pAmount);
             warpdriverStressTestMapper.insertRiskEvents(pAccountId, pAmount);
             pFinalBal.set(vBalance);
             // COMMIT;

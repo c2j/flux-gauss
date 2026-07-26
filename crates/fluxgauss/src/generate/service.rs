@@ -4,7 +4,7 @@ use std::path::Path;
 use encoding_rs::Encoding;
 
 use crate::generate::mapper::{is_simple_java_type, resolve_import};
-use crate::generate::writer::CodeWriter;
+use crate::generate::writer::{indent_java_body, CodeWriter};
 use crate::naming::{java_method_name, package_to_classname, snake_to_camel, snake_to_pascal};
 use crate::type_map::sql_type_to_java;
 use crate::types::{DmlType, PackageInfo, ParamMode};
@@ -165,7 +165,7 @@ pub fn write_service_class(
         format!("{}Mapper", package_to_classname(&pkg.package_name)),
         mapper_var
     )];
-    let mut constructor_assigns = vec![format!("        this.{} = {};", mapper_var, mapper_var)];
+    let mut constructor_assigns = vec![format!("this.{} = {};", mapper_var, mapper_var)];
     for (svc_var, _pkg_name) in service_injections {
         let svc_class = if let Some(pn) = service_injections.get(svc_var) {
             if !pn.is_empty() {
@@ -179,12 +179,14 @@ pub fn write_service_class(
             format!("{}Service", package_to_classname(&part))
         };
         constructor_params.push(format!("{} {}", svc_class, svc_var));
-        constructor_assigns.push(format!("        this.{} = {};", svc_var, svc_var));
+        constructor_assigns.push(format!("this.{} = {};", svc_var, svc_var));
     }
     w.line(&format!("public {}({}) {{", class_name, constructor_params.join(", ")));
+    w.push_indent();
     for assign in &constructor_assigns {
         w.line(assign);
     }
+    w.pop_indent();
     w.line("}");
 
     // Generate inner static classes for RECORD custom types
@@ -212,9 +214,9 @@ pub fn write_service_class(
 
     for proc in &pkg.procedures {
         w.blank();
-            let method = build_service_method(proc, &mapper_var, &object_pkg_var_names, &pkg.package_vars, debug);
+        let method = build_service_method(proc, &mapper_var, &object_pkg_var_names, &pkg.package_vars, debug);
         for line in method.split('\n') {
-            w.line(line);
+            w.raw_line(line);
         }
     }
 
@@ -752,8 +754,8 @@ fn build_service_method(
             body_lines.insert(0, formatted);
         }
     }
-    for line in &body_lines {
-        result.push(format!("        {}", line));
+    for line in indent_java_body(&body_lines, "        ") {
+        result.push(line);
     }
     result.push("    }".to_string());
     result.join("\n")

@@ -95,17 +95,17 @@ public interface WarpdriverStressTestMapper {
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:769 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return
     List<Map<String, Object>> selectFnMultiCursorReturn_1(@Param("pCustomerId") Long pCustomerId);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:769 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return
-    Integer selectOrders(@Param("pCustomerId") Long pCustomerId);
+    Integer selectOrders_2(@Param("pCustomerId") Long pCustomerId);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:769 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return
     Integer selectPayments(@Param("pCustomerId") Long pCustomerId);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell
     java.math.BigDecimal selectAccounts(@Param("pAccountId") Long pAccountId, @Param("pAmount") java.math.BigDecimal pAmount);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell
-    int updateAccounts(@Param("pAccountId") Long pAccountId, @Param("pAmount") java.math.BigDecimal pAmount);
+    int updateAccounts_1(@Param("pAccountId") Long pAccountId, @Param("pAmount") java.math.BigDecimal pAmount);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell
     int insertAccountJournal(@Param("pAccountId") Long pAccountId, @Param("pAmount") java.math.BigDecimal pAmount);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell
-    int updateAccounts_1(@Param("pAccountId") Long pAccountId, @Param("pAmount") java.math.BigDecimal pAmount);
+    int updateAccounts_2(@Param("pAccountId") Long pAccountId, @Param("pAmount") java.math.BigDecimal pAmount);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell
     int insertRiskEvents(@Param("pAccountId") Long pAccountId, @Param("pAmount") java.math.BigDecimal pAmount);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell

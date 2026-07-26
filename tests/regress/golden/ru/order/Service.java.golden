@@ -59,7 +59,7 @@ public class OrderService {
         // Source: pkg_order.complete_order (PROCEDURE) — {FIXTURES_ROOT}/pkg_order.sql:53-61
         @Transactional
         public void completeOrder(long pOrderId) {
-            orderMapper.updateTOrders(pOrderId);
+            orderMapper.updateTOrders_1(pOrderId);
             commonService.logOperation("ORDER", "COMPLETE", pOrderId);
             commonService.sendNotification("EMAIL", "Order completed");
         }

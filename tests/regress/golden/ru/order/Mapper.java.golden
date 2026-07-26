@@ -16,5 +16,5 @@ public interface OrderMapper {
     // {FIXTURES_ROOT}/pkg_order.sql:31 — pkg_order.get_order_detail
     List<Map<String, Object>> selectGetOrderDetail(@Param("pOrderId") Long pOrderId);
     // {FIXTURES_ROOT}/pkg_order.sql:53 — pkg_order.complete_order
-    int updateTOrders(@Param("pOrderId") Long pOrderId);
+    int updateTOrders_1(@Param("pOrderId") Long pOrderId);
 }

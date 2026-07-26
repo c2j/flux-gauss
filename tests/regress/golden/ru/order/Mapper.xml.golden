@@ -24,8 +24,8 @@
     select o . * , p . name as product_name from t_orders o join t_products p on o . product_id = p . id where o . id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
 </select>
 
-<!-- Source: {FIXTURES_ROOT}/pkg_order.sql:53-61 — pkg_order.complete_order.updateTOrders -->
-<update id="updateTOrders" parameterType="long">
+<!-- Source: {FIXTURES_ROOT}/pkg_order.sql:53-61 — pkg_order.complete_order.updateTOrders_1 -->
+<update id="updateTOrders_1" parameterType="long">
     update t_orders set status = 'COMPLETED' where id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
 </update>
 

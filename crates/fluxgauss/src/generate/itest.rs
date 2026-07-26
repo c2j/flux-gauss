@@ -273,7 +273,7 @@ pub fn write_itest_class(
     for tm in &test_methods {
         w.blank();
         for line in tm.split('\n') {
-            w.line(line.trim_start_matches("    "));
+            w.raw_line(line);
         }
     }
 
