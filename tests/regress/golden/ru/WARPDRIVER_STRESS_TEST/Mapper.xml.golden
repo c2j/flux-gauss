@@ -218,8 +218,8 @@
     SELECT payment_id, pay_amount, pay_channel, pay_time FROM payments WHERE customer_id = #{pCustomerId, jdbcType=BIGINT, javaType=Long} AND pay_status = 'SUCCESS' ORDER BY pay_time DESC LIMIT 100
 </select>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:769-796 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return.selectOrders -->
-<select id="selectOrders" parameterType="long" resultType="int">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:769-796 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return.selectOrders_2 -->
+<select id="selectOrders_2" parameterType="long" resultType="int">
     select COUNT(*) FROM orders WHERE customer_id = #{pCustomerId, jdbcType=BIGINT, javaType=Long}
             LIMIT 1
 </select>
@@ -236,8 +236,8 @@
             LIMIT 1
 </select>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801-863 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.updateAccounts -->
-<update id="updateAccounts">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801-863 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.updateAccounts_1 -->
+<update id="updateAccounts_1">
     UPDATE accounts SET balance = balance - #{pAmount, jdbcType=NUMERIC, javaType=java.math.BigDecimal}, pre_amount = #{pAmount, jdbcType=NUMERIC, javaType=java.math.BigDecimal} WHERE account_id = #{pAccountId, jdbcType=BIGINT, javaType=Long}
 </update>
 
@@ -246,8 +246,8 @@
     INSERT INTO account_journal(account_id, dr_amount, cr_amount, remark) VALUES(#{pAccountId, jdbcType=BIGINT, javaType=Long}, #{pAmount, jdbcType=NUMERIC, javaType=java.math.BigDecimal}, 0, 'PRE_DEBIT')
 </insert>
 
-<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801-863 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.updateAccounts_1 -->
-<update id="updateAccounts_1">
+<!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801-863 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.updateAccounts_2 -->
+<update id="updateAccounts_2">
     UPDATE accounts SET frozen_flag = 'Y' WHERE account_id = #{pAccountId, jdbcType=BIGINT, javaType=Long}
 </update>
 
