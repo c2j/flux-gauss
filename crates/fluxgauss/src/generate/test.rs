@@ -140,7 +140,7 @@ pub fn write_service_test(
         };
         let test_method = build_success_test(proc, &mapper_var, pkg, &suffix);
         for line in test_method.split('\n') {
-            w.line(line);
+            w.raw_line(line);
         }
     }
 
