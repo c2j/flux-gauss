@@ -1156,12 +1156,14 @@ def _read_sql_file(path: str) -> tuple[str, str]:
         raw = f.read()
 
     text = raw.decode('utf-8', errors='replace')
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
     if '\ufffd' not in text:
         return text, 'utf-8'
 
     for enc in ('gb18030', 'gbk', 'big5'):
         try:
             candidate = raw.decode(enc)
+            candidate = candidate.replace('\r\n', '\n').replace('\r', '\n')
             if '\ufffd' not in candidate:
                 _log(f"  [INFO] Decoded {os.path.basename(path)} as {enc}", to_stdout=False)
                 return candidate, enc

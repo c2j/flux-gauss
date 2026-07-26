@@ -17,7 +17,8 @@ impl CodeWriter {
 
     pub fn line(&mut self, text: &str) {
         let indent = "    ".repeat(self.indent_level);
-        self.lines.push(format!("{}{}", indent, text));
+        let cleaned = text.replace('\r', "");
+        self.lines.push(format!("{}{}", indent, cleaned));
     }
 
     /// Pre-formatted line; skips current indent (for fully-indented method blocks).

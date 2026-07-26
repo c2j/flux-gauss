@@ -56,7 +56,7 @@ pub fn phase0_validate(sql_files: &[PathBuf]) -> ValidateResult {
 
         let content = match std::fs::read(sql_file) {
             Ok(bytes) => match ogsql_parser::token::decode_sql_file(&bytes) {
-                Ok((s, _enc)) => s,
+                Ok((s, _enc)) => s.replace("\r\n", "\n").replace('\r', "\n"),
                 Err(e) => {
                     file_results.push(FileValidateResult {
                         basename,
@@ -351,7 +351,7 @@ fn phase1_parse(
 
         let content = match std::fs::read(sql_file) {
             Ok(bytes) => match ogsql_parser::token::decode_sql_file(&bytes) {
-                Ok((s, _enc)) => s,
+                Ok((s, _enc)) => s.replace("\r\n", "\n").replace('\r', "\n"),
                 Err(e) => {
                     errors.push(ConversionError::Io {
                         path: sql_file.to_string_lossy().into_owned(),
