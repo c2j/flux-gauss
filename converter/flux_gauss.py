@@ -8822,8 +8822,11 @@ def _coerce_java_arg(a_java: str, target_type: str) -> str:
     - Numeric literal passed to BigDecimal parameter → BigDecimal.valueOf()
     - Map.get() result to typed parameter → cast expression
     """
-    # Empty string '' in PL/pgSQL passed to a numeric/boolean parameter
-    if a_java == '""' or a_java == '""':
+    # Empty string '' in PL/pgSQL passed to a numeric/boolean parameter.
+    # _coerce_java_arg returns zero-values (0L, 0, BigDecimal.ZERO, etc.) for function call args
+    # per PostgreSQL CAST semantics (''::int → 0), while _coerce_type returns null for ':=' 
+    # assignments per GaussDB PL/pgSQL semantics ('' assigned to NUMBER is NULL).
+    if a_java == '""' or a_java == "''":
         if target_type in ("long", "Long"):
             return "0L"
         if target_type in ("int", "Integer"):
@@ -9002,6 +9005,11 @@ def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
 
     # String to numeric
     if src == "String" and _is_numeric_type(tgt):
+        # Issue #57: empty string '' assigned to NUMBER is implicitly NULL in GaussDB.
+        # Emit null instead of Long.parseLong("") which throws NumberFormatException at runtime.
+        stripped = expr.strip()
+        if stripped == '""' or stripped == "''":
+            return "null"
         if tgt == "Integer":
             return f"Integer.parseInt({expr})"
         if tgt == "Long":
