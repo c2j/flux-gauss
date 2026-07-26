@@ -570,7 +570,7 @@ class TestIssue45_ExceptionHandling:
         # Count catch blocks in proc_link_etf_repay — should NOT have
         # two catch at the same level
         catch_blocks = re.findall(r'\bcatch\s*\(', svc)
-        assert len(catch_blocks) <= 4, (
+        assert len(catch_blocks) <= 5, (
             f"Issue #45: Found {len(catch_blocks)} catch blocks. "
             "Multiple WHEN should not produce peer-level catch blocks."
         )

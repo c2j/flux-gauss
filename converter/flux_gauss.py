@@ -6424,12 +6424,38 @@ def _wrap_handler_stmts(stmts, proc, all_packages,
                     else:
                         _lines.append(f"{indent}{target} = {expr};")
             elif sk == "Block":
-                # Process Block body statements inline (inner exception_block is handled at procedure level)
-                _blines = _wrap_handler_stmts(
-                    sv.get("body", []), proc, all_packages,
-                    out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
-                    indent, in_catch=in_catch)
-                _lines.extend(_blines)
+                exc_block = sv.get("exception_block")
+                if exc_block and exc_block.get("handlers"):
+                    # Emit inline try/catch for nested BEGIN...EXCEPTION...END
+                    _lines.append(f"{indent}try {{")
+                    _blines = _wrap_handler_stmts(
+                        sv.get("body", []), proc, all_packages,
+                        out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
+                        indent + "    ", in_catch=in_catch)
+                    _lines.extend(_blines)
+                    handlers_block = exc_block.get("handlers", [])
+                    if handlers_block:
+                        all_conditions = []
+                        for h in handlers_block:
+                            conds = h.get("conditions", [])
+                            all_conditions.append(conds[0] if conds else "EXCEPTION")
+                        _lines.append(f"{indent}}} catch (Exception e) {{ // {'; '.join(all_conditions)}")
+                    for handler in handlers_block:
+                        conditions = handler.get("conditions", [])
+                        cond_name = conditions[0] if conditions else "EXCEPTION"
+                        _lines.append(f"{indent}    // WHEN {cond_name}")
+                        h_blines = _wrap_handler_stmts(
+                            handler.get("statements", []), proc, all_packages,
+                            out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
+                            indent + "    ", in_catch=True)
+                        _lines.extend(h_blines)
+                    _lines.append(f"{indent}}}")
+                else:
+                    _blines = _wrap_handler_stmts(
+                        sv.get("body", []), proc, all_packages,
+                        out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
+                        indent, in_catch=in_catch)
+                    _lines.extend(_blines)
             elif sk == "Raise":
                 errm = "e.getMessage()" if in_catch else '"exception"'
                 _lines.append(f"{indent}throw new BusinessException({errm});")
@@ -11949,18 +11975,29 @@ def _merge_duplicate_catches(lines):
             catch_header = lines[i]
             catch_body = []
             j = i + 1
+            base_depth = 1  # We start inside the catch block
             while j < len(lines):
                 ls = lines[j].strip()
-                if ls == "}" or ls.startswith("} catch"):
-                    break
+                if len(ls) > 0:
+                    opens = ls.count("{")
+                    closes = ls.count("}")
+                    base_depth += opens - closes
+                    if base_depth <= 0:
+                        break
                 catch_body.append(lines[j])
                 j += 1
             while j < len(lines) and lines[j].strip().startswith("} catch (Exception e)"):
+                dup_body = []
                 j += 1
+                dup_depth = 1
                 while j < len(lines):
                     ls = lines[j].strip()
-                    if ls == "}" or ls.startswith("} catch"):
-                        break
+                    if len(ls) > 0:
+                        opens = ls.count("{")
+                        closes = ls.count("}")
+                        dup_depth += opens - closes
+                        if dup_depth <= 0:
+                            break
                     if lines[j] not in catch_body:
                         catch_body.append(lines[j])
                     j += 1
