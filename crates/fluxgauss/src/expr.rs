@@ -176,6 +176,13 @@ fn coerce_for_type(expr: &str, target_type: Option<&str>) -> String {
             if t.contains("java.sql.Date") || t == "Date" {
                 return "new java.sql.Date(0)".to_string();
             }
+            // Issue #57: empty string '' → NUMBER is implicitly NULL in GaussDB
+            if t == "Long" || t == "long" || t == "Integer" || t == "int"
+                || t == "Double" || t == "double" || t == "Float" || t == "float"
+                || t.contains("BigDecimal") || t.contains("BigInteger")
+            {
+                return "null".to_string();
+            }
         }
         return trimmed.to_string();
     }
@@ -1370,7 +1377,15 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         "CURRENT_DATE" => "new java.sql.Date(System.currentTimeMillis())".into(),
         "CHR" if !jargs.is_empty() => format!("String.valueOf((char)({}))", jargs[0]),
         "ASCII" if !jargs.is_empty() => format!("(int){}.charAt(0)", jargs[0]),
-        "TO_NUMBER" => format!("new BigDecimal({})", jargs.first().map(|s| s.as_str()).unwrap_or("\"0\"")),
+        "TO_NUMBER" => {
+            let arg = jargs.first().map(|s| s.as_str()).unwrap_or("\"0\"");
+            // Issue #57: TO_NUMBER('') should produce BigDecimal.ZERO, not new BigDecimal("")
+            if arg == "\"\"" || arg == "''" {
+                "java.math.BigDecimal.ZERO".to_string()
+            } else {
+                format!("new java.math.BigDecimal({})", arg)
+            }
+        },
         "INSTR" if jargs.len() >= 3 => {
             let s = if jargs[0].starts_with('"') || jargs[0].starts_with('\'') { jargs[0].clone() } else { format!("String.valueOf({})", jargs[0]) };
             let sub = if jargs[1].starts_with('"') || jargs[1].starts_with('\'') { jargs[1].clone() } else { format!("String.valueOf({})", jargs[1]) };
