@@ -24,18 +24,18 @@ class GaussCompleteExamplesServiceTest {
     @InjectMocks
     private GaussCompleteExamplesService service;
 
-        @Test
-        @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
-        void test_stringSplit_success() {
-            String pString = "test_pString";
-            String pDelimiter = "test_pDelimiter";
-            var result = service.stringSplit(pString, pDelimiter);
-        }
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_stringSplit_success() {
+        String pString = "test_pString";
+        String pDelimiter = "test_pDelimiter";
+        var result = service.stringSplit(pString, pDelimiter);
+    }
 
-        @Test
-        @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
-        void test_arrayLength_success() {
-            Object pArray = java.util.Arrays.asList(1.0, 2.0, 3.0);
-            var result = service.arrayLength(pArray);
-        }
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_arrayLength_success() {
+        Object pArray = java.util.Arrays.asList(1.0, 2.0, 3.0);
+        var result = service.arrayLength(pArray);
+    }
 }

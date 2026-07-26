@@ -3,30 +3,30 @@
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.example.demo.mapper.OrderMapper">
 
-<!-- Source: {FIXTURES_ROOT}/pkg_order.sql:1-12 — pkg_order.create_order.insertTOrders -->
-<insert id="insertTOrders">
-    insert into t_orders ( user_id , product_id , qty , status , created_at ) values ( #{pUserId, jdbcType=BIGINT, javaType=Long} , #{pProductId, jdbcType=BIGINT, javaType=Long} , #{pQty, jdbcType=INTEGER, javaType=Integer} , 'CREATED' , CURRENT_TIMESTAMP )
-</insert>
+    <!-- Source: {FIXTURES_ROOT}/pkg_order.sql:1-12 — pkg_order.create_order.insertTOrders -->
+    <insert id="insertTOrders">
+        insert into t_orders ( user_id , product_id , qty , status , created_at ) values ( #{pUserId, jdbcType=BIGINT, javaType=Long} , #{pProductId, jdbcType=BIGINT, javaType=Long} , #{pQty, jdbcType=INTEGER, javaType=Integer} , 'CREATED' , CURRENT_TIMESTAMP )
+    </insert>
 
-<!-- Source: {FIXTURES_ROOT}/pkg_order.sql:14-29 — pkg_order.cancel_order.selectTOrders -->
-<select id="selectTOrders" resultType="java.util.LinkedHashMap">
-    select product_id , qty from t_orders where id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
-            LIMIT 1
-</select>
+    <!-- Source: {FIXTURES_ROOT}/pkg_order.sql:14-29 — pkg_order.cancel_order.selectTOrders -->
+    <select id="selectTOrders" resultType="java.util.LinkedHashMap">
+        select product_id , qty from t_orders where id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
+                LIMIT 1
+    </select>
 
-<!-- Source: {FIXTURES_ROOT}/pkg_order.sql:14-29 — pkg_order.cancel_order.updateTOrders -->
-<update id="updateTOrders" parameterType="long">
-    update t_orders set status = 'CANCELLED' where id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
-</update>
+    <!-- Source: {FIXTURES_ROOT}/pkg_order.sql:14-29 — pkg_order.cancel_order.updateTOrders -->
+    <update id="updateTOrders" parameterType="long">
+        update t_orders set status = 'CANCELLED' where id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
+    </update>
 
-<!-- Source: {FIXTURES_ROOT}/pkg_order.sql:31-40 — pkg_order.get_order_detail.selectGetOrderDetail -->
-<select id="selectGetOrderDetail" parameterType="long" resultType="java.util.LinkedHashMap">
-    select o . * , p . name as product_name from t_orders o join t_products p on o . product_id = p . id where o . id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
-</select>
+    <!-- Source: {FIXTURES_ROOT}/pkg_order.sql:31-40 — pkg_order.get_order_detail.selectGetOrderDetail -->
+    <select id="selectGetOrderDetail" parameterType="long" resultType="java.util.LinkedHashMap">
+        select o . * , p . name as product_name from t_orders o join t_products p on o . product_id = p . id where o . id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
+    </select>
 
-<!-- Source: {FIXTURES_ROOT}/pkg_order.sql:53-61 — pkg_order.complete_order.updateTOrders_1 -->
-<update id="updateTOrders_1" parameterType="long">
-    update t_orders set status = 'COMPLETED' where id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
-</update>
+    <!-- Source: {FIXTURES_ROOT}/pkg_order.sql:53-61 — pkg_order.complete_order.updateTOrders_1 -->
+    <update id="updateTOrders_1" parameterType="long">
+        update t_orders set status = 'COMPLETED' where id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
+    </update>
 
 </mapper>

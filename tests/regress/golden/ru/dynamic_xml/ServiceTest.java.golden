@@ -24,55 +24,55 @@ class DynamicXmlServiceTest {
     @InjectMocks
     private DynamicXmlService service;
 
-        @Test
-        @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
-        void test_procConditionalQuery_success() {
-            String pTableName = "test_pTableName";
-            String pWhereClause = "test_pWhereClause";
-            String pOrderBy = "test_pOrderBy";
-            Integer pLimit = 5;
-            { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createdAt", 1L); when(dynamicXmlMapper.selectProcConditionalQuery(any(), any(), any(), any())).thenReturn(m); }
-            when(dynamicXmlMapper.selectAuditLog(any(), any(), any(), any())).thenReturn(999);
-            when(dynamicXmlMapper.updateProcConditionalUpdate(any(), any(), any(), any(), any())).thenReturn(1);
-            when(dynamicXmlMapper.insertProcMixedLogic(any(), any())).thenReturn(1);
-            when(dynamicXmlMapper.insertAuditLog(any(), any(), any())).thenReturn(1);
-            when(dynamicXmlMapper.deleteProcMixedLogic(any(), any())).thenReturn(1);
-            when(dynamicXmlMapper.insertAuditLog_1(any(), any(), any())).thenReturn(1);
-            service.procConditionalQuery(pTableName, pWhereClause, pOrderBy, pLimit);
-        }
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procConditionalQuery_success() {
+        String pTableName = "test_pTableName";
+        String pWhereClause = "test_pWhereClause";
+        String pOrderBy = "test_pOrderBy";
+        Integer pLimit = 5;
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createdAt", 1L); when(dynamicXmlMapper.selectProcConditionalQuery(any(), any(), any(), any())).thenReturn(m); }
+        when(dynamicXmlMapper.selectAuditLog(any(), any(), any(), any())).thenReturn(999);
+        when(dynamicXmlMapper.updateProcConditionalUpdate(any(), any(), any(), any(), any())).thenReturn(1);
+        when(dynamicXmlMapper.insertProcMixedLogic(any(), any())).thenReturn(1);
+        when(dynamicXmlMapper.insertAuditLog(any(), any(), any())).thenReturn(1);
+        when(dynamicXmlMapper.deleteProcMixedLogic(any(), any())).thenReturn(1);
+        when(dynamicXmlMapper.insertAuditLog_1(any(), any(), any())).thenReturn(1);
+        service.procConditionalQuery(pTableName, pWhereClause, pOrderBy, pLimit);
+    }
 
-        @Test
-        @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
-        void test_procConditionalUpdate_success() {
-            String pTableName = "test_pTableName";
-            Integer pId = 1;
-            String pStatus = "test_pStatus";
-            Long pAmount = 100L;
-            String pRemark = "test_pRemark";
-            { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createdAt", 1L); when(dynamicXmlMapper.selectProcConditionalQuery(any(), any(), any(), any())).thenReturn(m); }
-            when(dynamicXmlMapper.selectAuditLog(any(), any(), any(), any())).thenReturn(999);
-            when(dynamicXmlMapper.updateProcConditionalUpdate(any(), any(), any(), any(), any())).thenReturn(1);
-            when(dynamicXmlMapper.insertProcMixedLogic(any(), any())).thenReturn(1);
-            when(dynamicXmlMapper.insertAuditLog(any(), any(), any())).thenReturn(1);
-            when(dynamicXmlMapper.deleteProcMixedLogic(any(), any())).thenReturn(1);
-            when(dynamicXmlMapper.insertAuditLog_1(any(), any(), any())).thenReturn(1);
-            service.procConditionalUpdate(pTableName, pId, pStatus, pAmount, pRemark);
-            verify(dynamicXmlMapper, atLeast(0)).updateProcConditionalUpdate(any(), any(), any(), any(), any());
-        }
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procConditionalUpdate_success() {
+        String pTableName = "test_pTableName";
+        Integer pId = 1;
+        String pStatus = "test_pStatus";
+        Long pAmount = 100L;
+        String pRemark = "test_pRemark";
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createdAt", 1L); when(dynamicXmlMapper.selectProcConditionalQuery(any(), any(), any(), any())).thenReturn(m); }
+        when(dynamicXmlMapper.selectAuditLog(any(), any(), any(), any())).thenReturn(999);
+        when(dynamicXmlMapper.updateProcConditionalUpdate(any(), any(), any(), any(), any())).thenReturn(1);
+        when(dynamicXmlMapper.insertProcMixedLogic(any(), any())).thenReturn(1);
+        when(dynamicXmlMapper.insertAuditLog(any(), any(), any())).thenReturn(1);
+        when(dynamicXmlMapper.deleteProcMixedLogic(any(), any())).thenReturn(1);
+        when(dynamicXmlMapper.insertAuditLog_1(any(), any(), any())).thenReturn(1);
+        service.procConditionalUpdate(pTableName, pId, pStatus, pAmount, pRemark);
+        verify(dynamicXmlMapper, atLeast(0)).updateProcConditionalUpdate(any(), any(), any(), any(), any());
+    }
 
-        @Test
-        @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
-        void test_procMixedLogic_success() {
-            String pTableName = "test_pTableName";
-            String pMode = "test_pMode";
-            { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createdAt", 1L); when(dynamicXmlMapper.selectProcConditionalQuery(any(), any(), any(), any())).thenReturn(m); }
-            when(dynamicXmlMapper.selectAuditLog(any(), any(), any(), any())).thenReturn(999);
-            when(dynamicXmlMapper.updateProcConditionalUpdate(any(), any(), any(), any(), any())).thenReturn(1);
-            when(dynamicXmlMapper.insertProcMixedLogic(any(), any())).thenReturn(1);
-            when(dynamicXmlMapper.insertAuditLog(any(), any(), any())).thenReturn(1);
-            when(dynamicXmlMapper.deleteProcMixedLogic(any(), any())).thenReturn(1);
-            when(dynamicXmlMapper.insertAuditLog_1(any(), any(), any())).thenReturn(1);
-            service.procMixedLogic(pTableName, pMode);
-            verify(dynamicXmlMapper, atLeast(0)).insertProcMixedLogic(any(), any());
-        }
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procMixedLogic_success() {
+        String pTableName = "test_pTableName";
+        String pMode = "test_pMode";
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createdAt", 1L); when(dynamicXmlMapper.selectProcConditionalQuery(any(), any(), any(), any())).thenReturn(m); }
+        when(dynamicXmlMapper.selectAuditLog(any(), any(), any(), any())).thenReturn(999);
+        when(dynamicXmlMapper.updateProcConditionalUpdate(any(), any(), any(), any(), any())).thenReturn(1);
+        when(dynamicXmlMapper.insertProcMixedLogic(any(), any())).thenReturn(1);
+        when(dynamicXmlMapper.insertAuditLog(any(), any(), any())).thenReturn(1);
+        when(dynamicXmlMapper.deleteProcMixedLogic(any(), any())).thenReturn(1);
+        when(dynamicXmlMapper.insertAuditLog_1(any(), any(), any())).thenReturn(1);
+        service.procMixedLogic(pTableName, pMode);
+        verify(dynamicXmlMapper, atLeast(0)).insertProcMixedLogic(any(), any());
+    }
 }

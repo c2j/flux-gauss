@@ -15,55 +15,55 @@ public class DynamicXmlService {
     private final DynamicXmlMapper dynamicXmlMapper;
 
     public DynamicXmlService(DynamicXmlMapper dynamicXmlMapper) {
-            this.dynamicXmlMapper = dynamicXmlMapper;
+        this.dynamicXmlMapper = dynamicXmlMapper;
     }
 
-        // Source: pkg_dynamic_xml.proc_conditional_query (PROCEDURE) — {FIXTURES_ROOT}/pkg_dynamic_xml.sql:47-78
-        public void procConditionalQuery(String pTableName, String pWhereClause, String pOrderBy, int pLimit) {
-            Integer vCount = 0;
-            String vSql = null;
-            vSql = "SELECT id, name, amount, status, created_at FROM t_test_funcs";
-            vSql = String.valueOf(String.valueOf(vSql).concat(String.valueOf(" LIMIT "))).concat(String.valueOf(pLimit));
-            // CALL DBE_OUTPUT.PRINT_LINE(String.valueOf(String.valueOf("Generated SQL: ").concat(String.valueOf(pTableName))).concat(String.valueOf(vSql)))
-            dynamicXmlMapper.selectProcConditionalQuery(pTableName, pWhereClause, pOrderBy, pLimit);
-            { var _val = dynamicXmlMapper.selectAuditLog(pTableName, pWhereClause, pOrderBy, pLimit); if (_val != null) vCount = (Integer) _val; }
-        }
+    // Source: pkg_dynamic_xml.proc_conditional_query (PROCEDURE) — {FIXTURES_ROOT}/pkg_dynamic_xml.sql:47-78
+    public void procConditionalQuery(String pTableName, String pWhereClause, String pOrderBy, int pLimit) {
+        Integer vCount = 0;
+        String vSql = null;
+        vSql = "SELECT id, name, amount, status, created_at FROM t_test_funcs";
+        vSql = String.valueOf(String.valueOf(vSql).concat(String.valueOf(" LIMIT "))).concat(String.valueOf(pLimit));
+        // CALL DBE_OUTPUT.PRINT_LINE(String.valueOf(String.valueOf("Generated SQL: ").concat(String.valueOf(pTableName))).concat(String.valueOf(vSql)))
+        dynamicXmlMapper.selectProcConditionalQuery(pTableName, pWhereClause, pOrderBy, pLimit);
+        { var _val = dynamicXmlMapper.selectAuditLog(pTableName, pWhereClause, pOrderBy, pLimit); if (_val != null) vCount = (Integer) _val; }
+    }
 
-        // Source: pkg_dynamic_xml.proc_conditional_update (PROCEDURE) — {FIXTURES_ROOT}/pkg_dynamic_xml.sql:83-120
-        @Transactional
-        public void procConditionalUpdate(String pTableName, int pId, String pStatus, Long pAmount, String pRemark) {
-            String vSetClause = "";
-            String vSql = null;
-            vSql = String.valueOf("UPDATE ").concat(String.valueOf(pTableName));
-            if (pStatus != null) {
+    // Source: pkg_dynamic_xml.proc_conditional_update (PROCEDURE) — {FIXTURES_ROOT}/pkg_dynamic_xml.sql:83-120
+    @Transactional
+    public void procConditionalUpdate(String pTableName, int pId, String pStatus, Long pAmount, String pRemark) {
+        String vSetClause = "";
+        String vSql = null;
+        vSql = String.valueOf("UPDATE ").concat(String.valueOf(pTableName));
+        if (pStatus != null) {
             vSetClause = String.valueOf(String.valueOf(String.valueOf(vSetClause).concat(String.valueOf("status = '"))).concat(String.valueOf(pStatus))).concat(String.valueOf("'"));
-            }
-            if (pAmount != null) {
+        }
+        if (pAmount != null) {
             vSetClause = String.valueOf(String.valueOf(vSetClause).concat(String.valueOf("amount = "))).concat(String.valueOf(pAmount));
-            }
-            if (pRemark != null) {
+        }
+        if (pRemark != null) {
             vSetClause = String.valueOf(String.valueOf(String.valueOf(vSetClause).concat(String.valueOf("remark = '"))).concat(String.valueOf(pRemark))).concat(String.valueOf("'"));
-            }
-            if ((vSetClause != null && !java.util.Objects.equals(vSetClause, ""))) {
+        }
+        if ((vSetClause != null && !java.util.Objects.equals(vSetClause, ""))) {
             vSql = String.valueOf(String.valueOf(String.valueOf(String.valueOf(vSql).concat(String.valueOf(" SET "))).concat(String.valueOf(vSetClause))).concat(String.valueOf(" WHERE id = "))).concat(String.valueOf(pId));
             dynamicXmlMapper.updateProcConditionalUpdate(pTableName, pId, pStatus, pAmount, pRemark);
-            }
         }
+    }
 
-        // Source: pkg_dynamic_xml.proc_mixed_logic (PROCEDURE) — {FIXTURES_ROOT}/pkg_dynamic_xml.sql:126-150
-        @Transactional
-        public void procMixedLogic(String pTableName, String pMode) {
-            String vSql = null;
-            if (java.util.Objects.equals(pMode, "ARCHIVE")) {
+    // Source: pkg_dynamic_xml.proc_mixed_logic (PROCEDURE) — {FIXTURES_ROOT}/pkg_dynamic_xml.sql:126-150
+    @Transactional
+    public void procMixedLogic(String pTableName, String pMode) {
+        String vSql = null;
+        if (java.util.Objects.equals(pMode, "ARCHIVE")) {
             vSql = String.valueOf(String.valueOf(String.valueOf("INSERT INTO ").concat(String.valueOf(pTableName))).concat(String.valueOf("_hist SELECT * FROM "))).concat(String.valueOf(pTableName));
             dynamicXmlMapper.insertProcMixedLogic(pTableName, pMode);
             dynamicXmlMapper.insertAuditLog(pTableName, pMode, vSql);
-            } else if (java.util.Objects.equals(pMode, "CLEAN")) {
+        } else if (java.util.Objects.equals(pMode, "CLEAN")) {
             vSql = String.valueOf(String.valueOf("DELETE FROM ").concat(String.valueOf(pTableName))).concat(String.valueOf(" WHERE create_time < SYSDATE - 30"));
             dynamicXmlMapper.deleteProcMixedLogic(pTableName, pMode);
             dynamicXmlMapper.insertAuditLog_1(pTableName, pMode, vSql);
-            } else {
+        } else {
             // CALL DBE_OUTPUT.PRINT_LINE(String.valueOf("Unknown mode: ").concat(String.valueOf(pMode)))
-            }
         }
+    }
 }

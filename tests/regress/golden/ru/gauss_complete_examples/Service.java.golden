@@ -17,35 +17,35 @@ public class GaussCompleteExamplesService {
     private final GaussCompleteExamplesMapper gaussCompleteExamplesMapper;
 
     public GaussCompleteExamplesService(GaussCompleteExamplesMapper gaussCompleteExamplesMapper) {
-            this.gaussCompleteExamplesMapper = gaussCompleteExamplesMapper;
+        this.gaussCompleteExamplesMapper = gaussCompleteExamplesMapper;
     }
 
-        // Source: string_split (FUNCTION) — {FIXTURES_ROOT}/gauss_complete_examples.sql:5-31
-        public Object stringSplit(String pString, String pDelimiter) {
-            List<String> vArray = null;
-            Integer vEnd = 0;
-            Integer vIdx = 1;
-            Integer vStart = 1;
-            if (pString == null) {
+    // Source: string_split (FUNCTION) — {FIXTURES_ROOT}/gauss_complete_examples.sql:5-31
+    public Object stringSplit(String pString, String pDelimiter) {
+        List<String> vArray = null;
+        Integer vEnd = 0;
+        Integer vIdx = 1;
+        Integer vStart = 1;
+        if (pString == null) {
             return vArray;
-            }
-            vEnd = String.valueOf(pString).indexOf(String.valueOf(pDelimiter), Math.max(0, (vStart) - 1)) + 1;
-            while (vEnd > 0) {
+        }
+        vEnd = String.valueOf(pString).indexOf(String.valueOf(pDelimiter), Math.max(0, (vStart) - 1)) + 1;
+        while (vEnd > 0) {
             // CALL v_array(vIdx)
             // SQL: := trim ( SUBSTR ( p_string , v_start , v_end - v_start ) )
             vIdx = vIdx + 1;
             vStart = vEnd + pDelimiter.length();
             vEnd = String.valueOf(pString).indexOf(String.valueOf(pDelimiter), Math.max(0, (vStart) - 1)) + 1;
-            }
-            // CALL v_array(vIdx)
-            // SQL: := trim ( SUBSTR ( p_string , v_start ) )
-            return vArray;
         }
+        // CALL v_array(vIdx)
+        // SQL: := trim ( SUBSTR ( p_string , v_start ) )
+        return vArray;
+    }
 
-        // Source: array_length (FUNCTION) — {FIXTURES_ROOT}/gauss_complete_examples.sql:35-41
-        public Integer arrayLength(Object pArray) {
-            return ((java.util.List<?>) pArray).size();
-        }
+    // Source: array_length (FUNCTION) — {FIXTURES_ROOT}/gauss_complete_examples.sql:35-41
+    public Integer arrayLength(Object pArray) {
+        return ((java.util.List<?>) pArray).size();
+    }
 
     public java.util.List<String> stringToArray(String str, String delimiter) {
         if (str == null || str.isEmpty()) return java.util.Collections.emptyList();
