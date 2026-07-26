@@ -436,8 +436,32 @@ fn process_cleanup_stmt(
             for decl in &block.node.declarations {
                 crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new(), None);
             }
+            let has_exceptions = block.node.exception_block.is_some();
+            if has_exceptions {
+                proc.java_logic_lines.push("try {".to_string());
+            }
             for s in &block.node.body {
                 process_cleanup_stmt(s, cleanup_label, proc, stmt_ctx)?;
+            }
+            if let Some(exc_block) = &block.node.exception_block {
+                for handler in &exc_block.handlers {
+                    let is_others = handler.conditions.is_empty()
+                        || handler.conditions.iter().any(|c| c.eq_ignore_ascii_case("others"));
+                    if is_others {
+                        proc.java_logic_lines.push("} catch (Exception e) {".to_string());
+                    } else {
+                        let cond = handler.conditions.join(", ");
+                        proc.java_logic_lines.push(format!("}} catch (BusinessException e) {{ // {}", cond));
+                    }
+                    proc.java_logic_lines.push("    __SQLERRM__ = e.getMessage();".to_string());
+                    proc.java_logic_lines.push("    __SQLCODE__ = -1;".to_string());
+                    for s in &handler.statements {
+                        process_cleanup_stmt(s, cleanup_label, proc, stmt_ctx)?;
+                    }
+                }
+            }
+            if has_exceptions {
+                proc.java_logic_lines.push("}".to_string());
             }
             Ok(())
         }
@@ -685,7 +709,29 @@ fn process_with_goto_replace(
             for decl in &block.node.declarations {
                 crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new(), None);
             }
+            let has_exceptions = block.node.exception_block.is_some();
+            if has_exceptions {
+                proc.java_logic_lines.push("try {".to_string());
+            }
             process_with_goto_replace(&block.node.body, goto_labels, proc, stmt_ctx)?;
+            if let Some(exc_block) = &block.node.exception_block {
+                for handler in &exc_block.handlers {
+                    let is_others = handler.conditions.is_empty()
+                        || handler.conditions.iter().any(|c| c.eq_ignore_ascii_case("others"));
+                    if is_others {
+                        proc.java_logic_lines.push("} catch (Exception e) {".to_string());
+                    } else {
+                        let cond = handler.conditions.join(", ");
+                        proc.java_logic_lines.push(format!("}} catch (BusinessException e) {{ // {}", cond));
+                    }
+                    proc.java_logic_lines.push("    __SQLERRM__ = e.getMessage();".to_string());
+                    proc.java_logic_lines.push("    __SQLCODE__ = -1;".to_string());
+                    process_with_goto_replace(&handler.statements, goto_labels, proc, stmt_ctx)?;
+                }
+            }
+            if has_exceptions {
+                proc.java_logic_lines.push("}".to_string());
+            }
         }
         PlStatement::Loop(loop_stmt) => {
             proc.java_logic_lines.push("while (true) {".to_string());

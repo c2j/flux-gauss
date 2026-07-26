@@ -102,15 +102,24 @@ pub fn analyze_procedure(
             }
         }
         if let Some(exc_block) = &body_inner.exception_block {
-            proc.java_logic_lines.push("} catch (Exception e) {".into());
             for handler in &exc_block.handlers {
+                let is_others = handler.conditions.is_empty()
+                    || handler.conditions.iter().any(|c| c.eq_ignore_ascii_case("others"));
+                if is_others {
+                    proc.java_logic_lines.push("} catch (Exception e) {".into());
+                } else {
+                    let cond = handler.conditions.join(", ");
+                    proc.java_logic_lines.push(format!("}} catch (BusinessException e) {{ // {}", cond));
+                }
+                proc.java_logic_lines.push("    __SQLERRM__ = e.getMessage();".into());
+                proc.java_logic_lines.push("    __SQLCODE__ = -1;".into());
                 for s in &handler.statements {
                     if let Err(_) = crate::statement::process_statement(s, proc, &mut stmt_ctx) {
                         break;
                     }
                 }
+                proc.java_logic_lines.push("}".into());
             }
-            proc.java_logic_lines.push("}".into());
         }
         ctx.unresolved_calls.extend(stmt_ctx.unresolved_calls.drain(..));
     }

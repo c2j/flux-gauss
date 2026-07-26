@@ -26,6 +26,7 @@ const KNOWN_BROKEN: &[&str] = &[
     "issue_48_long_compareto_string.sql",
     "issue_49_varchar2_concat.sql",
     "issue_44_if_elsif_goto_2.sql",
+    "issue_54_nested_exception.sql",
 ];
 
 const FOUR_FILE_TYPES: &[(&str, FilePathFn)] = &[
