@@ -517,21 +517,18 @@ class TestIssue44_IfConditionLoss:
         assert svc, "Service file not generated"
         return svc
 
-    @pytest.mark.xfail(reason="Issue #44 OPEN — L2260 removes if( as guard when dynamic SQL detected")
     def test_dynamic_if_keeps_condition(self, cached_ast, tmp_path):
         svc = self._gen_svc(cached_ast, tmp_path)
         assert 'if (vCount > 0)' in svc or 'if (vCount.compareTo(0) > 0)' in svc, (
             "Issue #44: if (vCount > 0) removed by _remove_dynamic_sql_build_lines"
         )
 
-    @pytest.mark.xfail(reason="Issue #44 OPEN — elsif + dynamic SQL loses conditions")
     def test_dynamic_elsif_keeps_conditions(self, cached_ast, tmp_path):
         svc = self._gen_svc(cached_ast, tmp_path)
         assert bool(re.search(r'if\s*\(.*pFilter.*!=.*null', svc)), (
             "Issue #44: if (pFilter != null) removed by dynamic SQL cleanup"
         )
 
-    @pytest.mark.xfail(reason="Issue #44 OPEN — nested dynamic IF loses conditions")
     def test_nested_dynamic_keeps_ifs(self, cached_ast, tmp_path):
         svc = self._gen_svc(cached_ast, tmp_path)
         if_count = len(re.findall(r'\bif\s*\(', svc))
@@ -539,7 +536,6 @@ class TestIssue44_IfConditionLoss:
             f"Issue #44: only {if_count} if keywords — dynamic SQL cleanup removed them"
         )
 
-    @pytest.mark.xfail(reason="Issue #44 OPEN — chained concat + final IF loses condition")
     def test_chained_concat_keeps_final_if(self, cached_ast, tmp_path):
         svc = self._gen_svc(cached_ast, tmp_path)
         assert bool(re.search(r'if\s*\(.*pCode.*!=.*null', svc)), (

@@ -3413,15 +3413,15 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
                 for s in _iter_statements(stmt_data.get("then_stmts", [])):
                     _process_with_goto_replace(s)
                 _indent_last_lines(proc, 1)
-                if stmt_data.get("else_stmts"):
-                    proc.java_logic_lines.append("} else {")
-                    for s in _iter_statements(stmt_data["else_stmts"]):
-                        _process_with_goto_replace(s)
-                    _indent_last_lines(proc, 1)
                 for elsif in stmt_data.get("elsifs", []):
                     elsif_cond = _coerce_condition(_expr_to_java(elsif.get("condition", {}), proc, all_packages=all_packages))
                     proc.java_logic_lines.append(f"}} else if ({elsif_cond}) {{")
                     for s in _iter_statements(elsif.get("stmts", [])):
+                        _process_with_goto_replace(s)
+                    _indent_last_lines(proc, 1)
+                if stmt_data.get("else_stmts"):
+                    proc.java_logic_lines.append("} else {")
+                    for s in _iter_statements(stmt_data["else_stmts"]):
                         _process_with_goto_replace(s)
                     _indent_last_lines(proc, 1)
                 proc.java_logic_lines.append("}")
