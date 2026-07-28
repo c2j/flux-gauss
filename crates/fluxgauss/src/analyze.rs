@@ -101,6 +101,11 @@ pub fn analyze_procedure(
                 proc.java_logic_lines.insert(0, "try {".into());
             }
         }
+        // Multi-WHEN EXCEPTION → chained catch on one try:
+        //   try { ... } catch (A e) { ... } catch (B e) { ... }
+        // Each catch line starts with "}" (closes try or previous catch).
+        // Only ONE final "}" after all handlers — do NOT close per-handler
+        // (that orphans subsequent catch clauses; Issue #61 / MergeSales).
         if let Some(exc_block) = &body_inner.exception_block {
             for handler in &exc_block.handlers {
                 let is_others = handler.conditions.is_empty()
@@ -118,6 +123,8 @@ pub fn analyze_procedure(
                         break;
                     }
                 }
+            }
+            if has_exceptions {
                 proc.java_logic_lines.push("}".into());
             }
         }

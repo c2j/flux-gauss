@@ -2400,6 +2400,16 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
     if getattr(proc, '_has_goto', False):
         _analyze_and_rewrite_goto(proc, all_packages, dml_counter)
 
+    # Issue #63: reconcile FUNCTION return type when body only returns Strings
+    if proc.is_function and proc.return_type:
+        declared = sql_type_to_java(proc.return_type)
+        fixed = _reconcile_function_return_type(proc, declared)
+        if fixed == "String" and declared != "String":
+            proc.return_type = "varchar2"
+            _UDF_RETURN_TYPES[(proc.proc_name.lower(), len(proc.parameters))] = "String"
+            _record_todo("RETURN_TYPE_RECONCILE", proc,
+                         f"return 类型由 {declared} 纠正为 String（body 仅返回 String）")
+
 
 def _inject_inline_comments(proc: ProcedureInfo, checkpoints: list):
     """Insert inline comments into java_logic_lines at the correct positions.
@@ -6458,6 +6468,37 @@ def _wrap_handler_stmts(stmts, proc, all_packages,
                         out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
                         indent, in_catch=in_catch)
                     _lines.extend(_blines)
+            elif sk == "If":
+                cond = _expr_to_java(sv.get("condition", {}), proc, all_packages=all_packages)
+                _lines.append(f"{indent}if ({cond}) {{")
+                then_body = sv.get("then_stmts") or sv.get("then_body") or sv.get("body") or []
+                then_lines = _wrap_handler_stmts(
+                    then_body, proc, all_packages,
+                    out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
+                    indent + "    ", in_catch=in_catch)
+                _lines.extend(then_lines)
+                for elsif in (sv.get("elsifs") or sv.get("elsif_list") or sv.get("elsif") or []):
+                    elsif_cond = _expr_to_java(elsif.get("condition", {}), proc, all_packages=all_packages)
+                    _lines.append(f"{indent}}} else if ({elsif_cond}) {{")
+                    # AST key for ELSIF body is "stmts" (same as main IF path at ~3431)
+                    elsif_body = (
+                        elsif.get("stmts") or elsif.get("then_stmts")
+                        or elsif.get("body") or elsif.get("then_body") or []
+                    )
+                    elsif_lines = _wrap_handler_stmts(
+                        elsif_body, proc, all_packages,
+                        out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
+                        indent + "    ", in_catch=in_catch)
+                    _lines.extend(elsif_lines)
+                else_body = sv.get("else_stmts") or sv.get("else_body") or sv.get("else") or []
+                if else_body:
+                    _lines.append(f"{indent}}} else {{")
+                    else_lines = _wrap_handler_stmts(
+                        else_body, proc, all_packages,
+                        out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
+                        indent + "    ", in_catch=in_catch)
+                    _lines.extend(else_lines)
+                _lines.append(f"{indent}}}")
             elif sk == "Raise":
                 errm = "e.getMessage()" if in_catch else '"exception"'
                 _lines.append(f"{indent}throw new BusinessException({errm});")
@@ -6544,23 +6585,33 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
         else:
             other_handlers.append(handler)
 
-    # Process no_data_found handlers as null checks after the last mapper call
+    # Process no_data_found handlers as null checks after the last mapper call.
+    # If no mapper assignment is found (e.g. SELECT INTO OUT params via .set()),
+    # fall back to treating no_data_found as a regular catch handler so the
+    # body is not silently dropped (Issue #61).
+    _nd_fallback = []
     for nd_handler in no_data_handlers:
         nd_lines = _wrap_handler_stmts(
             nd_handler.get("statements", []), proc, all_packages,
             out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
             indent="    ", in_catch=False)
 
-        # Find the last mapper result variable
+        # Find the last mapper result variable (var = mapper.xxx)
         null_var = None
         for line in reversed(body_lines):
             m = re.match(r'^\s*(\w+)\s*=\s*mapper\.', line)
             if m:
                 null_var = m.group(1)
                 break
+        # Also match OUT-param style: pOXxx.set(mapper.xxx) or pOXxx.set(((Type) mapper.xxx))
+        if null_var is None:
+            for line in reversed(body_lines):
+                m = re.search(r'\.set\(\s*(?:\(\([^)]+\)\s*)?mapper\.', line)
+                if m:
+                    null_var = "__OUT_SET__"
+                    break
 
-        if null_var and nd_lines:
-            # Insert null check after the mapper call
+        if null_var and null_var != "__OUT_SET__" and nd_lines:
             null_block = [f"if ({null_var} == null) {{"]
             null_block.extend(nd_lines)
             null_block.append("}")
@@ -6568,6 +6619,12 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
                 if line.strip().startswith(f"{null_var} = mapper."):
                     body_lines = body_lines[:i+1] + null_block + body_lines[i+1:]
                     break
+        elif nd_lines:
+            # Cannot insert null-check — keep handler for catch-block emission
+            _nd_fallback.append(nd_handler)
+
+    if _nd_fallback:
+        other_handlers = _nd_fallback + other_handlers
 
     if other_handlers:
         result = ["try {"]
@@ -8063,13 +8120,11 @@ def _sf_substr(val, proc, _expr_to_java_fn):
         length = args_java[2]
         start_int = f"(int)({start})" if _might_be_long(start, proc) else f"({start})"
         length_int = f"(int)({length})" if _might_be_long(length, proc) else f"({length})"
-        _clamped_start = f"Math.max(0, {start_int} - 1)"
-        _e = f"Math.min({s_expr}.length(), {_clamped_start} + {length_int})"
-        return f"{s_expr}.substring({_clamped_start}, {_e})"
+        return f"_substr({s_expr}, {start_int}, {length_int})"
     elif len(args_java) == 2:
         start = args_java[1]
         start_int = f"(int)({start})" if _might_be_long(start, proc) else f"({start})"
-        return f"{s_expr}.substring(Math.max(0, {start_int} - 1))"
+        return f"_substr({s_expr}, {start_int})"
     return f"{s_expr}"
 
 
@@ -8444,11 +8499,13 @@ def _handle_function(func_name, args_java, proc):
             sub_expr = args_java[1]
             s_expr = s if (s.startswith('"') or s.startswith("'")) else f"String.valueOf({s})"
             sub_wrapped = sub_expr if (sub_expr.startswith('"') or sub_expr.startswith("'")) else f"String.valueOf({sub_expr})"
+            # Parenthesize (indexOf + 1) so comparisons/method chains bind correctly.
+            # Without parens: indexOf(x) + 1.equals(0) is parsed as float literal "1.equals".
             if len(args_java) >= 3:
                 start = args_java[2]
                 start_cast = f"(int)({start})" if _might_be_long(start, proc) else f"({start})"
-                return f"{s_expr}.indexOf({sub_wrapped}, Math.max(0, {start_cast} - 1)) + 1"
-            return f"{s_expr}.indexOf({sub_wrapped}) + 1"
+                return f"({s_expr}.indexOf({sub_wrapped}, Math.max(0, {start_cast} - 1)) + 1)"
+            return f"({s_expr}.indexOf({sub_wrapped}) + 1)"
         return "0"
 
     elif func_name == "to_hex":
@@ -8631,10 +8688,11 @@ _NUMERIC_FUNC_NEEDS_INT_ARGS = {"min", "max", "least", "greatest"}
 _NUMERIC_FUNC_RETURN_LONG = {"to_number"}
 _STRING_FUNC_RETURN = {
     "upper", "lower", "trim", "replace", "concat", "lpad", "rpad", "rtrim", "ltrim",
-    "chr", "substr", "substring", "nvl", "nvl2", "coalesce", "to_char", "to_clob",
+    "chr", "substr", "substring", "to_char", "to_clob",
     "reverse", "repeat", "initcap", "regexp_replace", "regexp_like", "left", "right",
     "split_part", "translate", "overlay", "to_date",
 }
+# nvl/nvl2/coalesce inherit the type of their value arguments (not always String)
 
 
 def _java_type_from_field_name(field_name: str) -> str:
@@ -8717,6 +8775,29 @@ def _infer_expr_type(expr, proc: ProcedureInfo) -> str:
                 arg_type = _infer_expr_type(val["args"][0], proc)
                 if "BigDecimal" in arg_type or arg_type.upper() in ("NUMERIC", "NUMBER", "DECIMAL"):
                     return "java.math.BigDecimal"
+            # COALESCE/NVL/NVL2: result type follows non-null value args
+            if func_name in ("coalesce", "nvl", "nvl2") and val.get("args"):
+                args = val["args"]
+                if func_name == "nvl2" and len(args) >= 3:
+                    t1 = _infer_expr_type(args[1], proc)
+                    t2 = _infer_expr_type(args[2], proc)
+                else:
+                    types = [_infer_expr_type(a, proc) for a in args]
+                    t1 = types[0] if types else "Object"
+                    t2 = types[1] if len(types) > 1 else t1
+                for t in (t1, t2):
+                    if "BigDecimal" in t:
+                        return "java.math.BigDecimal"
+                for t in (t1, t2):
+                    if t in ("Long", "long"):
+                        return "Long"
+                for t in (t1, t2):
+                    if t in ("Integer", "int", "Double", "double", "Float", "float"):
+                        return t if t[0].isupper() else t.capitalize()
+                for t in (t1, t2):
+                    if t == "String":
+                        return "String"
+                return t1 if t1 != "Object" else t2
             if func_name in _STRING_FUNC_RETURN:
                 return "String"
             if func_name == "to_date":
@@ -9273,12 +9354,29 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 left_out = _get_out_param(val.get("left"), proc)
                 right_out = _get_out_param(val.get("right"), proc)
 
+                # Coerce String OUT params to Long only for numeric-style comparisons.
+                # Equality against a string literal (e.g. p_o_succeed = '0') must stay
+                # as String.equals — Long.valueOf("0") == "0" is invalid Java.
+                _right_is_str_lit = (
+                    isinstance(val.get("right"), dict)
+                    and "Literal" in val.get("right", {})
+                    and isinstance(val["right"]["Literal"], dict)
+                    and "String" in val["right"]["Literal"]
+                )
+                _left_is_str_lit = (
+                    isinstance(val.get("left"), dict)
+                    and "Literal" in val.get("left", {})
+                    and isinstance(val["left"]["Literal"], dict)
+                    and "String" in val["left"]["Literal"]
+                )
                 if left_out and left_out.java_type == "String" and op in (">", "<", ">=", "<=", "=", "<>"):
-                    left = f"Long.valueOf({left})"
-                    left_type = "Long"
+                    if op in (">", "<", ">=", "<=") or (op in ("=", "<>") and not _right_is_str_lit and right_type != "String"):
+                        left = f"Long.valueOf({left})"
+                        left_type = "Long"
                 if right_out and right_out.java_type == "String" and op in (">", "<", ">=", "<=", "=", "<>"):
-                    right = f"Long.valueOf({right})"
-                    right_type = "Long"
+                    if op in (">", "<", ">=", "<=") or (op in ("=", "<>") and not _left_is_str_lit and left_type != "String"):
+                        right = f"Long.valueOf({right})"
+                        right_type = "Long"
 
                 # Cast .get() field access results for typed comparisons (null-safe)
                 _left_is_primitive = False
@@ -9798,7 +9896,13 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     if has_bd and result_types[i] not in ("java.math.BigDecimal", "Object", ""):
                         result = f"java.math.BigDecimal.valueOf({result})"
                     if is_primitive:
-                        cmp_expr = f"{operand} == {cond}"
+                        # Parenthesize operand to prevent operator precedence issues
+                        # e.g. "indexOf(x) + 1 == 0" must be "(indexOf(x) + 1) == 0"
+                        operand_needs_parens = any(op in operand for op in (" + ", " - ", " * ", " / ", " % "))
+                        if operand_needs_parens:
+                            cmp_expr = f"({operand}) == {cond}"
+                        else:
+                            cmp_expr = f"{operand} == {cond}"
                     else:
                         cmp_expr = f"java.util.Objects.equals({operand}, {cond})"
                     if i == 0:
@@ -9985,10 +10089,24 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
 def _is_string_comparison(binary_op: dict, proc: ProcedureInfo = None) -> bool:
     # Original logic: right side is a string literal
     right = binary_op.get("right", {})
+    right_is_numeric_string = False
     if isinstance(right, dict):
         for k, v in right.items():
             if k == "Literal" and isinstance(v, dict) and "String" in v:
-                return True
+                try:
+                    float(v["String"])
+                    right_is_numeric_string = True
+                except ValueError:
+                    return True
+    # Check: if right is a numeric string literal AND the other side is a known
+    # numeric type (e.g. INSTR returns Integer), treat as numeric comparison.
+    # This prevents .equals() on primitive-like expressions causing precedence
+    # bugs like "indexOf(x) + 1.equals(0)" (Java parses as float literal "1.equals").
+    if right_is_numeric_string and proc:
+        left_type = _infer_expr_type(binary_op.get("left", {}), proc)
+        if left_type in ("Integer", "int", "Long", "long", "Double", "double",
+                          "Float", "float", "java.math.BigDecimal"):
+            return False
     # Extended: either side is a String type variable
     if proc:
         left_type = _infer_expr_type(binary_op.get("left", {}), proc)
@@ -11777,6 +11895,21 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
         lines.append("        list.add(element);")
         lines.append("        return list;")
         lines.append("    }")
+    if "_substr(" in all_body_text:
+        lines.append("")
+        lines.append("    private String _substr(String str, Object pos) {")
+        lines.append("        return _substr(str, pos, str.length());")
+        lines.append("    }")
+        lines.append("")
+        lines.append("    private String _substr(String str, Object pos, Object len) {")
+        lines.append("        if (str == null) str = \"\";")
+        lines.append("        int p = (pos instanceof Number) ? ((Number) pos).intValue() : Integer.parseInt(String.valueOf(pos));")
+        lines.append("        int l = (len instanceof Number) ? ((Number) len).intValue() : Integer.parseInt(String.valueOf(len));")
+        lines.append("        int start = Math.max(0, p - 1);")
+        lines.append("        int end = Math.min(str.length(), start + l);")
+        lines.append("        if (start > end) start = end;")
+        lines.append("        return str.substring(start, end);")
+        lines.append("    }")
 
     # Stubs for known SQL functions that bypass _register_missing_overload
     _known_func_stubs = []
@@ -12074,6 +12207,70 @@ def _format_comment_for_java(comment) -> str:
     return f"// {text}" if text else ""
 
 
+def _reconcile_function_return_type(proc: ProcedureInfo, declared_ret: str):
+    """Issue #63: override numeric method return type when body only returns Strings.
+
+    Only triggers when:
+      - declared return is numeric (Long/Integer/BigDecimal/...)
+      - every non-null ``return <expr>;`` in java_logic_lines is a String local,
+        String parameter, string literal, or obvious string concat/valueOf
+    Does NOT trigger for COALESCE/NVL of numerics or mixed returns.
+    """
+    if not proc.is_function or not declared_ret:
+        return None
+    _numeric = ("Long", "Integer", "int", "long", "Double", "double",
+                "Float", "float", "java.math.BigDecimal", "BigDecimal")
+    if not any(n in declared_ret for n in _numeric):
+        return None
+
+    _name_to_type = {}
+    for vn, vt in proc.local_vars.items():
+        _name_to_type[snake_to_camel(vn)] = vt
+        _name_to_type[vn] = vt
+    for p in proc.parameters:
+        _name_to_type[p.java_name] = p.java_type
+        _name_to_type[p.name] = p.java_type
+
+    string_hits = 0
+    non_string_hits = 0
+    for line in proc.java_logic_lines:
+        s = line.strip()
+        m = re.match(r'^return\s+(.+);$', s)
+        if not m:
+            continue
+        expr = m.group(1).strip()
+        if expr in ("null", "null /* stub */") or expr.startswith("/*"):
+            continue
+        if expr.startswith('"') or expr.startswith("'"):
+            string_hits += 1
+            continue
+        # Bare identifier or OUT .get()
+        bare = expr
+        gm = re.match(r'^(\w+)\.get\(\)$', expr)
+        if gm:
+            bare = gm.group(1)
+        if re.match(r'^\w+$', bare) and bare in _name_to_type:
+            vt = _name_to_type[bare]
+            if vt == "String":
+                string_hits += 1
+            else:
+                non_string_hits += 1
+            continue
+        if any(tok in expr for tok in ("String.valueOf(", ".concat(", ' + "', '" + ')):
+            # Only count as string if no numeric BigDecimal/Long ops dominate
+            if any(tok in expr for tok in (".add(", ".subtract(", ".multiply(", ".divide(",
+                                            "BigDecimal", "Long.valueOf", "Integer.valueOf")):
+                non_string_hits += 1
+            else:
+                string_hits += 1
+            continue
+        non_string_hits += 1
+
+    if string_hits > 0 and non_string_hits == 0:
+        return "String"
+    return None
+
+
 def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: dict = None) -> str:
     params = []
     out_params = []
@@ -12099,6 +12296,11 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
 
     if proc.is_function:
         ret_type = sql_type_to_java(proc.return_type) if proc.return_type else "Object"
+        # Issue #63: if declared return is numeric but every RETURN is a String
+        # local/param/literal, prefer String (AST return_type may be wrong).
+        _reconciled = _reconcile_function_return_type(proc, ret_type)
+        if _reconciled:
+            ret_type = _reconciled
         _imp = _resolve_import(ret_type)
         if _imp:
             proc.imports.add(_imp)
@@ -12142,6 +12344,10 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                     default_val = f"new AtomicReference<>({inner})" if inner else _default_for_type(var_type)
                 elif var_name in proc.local_var_defaults and _is_numeric_default(default_val, var_type):
                     default_val = _wrap_default_for_type(default_val, var_type)
+                # Fix: empty string literal '' assigned to numeric type (e.g. BigDecimal)
+                # is invalid Java. Replace with the type's appropriate default.
+                if default_val in ('""', "''") and var_type not in ("String", "Object", "Map<String, Object>"):
+                    default_val = _default_for_type(var_type)
                 if var_type.startswith("java.util.List") and default_val in ('"{}"', "'{}'"):
                     default_val = _default_for_type(var_type)
                 if DEBUG_MODE:
