@@ -931,6 +931,220 @@ class TestIssue56_ReturnInHandler:
         )
 
 
+# ── Issue #61: Outer EXCEPTION multi-WHEN brace / handler drop ──
+
+class TestIssue61_OuterExceptionBrace:
+    """Issue #61: outer EXCEPTION WHEN no_data_found + OTHERS with nested
+    BEGIN-EXCEPTION must keep balanced braces and not drop handler bodies."""
+
+    def _gen_svc(self, cached_ast, tmp_path):
+        sql_file = "issue_61_outer_exception_brace.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+        return svc
+
+    def test_braces_balanced(self, cached_ast, tmp_path):
+        svc = self._gen_svc(cached_ast, tmp_path)
+        assert svc.count("{") == svc.count("}"), (
+            f"Issue #61: brace mismatch {{={svc.count('{')}}} }}={svc.count('}')}"
+        )
+
+    def test_no_orphaned_catch(self, cached_ast, tmp_path):
+        svc = self._gen_svc(cached_ast, tmp_path)
+        # No standalone } immediately before } catch that would orphan it
+        assert re.search(r'^\s*\}\s*$\n\s*\}\s*catch\s*\(', svc, re.M) is None, (
+            "Issue #61: extra } before catch orphans the catch block"
+        )
+
+    def test_no_data_found_handler_not_dropped(self, cached_ast, tmp_path):
+        svc = self._gen_svc(cached_ast, tmp_path)
+        assert "pOMarketPrice.set" in svc and "ZERO" in svc or "valueOf(0)" in svc, (
+            "Issue #61: no_data_found handler body dropped"
+        )
+
+    def test_others_if_body_emitted(self, cached_ast, tmp_path):
+        svc = self._gen_svc(cached_ast, tmp_path)
+        assert "中证行情" in svc, "Issue #61: OTHERS IF body not converted"
+        assert '"0".equals(' in svc or "Objects.equals" in svc, (
+            "Issue #61: p_o_succeed = '0' should use string equals"
+        )
+
+    def test_others_elsif_body_emitted(self, cached_ast, tmp_path):
+        """ELSIF inside EXCEPTION handler must use AST key 'stmts' (not then_stmts)."""
+        svc = self._gen_svc(cached_ast, tmp_path)
+        assert "WARN:" in svc, (
+            "Issue #61: ELSIF body inside EXCEPTION handler was dropped "
+            "(wrong AST key for elsif body)"
+        )
+        assert "OTHER_ERR" in svc, "Issue #61: ELSE body inside EXCEPTION handler dropped"
+        assert "else if" in svc or "else if (" in svc, "Issue #61: else if branch missing"
+
+
+# ── Issue #63: FUNCTION RETURN VARCHAR2 must be String ──────────
+
+class TestIssue63_Varchar2Return:
+    """Issue #63: RETURN VARCHAR2 → Java String; numeric RETURN stays numeric."""
+
+    def _gen_svc(self, cached_ast, tmp_path):
+        sql_file = "issue_63_varchar2_return.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+        return svc, pkg
+
+    def test_varchar2_functions_return_string(self, cached_ast, tmp_path):
+        svc, pkg = self._gen_svc(cached_ast, tmp_path)
+        assert re.search(r'public\s+String\s+fncGetOpenFundValue\s*\(', svc), (
+            "Issue #63: fnc_get_open_fund_value must return String"
+        )
+        assert re.search(r'public\s+String\s+fncTrdGetUnitCash\s*\(', svc), (
+            "Issue #63: fnc_trd_get_unit_cash must return String"
+        )
+
+    def test_numeric_function_stays_numeric(self, cached_ast, tmp_path):
+        svc, pkg = self._gen_svc(cached_ast, tmp_path)
+        assert re.search(r'public\s+(Long|java\.math\.BigDecimal|Integer)\s+fncGetPriceNum\s*\(', svc), (
+            "Issue #63: fnc_get_price_num must stay numeric, not String"
+        )
+        assert not re.search(r'public\s+String\s+fncGetPriceNum\s*\(', svc), (
+            "Issue #63: numeric COALESCE return must NOT be flipped to String"
+        )
+
+    def test_reconcile_overrides_wrong_numeric_declaration(self, cached_ast, tmp_path):
+        """When AST return_type is wrongly numeric but body returns String var."""
+        sql_file = "issue_63_varchar2_return.sql"
+        ast = cached_ast[sql_file]
+        pkg_name = _fixture_pkg_name(sql_file)
+        procs, pkg_vars, custom_types = fg.extract_procedures(ast, sql_file)
+        # Force wrong return type on the VARCHAR2 function
+        target = None
+        for p in procs:
+            if "open_fund" in p.name.lower() or "OpenFund" in p.name:
+                target = p
+                break
+            if p.proc_name and "open_fund" in p.proc_name.lower():
+                target = p
+                break
+        assert target is not None, "open_fund function not found"
+        target.return_type = "number"  # wrong AST
+        pkg = fg.PackageInfo(package_name=pkg_name, procedures=procs,
+                             package_vars=pkg_vars, custom_types=custom_types)
+        all_pkgs = {pkg_name: pkg}
+        for proc in procs:
+            fg.analyze_procedure(proc, all_pkgs)
+        assert target.return_type == "varchar2" or fg.sql_type_to_java(target.return_type) == "String", (
+            f"Issue #63: reconcile failed, still {target.return_type!r}"
+        )
+        out_dir = str(Path(tmp_path) / "dest_reconcile")
+        fg.generate_project(out_dir, packages=[pkg], config={})
+        cls = fg.package_to_classname(pkg_name)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert re.search(r'public\s+String\s+fncGetOpenFundValue\s*\(', svc), (
+            "Issue #63: reconciled signature must be String"
+        )
+
+
+# ── Issue #60: INSTR / CASE WHEN 0 operator precedence ──────────
+
+class TestIssue60_InstrCaseWhen:
+    """Issue #60: INSTR/CASE WHEN 0 must not produce indexOf()+1.equals(0)."""
+
+    def _gen_svc(self, cached_ast, tmp_path):
+        sql_file = "issue_60_instr_case_when.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+        return svc
+
+    def test_no_bare_one_dot_equals(self, cached_ast, tmp_path):
+        svc = self._gen_svc(cached_ast, tmp_path)
+        assert "1.equals(" not in svc, (
+            "Issue #60: bare 1.equals() — Java parses as float literal"
+        )
+        assert re.search(r'\+\s*1\.equals\(', svc) is None, (
+            "Issue #60: indexOf()+1.equals() operator precedence bug"
+        )
+
+    def test_instr_result_parenthesized(self, cached_ast, tmp_path):
+        svc = self._gen_svc(cached_ast, tmp_path)
+        assert "indexOf(" in svc, "INSTR should map to indexOf"
+        assert re.search(r'\(String\.valueOf\([^)]+\)\.indexOf\([^)]+\)\s*\+\s*1\)', svc) or \
+               re.search(r'\([^)]*\.indexOf\([^)]+\)\s*\+\s*1\)', svc), (
+            "Issue #60: INSTR result should be parenthesized (indexOf + 1)"
+        )
+
+    def test_case_when_uses_eq_eq_not_equals_on_int(self, cached_ast, tmp_path):
+        svc = self._gen_svc(cached_ast, tmp_path)
+        assert " == 0" in svc or "==0" in svc or "Objects.equals" in svc, (
+            "Issue #60: CASE WHEN 0 comparison missing"
+        )
+
+
+# ── Issue #62: SUBSTR helper method ─────────────────────────────
+
+class TestIssue62_SubstrHelper:
+    """Issue #62: SUBSTR should use _substr helper, not inline Math.min/max."""
+
+    def _gen_svc(self, cached_ast, tmp_path):
+        sql_file = "issue_62_substr_helper.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+        return svc
+
+    def test_uses_substr_helper(self, cached_ast, tmp_path):
+        svc = self._gen_svc(cached_ast, tmp_path)
+        assert "_substr(" in svc, "Issue #62: expected _substr(...) helper calls"
+
+    def test_helper_method_emitted(self, cached_ast, tmp_path):
+        svc = self._gen_svc(cached_ast, tmp_path)
+        assert "private String _substr(String str, Object pos, Object len)" in svc, (
+            "Issue #62: _substr helper method not generated"
+        )
+
+    def test_no_inline_math_min_max_substring(self, cached_ast, tmp_path):
+        svc = self._gen_svc(cached_ast, tmp_path)
+        inline = re.findall(
+            r'\.substring\(\s*Math\.(?:min|max)\(',
+            svc
+        )
+        assert len(inline) == 0, (
+            f"Issue #62: found {len(inline)} inline Math.min/max substring expansions"
+        )
+
+
+# ── Issue #64: BigDecimal empty-string init ─────────────────────
+
+class TestIssue64_BigDecimalEmptyInit:
+    """Issue #64: empty string '' must not initialize numeric Java types."""
+
+    def _gen_svc(self, cached_ast, tmp_path):
+        sql_file = "issue_64_bigdecimal_empty_init.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+        return svc
+
+    def test_no_bigdecimal_eq_empty_string(self, cached_ast, tmp_path):
+        svc = self._gen_svc(cached_ast, tmp_path)
+        bad = re.findall(
+            r'(?:BigDecimal|Long|Integer|Double|Float)\s+\w+\s*=\s*""\s*;',
+            svc
+        )
+        assert len(bad) == 0, (
+            f"Issue #64: numeric vars initialized with empty string: {bad}"
+        )
+
+    def test_empty_string_defaults_are_string_or_typed_default(self, cached_ast, tmp_path):
+        svc = self._gen_svc(cached_ast, tmp_path)
+        assert re.search(r'procEmptyStringDefaults|EmptyStringDefaults', svc), (
+            "Issue #64: expected procedure method not generated"
+        )
+        bad = re.findall(r'(?:BigDecimal|Long|Integer)\s+\w+\s*=\s*""\s*;', svc)
+        assert bad == [], f"Issue #64: numeric empty-string inits still present: {bad}"
+
+
 # ── Meta: Verify all issue fixtures parse correctly ──────────────
 
 class TestIssueFixturesParse:
@@ -950,6 +1164,11 @@ class TestIssueFixturesParse:
         "issue_49_varchar2_concat.sql",
         "issue_54_nested_exception.sql",
         "pkg_issue56_return_handler.sql",
+        "issue_60_instr_case_when.sql",
+        "issue_61_outer_exception_brace.sql",
+        "issue_62_substr_helper.sql",
+        "issue_63_varchar2_return.sql",
+        "issue_64_bigdecimal_empty_init.sql",
     ]
 
     @pytest.mark.parametrize("sql_file", ISSUE_FIXTURES)
