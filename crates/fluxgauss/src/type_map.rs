@@ -124,6 +124,7 @@ pub fn infer_sql_type_from_column_name(column_name: &str) -> &'static str {
     if col.contains("amount") || col.contains("balance") || col.contains("price")
         || col.contains("qty") || col.contains("quantity") || col.contains("total")
         || col.contains("salary") || col.contains("pmll") || col.contains("rate")
+        || col.contains("digits") || col.contains("scale") || col.contains("days")
     {
         return "numeric";
     }

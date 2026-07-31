@@ -329,6 +329,9 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>) -> String {
         Some(t) if (t == "Long" || t == "long") && trimmed.contains("BigDecimal") => {
             format!("({}).longValue()", trimmed)
         }
+        Some(t) if (t == "Long" || t == "long") => {
+            format!("Long.valueOf({})", trimmed)
+        }
         _ => expr.to_string()
     }
 }
@@ -1209,9 +1212,19 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             if jargs.len() >= 2 {
                 let arg = jargs[0].as_str();
                 if is_bigdecimal_var(arg, proc) {
-                    format!("{}.setScale((int){}, java.math.RoundingMode.HALF_UP)", arg, jargs[1])
+                    let scale_int = if is_bigdecimal_var(&jargs[1], proc) {
+                        format!("{}.intValue()", jargs[1])
+                    } else {
+                        format!("(int)({})", jargs[1])
+                    };
+                    format!("{}.setScale({}, java.math.RoundingMode.HALF_UP)", arg, scale_int)
                 } else {
-                    format!("Math.round({} * Math.pow(10, {})) / Math.pow(10, {})", jargs[0], jargs[1], jargs[1])
+                    let scale_dbl = if is_bigdecimal_var(&jargs[1], proc) {
+                        format!("{}.doubleValue()", jargs[1])
+                    } else {
+                        jargs[1].clone()
+                    };
+                    format!("Math.round({} * Math.pow(10, {})) / Math.pow(10, {})", jargs[0], scale_dbl, scale_dbl)
                 }
             } else {
                 let arg = jargs.first().map(|s| s.as_str()).unwrap_or("0");
