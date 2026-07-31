@@ -71,7 +71,10 @@ pub fn write_mapper_interface(
         }
         norm = re_t.replace_all(&norm, "$1 $3").to_string();
         if sig_map.contains(&norm) {
-            deduped.push(format!("    // [DUPLICATE] {}", m.trim()));
+            let commented: Vec<String> = m.lines()
+                .map(|l| format!("    // [DUPLICATE] {}", l))
+                .collect();
+            deduped.push(commented.join("\n"));
         } else {
             sig_map.insert(norm);
             deduped.push(m);

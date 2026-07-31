@@ -95,6 +95,7 @@ pub fn write_service_class(
     }
     if all_body.contains("AtomicReference<")
         || pkg.procedures.iter().any(|p| p.parameters.iter().any(|p| p.is_out()))
+        || pkg.procedures.iter().any(|p| !p.out_local_vars.is_empty())
     {
         all_imports.insert("import java.util.concurrent.atomic.AtomicReference;".to_string());
     }
@@ -361,11 +362,11 @@ fn coerce_default_value(java_type: &str, default_val: &str) -> String {
         if trimmed == "1" {
             return "java.math.BigDecimal.ONE".to_string();
         }
-        if trimmed == "null" || trimmed == "java.math.bigdecimal.zero" || trimmed == "java.math.bigdecimal.one" {
-            return default_val.to_string();
+        if trimmed == "null" || trimmed == "java.math.bigdecimal.zero" || trimmed == "java.math.bigdecimal.one" || trimmed == "\"\"" || trimmed == "''" {
+            return "java.math.BigDecimal.ZERO".to_string();
         }
         if trimmed.parse::<i64>().is_ok() {
-            return format!("java.math.BigDecimal.valueOf({})", trimmed);
+            return format!("java.math.BigDecimal.valueOf({})", crate::expr::java_int_lit(trimmed));
         }
         if trimmed.parse::<f64>().is_ok() {
             return format!("new java.math.BigDecimal(\"{}\")", trimmed);
@@ -373,7 +374,7 @@ fn coerce_default_value(java_type: &str, default_val: &str) -> String {
         if trimmed.starts_with("(") && trimmed.ends_with(")") {
             let inner = &trimmed[1..trimmed.len()-1];
             if inner.parse::<i64>().is_ok() || inner.parse::<f64>().is_ok() {
-                return format!("java.math.BigDecimal.valueOf({})", inner);
+                return format!("java.math.BigDecimal.valueOf({})", crate::expr::java_int_lit(inner));
             }
         }
         return default_val.to_string();
