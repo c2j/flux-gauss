@@ -857,13 +857,27 @@ fn append_local_vars_to_mapper_calls(
             for (name, _) in &promoted_extra {
                 let jn_lower = name.to_lowercase();
                 if !param_java_names.iter().any(|pn| pn.to_lowercase() == jn_lower) {
-                    if out_params.iter().any(|p| snake_to_camel(&p.name).to_lowercase() == jn_lower) {
+                    let is_ar = out_params.iter().any(|p| snake_to_camel(&p.name).to_lowercase() == jn_lower)
+                        || proc.out_local_vars.iter().any(|(k, _)|
+                            k.to_lowercase().replace("_", "") == jn_lower.replace("_", ""));
+                    if is_ar {
                         extra_args.push(format!("{}.get()", name));
                     } else {
                         extra_args.push(name.clone());
                     }
                 }
             }
+
+            // Also unwrap local_args that are promoted to AtomicReference
+            local_args = local_args.iter().map(|name| {
+                if proc.out_local_vars.iter().any(|(k, _)|
+                    k.to_lowercase().replace("_", "") == name.to_lowercase().replace("_", ""))
+                {
+                    format!("{}.get()", name)
+                } else {
+                    name.clone()
+                }
+            }).collect();
 
             extra_args.extend(local_args);
             extra_args.extend(pkg_args);

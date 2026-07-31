@@ -1172,7 +1172,17 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             } else {
                 jargs[1].clone()
             };
-            format!("({} != null ? {} : {})", jargs[0], jargs[0], else_val)
+            let arg0 = jargs[0].trim();
+            let arg0_is_ar = proc.out_local_vars.iter().any(|(k,_)|
+                k.to_lowercase().replace("_", "") == arg0.to_lowercase().replace("_", ""))
+                || proc.parameters.iter().any(|p| p.is_out()
+                    && p.name.to_lowercase().replace("_", "") == arg0.to_lowercase().replace("_", ""));
+            let true_val = if arg0_is_ar {
+                format!("{}.get()", arg0)
+            } else {
+                arg0.to_string()
+            };
+            format!("({} != null ? {} : {})", arg0, true_val, else_val)
         }
         "UPPER" => format!("String.valueOf({}).toUpperCase()", jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")),
         "LOWER" => format!("String.valueOf({}).toLowerCase()", jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")),
