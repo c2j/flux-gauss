@@ -99,6 +99,21 @@ pub fn assignment_to_java(target: &ogsql_parser::ast::Expr, value: &ogsql_parser
                     format!("String.valueOf({})", val)
                 } else if ptype == "Long" && val.starts_with('"') {
                     format!("Long.valueOf({})", val)
+                } else if ptype == "Long" && val.chars().all(|c| c.is_ascii_digit()) {
+                    format!("Long.valueOf({})", java_int_lit(&val))
+                } else if ptype == "Long" && (val.contains("BigDecimal") || val.contains("java.math.BigDecimal")) {
+                    format!("({}).longValue()", val)
+                } else if ptype == "Long" {
+                    let trimmed = val.trim();
+                    let matched = proc.local_vars.iter().any(|(k, t)| 
+                        k.to_lowercase().replace("_", "") == trimmed.to_lowercase().replace("_", "")
+                        && t.contains("BigDecimal")
+                    );
+                    if matched {
+                        format!("({}).longValue()", val)
+                    } else {
+                        val
+                    }
                 } else if ptype == "java.math.BigDecimal" {
                     if val.starts_with("String.valueOf(") {
                         let inner = val.trim_start_matches("String.valueOf(").trim_end_matches(')');
@@ -131,14 +146,29 @@ pub fn assignment_to_java(target: &ogsql_parser::ast::Expr, value: &ogsql_parser
             };
             return format!("{}.set({});", camel, coerced);
         }
-        let var_type = proc.local_vars.get(&ref_name.to_lowercase()).cloned()
+        let mut var_type = proc.local_vars.get(&ref_name.to_lowercase()).cloned()
             .or_else(|| {
                 let ref_lower = ref_name.to_lowercase().replace("_", "");
                 proc.package_vars.iter()
                     .find(|(k, _)| k.to_lowercase().replace("_", "") == ref_lower)
                     .map(|(_, vi)| vi.java_type.clone())
             });
+        // Check if promoted to AtomicReference<> by out_local_vars (OUT-arg usage)
+        let ref_lower_no_underscore = ref_name.to_lowercase().replace("_", "");
+        if let Some((_, inner_type)) = proc.out_local_vars.iter()
+            .find(|(k, _)| k.to_lowercase().replace("_", "") == ref_lower_no_underscore)
+        {
+            var_type = Some(format!("AtomicReference<{}>", inner_type));
+        }
         let mut val = expr_to_java(value, proc);
+        // Local vars promoted to AtomicReference for OUT-arg usage need .set()
+        if let Some(vt) = &var_type {
+            if vt.contains("AtomicReference<") {
+                let inner_type = vt.trim_start_matches("AtomicReference<").trim_end_matches('>');
+                let coerced = coerce_for_type(&val, Some(inner_type));
+                return format!("{}.set({});", camel, coerced);
+            }
+        }
         let skip_coerce = var_type.as_ref().map_or(false, |t| t.contains("BigDecimal"))
             && is_bigdecimal_var(&val, proc);
         if !skip_coerce {
@@ -151,7 +181,22 @@ pub fn assignment_to_java(target: &ogsql_parser::ast::Expr, value: &ogsql_parser
     format!("{} = {};", var, val)
 }
 
-fn coerce_for_type(expr: &str, target_type: Option<&str>) -> String {
+/// Render a Java integer literal with an `L` suffix when it exceeds the
+/// `int` range (2^31-1). Unsuffixed literals are `int`-typed per JLS 3.10.1,
+/// so `BigDecimal.valueOf(99999999999)` fails to compile — needs `...L`.
+pub(crate) fn java_int_lit(digits: &str) -> String {
+    let trimmed = digits.trim();
+    if !trimmed.is_empty() && trimmed.chars().all(|c| c.is_ascii_digit()) {
+        if let Ok(v) = trimmed.parse::<i64>() {
+            if v > i32::MAX as i64 {
+                return format!("{}L", trimmed);
+            }
+        }
+    }
+    trimmed.to_string()
+}
+
+pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>) -> String {
     let trimmed = expr.trim();
     if is_nullish_java_expr(trimmed) {
         if let Some(t) = target_type {
@@ -194,10 +239,10 @@ fn coerce_for_type(expr: &str, target_type: Option<&str>) -> String {
             && (trimmed.starts_with("Math.")
                 || (trimmed.contains("Math.")
                     && trimmed.chars().next().map(|c| c.is_ascii_digit() || c == '(' || c == '-').unwrap_or(false))) => {
-            format!("java.math.BigDecimal.valueOf({})", trimmed)
+            format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed))
         }
         Some(t) if t.contains("BigDecimal") && trimmed.chars().all(|c| c.is_ascii_digit()) => {
-            format!("java.math.BigDecimal.valueOf({})", trimmed)
+            format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed))
         }
         Some(t) if t.contains("BigDecimal")
             && trimmed.contains(".get(")
@@ -206,7 +251,7 @@ fn coerce_for_type(expr: &str, target_type: Option<&str>) -> String {
             let has_arithmetic = trimmed.contains(" * ") || trimmed.contains(" + ")
                 || trimmed.contains(" - ") || trimmed.contains(" / ");
             if has_arithmetic {
-                format!("java.math.BigDecimal.valueOf({})", trimmed)
+                format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed))
             } else {
                 format!("java.math.BigDecimal.valueOf(((Number) {}).longValue())", trimmed)
             }
@@ -226,7 +271,7 @@ fn coerce_for_type(expr: &str, target_type: Option<&str>) -> String {
             && !trimmed.contains("BigDecimal.ZERO")
             && !trimmed.contains("BigDecimal.ONE")
             && !trimmed.starts_with("new java.math.BigDecimal") => {
-            format!("java.math.BigDecimal.valueOf({})", trimmed)
+            format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed))
         }
         Some(t) if t.contains("BigDecimal")
             && !trimmed.contains("BigDecimal")
@@ -246,7 +291,7 @@ fn coerce_for_type(expr: &str, target_type: Option<&str>) -> String {
             && !trimmed.contains(".min(")
             && !trimmed.contains(".stripTrailingZeros(")
             => {
-            format!("java.math.BigDecimal.valueOf({})", trimmed)
+            format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed))
         }
         Some(t) if (t == "Integer" || t == "int") && trimmed.contains(".get(") => {
             format!("((Number) {}).intValue()", trimmed)
@@ -261,7 +306,7 @@ fn coerce_for_type(expr: &str, target_type: Option<&str>) -> String {
             format!("((java.sql.Date) {})", trimmed)
         }
         Some(t) if t == "Long" && trimmed.chars().all(|c| c.is_ascii_digit()) => {
-            format!("Long.valueOf({})", trimmed)
+            format!("Long.valueOf({})", java_int_lit(trimmed))
         }
         Some(t) if t == "String" && trimmed != "null"
             && !trimmed.contains("String.valueOf(")
@@ -281,6 +326,9 @@ fn coerce_for_type(expr: &str, target_type: Option<&str>) -> String {
         Some(t) if (t == "Long" || t == "long") && trimmed.contains(".indexOf(") && !trimmed.contains("(long)") => {
             format!("(long)({})", trimmed)
         }
+        Some(t) if (t == "Long" || t == "long") && trimmed.contains("BigDecimal") => {
+            format!("({}).longValue()", trimmed)
+        }
         _ => expr.to_string()
     }
 }
@@ -290,15 +338,23 @@ fn coerce_arg_to_type(arg: &str, target_type: &str, proc: &ProcedureInfo) -> Str
     let target_is_bigdecimal = target_type.contains("BigDecimal");
     let target_is_long = target_type == "long" || target_type == "Long";
 
+    // Unwrap AtomicReference OUT params when passed as regular-type args
+    if is_out_param(trimmed, proc) || proc.out_local_vars.iter().any(|(k,_)|
+        k.to_lowercase().replace("_", "") == trimmed.to_lowercase().replace("_", ""))
+    {
+        // OUT param / promoted local — pass .get() value, then coerce further
+        return coerce_arg_to_type(&format!("{}.get()", trimmed), target_type, proc);
+    }
+
     if target_is_bigdecimal {
         if trimmed.chars().all(|c| c.is_ascii_digit()) {
-            return format!("java.math.BigDecimal.valueOf({})", trimmed);
+            return format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed));
         }
         if trimmed.chars().all(|c| c.is_ascii_digit() || c == '.') && trimmed.contains('.') {
             return format!("new java.math.BigDecimal(\"{}\")", trimmed);
         }
         if is_integer_type(trimmed, proc) {
-            return format!("java.math.BigDecimal.valueOf({})", trimmed);
+            return format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed));
         }
         if trimmed.contains(".get(") {
             return format!("java.math.BigDecimal.valueOf(((Number) {}).longValue())", trimmed);
@@ -348,7 +404,10 @@ fn is_out_param(name: &str, proc: &ProcedureInfo) -> bool {
     } else {
         name
     };
-    proc.parameters.iter().any(|p| p.name == base_name && p.is_out())
+    let bn = base_name.to_lowercase().replace("_", "");
+    proc.parameters.iter().any(|p| {
+        p.name.to_lowercase().replace("_", "") == bn && p.is_out()
+    })
 }
 
 fn might_be_long(expr: &str, proc: &ProcedureInfo) -> bool {
@@ -694,20 +753,27 @@ fn is_bigdecimal_var(expr_str: &str, proc: &ProcedureInfo) -> bool {
     false
 }
 
-fn wrap_bigdecimal(expr: &str, already_bd: bool, _proc: &ProcedureInfo) -> String {
+fn wrap_bigdecimal(expr: &str, already_bd: bool, proc: &ProcedureInfo) -> String {
     if already_bd { return expr.to_string(); }
     let trimmed = expr.trim();
     if is_nullish_java_expr(trimmed) { return "java.math.BigDecimal.ZERO".to_string(); }
     if trimmed.starts_with("new java.math.BigDecimal") { return trimmed.to_string(); }
+    // Unwrap AtomicReference<Long> vars promoted for OUT arg usage
+    let trimmed_lower = trimmed.to_lowercase();
+    let has_ar_var = proc.out_local_vars.iter().any(|(k, _)| k.to_lowercase().replace("_", "") == trimmed_lower.replace("_", ""))
+        || proc.parameters.iter().any(|p| p.is_out() && p.name.to_lowercase().replace("_", "") == trimmed_lower.replace("_", ""));
+    if has_ar_var {
+        return format!("java.math.BigDecimal.valueOf({}.get().longValue())", trimmed);
+    }
     if trimmed.starts_with("Math.") {
-        return format!("java.math.BigDecimal.valueOf({})", trimmed);
+        return format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed));
     }
     if trimmed.contains(".get(") {
         format!("java.math.BigDecimal.valueOf(((Number) {}).doubleValue())", trimmed)
     } else if trimmed.chars().all(|c| c.is_ascii_digit() || c == '.') && !trimmed.is_empty() {
-        format!("java.math.BigDecimal.valueOf({})", trimmed)
+        format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed))
     } else {
-        format!("java.math.BigDecimal.valueOf({})", trimmed)
+        format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed))
     }
 }
 
@@ -833,7 +899,16 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
         let l_is_string = (is_string_var(&l, proc) && !l.contains(".length()") && !l.contains(".intValue()") && !l.contains(".longValue()")) || l.starts_with('"');
         let r_is_string = (is_string_var(&r, proc) && !r.contains(".length()") && !r.contains(".intValue()") && !r.contains(".longValue()")) || r.starts_with('"');
         if l_is_string || r_is_string {
-            return format!("\"\" + {} + {}", l, r);
+            if op == "+" {
+                return format!("\"\" + {} + {}", l, r);
+            }
+            // For * / - operators, coerce String operands to double (numeric arithmetic)
+            if l_is_string {
+                l = format!("Double.parseDouble(String.valueOf({}))", l);
+            }
+            if r_is_string {
+                r = format!("Double.parseDouble(String.valueOf({}))", r);
+            }
         }
     }
 
@@ -1093,7 +1168,7 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
     match upper.as_str() {
         "NVL" | "COALESCE" if jargs.len() >= 2 => {
             let else_val = if is_bigdecimal_var(&jargs[0], proc) && jargs[1].trim().chars().all(|c| c.is_ascii_digit()) {
-                format!("java.math.BigDecimal.valueOf({})", jargs[1].trim())
+                format!("java.math.BigDecimal.valueOf({})", java_int_lit(&jargs[1]))
             } else {
                 jargs[1].clone()
             };
@@ -1479,7 +1554,16 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                 return format!("this.{}({})", method, coerced_args.join(", "));
             }
             if !cross_pkg_svc.is_empty() && !method.is_empty() {
-                return format!("{}.{}({})", cross_pkg_svc, method, jargs.join(", "));
+                let x_args: Vec<String> = jargs.iter().map(|a| {
+                    if is_out_param(a, proc) || proc.out_local_vars.iter().any(|(k,_)|
+                        k.to_lowercase().replace("_", "") == a.to_lowercase().replace("_", ""))
+                    {
+                        format!("{}.get()", a)
+                    } else {
+                        a.clone()
+                    }
+                }).collect();
+                return format!("{}.{}({})", cross_pkg_svc, method, x_args.join(", "));
             }
             let func_short = name_parts.last().unwrap_or(&name);
             let pkg_hint = if name_parts.len() >= 2 { name_parts[0] } else { "?" };

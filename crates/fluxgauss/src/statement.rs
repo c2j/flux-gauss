@@ -1527,7 +1527,9 @@ fn process_procedure_call(
                     } else {
                         let arg_trimmed = arg.trim();
                         let is_atomic_ref = proc.out_local_vars.keys()
-                            .any(|vname| crate::naming::snake_to_camel(vname) == arg_trimmed);
+                            .any(|vname| crate::naming::snake_to_camel(vname) == arg_trimmed)
+                            || proc.parameters.iter()
+                                .any(|p| p.is_out() && crate::naming::snake_to_camel(&p.name) == arg_trimmed);
                         if is_atomic_ref && !arg_trimmed.contains('.') && !arg_trimmed.contains('(') {
                             arg = format!("{}.get()", arg_trimmed);
                         }
@@ -1550,6 +1552,25 @@ fn process_procedure_call(
             }
             arg
         }).collect();
+
+        // When target procedure info is not available (cross-package call to framework service),
+        // unwrap AtomicReference OUT params since the callee likely expects plain types.
+        if target_proc.is_none() {
+            args = args.iter().enumerate().map(|(i, arg)| {
+                let arg_trimmed = arg.trim();
+                if i < raw_args.len() {
+                    let raw = raw_args[i].trim();
+                    let is_promoted = proc.out_local_vars.keys()
+                        .any(|vname| crate::naming::snake_to_camel(vname) == raw);
+                    let is_out = proc.parameters.iter()
+                        .any(|p| p.is_out() && crate::naming::snake_to_camel(&p.name) == raw);
+                    if (is_promoted || is_out) && !arg_trimmed.contains('.') && !arg_trimmed.contains('(') {
+                        return format!("{}.get()", arg_trimmed);
+                    }
+                }
+                arg.clone()
+            }).collect();
+        }
 
         // Pad missing args when target has more params than caller provides
         if let Some(tp) = &target_proc {
@@ -2046,7 +2067,12 @@ pub fn process_statement(
         PlStatement::Return { expression } => {
             if let Some(expr) = expression {
                 let val = crate::expr::expr_to_java(expr, proc);
-                push_logic_line(proc, format!("return {};", val));
+                let coerced = if let Some(rt) = &proc.return_type {
+                    crate::expr::coerce_for_type(&val, Some(rt))
+                } else {
+                    val
+                };
+                push_logic_line(proc, format!("return {};", coerced));
             } else if proc.return_type.as_ref().map_or(false, |rt| rt != "void") {
                 push_logic_line(proc, "return null;".into());
             } else if proc.parameters.iter().any(|p| p.is_out() && p.is_refcursor()) {
