@@ -383,7 +383,7 @@ fn coerce_arg_to_type(arg: &str, target_type: &str, proc: &ProcedureInfo) -> Str
         }
     }
 
-    if target_type == "String" && trimmed.contains(".get(") {
+    if target_type == "String" && (trimmed.contains(".get(") || infer_arg_type_from_expr(trimmed, proc) == "Object") {
         return format!("String.valueOf({})", trimmed);
     }
 
@@ -855,6 +855,16 @@ fn safe_long_value(expr: &str) -> String {
 fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> String {
     let mut l = expr_to_java(left, proc);
     let mut r = expr_to_java(right, proc);
+
+    // Unwrap (Number) prefix for arithmetic contexts
+    if matches!(op, "*" | "/" | "+" | "-") {
+        if l.trim().starts_with("(Number)") {
+            l = format!("((Number) {}).longValue()", l.trim().trim_start_matches("(Number)").trim());
+        }
+        if r.trim().starts_with("(Number)") {
+            r = format!("((Number) {}).longValue()", r.trim().trim_start_matches("(Number)").trim());
+        }
+    }
 
     let is_arith = matches!(op, "*" | "+" | "-" | "/");
     let l_is_ts = is_timestamp_or_date_var(&l, proc)
