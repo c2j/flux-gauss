@@ -206,7 +206,12 @@ fn preprocess_cursor_sql(sql: &str, using_args: &[ogsql_parser::ast::Expr], proc
 fn push_logic_line(proc: &mut ProcedureInfo, line: String) {
     let _trimmed_line = line.trim_start();
     if is_control_structure_line(&line) {
-        proc.java_logic_lines.push(line);
+        // Closing braces must always be emitted; unreachable check only for openers
+        if !_trimmed_line.starts_with('}') && is_unreachable_after_terminal(&proc.java_logic_lines) {
+            proc.java_logic_lines.push(format!("// UNREACHABLE: {}", line));
+        } else {
+            proc.java_logic_lines.push(line);
+        }
         return;
     }
     if is_unreachable_after_terminal(&proc.java_logic_lines) {
@@ -2278,8 +2283,20 @@ pub fn process_statement(
                 process_statement(s, proc, ctx)?;
             }
             if let Some(exc_block) = &block_stmt.node.exception_block {
+                let mut has_business = false;
                 for handler in &exc_block.handlers {
                     let is_others = handler.conditions.is_empty() || handler.conditions.iter().any(|c| c.eq_ignore_ascii_case("others"));
+                    // Merge consecutive BusinessException handlers into the first one
+                    if !is_others && has_business {
+                        // Append body to previous catch (no new header)
+                        for s in &handler.statements {
+                            process_statement(s, proc, ctx)?;
+                        }
+                        continue;
+                    }
+                    if !is_others {
+                        has_business = true;
+                    }
                     let evar = format!("__e{}", crate::analyze::CATCH_VAR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
                     if is_others {
                         push_logic_line(proc, format!("}} catch (Exception {evar}) {{"));
