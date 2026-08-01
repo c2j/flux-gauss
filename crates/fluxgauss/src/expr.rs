@@ -858,10 +858,10 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
 
     // Unwrap (Number) prefix for arithmetic contexts
     if matches!(op, "*" | "/" | "+" | "-") {
-        if l.trim().starts_with("(Number)") {
+        if l.trim().starts_with("(Number)") && !l.contains(".longValue()") && !l.contains(".doubleValue()") {
             l = format!("((Number) {}).longValue()", l.trim().trim_start_matches("(Number)").trim());
         }
-        if r.trim().starts_with("(Number)") {
+        if r.trim().starts_with("(Number)") && !r.contains(".longValue()") && !r.contains(".doubleValue()") {
             r = format!("((Number) {}).longValue()", r.trim().trim_start_matches("(Number)").trim());
         }
     }
