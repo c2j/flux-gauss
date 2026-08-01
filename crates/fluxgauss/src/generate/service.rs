@@ -639,7 +639,10 @@ fn build_service_method(
                 }
             }
             // Declare raw cursor name as null for CLOSE cleanup null-checks
-            body_lines.push(format!("Object {} = null;", cursor_name));
+            let decl = format!("Object {} = null;", cursor_name);
+            if !body_lines.contains(&decl) {
+                body_lines.push(decl);
+            }
         }
 
         let logic_text = proc.java_logic_lines.join(" ");
