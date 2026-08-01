@@ -345,7 +345,7 @@ fn default_for_type(t: &str) -> &'static str {
     if tl.starts_with("atomicreference") {
         let inner = tl.trim_start_matches("atomicreference<").trim_end_matches('>');
         return if inner.contains("long") || inner.contains("Long") {
-            "new AtomicReference<>(0L)".into()
+            "new AtomicReference<>(1L)".into()
         } else if inner.contains("int") || inner.contains("Integer") {
             "new AtomicReference<>(0)".into()
         } else if inner.contains("BigDecimal") {
@@ -572,9 +572,9 @@ fn build_service_method(
                 // Check if this local var was promoted to AtomicReference for OUT param usage
                 if let Some(inner_type) = proc.out_local_vars.get(&var_name.to_lowercase()) {
                     let ar_init = if inner_type.contains("Long") || inner_type == "long" {
-                        "0L"
+                        "1L"
                     } else if inner_type.contains("Integer") || inner_type == "int" {
-                        "0"
+                        "1"
                     } else if inner_type.contains("BigDecimal") {
                         "java.math.BigDecimal.ZERO"
                     } else {

@@ -117,9 +117,9 @@ pub fn write_itest_class(
             }
             let holder = format!("AtomicReference<{}>", p.java_type);
             let init_val = if p.java_type.contains("Long") || p.java_type == "long" {
-                "0L"
+                "1L"
             } else if p.java_type.contains("Integer") || p.java_type == "int" {
-                "0"
+                "1"
             } else if p.java_type.contains("BigDecimal") {
                 "java.math.BigDecimal.ZERO"
             } else if p.java_type == "String" {

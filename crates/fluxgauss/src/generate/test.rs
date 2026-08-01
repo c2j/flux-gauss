@@ -251,7 +251,7 @@ fn build_success_test(
             let inner_type = p.java_type.clone();
             let ref_var = format!("{}Ref", snake_to_camel(&p.name));
             let ar_init = if inner_type.contains("Long") || inner_type == "long" {
-                "0L"
+                "1L"
             } else if inner_type.contains("Integer") || inner_type == "int" {
                 "0"
             } else if inner_type.contains("BigDecimal") {
