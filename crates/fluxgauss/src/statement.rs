@@ -1542,7 +1542,7 @@ fn process_procedure_call(
                         let arg_has_get = arg.contains(".get(");
                         if target_is_string && arg_type_inferred == "long" {
                             arg = format!("String.valueOf({})", arg);
-                        } else if target_is_string && arg_type_inferred == "Object" {
+                        } else if target_is_string && (arg_type_inferred == "Object" || arg_type_inferred == "BigDecimal") {
                             arg = format!("String.valueOf({})", arg);
                         } else if target_is_long && arg_type_inferred == "String" {
                             arg = format!("Long.parseLong(String.valueOf({}))", arg);
