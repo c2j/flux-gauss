@@ -93,7 +93,7 @@ pub(crate) fn is_unreachable_after_terminal(java_logic_lines: &[String]) -> bool
         let closes = t.chars().filter(|&c| c == '}').count() as i32;
         depth += closes - opens;  // reverse: } opens scope, { closes it
         if depth <= 0 {
-            if t.starts_with("return") || t.starts_with("throw") {
+            if t.starts_with("return") || t.starts_with("throw") || t.starts_with("currentState = ") {
                 return true;
             }
             if t.starts_with("break") {
