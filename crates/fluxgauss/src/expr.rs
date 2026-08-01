@@ -380,6 +380,10 @@ fn coerce_arg_to_type(arg: &str, target_type: &str, proc: &ProcedureInfo) -> Str
         }
     }
 
+    if target_type == "String" && trimmed.contains(".get(") {
+        return format!("String.valueOf({})", trimmed);
+    }
+
     arg.to_string()
 }
 
