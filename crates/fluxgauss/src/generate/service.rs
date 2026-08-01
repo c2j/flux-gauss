@@ -638,6 +638,8 @@ fn build_service_method(
                     body_lines.push(format!("int {} = 0;", index_var));
                 }
             }
+            // Declare raw cursor name as null for CLOSE cleanup null-checks
+            body_lines.push(format!("Object {} = null;", cursor_name));
         }
 
         let logic_text = proc.java_logic_lines.join(" ");
