@@ -1024,6 +1024,8 @@ fn process_execute_stmt(
                      let original_java_type = proc.local_vars.get(&var_name.to_lowercase()).cloned().unwrap_or_default();
                      push_logic_line(proc, if java_type.contains("Map") {
                          format!("{{ var _row = mapper.{}({}); if (_row != null) {{ {} = _row; }} }}", method_id, args, var_java)
+                     } else if matches!(dml_type, DmlType::Select) && matches!(declared_type.as_str(), "int" | "Integer" | "long" | "Long") {
+                         format!("{{ var _row = mapper.{}({}); {} = (_row != null ? 1 : 0); }}", method_id, args, var_java)
                      } else if java_type != original_java_type {
                          format!("String _{} = mapper.{}({});", var_name, method_id, args)
                      } else {
