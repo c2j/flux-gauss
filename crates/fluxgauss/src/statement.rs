@@ -1416,7 +1416,7 @@ fn infer_arg_type(arg: &str, proc: &ProcedureInfo) -> &'static str {
                 t if t.starts_with("AtomicReference") => "AtomicReference",
                 t if t.contains("BigDecimal") => "BigDecimal",
                 t if t.starts_with("List<") => "String",
-                _ => "unknown",
+                _ => "Object",
             };
         }
     }
@@ -1426,11 +1426,11 @@ fn infer_arg_type(arg: &str, proc: &ProcedureInfo) -> &'static str {
             return match p.java_type.as_str() {
                 "long" | "Long" => "long",
                 "String" => "String",
-                _ => "unknown",
+                _ => "Object",
             };
         }
     }
-    "unknown"
+    "Object"
 }
 
 fn process_procedure_call(
@@ -1542,7 +1542,7 @@ fn process_procedure_call(
                         let arg_has_get = arg.contains(".get(");
                         if target_is_string && arg_type_inferred == "long" {
                             arg = format!("String.valueOf({})", arg);
-                        } else if target_is_string && arg_type_inferred == "Object" && arg_has_get {
+                        } else if target_is_string && arg_type_inferred == "Object" {
                             arg = format!("String.valueOf({})", arg);
                         } else if target_is_long && arg_type_inferred == "String" {
                             arg = format!("Long.parseLong(String.valueOf({}))", arg);
