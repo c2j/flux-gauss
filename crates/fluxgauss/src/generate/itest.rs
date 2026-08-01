@@ -120,7 +120,11 @@ pub fn write_itest_class(
             out_args.push(snake_to_camel(&p.name));
         }
 
-        let all_args = param_args.iter().cloned().chain(out_args.iter().cloned()).collect::<Vec<_>>();
+        // Build argument list in original parameter declaration order (mixed IN/OUT)
+        let all_args: Vec<String> = proc.parameters.iter()
+            .filter(|p| !p.is_refcursor())
+            .map(|p| snake_to_camel(&p.name))
+            .collect();
         let args_str = all_args.join(", ");
 
         let test_data = infer_test_data(proc, pkg, &schema_map, all_packages);
