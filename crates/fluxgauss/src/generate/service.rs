@@ -672,7 +672,7 @@ fn build_service_method(
             } else if trimmed.starts_with("/*") && trimmed.contains("null;") {
                 l = l.replace("null;", "");
             }
-            if needs_rowcount && l.contains(&format!("{}.", mapper_name)) && l.trim().ends_with(";") && !l.contains("=") && !l.contains("List<") && !l.contains("Map<") {
+            if needs_rowcount && l.contains(&format!("{}.", mapper_name)) && l.trim().ends_with(";") && !l.contains("=") && !l.contains("List<") && !l.contains("Map<") && !l.to_lowercase().contains("select") {
                 l = l.replace(&format!("{}.", mapper_name), &format!("__ROWCOUNT__ = {}.", mapper_name));
             }
             body_lines.push(l);
