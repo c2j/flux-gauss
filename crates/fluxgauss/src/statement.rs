@@ -1546,6 +1546,8 @@ fn process_procedure_call(
                             arg = format!("String.valueOf({})", arg);
                         } else if target_is_long && arg_type_inferred == "String" {
                             arg = format!("Long.parseLong(String.valueOf({}))", arg);
+                        } else if target_is_long && arg_type_inferred == "BigDecimal" {
+                            arg = format!("({}).longValue()", arg);
                         } else if target_is_int && arg_has_get {
                             arg = format!("((Number) {}).intValue()", arg);
                         } else if target_is_long && arg_has_get {
