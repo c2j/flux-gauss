@@ -2276,45 +2276,66 @@ pub fn process_statement(
                 crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new(), None);
             }
             let has_exceptions = block_stmt.node.exception_block.is_some();
-            if has_exceptions {
+            let try_line_idx = if has_exceptions {
                 push_logic_line(proc, "try {".into());
-            }
+                Some(proc.java_logic_lines.len() - 1)
+            } else {
+                None
+            };
             for s in &block_stmt.node.body {
                 process_statement(s, proc, ctx)?;
-            }
-            if let Some(exc_block) = &block_stmt.node.exception_block {
-                let mut has_business = false;
-                for handler in &exc_block.handlers {
-                    let is_others = handler.conditions.is_empty() || handler.conditions.iter().any(|c| c.eq_ignore_ascii_case("others"));
-                    // Merge consecutive BusinessException handlers into the first one
-                    if !is_others && has_business {
-                        // Append body to previous catch (no new header)
-                        for s in &handler.statements {
-                            process_statement(s, proc, ctx)?;
-                        }
-                        continue;
-                    }
-                    if !is_others {
-                        has_business = true;
-                    }
-                    let evar = format!("__e{}", crate::analyze::CATCH_VAR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
-                    if is_others {
-                        push_logic_line(proc, format!("}} catch (Exception {evar}) {{"));
-                    } else {
-                        let cond = handler.conditions.join(", ");
-                        push_logic_line(proc, format!("}} catch (BusinessException {evar}) {{ // {}", cond));
-                    }
-                    push_logic_line(proc, format!("    __SQLERRM__ = {evar}.getMessage();"));
-                    push_logic_line(proc, "    __SQLCODE__ = -1;".into());
-                    for s in &handler.statements {
-                        process_statement(s, proc, ctx)?;
-                    }
-                    if is_unreachable_after_terminal(&proc.java_logic_lines) {
+                // Stop processing Block body after terminal statement (return/break/Goto)
+                if let Some(last) = proc.java_logic_lines.last() {
+                    let t = last.trim();
+                    if t == "break;" || t.starts_with("return ") || t == "return;" || t == "continue;" {
                         break;
                     }
                 }
             }
-            if has_exceptions {
+            // If body ended with terminal, strip the try { line and skip exception handlers
+            let ended_with_terminal = proc.java_logic_lines.last()
+                .map_or(false, |l| {
+                    let t = l.trim();
+                    t == "break;" || t.starts_with("return ") || t == "return;" || t == "continue;"
+                });
+            if ended_with_terminal {
+                if let Some(idx) = try_line_idx {
+                    proc.java_logic_lines.remove(idx);
+                }
+            }
+            if has_exceptions && !ended_with_terminal {
+                if let Some(exc_block) = &block_stmt.node.exception_block {
+                    let mut has_business = false;
+                    for handler in &exc_block.handlers {
+                        let is_others = handler.conditions.is_empty() || handler.conditions.iter().any(|c| c.eq_ignore_ascii_case("others"));
+                        // Merge consecutive BusinessException handlers into the first one
+                        if !is_others && has_business {
+                            // Append body to previous catch (no new header)
+                            for s in &handler.statements {
+                                process_statement(s, proc, ctx)?;
+                            }
+                            continue;
+                        }
+                        if !is_others {
+                            has_business = true;
+                        }
+                        let evar = format!("__e{}", crate::analyze::CATCH_VAR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+                        if is_others {
+                            push_logic_line(proc, format!("}} catch (Exception {evar}) {{"));
+                        } else {
+                            let cond = handler.conditions.join(", ");
+                            push_logic_line(proc, format!("}} catch (BusinessException {evar}) {{ // {}", cond));
+                        }
+                        push_logic_line(proc, format!("    __SQLERRM__ = {evar}.getMessage();"));
+                        push_logic_line(proc, "    __SQLCODE__ = -1;".into());
+                        for s in &handler.statements {
+                            process_statement(s, proc, ctx)?;
+                        }
+                        if is_unreachable_after_terminal(&proc.java_logic_lines) {
+                            break;
+                        }
+                    }
+                }
                 push_logic_line(proc, "}".into());
             }
             Ok(())
@@ -2327,6 +2348,9 @@ pub fn process_statement(
             }
             for s in &loop_stmt.node.body {
                 process_statement(s, proc, ctx)?;
+                if let Some(last) = proc.java_logic_lines.last() {
+                    if is_terminal_statement(last) { break; }
+                }
             }
             push_logic_line(proc, "}".into());
             Ok(())
@@ -2340,6 +2364,9 @@ pub fn process_statement(
             }
             for s in &while_stmt.node.body {
                 process_statement(s, proc, ctx)?;
+                if let Some(last) = proc.java_logic_lines.last() {
+                    if is_terminal_statement(last) { break; }
+                }
             }
             push_logic_line(proc, "}".into());
             Ok(())
