@@ -781,7 +781,14 @@ fn wrap_bigdecimal(expr: &str, already_bd: bool, proc: &ProcedureInfo) -> String
         return format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed));
     }
     if trimmed.contains(".get(") {
-        format!("java.math.BigDecimal.valueOf(((Number) {}).doubleValue())", trimmed)
+        // For arithmetic expressions, BigDecimal.valueOf() with the raw expression works
+        // because the result is primitive long/double. The (Number) cast + .doubleValue()
+        // pattern would bind the cast to the first operand only (Java precedence).
+        if trimmed.contains(" * ") || trimmed.contains(" + ") || trimmed.contains(" - ") || trimmed.contains(" / ") {
+            format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed))
+        } else {
+            format!("java.math.BigDecimal.valueOf(((Number) {}).doubleValue())", trimmed)
+        }
     } else if trimmed.chars().all(|c| c.is_ascii_digit() || c == '.') && !trimmed.is_empty() {
         format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed))
     } else {
