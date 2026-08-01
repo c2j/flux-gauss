@@ -299,7 +299,7 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>) -> String {
         Some(t) if (t == "Integer" || t == "int") && trimmed.contains(".get(") => {
             format!("((Number) {}).intValue()", trimmed)
         }
-        Some(t) if (t == "Long" || t == "long") && trimmed.contains(".get(") => {
+        Some(t) if (t == "Long" || t == "long") && trimmed.contains(".get(") && !trimmed.contains(" * ") && !trimmed.contains(" + ") && !trimmed.contains(" - ") && !trimmed.contains(" / ") => {
             format!("((Number) {}).longValue()", trimmed)
         }
         Some(t) if t == "java.sql.Timestamp" && trimmed.contains(".get(") => {
@@ -331,6 +331,9 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>) -> String {
         }
         Some(t) if (t == "Long" || t == "long") && trimmed.contains("BigDecimal") => {
             format!("({}).longValue()", trimmed)
+        }
+        Some(t) if (t == "Long" || t == "long") && (trimmed.contains(" * ") || trimmed.contains(" + ") || trimmed.contains(" - ") || trimmed.contains(" / ")) => {
+            trimmed.to_string()
         }
         Some(t) if (t == "Long" || t == "long") => {
             format!("((Number)({})).longValue()", trimmed)
