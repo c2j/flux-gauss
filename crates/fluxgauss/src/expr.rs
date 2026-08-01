@@ -232,6 +232,9 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>) -> String {
         return trimmed.to_string();
     }
     match target_type {
+        Some(t) if t.contains("BigDecimal") && trimmed.starts_with('"') => {
+            format!("new java.math.BigDecimal({})", trimmed)
+        }
         Some(t) if t.contains("BigDecimal")
             && !trimmed.starts_with("java.math.BigDecimal")
             && !trimmed.starts_with("new java.math.BigDecimal")
@@ -330,7 +333,7 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>) -> String {
             format!("({}).longValue()", trimmed)
         }
         Some(t) if (t == "Long" || t == "long") => {
-            format!("Long.valueOf({})", trimmed)
+            format!("((Number)({})).longValue()", trimmed)
         }
         _ => expr.to_string()
     }
