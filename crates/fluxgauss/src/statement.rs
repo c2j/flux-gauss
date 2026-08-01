@@ -79,7 +79,7 @@ fn is_terminal_statement(line: &str) -> bool {
         || trimmed.starts_with("continue ")
 }
 
-fn is_unreachable_after_terminal(java_logic_lines: &[String]) -> bool {
+pub(crate) fn is_unreachable_after_terminal(java_logic_lines: &[String]) -> bool {
     let mut depth: i32 = 0;
     for line in java_logic_lines.iter().rev() {
         let t = line.trim_start();
@@ -2291,6 +2291,9 @@ pub fn process_statement(
                     push_logic_line(proc, "    __SQLCODE__ = -1;".into());
                     for s in &handler.statements {
                         process_statement(s, proc, ctx)?;
+                    }
+                    if is_unreachable_after_terminal(&proc.java_logic_lines) {
+                        break;
                     }
                 }
             }

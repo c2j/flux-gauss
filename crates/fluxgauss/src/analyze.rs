@@ -127,16 +127,7 @@ pub fn analyze_procedure(
                         break;
                     }
                 }
-                // After a handler that ends with a terminal statement,
-                // subsequent catch blocks are unreachable — stop emitting.
-                let has_terminal = proc.java_logic_lines.iter().rev()
-                    .find(|l| !l.trim().starts_with("// UNREACHABLE:") && !l.trim().is_empty())
-                    .map(|l| {
-                        let t = l.trim();
-                        t.starts_with("return") || t == "break;" || t.starts_with("currentState = ")
-                    })
-                    .unwrap_or(false);
-                if has_terminal {
+                if crate::statement::is_unreachable_after_terminal(&proc.java_logic_lines) {
                     break;
                 }
             }
