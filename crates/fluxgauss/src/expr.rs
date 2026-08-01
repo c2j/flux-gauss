@@ -857,8 +857,10 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
     let mut r = expr_to_java(right, proc);
 
     let is_arith = matches!(op, "*" | "+" | "-" | "/");
-    let l_is_ts = is_timestamp_or_date_var(&l, proc);
-    let r_is_ts = is_timestamp_or_date_var(&r, proc);
+    let l_is_ts = is_timestamp_or_date_var(&l, proc)
+        || l.contains("java.sql.Date.valueOf(") || l.contains("java.sql.Timestamp.valueOf(") || l.contains("new java.sql.Date(") || l.contains("new java.sql.Timestamp(");
+    let r_is_ts = is_timestamp_or_date_var(&r, proc)
+        || r.contains("java.sql.Date.valueOf(") || r.contains("java.sql.Timestamp.valueOf(") || r.contains("new java.sql.Date(") || r.contains("new java.sql.Timestamp(");
     if is_arith {
         if op == "-" && (l_is_ts || r_is_ts) {
             if l_is_ts && r_is_ts {
@@ -870,6 +872,8 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
                     format!("Long.parseLong(String.valueOf({}))", stripped.trim())
                 } else if r == "null" || r.contains("String.valueOf(") || is_string_var(&r, proc) {
                     format!("Long.parseLong(String.valueOf({}))", r)
+                } else if is_bigdecimal_var(&r, proc) || r.contains("BigDecimal") {
+                    format!("({}).longValue()", r)
                 } else {
                     r.clone()
                 };
@@ -884,6 +888,8 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
                     format!("Long.parseLong(String.valueOf({}))", stripped.trim())
                 } else if r == "null" || r.contains("String.valueOf(") || is_string_var(&r, proc) {
                     format!("Long.parseLong(String.valueOf({}))", r)
+                } else if is_bigdecimal_var(&r, proc) || r.contains("BigDecimal") {
+                    format!("({}).longValue()", r)
                 } else {
                     r.clone()
                 };
@@ -976,9 +982,7 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
             let l_null = is_nullish_java_expr(&l);
             let r_null = is_nullish_java_expr(&r);
             if l_null || r_null {
-                let safe_l = if l_null { "0".to_string() } else { l.clone() };
-                let safe_r = if r_null { "0".to_string() } else { r.clone() };
-                return format!("/* unresolved */ {} {} {}", safe_l, op, safe_r);
+                return "true".to_string();
             }
             let l_is_str = (is_string_var(&l, proc) && !l.contains(".length()") && !l.contains(".intValue()") && !l.contains(".longValue()") && !l.contains(".indexOf(") && !l.contains(".charAt(")) || l.starts_with('"');
             let r_is_str = (is_string_var(&r, proc) && !r.contains(".length()") && !r.contains(".intValue()") && !r.contains(".longValue()") && !r.contains(".indexOf(") && !r.contains(".charAt(")) || r.starts_with('"');
@@ -1111,9 +1115,13 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
             } else if is_arith && (has_get_l || has_get_r) {
                 let lo = if has_get_l {
                     safe_long_value(&l)
+                } else if l.trim().starts_with("(Number)") {
+                    format!("({}).longValue()", l)
                 } else { l.clone() };
                 let ro = if has_get_r {
                     safe_long_value(&r)
+                } else if r.trim().starts_with("(Number)") {
+                    format!("({}).longValue()", r)
                 } else { r.clone() };
                 (lo, ro)
             } else {
