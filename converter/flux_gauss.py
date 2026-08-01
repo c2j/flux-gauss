@@ -5015,7 +5015,11 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
             java_expr = f"String.valueOf({java_expr})"
 
     # Cast Map.get() results when assigning to typed variables
-    if ".get(" in java_expr and target_type not in ("Object", "Map<String, Object>", "") and not re.match(r'^(false|null)\s*/\*', java_expr):
+    if re.search(r'/\*\s*(UNSUPPORTED|TODO: implement|Subquery|RangeOp)\b', java_expr):
+        # Stubbed function call — use the target type's default instead of null
+        if target_type not in ("Object", "Map<String, Object>", "void", ""):
+            java_expr = _type_default(target_type)
+    elif ".get(" in java_expr and target_type not in ("Object", "Map<String, Object>", "") and not re.match(r'^(false|null)\s*/\*', java_expr):
         if target_type == "String":
             java_expr = f"(String) {java_expr}"
         elif "BigDecimal" in target_type:
@@ -9670,16 +9674,16 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     return f"{left}.toString().concat({right}.toString())"
 
             if op == "^":
-                left_d = f"((Number) ({left} != null ? {left} : 0.0d)).doubleValue()" if (".get(" in left and not _is_primitive_producing(left)) else (f"Double.parseDouble({left})" if left_type == "String" else f"((Number) ({left})).doubleValue()")
-                right_d = f"((Number) ({right} != null ? {right} : 0.0d)).doubleValue()" if (".get(" in right and not _is_primitive_producing(right)) else (f"Double.parseDouble({right})" if right_type == "String" else f"((Number) ({right})).doubleValue()")
+                left_d = f"((Number) ({left} != null ? {left} : 0.0d)).doubleValue()" if (".get(" in left and not _is_primitive_producing(left)) else (f"({left} != null ? Double.parseDouble({left}) : 0.0d)" if left_type == "String" else f"((Number) ({left})).doubleValue()")
+                right_d = f"((Number) ({right} != null ? {right} : 0.0d)).doubleValue()" if (".get(" in right and not _is_primitive_producing(right)) else (f"({right} != null ? Double.parseDouble({right}) : 0.0d)" if right_type == "String" else f"((Number) ({right})).doubleValue()")
                 return f"Math.pow({left_d}, {right_d})"
             java_op = _java_op(op)
             if op in ("+", "-", "*", "/") and (".get(" in left or ".get(" in right or left_type == "String" or right_type == "String"):
                 if op == "+" and left_type == "String" and right_type == "String":
                     pass
                 else:
-                    left_d = f"((Number) ({left} != null ? {left} : 0.0d)).doubleValue()" if (".get(" in left and not _is_primitive_producing(left)) else (f"Double.parseDouble({left})" if left_type == "String" else f"((Number) ({left})).doubleValue()")
-                    right_d = f"((Number) ({right} != null ? {right} : 0.0d)).doubleValue()" if (".get(" in right and not _is_primitive_producing(right)) else (f"Double.parseDouble({right})" if right_type == "String" else f"((Number) ({right})).doubleValue()")
+                    left_d = f"((Number) ({left} != null ? {left} : 0.0d)).doubleValue()" if (".get(" in left and not _is_primitive_producing(left)) else (f"({left} != null ? Double.parseDouble({left}) : 0.0d)" if left_type == "String" else f"((Number) ({left})).doubleValue()")
+                    right_d = f"((Number) ({right} != null ? {right} : 0.0d)).doubleValue()" if (".get(" in right and not _is_primitive_producing(right)) else (f"({right} != null ? Double.parseDouble({right}) : 0.0d)" if right_type == "String" else f"((Number) ({right})).doubleValue()")
                     return f"({left_d} {java_op} {right_d})"
             _is_ts_left = "Timestamp" in left_type or "Timestamp" in left or "java.sql.Date" in left or left_type in ("java.sql.Date", "java.util.Date")
             _is_ts_right = "Timestamp" in right_type or "Timestamp" in right or "java.sql.Date" in right or right_type in ("java.sql.Date", "java.util.Date")
@@ -9700,9 +9704,18 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             if op == "+" and _is_ts_right and left_type in ("Long", "long", "Integer", "int", "Double", "double", "Float", "float", "java.math.BigDecimal", "BigDecimal"):
                 return f"new java.sql.Date({right}.getTime() + ((Number) ({left})).longValue() * 86400000L)"
             if op == "=" and _is_string_comparison(val, proc):
-                return f"{right}.equals({left})"
+                # Ensure the non-.get() operand is the caller to avoid NPE on null Map.get()
+                if ".get(" in right and ".get(" not in left:
+                    return f"{left}.equals({right})"
+                if ".get(" in left and ".get(" not in right:
+                    return f"{right}.equals({left})"
+                return f"java.util.Objects.equals({left}, {right})"
             elif op == "<>" and _is_string_comparison(val, proc):
-                return f"!{right}.equals({left})"
+                if ".get(" in right and ".get(" not in left:
+                    return f"!{left}.equals({right})"
+                if ".get(" in left and ".get(" not in right:
+                    return f"!{right}.equals({left})"
+                return f"!java.util.Objects.equals({left}, {right})"
             _is_ts_cmp = ("Timestamp" in left_type or "Timestamp" in left) and ("Timestamp" in right_type or "Timestamp" in right)
             if _is_ts_cmp and op in (">", "<", ">=", "<="):
                 _ts_cmp = {"<": "before", ">": "after", "<=": "!after", ">=": "!before"}
@@ -13374,7 +13387,7 @@ def _default_test_value(java_type: str, param_name: str, pkg=None) -> str:
                 return f"new {svc_class}Service.{java_type}()"
     if "string" in lower or lower == "object":
         if "date" in name_lower:
-            return "\"2024-01-01\""
+            return "\"20240101\""
         if any(kw in name_lower for kw in ("list", "ids", "task_list", "id_list", "values")):
             return "\"1,2,3\""
         if any(kw in name_lower for kw in ("flag", "amount", "seqno", "interfaceseq", "operflag", "stepno", "count", "quantity", "qty", "price", "total")):
