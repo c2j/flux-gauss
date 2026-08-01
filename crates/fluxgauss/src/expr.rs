@@ -984,10 +984,14 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
                     };
                     let l_bd = if l_is_str && !l_numeric_str {
                         format!("new java.math.BigDecimal(String.valueOf({}))", l)
+                    } else if !l_is_str {
+                        format!("new java.math.BigDecimal(String.valueOf({}))", l)
                     } else {
                         format!("new java.math.BigDecimal({})", l)
                     };
                     let r_bd = if r_is_str && !r_numeric_str {
+                        format!("new java.math.BigDecimal(String.valueOf({}))", r)
+                    } else if !r_is_str {
                         format!("new java.math.BigDecimal(String.valueOf({}))", r)
                     } else {
                         format!("new java.math.BigDecimal({})", r)

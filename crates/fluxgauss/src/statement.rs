@@ -2274,13 +2274,14 @@ pub fn process_statement(
             if let Some(exc_block) = &block_stmt.node.exception_block {
                 for handler in &exc_block.handlers {
                     let is_others = handler.conditions.is_empty() || handler.conditions.iter().any(|c| c.eq_ignore_ascii_case("others"));
+                    let evar = format!("__e{}", crate::analyze::CATCH_VAR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
                     if is_others {
-                        push_logic_line(proc, "} catch (Exception e) {".into());
+                        push_logic_line(proc, format!("}} catch (Exception {evar}) {{"));
                     } else {
                         let cond = handler.conditions.join(", ");
-                        push_logic_line(proc, format!("}} catch (BusinessException e) {{ // {}", cond));
+                        push_logic_line(proc, format!("}} catch (BusinessException {evar}) {{ // {}", cond));
                     }
-                    push_logic_line(proc, "    __SQLERRM__ = e.getMessage();".into());
+                    push_logic_line(proc, format!("    __SQLERRM__ = {evar}.getMessage();"));
                     push_logic_line(proc, "    __SQLCODE__ = -1;".into());
                     for s in &handler.statements {
                         process_statement(s, proc, ctx)?;
