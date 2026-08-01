@@ -372,10 +372,14 @@ pub fn write_mapper_xml(
     let namespace = format!("{}.mapper.{}", base_package, class_name);
 
     let mut statements = Vec::new();
+    let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     for proc in &pkg.procedures {
         for dml in &proc.dml_statements {
+            let id_attr = format!("id=\"{}\"", dml.method_id);
+            if seen_ids.contains(&id_attr) { continue; }
             let stmt_xml = build_mapper_statement(proc, dml, &pkg.package_vars);
             statements.push(stmt_xml);
+            seen_ids.insert(id_attr);
         }
     }
 
