@@ -491,12 +491,14 @@ fn expr_to_java_impl(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> St
             case_to_java(operand, whens, else_expr, proc)
         }
         Expr::Parenthesized(inner) => format!("({})", expr_to_java(inner, proc)),
-        Expr::Between { expr, low, high, negated } => {
+         Expr::Between { expr, low, high, negated } => {
             let e = expr_to_java(expr, proc);
             let lo = expr_to_java(low, proc);
             let hi = expr_to_java(high, proc);
-            if *negated { format!("!({} >= {} && {} <= {})", e, lo, e, hi) } else { format!("({} >= {} && {} <= {})", e, lo, e, hi) }
-        }
+            let ge = binary_op_to_java(expr, ">=", low, proc);
+            let le = binary_op_to_java(expr, "<=", high, proc);
+            if *negated { format!("!({} && {})", ge, le) } else { format!("({} && {})", ge, le) }
+         }
         Expr::Exists(_) => "/* EXISTS */ true".into(),
         Expr::Subquery(_) => "null".into(),
         Expr::QualifiedStar(_) => "null".into(),
