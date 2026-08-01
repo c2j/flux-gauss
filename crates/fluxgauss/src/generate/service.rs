@@ -342,7 +342,20 @@ fn default_for_type(t: &str) -> &'static str {
     if tl.contains("float") { return "0.0f"; }
     if tl.contains("boolean") { return "false"; }
     if tl.starts_with("map<") { return "new HashMap<>()"; }
-    if tl.starts_with("atomicreference") { return "new AtomicReference<>(null)"; }
+    if tl.starts_with("atomicreference") {
+        let inner = tl.trim_start_matches("atomicreference<").trim_end_matches('>');
+        return if inner.contains("long") || inner.contains("Long") {
+            "new AtomicReference<>(0L)".into()
+        } else if inner.contains("int") || inner.contains("Integer") {
+            "new AtomicReference<>(0)".into()
+        } else if inner.contains("BigDecimal") {
+            "new AtomicReference<>(java.math.BigDecimal.ZERO)".into()
+        } else if inner.contains("String") {
+            "new AtomicReference<>(\"\")".into()
+        } else {
+            "new AtomicReference<>(null)".into()
+        };
+    }
     "null"
 }
 
@@ -558,7 +571,16 @@ fn build_service_method(
                 }
                 // Check if this local var was promoted to AtomicReference for OUT param usage
                 if let Some(inner_type) = proc.out_local_vars.get(&var_name.to_lowercase()) {
-                    body_lines.push(format!("AtomicReference<{}> {} = new AtomicReference<>(null);", inner_type, var_java));
+                    let ar_init = if inner_type.contains("Long") || inner_type == "long" {
+                        "0L"
+                    } else if inner_type.contains("Integer") || inner_type == "int" {
+                        "0"
+                    } else if inner_type.contains("BigDecimal") {
+                        "java.math.BigDecimal.ZERO"
+                    } else {
+                        "null"
+                    };
+                    body_lines.push(format!("AtomicReference<{}> {} = new AtomicReference<>({});", inner_type, var_java, ar_init));
                 } else {
                     let default_val = proc.local_var_defaults.get(&var_name.to_lowercase())
                         .cloned()
