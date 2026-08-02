@@ -27,16 +27,10 @@ public class Issue56ReturnHandlerService {
         try {
             { var _val = issue56ReturnHandlerMapper.selectTIssue56Data(); if (_val != null) vData = (String) _val; }
             pResult.set(String.valueOf(vData));
-        } catch (BusinessException e) { // no_data_found
-            __SQLERRM__ = e.getMessage();
+        } catch (BusinessException __e32) { // no_data_found
+            __SQLERRM__ = __e32.getMessage();
             __SQLCODE__ = -1;
             pResult.set("not_found");
-            return;
-        }
-        } catch (Exception e) {
-            __SQLERRM__ = e.getMessage();
-            __SQLCODE__ = -1;
-            pResult.set("error");
             return;
         }
     }
@@ -53,23 +47,17 @@ public class Issue56ReturnHandlerService {
                 vData = "default";
             }
             pResult.set(String.valueOf(vData));
-        } catch (BusinessException e) { // no_data_found
-            __SQLERRM__ = e.getMessage();
+        } catch (BusinessException __e33) { // no_data_found
+            __SQLERRM__ = __e33.getMessage();
             __SQLCODE__ = -1;
             try {
                 { var _val = issue56ReturnHandlerMapper.selectTIssue56Data_2(); if (_val != null) vTmp = (String) _val; }
                 pResult.set(String.valueOf(vTmp));
-            } catch (Exception e) {
-                __SQLERRM__ = e.getMessage();
+            } catch (Exception __e34) {
+                __SQLERRM__ = __e34.getMessage();
                 __SQLCODE__ = -1;
                 pResult.set("nested_fallback_failed");
             }
-            return;
-        }
-        } catch (Exception e) {
-            __SQLERRM__ = e.getMessage();
-            __SQLCODE__ = -1;
-            pResult.set("outer_error");
             return;
         }
     }
@@ -82,22 +70,10 @@ public class Issue56ReturnHandlerService {
         try {
             { var _val = issue56ReturnHandlerMapper.selectTIssue56Data_2(); if (_val != null) vData = (String) _val; }
             pResult.set(String.valueOf(vData));
-        } catch (BusinessException e) { // no_data_found
-            __SQLERRM__ = e.getMessage();
+        } catch (BusinessException __e35) { // no_data_found
+            __SQLERRM__ = __e35.getMessage();
             __SQLCODE__ = -1;
             pResult.set("not_found");
-            return;
-        }
-        } catch (BusinessException e) { // too_many_rows
-            __SQLERRM__ = e.getMessage();
-            __SQLCODE__ = -1;
-            pResult.set("too_many");
-            return;
-        }
-        } catch (Exception e) {
-            __SQLERRM__ = e.getMessage();
-            __SQLCODE__ = -1;
-            pResult.set("error");
             return;
         }
     }

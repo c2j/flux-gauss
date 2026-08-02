@@ -42,11 +42,11 @@ public class DynamicXmlService {
     public void procMixedLogic(String pTableName, String pMode) {
         String vSql = null;
         int _sqlRowCount = 0;
-        if ("ARCHIVE".equals(pMode)) {
+        if (java.util.Objects.equals(pMode, "ARCHIVE")) {
             vSql = "INSERT INTO " + pTableName + "_hist SELECT * FROM " + pTableName;
             _sqlRowCount = dynamicXmlMapper.insertProcMixedLogic(pTableName);
             _sqlRowCount = dynamicXmlMapper.insertAuditLog(pTableName, pMode, vSql);
-        } else if ("CLEAN".equals(pMode)) {
+        } else if (java.util.Objects.equals(pMode, "CLEAN")) {
             vSql = "DELETE FROM " + pTableName + " WHERE create_time < SYSDATE - 30";
             _sqlRowCount = dynamicXmlMapper.deleteProcMixedLogic(pTableName);
             _sqlRowCount = dynamicXmlMapper.insertAuditLog_1(pTableName, pMode, vSql);

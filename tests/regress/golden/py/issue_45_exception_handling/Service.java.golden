@@ -25,13 +25,19 @@ public class Issue45ExceptionHandlingService {
             pOSecurityId.set(null);
             vSecurityId = issue45ExceptionHandlingMapper.selectTIssue45Security(pSecurityCode);
             if (vSecurityId == null) {
-                // SqlStatement
-                pOSucceed.set("FOUND_BAK");
-                pOSecurityId.set(String.valueOf(vSecurityId));
+                try {
+                    // SqlStatement
+                    pOSucceed.set("FOUND_BAK");
+                    pOSecurityId.set(String.valueOf(vSecurityId));
+                } catch (Exception e) { // OTHERS
+                    // WHEN OTHERS
+                    pOSucceed.set("ERROR: 没有在证券代码维护中维护！");
+                    pOSecurityId.set("");
+                }
             }
             pOSucceed.set("FOUND_MAIN");
             pOSecurityId.set(String.valueOf(vSecurityId));
-        } catch (Exception e) { // EXCEPTION handlers — src: issue_45_exception_handling.sql:66
+        } catch (Exception e2) { // EXCEPTION handlers — src: issue_45_exception_handling.sql:66
             pOSucceed.set("ERROR: 证券代码查询异常");
             pOSecurityId.set("");
         }
@@ -63,7 +69,7 @@ public class Issue45ExceptionHandlingService {
                 // WHEN OTHERS
                 pMsg.set("SYSTEM_ERROR: " + e.getMessage());
             }
-        } catch (Exception e) { // EXCEPTION handlers — src: issue_45_exception_handling.sql:123
+        } catch (Exception e2) { // EXCEPTION handlers — src: issue_45_exception_handling.sql:123
             pMsg.set("OUTER_ERROR");
         }
     }

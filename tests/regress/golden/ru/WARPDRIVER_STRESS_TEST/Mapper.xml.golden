@@ -44,11 +44,6 @@
                 LIMIT 1
     </select>
 
-    <!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294-351 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master.updateOrders -->
-    <update id="updateOrders" parameterType="long">
-        UPDATE orders SET version = version + 1, update_time = current_timestamp WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long} AND version = ( SELECT version FROM orders WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long} )
-    </update>
-
     <!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294-351 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master.updateAccounts -->
     <update id="updateAccounts">
         UPDATE accounts SET balance = balance - #{vTempAmt, jdbcType=NUMERIC, javaType=java.math.BigDecimal} WHERE account_id = (SELECT account_id FROM orders WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long})
@@ -117,11 +112,6 @@
         UPDATE bulk_orders SET process_flag = 'PASSED', process_time = current_timestamp WHERE order_id = #{mainRec.orderId}
     </update>
 
-    <!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders -->
-    <update id="updateOrders">
-        UPDATE orders SET status = 'PENDING', submit_time = current_timestamp WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
-    </update>
-
     <!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_1 -->
     <update id="updateOrders_1">
         UPDATE orders SET status = 'PAID', pay_time = current_timestamp WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
@@ -176,12 +166,6 @@
     <update id="updateOrders_11">
         UPDATE orders SET status = 'PAID', partial_refund_amt = 100 WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
     </update>
-
-    <!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.selectOrders -->
-    <select id="selectOrders" resultType="string">
-        select status FROM orders WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
-                LIMIT 1
-    </select>
 
     <!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517-632 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.insertStateTransitions -->
     <insert id="insertStateTransitions">

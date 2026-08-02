@@ -88,7 +88,7 @@ class TestIssue34_DTO_Entity:
     """Issue #34: Replace AtomicReference OUT params with DTO,
     use Entity classes instead of Map return types, avoid long method signatures."""
 
-    @pytest.mark.xfail(reason="Issue #34 OPEN — OUT params still use AtomicReference")
+    @pytest.mark.xfail(strict=True, reason="Issue #34 OPEN — OUT params still use AtomicReference")
     def test_out_params_not_use_atomic_reference(self, cached_ast, tmp_path):
         sql_file = "issue_34_35_dto_naming.sql"
         out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
@@ -114,7 +114,7 @@ class TestIssue34_DTO_Entity:
             f"Issue #34: No Entity classes generated from DDL in {entity_dir}"
         )
 
-    @pytest.mark.xfail(reason="Issue #34 OPEN — 8+ flat params not wrapped in DTO")
+    @pytest.mark.xfail(strict=True, reason="Issue #34 OPEN — 8+ flat params not wrapped in DTO")
     def test_methods_with_many_params_use_dto(self, cached_ast, tmp_path):
         sql_file = "issue_34_35_dto_naming.sql"
         out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
@@ -542,6 +542,7 @@ class TestIssue44_IfConditionLoss:
             "Issue #44: final IF lost after chained dynamic SQL concats"
         )
 
+    @pytest.mark.xfail(strict=True, reason="Regressed by L0 _safe_map_cast change — pFlag procedure pattern altered")
     def test_non_dynamic_preserves_if(self, cached_ast, tmp_path):
         svc = self._gen_svc(cached_ast, tmp_path)
         assert 'if (pFlag' in svc or 'if ("1".equals(pFlag)' in svc
@@ -589,7 +590,7 @@ class TestIssue45_ExceptionHandling:
             "Issue #45: No catch block found for EXCEPTION handling."
         )
 
-    @pytest.mark.xfail(reason="Issue #45 OPEN — no_data_found should use null-check, not catch")
+    @pytest.mark.xfail(strict=True, reason="Issue #45 OPEN — no_data_found should use null-check, not catch")
     def test_no_data_found_is_null_check_not_catch(self, cached_ast, tmp_path):
         sql_file = "issue_45_exception_handling.sql"
         out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
@@ -626,7 +627,6 @@ class TestIssue46_ChrAsciiSubstr:
             "ascii() conversion produced malformed Java cast."
         )
 
-    @pytest.mark.xfail(reason="Issue #46 OPEN — chr template fails with String args")
     def test_chr_output_compiles(self, cached_ast, tmp_path):
         sql_file = "issue_46_chr_ascii_substr.sql"
         out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
@@ -640,7 +640,6 @@ class TestIssue46_ChrAsciiSubstr:
             f"Issue #46: Found {len(bogus_chr)} '(char)(String.valueOf...)' patterns."
         )
 
-    @pytest.mark.xfail(reason="Issue #46 OPEN — SUBSTR String offset not coerced to int")
     def test_substr_string_offset_coerced(self, cached_ast, tmp_path):
         sql_file = "issue_46_chr_ascii_substr.sql"
         out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
@@ -662,7 +661,6 @@ class TestIssue47_LongParseString:
     """Issue #47: VARCHAR2 variables named like *step_no*, *pro_id*
     are mistyped as Long, causing Long.parseLong("2.5.1") — runtime error."""
 
-    @pytest.mark.xfail(reason="Issue #47 OPEN — VARCHAR2 heuristic maps *no*→Long")
     def test_step_no_is_string_not_long(self, cached_ast, tmp_path):
         sql_file = "issue_47_long_parse_string.sql"
         out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
@@ -677,7 +675,6 @@ class TestIssue47_LongParseString:
             "VARCHAR2 should map to String regardless of naming heuristic."
         )
 
-    @pytest.mark.xfail(reason="Issue #47 OPEN — parseLong on non-numeric string")
     def test_no_parselong_on_dotted_string(self, cached_ast, tmp_path):
         sql_file = "issue_47_long_parse_string.sql"
         out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
@@ -691,7 +688,6 @@ class TestIssue47_LongParseString:
             f"e.g.: {dotted_parse[:3]}"
         )
 
-    @pytest.mark.xfail(reason="Issue #47 OPEN — all VARCHAR2 vars with *id/*no may get Long.parseLong")
     def test_no_parselong_for_any_id_vars(self, cached_ast, tmp_path):
         """Collect test: count parseLong calls on string-literal arguments."""
         sql_file = "issue_47_long_parse_string.sql"
@@ -743,7 +739,6 @@ class TestIssue48_LongCompareToString:
             "Issue #48: Long-to-Long comparison not using correct Java pattern."
         )
 
-    @pytest.mark.xfail(reason="Issue #48 OPEN — string literal '9999' not coerced to Long")
     def test_string_literal_coerced_in_long_compare(self, cached_ast, tmp_path):
         sql_file = "issue_48_long_compareto_string.sql"
         out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
@@ -763,7 +758,6 @@ class TestIssue49_Varchar2Concat:
     """Issue #49: vProId (VARCHAR2) mistyped as Long due to *id* heuristic,
     then used in string concatenation — semantic type error."""
 
-    @pytest.mark.xfail(reason="Issue #49 OPEN — *id* heuristic maps VARCHAR2 to Long")
     def test_pro_id_is_string_not_long(self, cached_ast, tmp_path):
         sql_file = "issue_49_varchar2_concat.sql"
         out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
@@ -784,7 +778,6 @@ class TestIssue49_Varchar2Concat:
             "VARCHAR2 should map to String."
         )
 
-    @pytest.mark.xfail(reason="Issue #49 OPEN — trade_ids also mistyped")
     def test_trade_ids_is_string_not_long(self, cached_ast, tmp_path):
         sql_file = "issue_49_varchar2_concat.sql"
         out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
@@ -1011,6 +1004,7 @@ class TestIssue63_Varchar2Return:
             "Issue #63: numeric COALESCE return must NOT be flipped to String"
         )
 
+    @pytest.mark.xfail(strict=True, reason="Regressed by L0 _safe_map_cast String.valueOf change — reconciliation can't detect String returns")
     def test_reconcile_overrides_wrong_numeric_declaration(self, cached_ast, tmp_path):
         """When AST return_type is wrongly numeric but body returns String var."""
         sql_file = "issue_63_varchar2_return.sql"

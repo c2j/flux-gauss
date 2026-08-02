@@ -32,12 +32,12 @@ public class GaussCompleteExamplesService {
         if (pString == null) {
             return vArray;
         }
-        vEnd = String.valueOf(pString).indexOf(String.valueOf(pDelimiter), Math.max(0, (vStart) - 1)) + 1;
+        vEnd = (String.valueOf(pString).indexOf(String.valueOf(pDelimiter), Math.max(0, (vStart) - 1)) + 1);
         while (vEnd > 0) {
             // CALL v_array(...)
             vIdx = vIdx + 1;
             vStart = vEnd + String.valueOf(pDelimiter).length();
-            vEnd = String.valueOf(pString).indexOf(String.valueOf(pDelimiter), Math.max(0, (vStart) - 1)) + 1;
+            vEnd = (String.valueOf(pString).indexOf(String.valueOf(pDelimiter), Math.max(0, (vStart) - 1)) + 1);
         }
         // CALL v_array(...)
         return vArray;
@@ -85,8 +85,8 @@ public class GaussCompleteExamplesService {
                 try {
                     vBonusRate = (java.math.BigDecimal) this.funcGetBonusRate(Integer.parseInt(String.valueOf(vEmp.get("department_id"))));
                     vBonusAmt = (java.math.BigDecimal) (java.math.BigDecimal.valueOf(((Number) (vEmp.get("salary") != null ? vEmp.get("salary") : 0L)).longValue()).multiply(vBonusRate)).setScale((int)(2), java.math.RoundingMode.HALF_UP);
-                    vMaxBonus = (java.math.BigDecimal) java.math.BigDecimal.valueOf(((Number) (java.math.BigDecimal.valueOf(((Number) (vEmp.get("salary") != null ? vEmp.get("salary") : 0L)).longValue()).multiply(java.math.BigDecimal.valueOf(12)) != null ? java.math.BigDecimal.valueOf(((Number) (vEmp.get("salary") != null ? vEmp.get("salary") : 0L)).longValue()).multiply(java.math.BigDecimal.valueOf(12)) : 0L)).longValue()).multiply(java.math.BigDecimal.valueOf(0.20d));
-                    if (java.math.BigDecimal.valueOf(((Number) (java.math.BigDecimal.valueOf(((Number) (vEmp.get("year_bonus_total") != null ? vEmp.get("year_bonus_total") : 0L)).longValue()).add(vBonusAmt) != null ? java.math.BigDecimal.valueOf(((Number) (vEmp.get("year_bonus_total") != null ? vEmp.get("year_bonus_total") : 0L)).longValue()).add(vBonusAmt) : 0L)).longValue()).compareTo(vMaxBonus) > 0) {
+                    vMaxBonus = (java.math.BigDecimal) java.math.BigDecimal.valueOf(((Number) (vEmp.get("salary") != null ? vEmp.get("salary") : 0L)).longValue()).multiply(java.math.BigDecimal.valueOf(12)).multiply(java.math.BigDecimal.valueOf(0.20d));
+                    if (java.math.BigDecimal.valueOf(((Number) (vEmp.get("year_bonus_total") != null ? vEmp.get("year_bonus_total") : 0L)).longValue()).add(vBonusAmt).compareTo(vMaxBonus) > 0) {
                         vBonusAmt = (java.math.BigDecimal) vMaxBonus.subtract(java.math.BigDecimal.valueOf(((Number) (vEmp.get("year_bonus_total") != null ? vEmp.get("year_bonus_total") : 0L)).longValue()));
                         _sqlRowCount = gaussCompleteExamplesMapper.insertBonusLimitLog(vEmp);
                     }
@@ -112,11 +112,11 @@ public class GaussCompleteExamplesService {
             // COMMIT — auto-committed by Spring @Transactional boundary
             _sqlRowCount = gaussCompleteExamplesMapper.updateBatchLog(vTotalBonus, vProcessed, vLogId);
             // COMMIT — auto-committed by Spring @Transactional boundary
-        } catch (Exception e) { // EXCEPTION handlers — src: gauss_complete_examples.sql:75
+        } catch (Exception e2) { // EXCEPTION handlers — src: gauss_complete_examples.sql:75
             // Rollback
             // SqlStatement
             // Commit
-            throw new BusinessException(e.getMessage());
+            throw new BusinessException(e2.getMessage());
         }
     }
 
@@ -160,9 +160,9 @@ public class GaussCompleteExamplesService {
                     _row = vCursorResult.get(vCursorIdx);
                     vCursorIdx++;
                     vRecId = (_row.get("v_rec_id") != null ? (_row.get("v_rec_id") instanceof Number ? ((Number) _row.get("v_rec_id")).intValue() : Integer.parseInt(String.valueOf(_row.get("v_rec_id")))) : 0);
-                    vRecName = (String) _row.get("v_rec_name");
+                    vRecName = (_row.get("v_rec_name") != null ? String.valueOf(_row.get("v_rec_name")) : "");
                     vRecValue = (_row.get("v_rec_value") != null ? (_row.get("v_rec_value") instanceof java.math.BigDecimal ? (java.math.BigDecimal) _row.get("v_rec_value") : new java.math.BigDecimal(String.valueOf(_row.get("v_rec_value")))) : java.math.BigDecimal.ZERO);
-                    vRecStatus = (String) _row.get("v_rec_status");
+                    vRecStatus = (_row.get("v_rec_status") != null ? String.valueOf(_row.get("v_rec_status")) : "");
                     vRecTime = (java.sql.Timestamp) _row.get("v_rec_time");
                 }
                 if (!(vCursorIdx < vCursorResult.size())) { break; }
@@ -192,10 +192,12 @@ public class GaussCompleteExamplesService {
             // COMMIT — auto-committed by Spring @Transactional boundary
             // cursor v_cursor closed
             _sqlRowCount = gaussCompleteExamplesMapper.insertPerformanceLog(pTableName, pWhereClause, pOrderBy, vRowCount, vStartTime);
-        } catch (Exception e) { // EXCEPTION handlers — src: gauss_complete_examples.sql:247
-            // If
+        } catch (Exception e2) { // EXCEPTION handlers — src: gauss_complete_examples.sql:247
+            if ((vCursorResult != null)) {
+                // Close
+            }
             // Rollback
-            throw new BusinessException(e.getMessage());
+            throw new BusinessException(e2.getMessage());
         }
     }
 
@@ -363,7 +365,7 @@ public class GaussCompleteExamplesService {
                 _row = pInCursorResult.get(pInCursorIdx);
                 pInCursorIdx++;
                 vId = (_row.get("v_id") != null ? (_row.get("v_id") instanceof Number ? ((Number) _row.get("v_id")).intValue() : Integer.parseInt(String.valueOf(_row.get("v_id")))) : 0);
-                vName = (String) _row.get("v_name");
+                vName = (_row.get("v_name") != null ? String.valueOf(_row.get("v_name")) : "");
                 vSalary = (_row.get("v_salary") != null ? (_row.get("v_salary") instanceof java.math.BigDecimal ? (java.math.BigDecimal) _row.get("v_salary") : new java.math.BigDecimal(String.valueOf(_row.get("v_salary")))) : java.math.BigDecimal.ZERO);
                 vDeptId = (_row.get("v_dept_id") != null ? (_row.get("v_dept_id") instanceof Number ? ((Number) _row.get("v_dept_id")).intValue() : Integer.parseInt(String.valueOf(_row.get("v_dept_id")))) : 0);
                 vHireDate = (_row.get("v_hire_date") instanceof java.sql.Timestamp ? new java.sql.Date(((java.sql.Timestamp) _row.get("v_hire_date")).getTime()) : (java.sql.Date) _row.get("v_hire_date"));
@@ -402,15 +404,15 @@ public class GaussCompleteExamplesService {
                 _row = pCursorResult.get(pCursorIdx);
                 pCursorIdx++;
                 vId = (_row.get("v_id") != null ? (_row.get("v_id") instanceof Number ? ((Number) _row.get("v_id")).intValue() : Integer.parseInt(String.valueOf(_row.get("v_id")))) : 0);
-                vName = (String) _row.get("v_name");
+                vName = (_row.get("v_name") != null ? String.valueOf(_row.get("v_name")) : "");
                 vSalary = (_row.get("v_salary") != null ? (_row.get("v_salary") instanceof java.math.BigDecimal ? (java.math.BigDecimal) _row.get("v_salary") : new java.math.BigDecimal(String.valueOf(_row.get("v_salary")))) : java.math.BigDecimal.ZERO);
-                vLevel = (String) _row.get("v_level");
+                vLevel = (_row.get("v_level") != null ? String.valueOf(_row.get("v_level")) : "");
                 vEligible = (_row.get("v_eligible") != null ? (_row.get("v_eligible") instanceof Number ? ((Number) _row.get("v_eligible")).intValue() : Integer.parseInt(String.valueOf(_row.get("v_eligible")))) : 0);
             }
             if (!(pCursorIdx < pCursorResult.size())) { break; }
             vCount = vCount + 1;
             vTotal = vTotal.add(vSalary);
-            if ("SENIOR".equals(vLevel)) {
+            if (java.util.Objects.equals(vLevel, "SENIOR")) {
                 vSeniorCount = vSeniorCount + 1;
             }
         }

@@ -1,8 +1,9 @@
 package com.example.demo.service;
 
 import com.example.demo.exception.BusinessException;
-import com.example.demo.mapper.Issue44IfElsifGoto2Mapper;
-import com.example.demo.service.Issue44IfElsifGoto2Service;
+import com.example.demo.mapper.Issue64BigdecimalEmptyInitMapper;
+import com.example.demo.service.Issue64BigdecimalEmptyInitService;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -15,20 +16,19 @@ import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
-class Issue44IfElsifGoto2ServiceTest {
+class Issue64BigdecimalEmptyInitServiceTest {
 
     @Mock
-    private Issue44IfElsifGoto2Mapper issue44IfElsifGoto2Mapper;
+    private Issue64BigdecimalEmptyInitMapper issue64BigdecimalEmptyInitMapper;
 
     @InjectMocks
-    private Issue44IfElsifGoto2Service service;
+    private Issue64BigdecimalEmptyInitService service;
 
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
-    void test_procNestedExceptionBlocks_success() {
-        when(issue44IfElsifGoto2Mapper.selectTIssue44ConfigCount1()).thenReturn(999);
-        when(issue44IfElsifGoto2Mapper.selectTIssue44Config()).thenReturn("1");
-        when(issue44IfElsifGoto2Mapper.selectTIssue44Config_1(any())).thenReturn("1");
-        service.procNestedExceptionBlocks();
+    void test_procEmptyStringDefaults_success() {
+        String pId = "test_pId";
+        AtomicReference<String> pResult = new AtomicReference<>(null);
+        service.procEmptyStringDefaults(pId, pResult);
     }
 }

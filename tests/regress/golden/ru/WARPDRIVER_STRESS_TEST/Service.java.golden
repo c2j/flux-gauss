@@ -48,8 +48,8 @@ public class WarpdriverStressTestService {
         try {
             warpdriverStressTestMapper.insertAuditTrail(pAction, pDetail);
             // COMMIT;
-        } catch (Exception e) {
-            __SQLERRM__ = e.getMessage();
+        } catch (Exception __e1) {
+            __SQLERRM__ = __e1.getMessage();
             __SQLCODE__ = -1;
         }
     }
@@ -68,7 +68,7 @@ public class WarpdriverStressTestService {
     public void spMainOrchestrator(String pBizDate, String pMode, AtomicReference<java.math.BigDecimal> pTotalAmt, AtomicReference<Long> pLogId) {
         Integer vCleaned = 0;
         java.util.List<Object> vCurOrders = null;
-        java.sql.Date vDate = java.sql.Date.valueOf(String.valueOf(pBizDate));
+        java.sql.Date vDate = java.sql.Date.valueOf(java.time.LocalDate.parse(String.valueOf(pBizDate), java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd]")));
         Boolean vHasError = false;
         Integer vIdx = 0;
         List<String> vItemTab = null;
@@ -77,6 +77,7 @@ public class WarpdriverStressTestService {
         java.math.BigDecimal vSum = java.math.BigDecimal.ZERO;
         List<Map<String, Object>> vCurOrdersResult = null;
         int vCurOrdersIdx = 0;
+        Object v_cur_orders = null;
         boolean found = false;
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
@@ -110,7 +111,7 @@ public class WarpdriverStressTestService {
                     }
                     if (!found) {
                         currentState = SpMainOrchestratorState.CloseCursor;
-                        break;
+                        // UNREACHABLE: break;
                     }
                     if (java.util.Objects.equals(vRec.get("status"), "PENDING")) {
                         vSavepoint1 = String.valueOf("sp_").concat(String.valueOf(vRec.getOrDefault("orderId", vRec.get("order_id"))));
@@ -121,7 +122,7 @@ public class WarpdriverStressTestService {
                             if (java.util.Objects.equals(__ROWCOUNT__, 0)) {
                                 // SQL: ROLLBACK TO SAVEPOINT ${vSavepoint1}
                                 currentState = SpMainOrchestratorState.FetchLoop;
-                                break;
+                                // UNREACHABLE: break;
                             }
                             vIdx = vIdx + 1;
                             // CALL itemTab(vIdx) — procedure not found in current package
@@ -139,20 +140,20 @@ public class WarpdriverStressTestService {
                                 this.spDynamicSchedulerDispatch(String.valueOf(vRec.getOrDefault("orderId", vRec.get("order_id"))), "JOB_BIG_ORDER_");
                             } else if (java.util.Optional.ofNullable((Number) vRec.getOrDefault("totalAmount", vRec.get("total_amount"))).map(Number::longValue).orElse(0L) < 0) {
                                 currentState = SpMainOrchestratorState.ErrorHandler;
-                                break;
+                                // UNREACHABLE: break;
                             }
-                        } catch (Exception e) {
-                            __SQLERRM__ = e.getMessage();
+                        } catch (Exception __e5) {
+                            __SQLERRM__ = __e5.getMessage();
                             __SQLCODE__ = -1;
                             gLastErrorCode = String.valueOf(__SQLERRM__);
                             // SQL: ROLLBACK TO SAVEPOINT ${vSavepoint1}
-                            this.spAutonomousAudit("ORCH_ERROR", __SQLERRM__);
+                            this.spAutonomousAudit("ORCH_ERROR", String.valueOf(__SQLERRM__));
                             currentState = SpMainOrchestratorState.FetchLoop;
-                            break;
+                            // UNREACHABLE: break;
                         }
                     } else if (java.util.Objects.equals(vRec.get("status"), "PROCESSING")) {
                         currentState = SpMainOrchestratorState.FetchLoop;
-                        break;
+                        // UNREACHABLE: break;
                     }
                     if (java.util.Objects.equals((gSessionCounter % 100), 0)) {
                         // COMMIT;
@@ -185,13 +186,13 @@ public class WarpdriverStressTestService {
                     break;
                 }
             }
-        } catch (Exception e) {
-            __SQLERRM__ = e.getMessage();
+        } catch (Exception __e7) {
+            __SQLERRM__ = __e7.getMessage();
             __SQLCODE__ = -1;
             try { TransactionAspectSupport.currentTransactionStatus().setRollbackOnly(); } catch (Exception _tx) {}
             pTotalAmt.set(java.math.BigDecimal.valueOf(-1L));
             gLastErrorCode = String.valueOf(__SQLERRM__);
-            this.spAutonomousAudit("ORCH_FATAL", __SQLERRM__);
+            this.spAutonomousAudit("ORCH_FATAL", String.valueOf(__SQLERRM__));
             log.info("");
         }
     }
@@ -209,7 +210,7 @@ public class WarpdriverStressTestService {
         try {
             try {
                 vLockKey = String.valueOf("LOCK_ORDER_").concat(String.valueOf(pOrderId));
-                vConnId = Thread.currentThread().getId();
+                vConnId = ((Number)(Thread.currentThread().getId())).longValue();
                 __ROWCOUNT__ = warpdriverStressTestMapper.insertDistributedLocks(pOrderId, vConnId, vLockKey);
                 { var _val = warpdriverStressTestMapper.selectOrders(pOrderId); if (_val != null) vTempAmt = (java.math.BigDecimal) _val; }
                 if (!found) {
@@ -232,8 +233,8 @@ public class WarpdriverStressTestService {
                 __ROWCOUNT__ = warpdriverStressTestMapper.deleteDistributedLocks(pOrderId, vLockKey);
                 // COMMIT;
             }
-        } catch (Exception e) {
-            __SQLERRM__ = e.getMessage();
+        } catch (Exception __e9) {
+            __SQLERRM__ = __e9.getMessage();
             __SQLCODE__ = -1;
             __ROWCOUNT__ = warpdriverStressTestMapper.deleteDistributedLocks_1(pOrderId, vLockKey);
             pResult.set(String.valueOf(String.valueOf("ERROR:").concat(String.valueOf(__SQLERRM__))));
@@ -265,7 +266,7 @@ public class WarpdriverStressTestService {
 
     // Source: PKG_WARPDRIVER_STRESS_TEST.sp_goto_skip_logic (PROCEDURE) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:397-437
     public void spGotoSkipLogic(String pReportType, String pBizDate, AtomicReference<String> pContent) {
-        java.sql.Date vDate = java.sql.Date.valueOf(String.valueOf(pBizDate));
+        java.sql.Date vDate = java.sql.Date.valueOf(java.time.LocalDate.parse(String.valueOf(pBizDate), java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd]")));
         String vDetail = "";
         String vHeader = null;
         vHeader = String.valueOf(String.valueOf(String.valueOf("=== 清算报告 (").concat(String.valueOf(pBizDate))).concat(String.valueOf(") ==="))).concat(String.valueOf(String.valueOf((char)(10))));
@@ -313,8 +314,8 @@ public class WarpdriverStressTestService {
                             warpdriverStressTestMapper.updateBulkOrders_1(pBatchId, mainRec, riskRec);
                             continue;
                         }
-                    } catch (BusinessException e) { // NO_DATA
-                        __SQLERRM__ = e.getMessage();
+                    } catch (BusinessException __e13) { // NO_DATA
+                        __SQLERRM__ = __e13.getMessage();
                         __SQLCODE__ = -1;
                     }
                 }
@@ -354,10 +355,10 @@ public class WarpdriverStressTestService {
                     warpdriverStressTestMapper.updateOrders(pOrderId, pEvent);
                     vState = "PENDING";
                     currentState = SpGotoStateMachineState.StatePending;
-                    break;
+                    // UNREACHABLE: break;
                 } else if (java.util.Objects.equals(pEvent, "RESUME")) {
                     currentState = SpGotoStateMachineState.StateCheck;
-                    break;
+                    // UNREACHABLE: break;
                 }
                 currentState = SpGotoStateMachineState.StateDone;
                 break;
@@ -366,23 +367,23 @@ public class WarpdriverStressTestService {
                     warpdriverStressTestMapper.updateOrders_1(pOrderId, pEvent);
                     vState = "PAID";
                     currentState = SpGotoStateMachineState.StatePaid;
-                    break;
+                    // UNREACHABLE: break;
                 } else if (java.util.Objects.equals(pEvent, "CANCEL")) {
                     warpdriverStressTestMapper.updateOrders_2(pOrderId, pEvent);
                     vState = "CANCELLED";
                     currentState = SpGotoStateMachineState.StateDone;
-                    break;
+                    // UNREACHABLE: break;
                 } else if (java.util.Objects.equals(pEvent, "TIMEOUT")) {
                     if (vRetry < vMaxRetry) {
                         vRetry = vRetry + 1;
                         warpdriverStressTestMapper.updateOrders_3(pOrderId, pEvent, vRetry);
                         currentState = SpGotoStateMachineState.StatePending;
-                        break;
+                        // UNREACHABLE: break;
                     } else {
                         warpdriverStressTestMapper.updateOrders_4(pOrderId, pEvent);
                         vState = "EXPIRED";
                         currentState = SpGotoStateMachineState.StateDone;
-                        break;
+                        // UNREACHABLE: break;
                     }
                 }
                 currentState = SpGotoStateMachineState.StateDone;
@@ -392,12 +393,12 @@ public class WarpdriverStressTestService {
                     warpdriverStressTestMapper.updateOrders_5(pOrderId, pEvent);
                     vState = "SHIPPED";
                     currentState = SpGotoStateMachineState.StateShipped;
-                    break;
+                    // UNREACHABLE: break;
                 } else if (java.util.Objects.equals(pEvent, "REFUND_REQ")) {
                     warpdriverStressTestMapper.updateOrders_6(pOrderId, pEvent);
                     vState = "REFUNDING";
                     currentState = SpGotoStateMachineState.StateRefunding;
-                    break;
+                    // UNREACHABLE: break;
                 }
                 currentState = SpGotoStateMachineState.StateDone;
                 break;
@@ -409,7 +410,7 @@ public class WarpdriverStressTestService {
                     warpdriverStressTestMapper.updateOrders_8(pOrderId, pEvent);
                     vState = "REFUNDING";
                     currentState = SpGotoStateMachineState.StateRefunding;
-                    break;
+                    // UNREACHABLE: break;
                 }
                 currentState = SpGotoStateMachineState.StateDone;
                 break;
@@ -418,17 +419,17 @@ public class WarpdriverStressTestService {
                     warpdriverStressTestMapper.updateOrders_9(pOrderId, pEvent);
                     vState = "REFUNDED";
                     currentState = SpGotoStateMachineState.StateDone;
-                    break;
+                    // UNREACHABLE: break;
                 } else if (java.util.Objects.equals(pEvent, "REFUND_REJECT")) {
                     warpdriverStressTestMapper.updateOrders_10(pOrderId, pEvent);
                     vState = "PAID";
                     currentState = SpGotoStateMachineState.StatePaid;
-                    break;
+                    // UNREACHABLE: break;
                 } else if (java.util.Objects.equals(pEvent, "PARTIAL_REFUND")) {
                     warpdriverStressTestMapper.updateOrders_11(pOrderId, pEvent);
                     vState = "PAID";
                     currentState = SpGotoStateMachineState.StatePaid;
-                    break;
+                    // UNREACHABLE: break;
                 }
                 currentState = SpGotoStateMachineState.StateDone;
                 break;
@@ -437,19 +438,19 @@ public class WarpdriverStressTestService {
                 vState = String.valueOf(vDbState);
                 if (java.util.Objects.equals(vDbState, "PENDING")) {
                     currentState = SpGotoStateMachineState.StatePending;
-                    break;
+                    // UNREACHABLE: break;
                 }
                 if (java.util.Objects.equals(vDbState, "PAID")) {
                     currentState = SpGotoStateMachineState.StatePaid;
-                    break;
+                    // UNREACHABLE: break;
                 }
                 if (java.util.Objects.equals(vDbState, "SHIPPED")) {
                     currentState = SpGotoStateMachineState.StateShipped;
-                    break;
+                    // UNREACHABLE: break;
                 }
                 if (java.util.Objects.equals(vDbState, "REFUNDING")) {
                     currentState = SpGotoStateMachineState.StateRefunding;
-                    break;
+                    // UNREACHABLE: break;
                 }
                 currentState = SpGotoStateMachineState.StateDone;
                 break;
@@ -478,6 +479,8 @@ public class WarpdriverStressTestService {
         Integer vCount = 0;
         List<Map<String, Object>> vCurResult = null;
         int vCurIdx = 0;
+        Object v_cur = null;
+        Object vCur = null;
         boolean found = false;
         if (pDepth > 10) {
             return 0;
@@ -515,7 +518,7 @@ public class WarpdriverStressTestService {
         for (vIdx = 0; vIdx <= this.jsonbArrayLength(vArr) - 1; vIdx++) {
             vItem = String.valueOf(this.jsonbGet(vArr, vIdx));
             vNewPrice = java.math.BigDecimal.valueOf(((Number) java.util.Objects.requireNonNullElse((this.jsonbGetText(vItem, "price")), 0L)).longValue()).multiply((java.math.BigDecimal.valueOf(1).subtract(pDiscount)));
-            vResult = String.valueOf(vResult).concat(String.valueOf(this.jsonbBuildObject(String.valueOf("product_id"), this.jsonbGetText(vItem, "product_id"), String.valueOf("original_price"), java.math.BigDecimal.valueOf(((Number) java.util.Objects.requireNonNullElse((this.jsonbGetText(vItem, "price")), 0L)).longValue()), String.valueOf("discount_rate"), pDiscount, String.valueOf("final_price"), vNewPrice.setScale((int)2, java.math.RoundingMode.HALF_UP), String.valueOf("processed_at"), new java.sql.Timestamp(System.currentTimeMillis()))));
+            vResult = String.valueOf(vResult).concat(String.valueOf(this.jsonbBuildObject(String.valueOf("product_id"), this.jsonbGetText(vItem, "product_id"), String.valueOf("original_price"), java.math.BigDecimal.valueOf(((Number) java.util.Objects.requireNonNullElse((this.jsonbGetText(vItem, "price")), 0L)).longValue()), String.valueOf("discount_rate"), pDiscount, String.valueOf("final_price"), vNewPrice.setScale((int)(2), java.math.RoundingMode.HALF_UP), String.valueOf("processed_at"), new java.sql.Timestamp(System.currentTimeMillis()))));
         }
         return this.jsonbBuildObject(String.valueOf("items"), vResult, String.valueOf("total_count"), this.jsonbArrayLength(vArr), String.valueOf("summary_discount"), pDiscount);
     }
@@ -528,6 +531,8 @@ public class WarpdriverStressTestService {
         int pCurOrdersIdx = 0;
         List<Map<String, Object>> pCurPaymentsResult = null;
         int pCurPaymentsIdx = 0;
+        Object p_cur_payments = null;
+        Object p_cur_orders = null;
         pCurOrdersResult = warpdriverStressTestMapper.selectFnMultiCursorReturn(pCustomerId);
         if (pCurOrdersResult == null) pCurOrdersResult = new java.util.ArrayList<>();
         pCurOrdersIdx = 0;
@@ -568,8 +573,8 @@ public class WarpdriverStressTestService {
             try {
                 // SAVEPOINT sp_notify — handled via JDBC Connection.setSavepoint() in @Transactional context
                 warpdriverStressTestMapper.insertNotifications(pAccountId, pAmount);
-            } catch (Exception e) {
-                __SQLERRM__ = e.getMessage();
+            } catch (Exception __e18) {
+                __SQLERRM__ = __e18.getMessage();
                 __SQLCODE__ = -1;
                 warpdriverStressTestMapper.insertSpSavepointHell(pAccountId, pAmount);
                 // SQL: v_ins = "INSERT INTO"
@@ -578,8 +583,8 @@ public class WarpdriverStressTestService {
             }
             // COMMIT;
             pFinalBal.set(new java.math.BigDecimal(String.valueOf(warpdriverStressTestMapper.selectAccounts_1(pAccountId, pAmount))));
-        } catch (Exception e) {
-            __SQLERRM__ = e.getMessage();
+        } catch (Exception __e19) {
+            __SQLERRM__ = __e19.getMessage();
             __SQLCODE__ = -1;
             try { TransactionAspectSupport.currentTransactionStatus().setRollbackOnly(); } catch (Exception _tx) {}
             log.info("");

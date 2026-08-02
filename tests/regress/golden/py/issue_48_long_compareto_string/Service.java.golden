@@ -55,11 +55,11 @@ public class Issue48LongComparetoStringService {
     // Source: pkg_issue48_compare.proc_check_status (PROCEDURE) — issue_48_long_compareto_string.sql:100-116
     public void procCheckStatus(String pStatus, AtomicReference<Integer> pCode) {
         pCode.set(null);
-        if ("0".equals(pStatus)) {
+        if (java.util.Objects.equals(pStatus, "0")) {
             pCode.set(Integer.valueOf(0));
-        } else if ("1".equals(pStatus)) {
+        } else if (java.util.Objects.equals(pStatus, "1")) {
             pCode.set(Integer.valueOf(1));
-        } else if ("2".equals(pStatus)) {
+        } else if (java.util.Objects.equals(pStatus, "2")) {
             pCode.set(Integer.valueOf(2));
         } else {
             pCode.set(Integer.valueOf(-1));

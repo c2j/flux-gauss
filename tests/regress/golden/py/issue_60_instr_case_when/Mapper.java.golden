@@ -1,0 +1,9 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue60InstrCaseWhenMapper {
+
+    // No direct DML operations for issue_60_instr_case_when
+}

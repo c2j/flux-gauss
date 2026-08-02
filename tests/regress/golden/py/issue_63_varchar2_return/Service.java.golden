@@ -1,0 +1,56 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue63Varchar2ReturnMapper;
+import java.util.Objects;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue63Varchar2ReturnService {
+    private static final Logger log = LoggerFactory.getLogger(Issue63Varchar2ReturnService.class);
+
+    private final Issue63Varchar2ReturnMapper issue63Varchar2ReturnMapper;
+
+    public Issue63Varchar2ReturnService(Issue63Varchar2ReturnMapper issue63Varchar2ReturnMapper) {
+        this.issue63Varchar2ReturnMapper = issue63Varchar2ReturnMapper;
+    }
+    // Source: pkg_issue63_ret.fnc_get_open_fund_value (FUNCTION) — issue_63_varchar2_return.sql:32-54
+    public String fncGetOpenFundValue(String pIDate, String pIPriceDate, String pISecurityId) {
+        String vMarketPrice = null;
+        String vBonusValue = null;
+        int _sqlRowCount = 0;
+        java.util.Map<String, Object> _row = null;
+        vMarketPrice = "";
+        vBonusValue = "0";
+        try {
+            _row = issue63Varchar2ReturnMapper.selectTIssue63Fund(pIDate, pIPriceDate, pISecurityId);
+            if (_row == null) _row = java.util.Collections.emptyMap();
+            _sqlRowCount = (_row != null && !_row.isEmpty()) ? 1 : 0;
+            vMarketPrice = (_row.get("market_price") != null ? String.valueOf(_row.get("market_price")) : "");
+            vBonusValue = (_row.get("bonus_value") != null ? String.valueOf(_row.get("bonus_value")) : "");
+        } catch (Exception e) { // OTHERS
+            // WHEN OTHERS
+            vMarketPrice = "0";
+            vBonusValue = "0";
+        }
+        vMarketPrice = vMarketPrice + vBonusValue;
+        return vMarketPrice;
+    }
+
+    // Source: pkg_issue63_ret.fnc_trd_get_unit_cash (FUNCTION) — issue_63_varchar2_return.sql:56-63
+    public String fncTrdGetUnitCash(String pIDate) {
+        String pOUnitCash = null;
+        pOUnitCash = "CASH_" + pIDate;
+        return pOUnitCash;
+    }
+
+    // Source: pkg_issue63_ret.fnc_get_price_num (FUNCTION) — issue_63_varchar2_return.sql:65-72
+    public Long fncGetPriceNum(String pIId) {
+        Long vTotal = Long.valueOf(0);
+        vTotal = Objects.requireNonNullElse(vTotal, 0) + 1;
+        return Objects.requireNonNullElse(vTotal, 0);
+    }
+}

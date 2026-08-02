@@ -1,0 +1,82 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue56ReturnHandlerMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue56ReturnHandlerService {
+    private static final Logger log = LoggerFactory.getLogger(Issue56ReturnHandlerService.class);
+
+    private final Issue56ReturnHandlerMapper issue56ReturnHandlerMapper;
+
+    public Issue56ReturnHandlerService(Issue56ReturnHandlerMapper issue56ReturnHandlerMapper) {
+        this.issue56ReturnHandlerMapper = issue56ReturnHandlerMapper;
+    }
+    // Source: pkg_issue56_return_handler.proc_two_handlers_first_returns (PROCEDURE) — pkg_issue56_return_handler.sql:20-34
+    public void procTwoHandlersFirstReturns(AtomicReference<String> pResult) {
+        String vData = null;
+        try {
+            pResult.set(null);
+            vData = issue56ReturnHandlerMapper.selectTIssue56Data();
+            if (vData == null) {
+                pResult.set("not_found");
+                return;
+            }
+            pResult.set(String.valueOf(vData));
+        } catch (Exception e) { // EXCEPTION handlers — src: pkg_issue56_return_handler.sql:20
+            pResult.set("error");
+            return;
+        }
+    }
+
+    // Source: pkg_issue56_return_handler.proc_nested_block_then_return (PROCEDURE) — pkg_issue56_return_handler.sql:36-62
+    public void procNestedBlockThenReturn(AtomicReference<String> pResult) {
+        String vData = null;
+        String vTmp = null;
+        try {
+            pResult.set(null);
+            vData = issue56ReturnHandlerMapper.selectTIssue56Data_1();
+            if (vData == null) {
+                try {
+                    // SqlStatement
+                    pResult.set(String.valueOf(vTmp));
+                } catch (Exception e) { // OTHERS
+                    // WHEN OTHERS
+                    pResult.set("nested_fallback_failed");
+                }
+                return;
+            }
+            if (vData == null) {
+                vData = "default";
+            }
+            pResult.set(String.valueOf(vData));
+        } catch (Exception e2) { // EXCEPTION handlers — src: pkg_issue56_return_handler.sql:36
+            pResult.set("outer_error");
+            return;
+        }
+    }
+
+    // Source: pkg_issue56_return_handler.proc_three_handlers_returns (PROCEDURE) — pkg_issue56_return_handler.sql:64-81
+    public void procThreeHandlersReturns(AtomicReference<String> pResult) {
+        String vData = null;
+        try {
+            pResult.set(null);
+            vData = issue56ReturnHandlerMapper.selectTIssue56Data_2();
+            if (vData == null) {
+                pResult.set("not_found");
+                return;
+            }
+            pResult.set(String.valueOf(vData));
+        } catch (Exception e) { // EXCEPTION handlers — src: pkg_issue56_return_handler.sql:64
+            pResult.set("too_many");
+            return;
+            pResult.set("error");
+            return;
+        }
+    }
+}

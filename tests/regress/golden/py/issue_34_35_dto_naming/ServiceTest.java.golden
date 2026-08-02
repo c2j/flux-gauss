@@ -35,7 +35,7 @@ class Issue3435DtoNamingServiceTest {
         AtomicReference<Long> pOrderId = new AtomicReference<>(null);
         AtomicReference<java.math.BigDecimal> pTotalAmount = new AtomicReference<>(null);
         AtomicReference<String> pStatusMsg = new AtomicReference<>(null);
-        when(issue3435DtoNamingMapper.selectTIssue34OrderMaxOrderId(any(), any(), any(), any(), any())).thenReturn("test");
+        when(issue3435DtoNamingMapper.selectTIssue34OrderMaxOrderId(any(), any(), any(), any(), any())).thenReturn("1");
         when(issue3435DtoNamingMapper.insertTIssue34Order(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(issue3435DtoNamingMapper.insertTIssue34OrderLog(any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(issue3435DtoNamingMapper.selectTIssue34OrderCount(any(), any())).thenReturn(null);
@@ -57,7 +57,7 @@ class Issue3435DtoNamingServiceTest {
         AtomicReference<Integer> pOrderCount = new AtomicReference<>(null);
         AtomicReference<java.math.BigDecimal> pTotalRevenue = new AtomicReference<>(null);
         AtomicReference<java.math.BigDecimal> pAvgAmount = new AtomicReference<>(null);
-        when(issue3435DtoNamingMapper.selectTIssue34OrderMaxOrderId(any(), any(), any(), any(), any())).thenReturn("test");
+        when(issue3435DtoNamingMapper.selectTIssue34OrderMaxOrderId(any(), any(), any(), any(), any())).thenReturn("1");
         when(issue3435DtoNamingMapper.insertTIssue34Order(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(issue3435DtoNamingMapper.insertTIssue34OrderLog(any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(issue3435DtoNamingMapper.selectTIssue34OrderCount(any(), any())).thenReturn(null);
@@ -78,7 +78,7 @@ class Issue3435DtoNamingServiceTest {
         String pUpdatedBy = "2024-01-01";
         AtomicReference<String> pOldStatus = new AtomicReference<>(null);
         AtomicReference<Integer> pRowsUpdated = new AtomicReference<>(null);
-        when(issue3435DtoNamingMapper.selectTIssue34OrderMaxOrderId(any(), any(), any(), any(), any())).thenReturn("test");
+        when(issue3435DtoNamingMapper.selectTIssue34OrderMaxOrderId(any(), any(), any(), any(), any())).thenReturn("1");
         when(issue3435DtoNamingMapper.insertTIssue34Order(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(issue3435DtoNamingMapper.insertTIssue34OrderLog(any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(issue3435DtoNamingMapper.selectTIssue34OrderCount(any(), any())).thenReturn(null);

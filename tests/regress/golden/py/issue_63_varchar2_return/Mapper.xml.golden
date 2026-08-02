@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.Issue63Varchar2ReturnMapper">
+
+    <!-- Source: issue_63_varchar2_return.sql:43-43 — pkg_issue63_ret.fnc_get_open_fund_value.selectTIssue63Fund -->
+    <select id="selectTIssue63Fund" parameterType="string" resultType="java.util.LinkedHashMap">
+        select
+          t.market_price,
+          t.bonus_value
+        from t_issue63_fund AS t
+        where t.security_id = #{pISecurityId, jdbcType=VARCHAR, javaType=String}
+                LIMIT 1
+    </select>
+
+</mapper>
