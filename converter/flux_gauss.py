@@ -566,7 +566,7 @@ def _close_log(output_dir: str):
         _LOG_FH = None
 
 
-_PROGRESS_TERMINAL_WIDTH = 72
+_PROGRESS_TERMINAL_WIDTH = 40
 
 
 def _progress_bar(phase: str, current: int, total: int, status: str = ""):
@@ -589,7 +589,8 @@ def _progress_done(phase: str, total: int):
         return
     bar = "█" * _PROGRESS_TERMINAL_WIDTH
     label = f"{phase:<8}"
-    sys.stdout.write(f"\r  {label} [{bar}] {total}/{total} 100.0%  ✓\n")
+    line = f"\r  {label} [{bar}] {total}/{total} 100.0%  ✓"
+    sys.stdout.write(f"{line:<120}\n")
     sys.stdout.flush()
 
 
@@ -2371,20 +2372,19 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
     # Process body statements
     body_stmts = block.get("body", [])
     pkg_key = proc.package.lower() if proc.package else "default"
-    import sys as _sys
     _ctr_id = id(_DML_COUNTER_BY_PKG)
     _ctr_val_id = id(_DML_COUNTER_BY_PKG.get(pkg_key))
     _has_key = pkg_key in _DML_COUNTER_BY_PKG
     if not _has_key:
-        import sys as _sys; print(f"[DMLNEWKEY] {proc.proc_name}: key {pkg_key!r} being created (was missing)", file=_sys.stderr)
+        _log(f"[DMLNEWKEY] {proc.proc_name}: key {pkg_key!r} being created (was missing)", to_stdout=False)
 
     if not hasattr(_DML_COUNTER_BY_PKG, '_tracker'):
         _DML_COUNTER_BY_PKG._tracker = _ctr_id
     elif _DML_COUNTER_BY_PKG._tracker != _ctr_id:
-        print(f"[DMLLOST] {proc.proc_name}: _DML_COUNTER_BY_PKG was REPLACED! old={_DML_COUNTER_BY_PKG._tracker} new={_ctr_id}", file=_sys.stderr)
+        _log(f"[DMLLOST] {proc.proc_name}: _DML_COUNTER_BY_PKG was REPLACED! old={_DML_COUNTER_BY_PKG._tracker} new={_ctr_id}", to_stdout=False)
         _DML_COUNTER_BY_PKG._tracker = _ctr_id
     if _has_key and _ctr_val_id == id(None):
-        print(f"[DMLLOST] {proc.proc_name}: key {pkg_key!r} value became None!", file=_sys.stderr)
+        _log(f"[DMLLOST] {proc.proc_name}: key {pkg_key!r} value became None!", to_stdout=False)
     if pkg_key not in _DML_COUNTER_BY_PKG:
         _DML_COUNTER_BY_PKG[pkg_key] = {}
     dml_counter = _DML_COUNTER_BY_PKG[pkg_key]
@@ -3907,7 +3907,7 @@ def _dml_method_name(dml_type: str, proc_name: str, counter: dict, semantic_key:
         n = counter.get(dml_type, 0)
         counter[dml_type] = n + 1
         base = f"{dml_type}{snake_to_pascal(proc_name)}"
-    import sys as _sys; print(f"[DML-CNTR] {composite_key if semantic_key else dml_type} -> n={n} -> {base + (chr(95)+str(n) if n > 0 else "")}", file=_sys.stderr)
+    _log(f"[DML-CNTR] {composite_key if semantic_key else dml_type} -> n={n} -> {base + (chr(95)+str(n) if n > 0 else '')}", to_stdout=False)
     return base + (f"_{n}" if n > 0 else "")
 
 
