@@ -116,11 +116,26 @@ pub fn write_itest_class(
                 continue;
             }
             let holder = format!("AtomicReference<{}>", p.java_type);
-            out_decls.push(format!("{} {} = new AtomicReference<>(null);", holder, snake_to_camel(&p.name)));
+            let init_val = if p.java_type.contains("Long") || p.java_type == "long" {
+                "1L"
+            } else if p.java_type.contains("Integer") || p.java_type == "int" {
+                "1"
+            } else if p.java_type.contains("BigDecimal") {
+                "java.math.BigDecimal.ZERO"
+            } else if p.java_type == "String" {
+                "\"\""
+            } else {
+                "null"
+            };
+            out_decls.push(format!("{} {} = new AtomicReference<>({});", holder, snake_to_camel(&p.name), init_val));
             out_args.push(snake_to_camel(&p.name));
         }
 
-        let all_args = param_args.iter().cloned().chain(out_args.iter().cloned()).collect::<Vec<_>>();
+        // Build argument list in original parameter declaration order (mixed IN/OUT)
+        let all_args: Vec<String> = proc.parameters.iter()
+            .filter(|p| !p.is_refcursor())
+            .map(|p| snake_to_camel(&p.name))
+            .collect();
         let args_str = all_args.join(", ");
 
         let test_data = infer_test_data(proc, pkg, &schema_map, all_packages);
@@ -1359,7 +1374,7 @@ fn default_test_value(java_type: &str, param_name: &str) -> String {
         return "new java.util.HashMap<String, Object>()".to_string();
     }
     if tl.contains("string") {
-        if nl.contains("date") { return "\"2024-01-01\"".to_string(); }
+        if nl.contains("date") { return "\"20240101\"".to_string(); }
         if nl.contains("ids") || nl.contains("list") { return "\"1,2,3\"".to_string(); }
         if ["flag", "amount", "seqno", "seq", "interfaceseq", "operflag", "stepno", "count", "quantity", "qty", "price", "total"].iter().any(|kw| nl.contains(kw)) {
             return "\"1\"".to_string();

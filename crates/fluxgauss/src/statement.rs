@@ -79,7 +79,7 @@ fn is_terminal_statement(line: &str) -> bool {
         || trimmed.starts_with("continue ")
 }
 
-fn is_unreachable_after_terminal(java_logic_lines: &[String]) -> bool {
+pub(crate) fn is_unreachable_after_terminal(java_logic_lines: &[String]) -> bool {
     let mut depth: i32 = 0;
     for line in java_logic_lines.iter().rev() {
         let t = line.trim_start();
@@ -93,7 +93,7 @@ fn is_unreachable_after_terminal(java_logic_lines: &[String]) -> bool {
         let closes = t.chars().filter(|&c| c == '}').count() as i32;
         depth += closes - opens;  // reverse: } opens scope, { closes it
         if depth <= 0 {
-            if t.starts_with("return") || t.starts_with("throw") {
+            if t.starts_with("return") || t.starts_with("throw") || t.starts_with("currentState = ") {
                 return true;
             }
             if t.starts_with("break") {
@@ -206,7 +206,12 @@ fn preprocess_cursor_sql(sql: &str, using_args: &[ogsql_parser::ast::Expr], proc
 fn push_logic_line(proc: &mut ProcedureInfo, line: String) {
     let _trimmed_line = line.trim_start();
     if is_control_structure_line(&line) {
-        proc.java_logic_lines.push(line);
+        // Closing braces must always be emitted; unreachable check only for openers
+        if !_trimmed_line.starts_with('}') && is_unreachable_after_terminal(&proc.java_logic_lines) {
+            proc.java_logic_lines.push(format!("// UNREACHABLE: {}", line));
+        } else {
+            proc.java_logic_lines.push(line);
+        }
         return;
     }
     if is_unreachable_after_terminal(&proc.java_logic_lines) {
@@ -1024,6 +1029,8 @@ fn process_execute_stmt(
                      let original_java_type = proc.local_vars.get(&var_name.to_lowercase()).cloned().unwrap_or_default();
                      push_logic_line(proc, if java_type.contains("Map") {
                          format!("{{ var _row = mapper.{}({}); if (_row != null) {{ {} = _row; }} }}", method_id, args, var_java)
+                     } else if matches!(dml_type, DmlType::Select) && matches!(declared_type.as_str(), "int" | "Integer" | "long" | "Long") {
+                         format!("{{ var _row = mapper.{}({}); {} = (_row != null ? 1 : 0); }}", method_id, args, var_java)
                      } else if java_type != original_java_type {
                          format!("String _{} = mapper.{}({});", var_name, method_id, args)
                      } else {
@@ -1414,7 +1421,7 @@ fn infer_arg_type(arg: &str, proc: &ProcedureInfo) -> &'static str {
                 t if t.starts_with("AtomicReference") => "AtomicReference",
                 t if t.contains("BigDecimal") => "BigDecimal",
                 t if t.starts_with("List<") => "String",
-                _ => "unknown",
+                _ => "Object",
             };
         }
     }
@@ -1424,11 +1431,11 @@ fn infer_arg_type(arg: &str, proc: &ProcedureInfo) -> &'static str {
             return match p.java_type.as_str() {
                 "long" | "Long" => "long",
                 "String" => "String",
-                _ => "unknown",
+                _ => "Object",
             };
         }
     }
-    "unknown"
+    "Object"
 }
 
 fn process_procedure_call(
@@ -1527,7 +1534,9 @@ fn process_procedure_call(
                     } else {
                         let arg_trimmed = arg.trim();
                         let is_atomic_ref = proc.out_local_vars.keys()
-                            .any(|vname| crate::naming::snake_to_camel(vname) == arg_trimmed);
+                            .any(|vname| crate::naming::snake_to_camel(vname) == arg_trimmed)
+                            || proc.parameters.iter()
+                                .any(|p| p.is_out() && crate::naming::snake_to_camel(&p.name) == arg_trimmed);
                         if is_atomic_ref && !arg_trimmed.contains('.') && !arg_trimmed.contains('(') {
                             arg = format!("{}.get()", arg_trimmed);
                         }
@@ -1538,8 +1547,12 @@ fn process_procedure_call(
                         let arg_has_get = arg.contains(".get(");
                         if target_is_string && arg_type_inferred == "long" {
                             arg = format!("String.valueOf({})", arg);
+                        } else if target_is_string && (arg_type_inferred == "Object" || arg_type_inferred == "BigDecimal") {
+                            arg = format!("String.valueOf({})", arg);
                         } else if target_is_long && arg_type_inferred == "String" {
                             arg = format!("Long.parseLong(String.valueOf({}))", arg);
+                        } else if target_is_long && arg_type_inferred == "BigDecimal" {
+                            arg = format!("({}).longValue()", arg);
                         } else if target_is_int && arg_has_get {
                             arg = format!("((Number) {}).intValue()", arg);
                         } else if target_is_long && arg_has_get {
@@ -1550,6 +1563,25 @@ fn process_procedure_call(
             }
             arg
         }).collect();
+
+        // When target procedure info is not available (cross-package call to framework service),
+        // unwrap AtomicReference OUT params since the callee likely expects plain types.
+        if target_proc.is_none() {
+            args = args.iter().enumerate().map(|(i, arg)| {
+                let arg_trimmed = arg.trim();
+                if i < raw_args.len() {
+                    let raw = raw_args[i].trim();
+                    let is_promoted = proc.out_local_vars.keys()
+                        .any(|vname| crate::naming::snake_to_camel(vname) == raw);
+                    let is_out = proc.parameters.iter()
+                        .any(|p| p.is_out() && crate::naming::snake_to_camel(&p.name) == raw);
+                    if (is_promoted || is_out) && !arg_trimmed.contains('.') && !arg_trimmed.contains('(') {
+                        return format!("{}.get()", arg_trimmed);
+                    }
+                }
+                arg.clone()
+            }).collect();
+        }
 
         // Pad missing args when target has more params than caller provides
         if let Some(tp) = &target_proc {
@@ -2046,7 +2078,12 @@ pub fn process_statement(
         PlStatement::Return { expression } => {
             if let Some(expr) = expression {
                 let val = crate::expr::expr_to_java(expr, proc);
-                push_logic_line(proc, format!("return {};", val));
+                let coerced = if let Some(rt) = &proc.return_type {
+                    crate::expr::coerce_for_type(&val, Some(rt))
+                } else {
+                    val
+                };
+                push_logic_line(proc, format!("return {};", coerced));
             } else if proc.return_type.as_ref().map_or(false, |rt| rt != "void") {
                 push_logic_line(proc, "return null;".into());
             } else if proc.parameters.iter().any(|p| p.is_out() && p.is_refcursor()) {
@@ -2239,29 +2276,66 @@ pub fn process_statement(
                 crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new(), None);
             }
             let has_exceptions = block_stmt.node.exception_block.is_some();
-            if has_exceptions {
+            let try_line_idx = if has_exceptions {
                 push_logic_line(proc, "try {".into());
-            }
+                Some(proc.java_logic_lines.len() - 1)
+            } else {
+                None
+            };
             for s in &block_stmt.node.body {
                 process_statement(s, proc, ctx)?;
-            }
-            if let Some(exc_block) = &block_stmt.node.exception_block {
-                for handler in &exc_block.handlers {
-                    let is_others = handler.conditions.is_empty() || handler.conditions.iter().any(|c| c.eq_ignore_ascii_case("others"));
-                    if is_others {
-                        push_logic_line(proc, "} catch (Exception e) {".into());
-                    } else {
-                        let cond = handler.conditions.join(", ");
-                        push_logic_line(proc, format!("}} catch (BusinessException e) {{ // {}", cond));
-                    }
-                    push_logic_line(proc, "    __SQLERRM__ = e.getMessage();".into());
-                    push_logic_line(proc, "    __SQLCODE__ = -1;".into());
-                    for s in &handler.statements {
-                        process_statement(s, proc, ctx)?;
+                // Stop processing Block body after terminal statement (return/break/Goto)
+                if let Some(last) = proc.java_logic_lines.last() {
+                    let t = last.trim();
+                    if t == "break;" || t.starts_with("return ") || t == "return;" || t == "continue;" {
+                        break;
                     }
                 }
             }
-            if has_exceptions {
+            // If body ended with terminal, strip the try { line and skip exception handlers
+            let ended_with_terminal = proc.java_logic_lines.last()
+                .map_or(false, |l| {
+                    let t = l.trim();
+                    t == "break;" || t.starts_with("return ") || t == "return;" || t == "continue;"
+                });
+            if ended_with_terminal {
+                if let Some(idx) = try_line_idx {
+                    proc.java_logic_lines.remove(idx);
+                }
+            }
+            if has_exceptions && !ended_with_terminal {
+                if let Some(exc_block) = &block_stmt.node.exception_block {
+                    let mut has_business = false;
+                    for handler in &exc_block.handlers {
+                        let is_others = handler.conditions.is_empty() || handler.conditions.iter().any(|c| c.eq_ignore_ascii_case("others"));
+                        // Merge consecutive BusinessException handlers into the first one
+                        if !is_others && has_business {
+                            // Append body to previous catch (no new header)
+                            for s in &handler.statements {
+                                process_statement(s, proc, ctx)?;
+                            }
+                            continue;
+                        }
+                        if !is_others {
+                            has_business = true;
+                        }
+                        let evar = format!("__e{}", crate::analyze::CATCH_VAR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+                        if is_others {
+                            push_logic_line(proc, format!("}} catch (Exception {evar}) {{"));
+                        } else {
+                            let cond = handler.conditions.join(", ");
+                            push_logic_line(proc, format!("}} catch (BusinessException {evar}) {{ // {}", cond));
+                        }
+                        push_logic_line(proc, format!("    __SQLERRM__ = {evar}.getMessage();"));
+                        push_logic_line(proc, "    __SQLCODE__ = -1;".into());
+                        for s in &handler.statements {
+                            process_statement(s, proc, ctx)?;
+                        }
+                        if is_unreachable_after_terminal(&proc.java_logic_lines) {
+                            break;
+                        }
+                    }
+                }
                 push_logic_line(proc, "}".into());
             }
             Ok(())
@@ -2274,6 +2348,9 @@ pub fn process_statement(
             }
             for s in &loop_stmt.node.body {
                 process_statement(s, proc, ctx)?;
+                if let Some(last) = proc.java_logic_lines.last() {
+                    if is_terminal_statement(last) { break; }
+                }
             }
             push_logic_line(proc, "}".into());
             Ok(())
@@ -2287,6 +2364,9 @@ pub fn process_statement(
             }
             for s in &while_stmt.node.body {
                 process_statement(s, proc, ctx)?;
+                if let Some(last) = proc.java_logic_lines.last() {
+                    if is_terminal_statement(last) { break; }
+                }
             }
             push_logic_line(proc, "}".into());
             Ok(())

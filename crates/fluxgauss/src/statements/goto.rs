@@ -447,16 +447,20 @@ fn process_cleanup_stmt(
                 for handler in &exc_block.handlers {
                     let is_others = handler.conditions.is_empty()
                         || handler.conditions.iter().any(|c| c.eq_ignore_ascii_case("others"));
+                    let evar = format!("__e{}", crate::analyze::CATCH_VAR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
                     if is_others {
-                        proc.java_logic_lines.push("} catch (Exception e) {".to_string());
+                        proc.java_logic_lines.push(format!("}} catch (Exception {evar}) {{"));
                     } else {
                         let cond = handler.conditions.join(", ");
-                        proc.java_logic_lines.push(format!("}} catch (BusinessException e) {{ // {}", cond));
+                        proc.java_logic_lines.push(format!("}} catch (BusinessException {evar}) {{ // {}", cond));
                     }
-                    proc.java_logic_lines.push("    __SQLERRM__ = e.getMessage();".to_string());
+                    proc.java_logic_lines.push(format!("    __SQLERRM__ = {evar}.getMessage();"));
                     proc.java_logic_lines.push("    __SQLCODE__ = -1;".to_string());
                     for s in &handler.statements {
                         process_cleanup_stmt(s, cleanup_label, proc, stmt_ctx)?;
+                    }
+                    if crate::statement::is_unreachable_after_terminal(&proc.java_logic_lines) {
+                        break;
                     }
                 }
             }
@@ -718,13 +722,14 @@ fn process_with_goto_replace(
                 for handler in &exc_block.handlers {
                     let is_others = handler.conditions.is_empty()
                         || handler.conditions.iter().any(|c| c.eq_ignore_ascii_case("others"));
+                    let evar = format!("__e{}", crate::analyze::CATCH_VAR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
                     if is_others {
-                        proc.java_logic_lines.push("} catch (Exception e) {".to_string());
+                        proc.java_logic_lines.push(format!("}} catch (Exception {evar}) {{"));
                     } else {
                         let cond = handler.conditions.join(", ");
-                        proc.java_logic_lines.push(format!("}} catch (BusinessException e) {{ // {}", cond));
+                        proc.java_logic_lines.push(format!("}} catch (BusinessException {evar}) {{ // {}", cond));
                     }
-                    proc.java_logic_lines.push("    __SQLERRM__ = e.getMessage();".to_string());
+                    proc.java_logic_lines.push(format!("    __SQLERRM__ = {evar}.getMessage();"));
                     proc.java_logic_lines.push("    __SQLCODE__ = -1;".to_string());
                     process_with_goto_replace(&handler.statements, goto_labels, proc, stmt_ctx)?;
                 }
@@ -833,6 +838,10 @@ fn generate_state_machine_goto(
     for idx in 0..first_label_idx {
         let stmt = &body[idx];
         crate::statement::process_statement(stmt, proc, stmt_ctx)?;
+        if let Some(last) = proc.java_logic_lines.last() {
+            let t = last.trim();
+            if t == "break;" || t.starts_with("return ") || t == "return;" { break; }
+        }
     }
 
     proc.java_logic_lines.push("    switch (currentState) {".to_string());
@@ -869,6 +878,18 @@ fn generate_state_machine_goto(
                     if block.node.label.as_deref() == Some(label_name.as_str()) {
                         for s in &block.node.body {
                             crate::statement::process_statement(s, proc, stmt_ctx)?;
+                            if let Some(last) = proc.java_logic_lines.last() {
+                                let t = last.trim();
+                                if t == "break;" || t.starts_with("return ") || t == "return;" || t == "continue;" {
+                                    break;
+                                }
+                            }
+                        }
+                        if proc.java_logic_lines.last().map_or(false, |l| {
+                            let t = l.trim();
+                            t == "break;" || t.starts_with("return ") || t == "return;" || t == "continue;"
+                        }) {
+                            break;
                         }
                         continue;
                     }
@@ -880,6 +901,12 @@ fn generate_state_machine_goto(
             }
             if hit_goto {
                 break;
+            }
+            if let Some(last) = proc.java_logic_lines.last() {
+                let t = last.trim();
+                if t == "break;" || t.starts_with("return ") || t == "return;" {
+                    break;
+                }
             }
         }
         let last_meaningful = proc.java_logic_lines.iter().rev()

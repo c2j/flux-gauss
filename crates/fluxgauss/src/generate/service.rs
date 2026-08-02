@@ -95,6 +95,7 @@ pub fn write_service_class(
     }
     if all_body.contains("AtomicReference<")
         || pkg.procedures.iter().any(|p| p.parameters.iter().any(|p| p.is_out()))
+        || pkg.procedures.iter().any(|p| !p.out_local_vars.is_empty())
     {
         all_imports.insert("import java.util.concurrent.atomic.AtomicReference;".to_string());
     }
@@ -341,7 +342,20 @@ fn default_for_type(t: &str) -> &'static str {
     if tl.contains("float") { return "0.0f"; }
     if tl.contains("boolean") { return "false"; }
     if tl.starts_with("map<") { return "new HashMap<>()"; }
-    if tl.starts_with("atomicreference") { return "new AtomicReference<>(null)"; }
+    if tl.starts_with("atomicreference") {
+        let inner = tl.trim_start_matches("atomicreference<").trim_end_matches('>');
+        return if inner.contains("long") || inner.contains("Long") {
+            "new AtomicReference<>(1L)".into()
+        } else if inner.contains("int") || inner.contains("Integer") {
+            "new AtomicReference<>(0)".into()
+        } else if inner.contains("BigDecimal") {
+            "new AtomicReference<>(java.math.BigDecimal.ZERO)".into()
+        } else if inner.contains("String") {
+            "new AtomicReference<>(\"\")".into()
+        } else {
+            "new AtomicReference<>(null)".into()
+        };
+    }
     "null"
 }
 
@@ -361,11 +375,11 @@ fn coerce_default_value(java_type: &str, default_val: &str) -> String {
         if trimmed == "1" {
             return "java.math.BigDecimal.ONE".to_string();
         }
-        if trimmed == "null" || trimmed == "java.math.bigdecimal.zero" || trimmed == "java.math.bigdecimal.one" {
-            return default_val.to_string();
+        if trimmed == "null" || trimmed == "java.math.bigdecimal.zero" || trimmed == "java.math.bigdecimal.one" || trimmed == "\"\"" || trimmed == "''" {
+            return "java.math.BigDecimal.ZERO".to_string();
         }
         if trimmed.parse::<i64>().is_ok() {
-            return format!("java.math.BigDecimal.valueOf({})", trimmed);
+            return format!("java.math.BigDecimal.valueOf({})", crate::expr::java_int_lit(trimmed));
         }
         if trimmed.parse::<f64>().is_ok() {
             return format!("new java.math.BigDecimal(\"{}\")", trimmed);
@@ -373,7 +387,7 @@ fn coerce_default_value(java_type: &str, default_val: &str) -> String {
         if trimmed.starts_with("(") && trimmed.ends_with(")") {
             let inner = &trimmed[1..trimmed.len()-1];
             if inner.parse::<i64>().is_ok() || inner.parse::<f64>().is_ok() {
-                return format!("java.math.BigDecimal.valueOf({})", inner);
+                return format!("java.math.BigDecimal.valueOf({})", crate::expr::java_int_lit(inner));
             }
         }
         return default_val.to_string();
@@ -557,7 +571,16 @@ fn build_service_method(
                 }
                 // Check if this local var was promoted to AtomicReference for OUT param usage
                 if let Some(inner_type) = proc.out_local_vars.get(&var_name.to_lowercase()) {
-                    body_lines.push(format!("AtomicReference<{}> {} = new AtomicReference<>(null);", inner_type, var_java));
+                    let ar_init = if inner_type.contains("Long") || inner_type == "long" {
+                        "1L"
+                    } else if inner_type.contains("Integer") || inner_type == "int" {
+                        "1"
+                    } else if inner_type.contains("BigDecimal") {
+                        "java.math.BigDecimal.ZERO"
+                    } else {
+                        "null"
+                    };
+                    body_lines.push(format!("AtomicReference<{}> {} = new AtomicReference<>({});", inner_type, var_java, ar_init));
                 } else {
                     let default_val = proc.local_var_defaults.get(&var_name.to_lowercase())
                         .cloned()
@@ -637,6 +660,11 @@ fn build_service_method(
                     body_lines.push(format!("int {} = 0;", index_var));
                 }
             }
+            // Declare raw cursor name as null for CLOSE cleanup null-checks
+            let decl = format!("Object {} = null;", cursor_name);
+            if !body_lines.contains(&decl) {
+                body_lines.push(decl);
+            }
         }
 
         let logic_text = proc.java_logic_lines.join(" ");
@@ -666,7 +694,7 @@ fn build_service_method(
             } else if trimmed.starts_with("/*") && trimmed.contains("null;") {
                 l = l.replace("null;", "");
             }
-            if needs_rowcount && l.contains(&format!("{}.", mapper_name)) && l.trim().ends_with(";") && !l.contains("=") && !l.contains("List<") && !l.contains("Map<") {
+            if needs_rowcount && l.contains(&format!("{}.", mapper_name)) && l.trim().ends_with(";") && !l.contains("=") && !l.contains("List<") && !l.contains("Map<") && !l.to_lowercase().contains("select") {
                 l = l.replace(&format!("{}.", mapper_name), &format!("__ROWCOUNT__ = {}.", mapper_name));
             }
             body_lines.push(l);
@@ -856,13 +884,27 @@ fn append_local_vars_to_mapper_calls(
             for (name, _) in &promoted_extra {
                 let jn_lower = name.to_lowercase();
                 if !param_java_names.iter().any(|pn| pn.to_lowercase() == jn_lower) {
-                    if out_params.iter().any(|p| snake_to_camel(&p.name).to_lowercase() == jn_lower) {
+                    let is_ar = out_params.iter().any(|p| snake_to_camel(&p.name).to_lowercase() == jn_lower)
+                        || proc.out_local_vars.iter().any(|(k, _)|
+                            k.to_lowercase().replace("_", "") == jn_lower.replace("_", ""));
+                    if is_ar {
                         extra_args.push(format!("{}.get()", name));
                     } else {
                         extra_args.push(name.clone());
                     }
                 }
             }
+
+            // Also unwrap local_args that are promoted to AtomicReference
+            local_args = local_args.iter().map(|name| {
+                if proc.out_local_vars.iter().any(|(k, _)|
+                    k.to_lowercase().replace("_", "") == name.to_lowercase().replace("_", ""))
+                {
+                    format!("{}.get()", name)
+                } else {
+                    name.clone()
+                }
+            }).collect();
 
             extra_args.extend(local_args);
             extra_args.extend(pkg_args);
