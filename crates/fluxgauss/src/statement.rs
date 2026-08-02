@@ -133,7 +133,7 @@ fn row_extraction_expr(row_var: &str, col_name: &str, declared_type: &str) -> (S
         t if t.contains("AtomicReference") && t.contains("Integer") => (format!(".set({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).intValue() : 0)", row_var, col_name, row_var, col_name), true),
         t if t.contains("AtomicReference") && t.contains("Long") => (format!(".set({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).longValue() : 0L)", row_var, col_name, row_var, col_name), true),
         t if t.contains("AtomicReference") && t.contains("BigDecimal") => (format!(".set({}.get(\"{}\") instanceof java.math.BigDecimal ? (java.math.BigDecimal) {}.get(\"{}\") : java.math.BigDecimal.ZERO)", row_var, col_name, row_var, col_name), true),
-        t if t.contains("AtomicReference") && t.contains("String") => (format!(".set((String) {}.get(\"{}\"))", row_var, col_name), true),
+        t if t.contains("AtomicReference") && t.contains("String") => (format!(".set({}.get(\"{}\") instanceof String ? (String) {}.get(\"{}\") : {}.get(\"{}\") != null ? String.valueOf({}.get(\"{}\")) : null)", row_var, col_name, row_var, col_name, row_var, col_name, row_var, col_name), true),
         "Object" => (String::new(), false),
         _ => (format!("{}.get(\"{}\")", row_var, col_name), false),
     }
@@ -224,6 +224,32 @@ fn push_logic_line(proc: &mut ProcedureInfo, line: String) {
         }
         proc.java_logic_lines.push(format!("// UNREACHABLE: {}", line));
         return;
+    }
+    // If the previous line was already marked UNREACHABLE, this line is also unreachable
+    if let Some(last) = proc.java_logic_lines.last() {
+        if last.trim_start().starts_with("// UNREACHABLE:") {
+            proc.java_logic_lines.push(format!("// UNREACHABLE: {}", line));
+            return;
+        }
+    }
+    // Defensive: if this return follows another return at the same scope level
+    // (handles edge cases where is_unreachable_after_terminal may miss)
+    if _trimmed_line.starts_with("return ") || _trimmed_line == "return;" {
+        let mut depth: i32 = 0;
+        for prev in proc.java_logic_lines.iter().rev() {
+            let pt = prev.trim_start();
+            if pt.starts_with("//") || pt.is_empty() { continue; }
+            depth += pt.chars().filter(|&c| c == '}').count() as i32;
+            depth -= pt.chars().filter(|&c| c == '{').count() as i32;
+            if depth < 0 { break; }
+            if depth == 0 {
+                if pt.starts_with("return") || pt.starts_with("throw") {
+                    proc.java_logic_lines.push(format!("// UNREACHABLE: {}", line));
+                    return;
+                }
+                break;
+            }
+        }
     }
     proc.java_logic_lines.push(line);
 }
@@ -1048,6 +1074,10 @@ fn process_execute_stmt(
                         });
                 push_logic_line(proc, format!("Map<String, Object> {} = mapper.{}({});", var_name, method_id, args));
                 proc.imports.insert("import java.util.Map;".to_string());
+                // Add null guard for row extraction
+                if !execute.into_targets.is_empty() {
+                    push_logic_line(proc, format!("if ({} != null) {{", var_name));
+                }
 
                 for target in &execute.into_targets {
                     if let Some(field_name) = extract_var_name_from_expr(target) {
@@ -1074,6 +1104,10 @@ fn process_execute_stmt(
                         };
                         push_logic_line(proc, format!("{}.put(\"{}\", {}{}.get(\"{}\"));", parent_java, field_java, cast, var_name, field));
                     }
+                }
+
+                if !execute.into_targets.is_empty() {
+                    push_logic_line(proc, "}".to_string());
                 }
             }
         } else {
@@ -1286,7 +1320,7 @@ fn process_sql_statement(
                 push_logic_line(proc, java_line);
 
                 // Extract simple variables from Map result (e.g. SELECT INTO v_product_id, v_qty)
-                if !row_var_name.is_empty() && !var_names.is_empty() {
+                if !row_var_name.is_empty() && (!var_names.is_empty() || var_names.len() != targets.len()) {
                     push_logic_line(proc, format!("if ({} != null) {{", row_var_name));
                     for var_name in &var_names {
                         let var_java = snake_to_camel(var_name);
@@ -1296,7 +1330,7 @@ fn process_sql_statement(
                             let inner = match declared_type.as_str() {
                                 "Long" | "long" => format!(".set({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).longValue() : 0L)", row_var_name, var_name, row_var_name, var_name),
                                 "Integer" | "int" => format!(".set({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).intValue() : 0)", row_var_name, var_name, row_var_name, var_name),
-                                "String" => format!(".set((String) {}.get(\"{}\"))", row_var_name, var_name),
+                                "String" => format!(".set({}.get(\"{}\") instanceof String ? (String) {}.get(\"{}\") : {}.get(\"{}\") != null ? String.valueOf({}.get(\"{}\")) : null)", row_var_name, var_name, row_var_name, var_name, row_var_name, var_name, row_var_name, var_name),
                                 t if t.contains("BigDecimal") => format!(".set({}.get(\"{}\") instanceof java.math.BigDecimal ? (java.math.BigDecimal) {}.get(\"{}\") : java.math.BigDecimal.ZERO)", row_var_name, var_name, row_var_name, var_name),
                                 "Double" | "double" | "Float" | "float" => format!(".set({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).doubleValue() : 0.0)", row_var_name, var_name, row_var_name, var_name),
                                 _ => format!(".set({}.get(\"{}\"))", row_var_name, var_name),
@@ -1318,20 +1352,20 @@ fn process_sql_statement(
                             push_logic_line(proc, format!("    {} = {};", var_java, extraction));
                         }
                     }
-                    push_logic_line(proc, "}".to_string());
-                }
 
-                // Handle dotted INTO targets like v_result.emp_id → vResult.put("empId", _row.get("empId"))
-                if var_names.len() != targets.len() && !row_var_name.is_empty() {
-                    for target in targets {
-                        if let SelectTarget::Expr(expr, _) = target {
-                            if let Some((parent, field)) = extract_dotted_ref_from_expr(expr) {
-                                let parent_java = snake_to_camel(&parent);
-                                let field_java = snake_to_camel(&field);
-                                push_logic_line(proc, format!("{}.put(\"{}\", {}.get(\"{}\"));", parent_java, field_java, row_var_name, field));
+                    // Handle dotted INTO targets like v_result.emp_id → vResult.put("empId", _row.get("empId"))
+                    if var_names.len() != targets.len() {
+                        for target in targets {
+                            if let SelectTarget::Expr(expr, _) = target {
+                                if let Some((parent, field)) = extract_dotted_ref_from_expr(expr) {
+                                    let parent_java = snake_to_camel(&parent);
+                                    let field_java = snake_to_camel(&field);
+                                    push_logic_line(proc, format!("    {}.put(\"{}\", {}.get(\"{}\"));", parent_java, field_java, row_var_name, field));
+                                }
                             }
                         }
                     }
+                    push_logic_line(proc, "}".to_string());
                 }
             } else {
                 proc.dml_statements.push(DmlStatement {
@@ -2079,7 +2113,7 @@ pub fn process_statement(
             if let Some(expr) = expression {
                 let val = crate::expr::expr_to_java(expr, proc);
                 let coerced = if let Some(rt) = &proc.return_type {
-                    crate::expr::coerce_for_type(&val, Some(rt))
+                    crate::expr::coerce_for_type(&val, Some(rt), proc)
                 } else {
                     val
                 };
@@ -2331,7 +2365,7 @@ pub fn process_statement(
                         for s in &handler.statements {
                             process_statement(s, proc, ctx)?;
                         }
-                        if is_unreachable_after_terminal(&proc.java_logic_lines) {
+    if is_unreachable_after_terminal(&proc.java_logic_lines) {
                             break;
                         }
                     }
@@ -2897,7 +2931,7 @@ pub fn process_statement(
                                      let inner = match declared_type.as_str() {
                                          "Long" | "long" => format!(".set({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).longValue() : 0L)", var_name, iv, var_name, iv),
                                          "Integer" | "int" => format!(".set({}.get(\"{}\") instanceof Number ? ((Number) {}.get(\"{}\")).intValue() : 0)", var_name, iv, var_name, iv),
-                                         "String" => format!(".set((String) {}.get(\"{}\"))", var_name, iv),
+                                          "String" => format!(".set({}.get(\"{}\") instanceof String ? (String) {}.get(\"{}\") : {}.get(\"{}\") != null ? String.valueOf({}.get(\"{}\")) : null)", var_name, iv, var_name, iv, var_name, iv, var_name, iv),
                                          t if t.contains("BigDecimal") => format!(".set({}.get(\"{}\") instanceof java.math.BigDecimal ? (java.math.BigDecimal) {}.get(\"{}\") : java.math.BigDecimal.ZERO)", var_name, iv, var_name, iv),
                                          _ => format!(".set({}.get(\"{}\"))", var_name, iv),
                                      };

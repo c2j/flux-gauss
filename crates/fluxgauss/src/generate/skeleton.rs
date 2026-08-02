@@ -43,7 +43,44 @@ pub fn write_skeleton_files(
         generated.push("src/main/java/.../exception/BusinessException.java".to_string());
     }
 
+    // Generate application-integration.yml for remote-mode integration tests
+    if let Some(ref itest) = config.integration_test {
+        if itest.enabled.unwrap_or(false) {
+            let mode = itest.mode.as_deref().unwrap_or("remote");
+            if mode == "remote" {
+                let test_resources = output_dir.join("src/test/resources");
+                let itest_yml = test_resources.join("application-integration.yml");
+                if !itest_yml.exists() {
+                    write_integration_yml(&test_resources, itest, encoding)?;
+                    generated.push("src/test/resources/application-integration.yml".to_string());
+                }
+            }
+        }
+    }
+
     Ok(generated)
+}
+
+fn write_integration_yml(
+    resources_dir: &Path,
+    itest: &crate::config::IntegrationTestConfig,
+    encoding: &'static Encoding,
+) -> std::io::Result<()> {
+    let url = itest.url.as_deref().unwrap_or("jdbc:postgresql://localhost:5432/postgres");
+    let username = itest.username.as_deref().unwrap_or("postgres");
+    let password = itest.password.as_deref().unwrap_or("postgres");
+    let driver = "org.postgresql.Driver";
+
+    let mut w = CodeWriter::new();
+    w.line("spring:");
+    w.line("  datasource:");
+    w.line(&format!("    url: {}", url));
+    w.line(&format!("    username: {}", username));
+    w.line(&format!("    password: {}", password));
+    w.line(&format!("    driver-class-name: {}", driver));
+
+    std::fs::create_dir_all(resources_dir)?;
+    w.write_to_file(&resources_dir.join("application-integration.yml"), encoding)
 }
 
 fn write_pom_xml(output_dir: &Path, _base_package: &str, encoding: &'static Encoding) -> std::io::Result<()> {

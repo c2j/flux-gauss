@@ -1,4 +1,4 @@
-# $ cd ~/Projects/Desktop_Projects/DB/flux-gauss/ && rm -rf dest_py &&  OGSQL_BIN=../ogsql-parser/target/release/ogsql ~/dev/miniforge3/bin/python converter/flux_gauss.py --config demo-project/fluxgauss_py.yaml &&  cd dest_py/ && mvn compile && mvn test && mvn verify -Pintegration
+# $ cd ~/Projects/Desktop_Projects/DB/flux-gauss/ && rm -rf dest_py &&  OGSQL_BIN=../ogsql-parser/target/release/ogsql ~/dev/miniforge3/bin/python converter/flux_gauss.py --config demo-project/fluxgauss_py.yaml &&  cd dest_py/ && mvn compile && mvn test && DB_PASSWORD=Enmo@123 mvn verify -Pintegration
 output_dir: ./dest_py
 base_package: ced
 
