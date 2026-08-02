@@ -523,6 +523,7 @@ _PACKAGE_CONSTANTS = {}  # module-level: maps snake_case name → java_type for 
 _PACKAGE_VARIABLES = {}  # module-level: maps snake_case name → {"java_type": str, "default": str, "package": str}
 _PACKAGE_VAR_WRITTEN: set = set()  # module-level: set of package variable names (snake_case) that are assigned to during analysis
 _DML_COUNTER_BY_PKG: dict = {}  # module-level: shared DML method name counters per package
+_DML_CTR_TRACKER: int | None = None  # module-level: tracks id(_DML_COUNTER_BY_PKG) to detect replacement across analyze_procedure calls
 _UDF_RETURN_TYPES = {}  # module-level: maps (func_name_lower, arg_count) → java_type for user-defined functions
 _LOG_FH = None
 
@@ -2282,6 +2283,7 @@ def _remove_dynamic_sql_build_lines(proc: ProcedureInfo, stmt_cp_map: dict):
 
 def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
     """Analyze a procedure's body to extract DML, service calls, and Java logic."""
+    global _DML_CTR_TRACKER
     block = proc.body
     if not block:
         return
@@ -2378,11 +2380,11 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
     if not _has_key:
         _log(f"[DMLNEWKEY] {proc.proc_name}: key {pkg_key!r} being created (was missing)", to_stdout=False)
 
-    if not hasattr(_DML_COUNTER_BY_PKG, '_tracker'):
-        _DML_COUNTER_BY_PKG._tracker = _ctr_id
-    elif _DML_COUNTER_BY_PKG._tracker != _ctr_id:
-        _log(f"[DMLLOST] {proc.proc_name}: _DML_COUNTER_BY_PKG was REPLACED! old={_DML_COUNTER_BY_PKG._tracker} new={_ctr_id}", to_stdout=False)
-        _DML_COUNTER_BY_PKG._tracker = _ctr_id
+    if _DML_CTR_TRACKER is None:
+        _DML_CTR_TRACKER = _ctr_id
+    elif _DML_CTR_TRACKER != _ctr_id:
+        _log(f"[DMLLOST] {proc.proc_name}: _DML_COUNTER_BY_PKG was REPLACED! old={_DML_CTR_TRACKER} new={_ctr_id}", to_stdout=False)
+        _DML_CTR_TRACKER = _ctr_id
     if _has_key and _ctr_val_id == id(None):
         _log(f"[DMLLOST] {proc.proc_name}: key {pkg_key!r} value became None!", to_stdout=False)
     if pkg_key not in _DML_COUNTER_BY_PKG:
@@ -4644,9 +4646,10 @@ def _is_primitive_producing(expr: str) -> bool:
         return True
     if re.search(r'Math\.\w+\s*\(', s):
         return True
-    if re.search(r'\s[*\/]\s', s):
+    s_no_strings = re.sub(r'"[^"]*"', '""', s)
+    if re.search(r'\s[*\/]\s', s_no_strings):
         return True
-    if re.search(r'\s[+\-]\s', s) and re.search(r'(\.(doubleValue|longValue|intValue|floatValue|getTime)\(\)|parse(Double|Long|Int|Float)\(|\(\(Number\)|Math\.)', s):
+    if re.search(r'\s[+\-]\s', s_no_strings) and re.search(r'(\.(doubleValue|longValue|intValue|floatValue|getTime)\(\)|parse(Double|Long|Int|Float)\(|\(\(Number\)|Math\.)', s_no_strings):
         return True
     return False
 
@@ -4675,7 +4678,7 @@ def _safe_map_cast(var_type: str, expr: str) -> str:
     if var_type == "Double":
         return f"({expr} != null ? ({expr} instanceof Number ? ((Number) {expr}).doubleValue() : Double.parseDouble(String.valueOf({expr}))) : 0.0d)"
     if var_type == "String":
-        return f"(String) {expr}"
+        return f"({expr} != null ? String.valueOf({expr}) : \"\")"
     if "BigDecimal" in var_type:
         return f"({expr} != null ? ({expr} instanceof java.math.BigDecimal ? (java.math.BigDecimal) {expr} : new java.math.BigDecimal(String.valueOf({expr}))) : java.math.BigDecimal.ZERO)"
     if var_type == "java.sql.Date":
@@ -6480,7 +6483,7 @@ def _wrap_handler_stmts(stmts, proc, all_packages,
                     _PACKAGE_VAR_WRITTEN.add(_exc_var_name)
                 expr_raw = sv.get("expression", {})
                 expr = _expr_to_java(expr_raw, proc, all_packages=all_packages)
-                errm_repl = "e.getMessage()" if in_catch else '""'
+                errm_repl = "__SQLERRM__" if in_catch else '""'
                 expr = re.sub(r'\bsqlerrm\b', errm_repl, expr, flags=re.IGNORECASE)
                 expr = re.sub(r'\bsqlcode\b', 'String.valueOf(-1)', expr, flags=re.IGNORECASE)
                 if target in out_java_names:
@@ -6593,7 +6596,7 @@ def _wrap_handler_stmts(stmts, proc, all_packages,
                     _lines.extend(else_lines)
                 _lines.append(f"{indent}}}")
             elif sk == "Raise":
-                errm = "e.getMessage()" if in_catch else '"exception"'
+                errm = "__SQLERRM__" if in_catch else '"exception"'
                 _lines.append(f"{indent}throw new BusinessException({errm});")
             elif sk == "Return":
                 _lines.append(f"{indent}return;")
@@ -9147,6 +9150,34 @@ def _needs_coercion(source_type: str, target_type: str) -> bool:
     return True
 
 
+_BD_RETURNING_METHODS = frozenset({
+    "multiply", "add", "subtract", "divide", "setScale", "abs", "negate",
+    "pow", "max", "min", "round", "movePointLeft", "movePointRight", "ulp",
+})
+
+
+def _expr_is_bigdecimal_producing(expr: str) -> bool:
+    s = expr.strip()
+    if s.startswith((
+        "java.math.BigDecimal.", "BigDecimal.ZERO", "BigDecimal.ONE",
+        "BigDecimal.TEN", "new java.math.BigDecimal(", "new BigDecimal(",
+    )):
+        return True
+    if s.endswith(")"):
+        depth = 0
+        for i in range(len(s) - 1, -1, -1):
+            if s[i] == ")":
+                depth += 1
+            elif s[i] == "(":
+                depth -= 1
+                if depth == 0:
+                    m = re.search(r"\.(\w+)$", s[:i])
+                    if m and m.group(1) in _BD_RETURNING_METHODS:
+                        return True
+                    break
+    return False
+
+
 def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
     """Coerce a Java expression from source_type to target_type.
 
@@ -9182,6 +9213,10 @@ def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
                 return f"{expr}.floatValue()"
         # Non-BigDecimal source -> BigDecimal target
         if tgt == "java.math.BigDecimal":
+            if _expr_is_bigdecimal_producing(expr):
+                return expr
+            if ".get(" in expr and not _is_primitive_producing(expr):
+                return _safe_map_cast("java.math.BigDecimal", expr)
             return f"java.math.BigDecimal.valueOf({expr})"
         # Non-BigDecimal -> non-BigDecimal (Integer<->Long, Integer<->Double, etc.)
         if tgt == "Integer":
@@ -9704,7 +9739,14 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             _is_ts_right = "Timestamp" in right_type or "Timestamp" in right or "java.sql.Date" in right or right_type in ("java.sql.Date", "java.util.Date")
             _is_dur_left = ".toMillis()" in left
             _is_dur_right = ".toMillis()" in right
+            _extract_tails = (".getYear()", ".getMonthValue()", ".getDayOfMonth()",
+                              ".getDayOfWeek()", ".getDayOfYear()", ".getHour()",
+                              ".getMinute()", ".getSecond()", ".toLocalDate()")
+            _left_is_extract = any(left.rstrip().endswith(t) for t in _extract_tails)
+            _right_is_extract = any(right.rstrip().endswith(t) for t in _extract_tails)
             if op == "-" and _is_ts_left and _is_ts_right:
+                if _left_is_extract or _right_is_extract:
+                    return f"({left} - {right})"
                 return f"({left}.getTime() - {right}.getTime())"
             if op == "-" and _is_ts_left and _is_dur_right:
                 return f"new java.sql.Timestamp({left}.getTime() - {right})"
@@ -9802,7 +9844,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                         return 'java.util.Arrays.toString(e.getStackTrace())'
                     else:
                         # Generic fallback for any future ExceptionContext functions
-                        return f'e.getMessage()'
+                        return '__SQLERRM__'
                 elif _builtin_category == "TypeConstructor":
                     if args_java:
                         arg0 = args_java[0]
@@ -12768,7 +12810,11 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
         body_lines = cleaned_lines
 
     if ret_type != "void":
-        body_lines = [line.replace("return;", "return null;") if line.strip() == "return;" else line for line in body_lines]
+        _ret_default = "0" if ret_type in ("Integer", "int", "Long", "long", "Short", "Byte") else "null"
+        body_lines = [line.replace("return;", f"return {_ret_default};") if line.strip() == "return;" else line for line in body_lines]
+
+    body_lines = [line.replace("String.valueOf(null)", '""') for line in body_lines]
+    body_lines = [line.replace("new java.math.BigDecimal(\"\")", "java.math.BigDecimal.ZERO") for line in body_lines]
 
     # Pre-pass: strip trailing dead code before stub check
     _last_ret = -1
@@ -13366,7 +13412,7 @@ def _default_test_value(java_type: str, param_name: str, pkg=None) -> str:
         if "dept" in name_lower:
             return "20"
         return "1"
-    if java_type == "java.math.BigDecimal":
+    if "bigdecimal" in lower or java_type == "BigDecimal":
         return "new java.math.BigDecimal(\"99.99\")"
     if "big_decimal" in lower:
         return "new java.math.BigDecimal(\"99.99\")"
@@ -13406,7 +13452,7 @@ def _default_test_value(java_type: str, param_name: str, pkg=None) -> str:
                 return f"new {svc_class}Service.{java_type}()"
     if "string" in lower or lower == "object":
         if "date" in name_lower:
-            return "\"20240101\""
+            return "\"2024-01-01\""
         if any(kw in name_lower for kw in ("list", "ids", "task_list", "id_list", "values")):
             return "\"1,2,3\""
         if any(kw in name_lower for kw in ("flag", "amount", "seqno", "interfaceseq", "operflag", "stepno", "count", "quantity", "qty", "price", "total")):
@@ -13786,7 +13832,7 @@ def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bo
     if dml_result_type == "Long":
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(999L);"
     if dml_result_type == "String":
-        return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(\"test\");"
+        return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(\"1\");"
     if dml_result_type == "Boolean":
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(true);"
     if dml_result_type == "java.math.BigDecimal":

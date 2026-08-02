@@ -122,3 +122,16 @@ jobs:
 
       - name: Compile generated output
         run: cd dest_py && mvn compile --batch-mode --quiet
+
+      # ── Layer 0: End-to-end demo migration guard ───────────────
+      # Runs both engines (py + ru) through real demo yaml → mvn compile → mvn test
+      # → semantic health checks. ~4 min. Catches converter regressions that
+      # mini-fixture tests miss. See tests/regress/test_demo_migration.py
+      - name: Install Rust toolchain (for Rust engine L0)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build fluxgauss release binary
+        run: cargo build --release --bin fluxgauss
+
+      - name: Run demo migration guard (L0)
+        run: python3 -m pytest tests/regress/test_demo_migration.py -v --tb=short -m demo_migration
