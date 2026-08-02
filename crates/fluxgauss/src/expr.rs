@@ -165,14 +165,14 @@ pub fn assignment_to_java(target: &ogsql_parser::ast::Expr, value: &ogsql_parser
         if let Some(vt) = &var_type {
             if vt.contains("AtomicReference<") {
                 let inner_type = vt.trim_start_matches("AtomicReference<").trim_end_matches('>');
-                let coerced = coerce_for_type(&val, Some(inner_type));
+                let coerced = coerce_for_type(&val, Some(inner_type), proc);
                 return format!("{}.set({});", camel, coerced);
             }
         }
         let skip_coerce = var_type.as_ref().map_or(false, |t| t.contains("BigDecimal"))
             && is_bigdecimal_var(&val, proc);
         if !skip_coerce {
-            val = coerce_for_type(&val, var_type.as_deref());
+            val = coerce_for_type(&val, var_type.as_deref(), proc);
         }
         return format!("{} = {};", camel, val);
     }
@@ -196,8 +196,15 @@ pub(crate) fn java_int_lit(digits: &str) -> String {
     trimmed.to_string()
 }
 
-pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>) -> String {
+pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &ProcedureInfo) -> String {
     let trimmed = expr.trim();
+    // Early-exit: if target is BigDecimal and expr is already a BigDecimal value,
+    // don't double-wrap with BigDecimal.valueOf()
+    if let Some(t) = target_type {
+        if t.contains("BigDecimal") && is_bigdecimal_var(trimmed, proc) {
+            return trimmed.to_string();
+        }
+    }
     if is_nullish_java_expr(trimmed) {
         if let Some(t) = target_type {
             if t.contains("BigDecimal") { return "java.math.BigDecimal.ZERO".to_string(); }
@@ -703,7 +710,7 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
     }
 }
 
-fn is_bigdecimal_var(expr_str: &str, proc: &ProcedureInfo) -> bool {
+pub(crate) fn is_bigdecimal_var(expr_str: &str, proc: &ProcedureInfo) -> bool {
     let name = expr_str.trim();
     let base = name.split(|c: char| c == '.' || c == '(').next().unwrap_or(name);
     // Direct lookup (snake_case key)
@@ -795,7 +802,11 @@ fn wrap_bigdecimal(expr: &str, already_bd: bool, proc: &ProcedureInfo) -> String
     } else if trimmed.chars().all(|c| c.is_ascii_digit() || c == '.') && !trimmed.is_empty() {
         format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed))
     } else {
-        format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed))
+        if trimmed.contains("BigDecimal") {
+            trimmed.to_string()
+        } else {
+            format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed))
+        }
     }
 }
 
@@ -877,10 +888,14 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
     }
 
     let is_arith = matches!(op, "*" | "+" | "-" | "/");
-    let l_is_ts = is_timestamp_or_date_var(&l, proc)
-        || l.contains("java.sql.Date.valueOf(") || l.contains("java.sql.Timestamp.valueOf(") || l.contains("new java.sql.Date(") || l.contains("new java.sql.Timestamp(");
-    let r_is_ts = is_timestamp_or_date_var(&r, proc)
-        || r.contains("java.sql.Date.valueOf(") || r.contains("java.sql.Timestamp.valueOf(") || r.contains("new java.sql.Date(") || r.contains("new java.sql.Timestamp(");
+    let l_is_ts = (is_timestamp_or_date_var(&l, proc)
+        || l.contains("java.sql.Date.valueOf(") || l.contains("java.sql.Timestamp.valueOf(") || l.contains("new java.sql.Date(") || l.contains("new java.sql.Timestamp("))
+        && !l.contains(".getYear()") && !l.contains(".getMonthValue()") && !l.contains(".getDayOfMonth()")
+        && !l.contains(".getHour()") && !l.contains(".getMinute()") && !l.contains(".getSecond()");
+    let r_is_ts = (is_timestamp_or_date_var(&r, proc)
+        || r.contains("java.sql.Date.valueOf(") || r.contains("java.sql.Timestamp.valueOf(") || r.contains("new java.sql.Date(") || r.contains("new java.sql.Timestamp("))
+        && !r.contains(".getYear()") && !r.contains(".getMonthValue()") && !r.contains(".getDayOfMonth()")
+        && !r.contains(".getHour()") && !r.contains(".getMinute()") && !r.contains(".getSecond()");
     if is_arith {
         if op == "-" && (l_is_ts || r_is_ts) {
             if l_is_ts && r_is_ts {
@@ -1011,21 +1026,23 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
                 // When comparing against a numeric string literal, use BigDecimal.
                 let l_numeric_str = l.starts_with('"') && l.trim_matches('"').parse::<f64>().is_ok();
                 let r_numeric_str = r.starts_with('"') && r.trim_matches('"').parse::<f64>().is_ok();
-                if l_numeric_str || r_numeric_str {
+                if (l_numeric_str && r_numeric_str)
+                    || (l_numeric_str && !r_is_str && !r.contains('.'))
+                    || (r_numeric_str && !l_is_str && !l.contains('.')) {
                     let cmp_str = match op {
                         ">" => " > 0", "<" => " < 0", ">=" => " >= 0", "<=" => " <= 0", _ => " != 0",
                     };
                     let l_bd = if l_is_str && !l_numeric_str {
                         format!("new java.math.BigDecimal(String.valueOf({}).replace(\"-\", \"\"))", l)
                     } else if !l_is_str {
-                        format!("new java.math.BigDecimal(String.valueOf({}))", l)
+                        format!("new java.math.BigDecimal({} != null ? String.valueOf({}) : \"0\")", l, l)
                     } else {
                         format!("new java.math.BigDecimal({})", l)
                     };
                     let r_bd = if r_is_str && !r_numeric_str {
                         format!("new java.math.BigDecimal(String.valueOf({}).replace(\"-\", \"\"))", r)
                     } else if !r_is_str {
-                        format!("new java.math.BigDecimal(String.valueOf({}))", r)
+                        format!("new java.math.BigDecimal({} != null ? String.valueOf({}) : \"0\")", r, r)
                     } else {
                         format!("new java.math.BigDecimal({})", r)
                     };
@@ -1442,8 +1459,8 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         "TO_HEX" if !jargs.is_empty() => format!("Long.toHexString({}).toUpperCase()", jargs[0]),
         "TO_DATE" if jargs.len() >= 2 => {
             let fmt_raw = jargs[1].trim_matches('"').trim_matches('\'').to_lowercase();
-            if fmt_raw == "yyyy-mm-dd" || fmt_raw.contains("yyyy") {
-                format!("java.sql.Date.valueOf(String.valueOf({}))", jargs[0])
+            if fmt_raw == "yyyy-mm-dd" {
+                format!("java.sql.Date.valueOf(java.time.LocalDate.parse(String.valueOf({}), java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd]\")))", jargs[0])
             } else {
                 let java_fmt = fmt_raw.replace("yyyy", "yyyy").replace("yy", "yy")
                     .replace("mm", "MM").replace("mon", "MMM").replace("month", "MMMM")
@@ -1451,7 +1468,7 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                     .replace("hh24", "HH").replace("hh12", "hh").replace("hh", "HH")
                     .replace("mi", "mm").replace("ss", "ss")
                     .replace("ff3", "SSS").replace("ms", "SSS");
-                format!("new java.sql.Date(new java.text.SimpleDateFormat(\"{}\").parse(String.valueOf({})).getTime())", java_fmt, jargs[0])
+                format!("java.sql.Date.valueOf(java.time.LocalDate.parse(String.valueOf({}), java.time.format.DateTimeFormatter.ofPattern(\"[{}][yyyy-MM-dd]\")))", jargs[0], java_fmt)
             }
         }
         "TO_DATE" => format!("java.sql.Date.valueOf(String.valueOf({}))", jargs.first().map(|s| s.as_str()).unwrap_or("null")),

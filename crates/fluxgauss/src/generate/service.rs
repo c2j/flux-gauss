@@ -661,9 +661,15 @@ fn build_service_method(
                 }
             }
             // Declare raw cursor name as null for CLOSE cleanup null-checks
-            let decl = format!("Object {} = null;", cursor_name);
-            if !body_lines.contains(&decl) {
-                body_lines.push(decl);
+            // Skip if cursor_name collides with a parameter or local var (would cause duplicate variable)
+            let is_param_name = proc.parameters.iter().any(|p| snake_to_camel(&p.name) == *cursor_name);
+            let is_local_var = proc.local_vars.keys().any(|k| snake_to_camel(k) == *cursor_name)
+                || proc.out_local_vars.contains_key(&cursor_name.to_lowercase());
+            if !is_param_name && !is_local_var {
+                let decl = format!("Object {} = null;", cursor_name);
+                if !body_lines.contains(&decl) {
+                    body_lines.push(decl);
+                }
             }
         }
 
@@ -720,7 +726,11 @@ fn build_service_method(
         }
 
         if ret_type != "void" {
-              let last_line = body_lines.last().map(|s| s.trim().to_string()).unwrap_or_default();
+              // Find last executable line (skip // UNREACHABLE: comments)
+              let last_line = body_lines.iter().rev()
+                  .find(|l| !l.trim_start().starts_with("// UNREACHABLE:"))
+                  .map(|l| l.trim().to_string())
+                  .unwrap_or_default();
               let needs_fallback = if last_line.starts_with("return ") || last_line.starts_with("return;") {
                   false
               } else if last_line == "}" {

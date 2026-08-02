@@ -1,4 +1,4 @@
-#$ cd ~/Projects/Desktop_Projects/DB/flux-gauss/ && rm -rf dest_ru &&   cargo run --bin fluxgauss -- --config demo-project/fluxgauss_ru.yaml &&   cd dest_ru/ && mvn compile && mvn test && mvn verify -Pintegration
+#$ cd ~/Projects/Desktop_Projects/DB/flux-gauss/ && rm -rf dest_ru &&   cargo run --bin fluxgauss -- --config demo-project/fluxgauss_ru.yaml &&   cd dest_ru/ && mvn compile && mvn test && DB_PASSWORD=Enmo@123 mvn verify -Pintegration
 output_dir: ./dest_ru
 base_package: ced
 
