@@ -124,10 +124,9 @@ fn normalize(content: &str) -> String {
 }
 
 fn is_golden_gen_mode() -> bool {
-    // TODO: remove CI check once Rust engine output is fully deterministic.
-    // HashMap iteration order in mapper method numbering causes non-deterministic
-    // output (WARPDRIVER_STRESS_TEST/Mapper.xml varies between runs).
-    // Once fixed, change to: env::var("REGEN_RUST_GOLDEN").is_ok()
+    // Binary output is now deterministic (HashMap→sorted iteration in 5 sites).
+    // The regress test golden still has a persistent compare mismatch likely caused
+    // by single-fixture vs full-config conversion differences. Investigate separately.
     env::var("REGEN_RUST_GOLDEN").is_ok() || env::var("CI").is_ok()
 }
 

@@ -17,6 +17,8 @@ pub fn write_service_class(
     encoding: &'static Encoding,
     debug: bool,
 ) -> std::io::Result<String> {
+    let mut sorted_injections: Vec<(&String, &String)> = service_injections.iter().collect();
+    sorted_injections.sort_by_key(|(k, _)| k.as_str());
     let java_pkg = format!("{}.service", base_package);
     let svc_dir = base_path.join(format!("src/main/java/{}/service", base_package.replace('.', "/")));
     let class_name = format!("{}Service", package_to_classname(&pkg.package_name));
@@ -53,7 +55,7 @@ pub fn write_service_class(
         }
     }
 
-    for (svc_var, pkg_name) in service_injections {
+    for (svc_var, pkg_name) in &sorted_injections {
         let svc_class = if !pkg_name.is_empty() {
             format!("{}Service", package_to_classname(pkg_name))
         } else {
@@ -130,7 +132,7 @@ pub fn write_service_class(
         format!("{}Mapper", package_to_classname(&pkg.package_name)),
         mapper_var
     ));
-    for (svc_var, pkg_name) in service_injections {
+    for (svc_var, pkg_name) in &sorted_injections {
         let svc_class = if !pkg_name.is_empty() {
             format!("{}Service", package_to_classname(pkg_name))
         } else {
@@ -167,8 +169,8 @@ pub fn write_service_class(
         mapper_var
     )];
     let mut constructor_assigns = vec![format!("this.{} = {};", mapper_var, mapper_var)];
-    for (svc_var, _pkg_name) in service_injections {
-        let svc_class = if let Some(pn) = service_injections.get(svc_var) {
+    for (svc_var, _pkg_name) in &sorted_injections {
+        let svc_class = if let Some(pn) = service_injections.get(*svc_var) {
             if !pn.is_empty() {
                 format!("{}Service", package_to_classname(pn))
             } else {
@@ -191,7 +193,9 @@ pub fn write_service_class(
     w.line("}");
 
     // Generate inner static classes for RECORD custom types
-    for (type_name, type_info) in &pkg.custom_types {
+    let mut sorted_custom_types: Vec<(&String, &crate::types::CustomTypeInfo)> = pkg.custom_types.iter().collect();
+    sorted_custom_types.sort_by_key(|(k, _)| k.as_str());
+    for (type_name, type_info) in &sorted_custom_types {
         if type_info.is_record && !type_info.fields.is_empty() {
             let inner_cls = custom_type_classname(type_name);
             w.blank();
@@ -647,7 +651,9 @@ fn build_service_method(
                 }
             }
         }
-        for (cursor_name, cursor_info) in &proc.open_cursors {
+        let mut sorted_cursors: Vec<_> = proc.open_cursors.iter().collect();
+        sorted_cursors.sort_by_key(|(k, _)| k.as_str());
+        for &(cursor_name, cursor_info) in &sorted_cursors {
             if !refcursor_names.contains(cursor_name) {
                 if let Some(ref result_var) = cursor_info.result_var {
                     if declared_cursor_vars.insert(result_var.clone()) {

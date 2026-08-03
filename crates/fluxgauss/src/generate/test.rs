@@ -37,6 +37,8 @@ pub fn write_service_test(
     service_injections: &std::collections::HashMap<String, String>,
     encoding: &'static Encoding,
 ) -> std::io::Result<String> {
+    let mut sorted_injections: Vec<(&String, &String)> = service_injections.iter().collect();
+    sorted_injections.sort_by_key(|(k, _)| k.as_str());
     let java_pkg = format!("{}.service", base_package);
     let test_dir = base_path.join(format!("src/test/java/{}/service", base_package.replace('.', "/")));
     let class_name = format!("{}Service", package_to_classname(&pkg.package_name));
@@ -61,7 +63,7 @@ pub fn write_service_test(
     imports.insert("import static org.mockito.Mockito.*;".to_string());
     imports.insert("import static org.junit.jupiter.api.Assertions.*;".to_string());
 
-    for (svc_var, pkg_name) in service_injections {
+    for &(svc_var, pkg_name) in &sorted_injections {
         let svc_class = if !pkg_name.is_empty() {
             format!("{}Service", package_to_classname(pkg_name))
         } else {
@@ -103,7 +105,7 @@ pub fn write_service_test(
         mapper_var
     ));
 
-    for (svc_var, pkg_name) in service_injections {
+    for &(svc_var, pkg_name) in &sorted_injections {
         let svc_class = if !pkg_name.is_empty() {
             format!("{}Service", package_to_classname(pkg_name))
         } else {
