@@ -124,10 +124,7 @@ fn normalize(content: &str) -> String {
 }
 
 fn is_golden_gen_mode() -> bool {
-    // Binary output is now deterministic (HashMap→sorted iteration in 5 sites).
-    // The regress test golden still has a persistent compare mismatch likely caused
-    // by single-fixture vs full-config conversion differences. Investigate separately.
-    env::var("REGEN_RUST_GOLDEN").is_ok() || env::var("CI").is_ok()
+    env::var("REGEN_RUST_GOLDEN").is_ok()
 }
 
 struct GeneratedFiles {

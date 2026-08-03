@@ -27,8 +27,8 @@ public class Issue56ReturnHandlerService {
         try {
             { var _val = issue56ReturnHandlerMapper.selectTIssue56Data(); if (_val != null) vData = (String) _val; }
             pResult.set(String.valueOf(vData));
-        } catch (BusinessException __e32) { // no_data_found
-            __SQLERRM__ = __e32.getMessage();
+        } catch (BusinessException __e1) { // no_data_found
+            __SQLERRM__ = __e1.getMessage();
             __SQLCODE__ = -1;
             pResult.set("not_found");
             return;
@@ -47,14 +47,14 @@ public class Issue56ReturnHandlerService {
                 vData = "default";
             }
             pResult.set(String.valueOf(vData));
-        } catch (BusinessException __e33) { // no_data_found
-            __SQLERRM__ = __e33.getMessage();
+        } catch (BusinessException __e1) { // no_data_found
+            __SQLERRM__ = __e1.getMessage();
             __SQLCODE__ = -1;
             try {
                 { var _val = issue56ReturnHandlerMapper.selectTIssue56Data_2(); if (_val != null) vTmp = (String) _val; }
                 pResult.set(String.valueOf(vTmp));
-            } catch (Exception __e34) {
-                __SQLERRM__ = __e34.getMessage();
+            } catch (Exception __e2) {
+                __SQLERRM__ = __e2.getMessage();
                 __SQLCODE__ = -1;
                 pResult.set("nested_fallback_failed");
             }
@@ -70,8 +70,8 @@ public class Issue56ReturnHandlerService {
         try {
             { var _val = issue56ReturnHandlerMapper.selectTIssue56Data_2(); if (_val != null) vData = (String) _val; }
             pResult.set(String.valueOf(vData));
-        } catch (BusinessException __e35) { // no_data_found
-            __SQLERRM__ = __e35.getMessage();
+        } catch (BusinessException __e1) { // no_data_found
+            __SQLERRM__ = __e1.getMessage();
             __SQLCODE__ = -1;
             pResult.set("not_found");
             return;

@@ -142,8 +142,8 @@ public class WarpdriverStressTestService {
                                 currentState = SpMainOrchestratorState.ErrorHandler;
                                 // UNREACHABLE: break;
                             }
-                        } catch (Exception __e5) {
-                            __SQLERRM__ = __e5.getMessage();
+                        } catch (Exception __e2) {
+                            __SQLERRM__ = __e2.getMessage();
                             __SQLCODE__ = -1;
                             gLastErrorCode = String.valueOf(__SQLERRM__);
                             // SQL: ROLLBACK TO SAVEPOINT ${vSavepoint1}
@@ -186,8 +186,8 @@ public class WarpdriverStressTestService {
                     break;
                 }
             }
-        } catch (Exception __e7) {
-            __SQLERRM__ = __e7.getMessage();
+        } catch (Exception __e3) {
+            __SQLERRM__ = __e3.getMessage();
             __SQLCODE__ = -1;
             try { TransactionAspectSupport.currentTransactionStatus().setRollbackOnly(); } catch (Exception _tx) {}
             pTotalAmt.set(java.math.BigDecimal.valueOf(-1L));
@@ -233,8 +233,8 @@ public class WarpdriverStressTestService {
                 __ROWCOUNT__ = warpdriverStressTestMapper.deleteDistributedLocks(pOrderId, vLockKey);
                 // COMMIT;
             }
-        } catch (Exception __e9) {
-            __SQLERRM__ = __e9.getMessage();
+        } catch (Exception __e1) {
+            __SQLERRM__ = __e1.getMessage();
             __SQLCODE__ = -1;
             __ROWCOUNT__ = warpdriverStressTestMapper.deleteDistributedLocks_1(pOrderId, vLockKey);
             pResult.set(String.valueOf(String.valueOf("ERROR:").concat(String.valueOf(__SQLERRM__))));
@@ -314,8 +314,8 @@ public class WarpdriverStressTestService {
                             warpdriverStressTestMapper.updateBulkOrders_1(pBatchId, mainRec, riskRec);
                             continue;
                         }
-                    } catch (BusinessException __e13) { // NO_DATA
-                        __SQLERRM__ = __e13.getMessage();
+                    } catch (BusinessException __e2) { // NO_DATA
+                        __SQLERRM__ = __e2.getMessage();
                         __SQLCODE__ = -1;
                     }
                 }
@@ -479,8 +479,8 @@ public class WarpdriverStressTestService {
         Integer vCount = 0;
         List<Map<String, Object>> vCurResult = null;
         int vCurIdx = 0;
-        Object v_cur = null;
         Object vCur = null;
+        Object v_cur = null;
         boolean found = false;
         if (pDepth > 10) {
             return 0;
@@ -531,8 +531,8 @@ public class WarpdriverStressTestService {
         int pCurOrdersIdx = 0;
         List<Map<String, Object>> pCurPaymentsResult = null;
         int pCurPaymentsIdx = 0;
-        Object p_cur_payments = null;
         Object p_cur_orders = null;
+        Object p_cur_payments = null;
         pCurOrdersResult = warpdriverStressTestMapper.selectFnMultiCursorReturn(pCustomerId);
         if (pCurOrdersResult == null) pCurOrdersResult = new java.util.ArrayList<>();
         pCurOrdersIdx = 0;
@@ -573,8 +573,8 @@ public class WarpdriverStressTestService {
             try {
                 // SAVEPOINT sp_notify — handled via JDBC Connection.setSavepoint() in @Transactional context
                 warpdriverStressTestMapper.insertNotifications(pAccountId, pAmount);
-            } catch (Exception __e18) {
-                __SQLERRM__ = __e18.getMessage();
+            } catch (Exception __e1) {
+                __SQLERRM__ = __e1.getMessage();
                 __SQLCODE__ = -1;
                 warpdriverStressTestMapper.insertSpSavepointHell(pAccountId, pAmount);
                 // SQL: v_ins = "INSERT INTO"
@@ -583,8 +583,8 @@ public class WarpdriverStressTestService {
             }
             // COMMIT;
             pFinalBal.set(new java.math.BigDecimal(String.valueOf(warpdriverStressTestMapper.selectAccounts_1(pAccountId, pAmount))));
-        } catch (Exception __e19) {
-            __SQLERRM__ = __e19.getMessage();
+        } catch (Exception __e2) {
+            __SQLERRM__ = __e2.getMessage();
             __SQLCODE__ = -1;
             try { TransactionAspectSupport.currentTransactionStatus().setRollbackOnly(); } catch (Exception _tx) {}
             log.info("");

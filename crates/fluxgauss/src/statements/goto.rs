@@ -447,7 +447,7 @@ fn process_cleanup_stmt(
                 for handler in &exc_block.handlers {
                     let is_others = handler.conditions.is_empty()
                         || handler.conditions.iter().any(|c| c.eq_ignore_ascii_case("others"));
-                    let evar = format!("__e{}", crate::analyze::CATCH_VAR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+                    let evar = format!("__e{}", { let n = proc.catch_counter; proc.catch_counter += 1; n + 1 });
                     if is_others {
                         proc.java_logic_lines.push(format!("}} catch (Exception {evar}) {{"));
                     } else {
@@ -722,7 +722,7 @@ fn process_with_goto_replace(
                 for handler in &exc_block.handlers {
                     let is_others = handler.conditions.is_empty()
                         || handler.conditions.iter().any(|c| c.eq_ignore_ascii_case("others"));
-                    let evar = format!("__e{}", crate::analyze::CATCH_VAR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+                    let evar = format!("__e{}", { let n = proc.catch_counter; proc.catch_counter += 1; n + 1 });
                     if is_others {
                         proc.java_logic_lines.push(format!("}} catch (Exception {evar}) {{"));
                     } else {
