@@ -1,0 +1,29 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue62SubstrMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_62_substr_helper.sql
+public class Issue62SubstrService {
+    private static final Logger log = LoggerFactory.getLogger(Issue62SubstrService.class);
+
+    private final Issue62SubstrMapper issue62SubstrMapper;
+
+    public Issue62SubstrService(Issue62SubstrMapper issue62SubstrMapper) {
+        this.issue62SubstrMapper = issue62SubstrMapper;
+    }
+
+    // Source: pkg_issue62_substr.proc_substr_basic (PROCEDURE) — {FIXTURES_ROOT}/issue_62_substr_helper.sql:16-25
+    public void procSubstrBasic(String pId, AtomicReference<String> pResult) {
+        String vPart = null;
+        vPart = String.valueOf(pId).substring(Math.min(String.valueOf(pId).length(), Math.max(0, (3) - 1)), Math.min(String.valueOf(pId).length(), Math.max(0, (3) - 1) + (3)));
+        pResult.set(String.valueOf(String.valueOf(String.valueOf(String.valueOf(pId).substring(Math.min(String.valueOf(pId).length(), Math.max(0, (1) - 1)), Math.min(String.valueOf(pId).length(), Math.max(0, (1) - 1) + (2)))).concat(String.valueOf("-"))).concat(String.valueOf(vPart))));
+        pResult.set(String.valueOf(String.valueOf(pResult.get()).concat(String.valueOf(String.valueOf(pId).substring(Math.min(String.valueOf(pId).length(), Math.max(0, (6) - 1)))))));
+    }
+}

@@ -1,0 +1,54 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue38MainMapper;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_38_map_put.sql
+public class Issue38MainService {
+    private static final Logger log = LoggerFactory.getLogger(Issue38MainService.class);
+
+    private final Issue38MainMapper issue38MainMapper;
+    private static final Integer globalCounter = 0;
+    private static final String outErrorCode = null;
+    private static final String outErrorMsg = null;
+    private static final String outStatus = null;
+
+    public Issue38MainService(Issue38MainMapper issue38MainMapper) {
+        this.issue38MainMapper = issue38MainMapper;
+    }
+
+    // Source: pkg_issue38_main.proc_do_work (PROCEDURE) — {FIXTURES_ROOT}/issue_38_map_put.sql:40-61
+    public void procDoWork(String pInput, AtomicReference<String> pStatus) {
+        ((java.util.Map<String, Object>) pkgIssue38Shared).put("outStatus", "PROCESSING");
+        ((java.util.Map<String, Object>) pkgIssue38Shared).put("outErrorCode", "");
+        ((java.util.Map<String, Object>) pkgIssue38Shared).put("outErrorMsg", "");
+        if (pInput == null) {
+            ((java.util.Map<String, Object>) pkgIssue38Shared).put("outStatus", "FAILED");
+            ((java.util.Map<String, Object>) pkgIssue38Shared).put("outErrorCode", "E001");
+            ((java.util.Map<String, Object>) pkgIssue38Shared).put("outErrorMsg", "Input is null");
+            pStatus.set("FAILED");
+        } else {
+            ((java.util.Map<String, Object>) pkgIssue38Shared).put("outStatus", "SUCCESS");
+            ((java.util.Map<String, Object>) pkgIssue38Shared).put("globalCounter", java.util.Optional.ofNullable((Number) ((java.util.Map<String, Object>) pkgIssue38Shared).getOrDefault("globalCounter", ((java.util.Map<String, Object>) pkgIssue38Shared).get("global_counter"))).map(Number::longValue).orElse(0L) + 1);
+            pStatus.set("SUCCESS");
+        }
+    }
+
+    // Source: pkg_issue38_main.proc_cross_set_error (PROCEDURE) — {FIXTURES_ROOT}/issue_38_map_put.sql:64-72
+    public void procCrossSetError(String pCode, String pMsg) {
+        ((java.util.Map<String, Object>) pkgIssue38Shared).put("outErrorCode", pCode);
+        ((java.util.Map<String, Object>) pkgIssue38Shared).put("outErrorMsg", pMsg);
+    }
+
+    // Source: pkg_issue38_main.proc_increment_counter (PROCEDURE) — {FIXTURES_ROOT}/issue_38_map_put.sql:75-82
+    public void procIncrementCounter() {
+        ((java.util.Map<String, Object>) pkgIssue38Shared).put("globalCounter", java.util.Optional.ofNullable((Number) ((java.util.Map<String, Object>) pkgIssue38Shared).getOrDefault("globalCounter", ((java.util.Map<String, Object>) pkgIssue38Shared).get("global_counter"))).map(Number::longValue).orElse(0L) + 1);
+    }
+}

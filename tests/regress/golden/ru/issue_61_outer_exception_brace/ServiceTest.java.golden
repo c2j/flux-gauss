@@ -1,0 +1,41 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue61ExcMapper;
+import com.example.demo.service.Issue61ExcService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_61_outer_exception_brace.sql
+class Issue61ExcServiceTest {
+
+    @Mock
+    private Issue61ExcMapper issue61ExcMapper;
+
+    @InjectMocks
+    private Issue61ExcService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_prcGetZsPrice_success() {
+        String pISecurityId = "test_pISecurityId";
+        String pIMarketType = "test_pIMarketType";
+        AtomicReference<java.math.BigDecimal> pOMarketPriceRef = new AtomicReference<>(java.math.BigDecimal.ZERO);
+        AtomicReference<String> pOPassFlagRef = new AtomicReference<>(null);
+        AtomicReference<String> pOSucceedRef = new AtomicReference<>(null);
+        when(issue61ExcMapper.selectTIssue61Bond(any(), any())).thenReturn(999);
+        when(issue61ExcMapper.selectTIssue61Bond_1(any(), any())).thenReturn(999);
+        when(issue61ExcMapper.selectTIssue61Bond_2(any(), any())).thenReturn(999);
+        service.prcGetZsPrice(pISecurityId, pIMarketType, pOMarketPriceRef, pOPassFlagRef, pOSucceedRef);
+    }
+}

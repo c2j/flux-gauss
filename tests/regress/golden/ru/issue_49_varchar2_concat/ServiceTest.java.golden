@@ -1,0 +1,53 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue49ConcatMapper;
+import com.example.demo.service.Issue49ConcatService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_49_varchar2_concat.sql
+class Issue49ConcatServiceTest {
+
+    @Mock
+    private Issue49ConcatMapper issue49ConcatMapper;
+
+    @InjectMocks
+    private Issue49ConcatService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procBuildIdList_success() {
+        String pBaseIds = "1,2,3";
+        String pExtraIds = "1,2,3";
+        AtomicReference<String> pResultRef = new AtomicReference<>(null);
+        service.procBuildIdList(pBaseIds, pExtraIds, pResultRef);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procAppendTradeIds_success() {
+        String pNewId = "test_pNewId";
+        AtomicReference<String> pResultRef = new AtomicReference<>(null);
+        service.procAppendTradeIds(pNewId, pResultRef);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procConcatLabels_success() {
+        String pPrefix = "test_pPrefix";
+        String pSuffix = "test_pSuffix";
+        AtomicReference<String> pResultRef = new AtomicReference<>(null);
+        service.procConcatLabels(pPrefix, pSuffix, pResultRef);
+    }
+}

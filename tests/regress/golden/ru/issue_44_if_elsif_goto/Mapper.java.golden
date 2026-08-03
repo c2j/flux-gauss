@@ -1,0 +1,21 @@
+package com.example.demo.mapper;
+
+import java.math.BigDecimal;
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue44BugsMapper {
+
+    // {FIXTURES_ROOT}/issue_44_if_elsif_goto.sql:56 — pkg_issue44_bugs.proc_dynamic_sql_if_else
+    Integer selectTIssue44Orders(@Param("pStatus") String pStatus, @Param("pDate") String pDate);
+    // {FIXTURES_ROOT}/issue_44_if_elsif_goto.sql:56 — pkg_issue44_bugs.proc_dynamic_sql_if_else
+    String selectTIssue44Orders_1(@Param("pStatus") String pStatus, @Param("pDate") String pDate);
+    // {FIXTURES_ROOT}/issue_44_if_elsif_goto.sql:98 — pkg_issue44_bugs.proc_dynamic_sql_if_elsif
+    String selectTIssue44Orders_2(@Param("pFilter") String pFilter, @Param("pMode") Integer pMode);
+    // {FIXTURES_ROOT}/issue_44_if_elsif_goto.sql:132 — pkg_issue44_bugs.proc_nested_dynamic_if
+    java.math.BigDecimal selectTIssue44Orders_3(@Param("pType") String pType, @Param("pSubType") String pSubType);
+    // {FIXTURES_ROOT}/issue_44_if_elsif_goto.sql:163 — pkg_issue44_bugs.proc_non_dynamic_if_else
+    String selectTIssue44Orders_4(@Param("pFlag") String pFlag);
+    // {FIXTURES_ROOT}/issue_44_if_elsif_goto.sql:187 — pkg_issue44_bugs.proc_chained_if_with_concat
+    String selectTIssue44Orders_5(@Param("pCode") String pCode);
+}

@@ -1,0 +1,10 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue48CompareMapper {
+
+    // {FIXTURES_ROOT}/issue_48_long_compareto_string.sql:51 — pkg_issue48_compare.proc_check_pro_id
+    Integer selectDual(@Param("pProId") Long pProId);
+}

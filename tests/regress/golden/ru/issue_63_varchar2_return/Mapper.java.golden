@@ -1,0 +1,11 @@
+package com.example.demo.mapper;
+
+import java.util.Map;
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue63RetMapper {
+
+    // {FIXTURES_ROOT}/issue_63_varchar2_return.sql:32 — pkg_issue63_ret.fnc_get_open_fund_value
+    Map<String, Object> selectTIssue63Fund(@Param("pIDate") String pIDate, @Param("pIPriceDate") String pIPriceDate, @Param("pISecurityId") String pISecurityId);
+}

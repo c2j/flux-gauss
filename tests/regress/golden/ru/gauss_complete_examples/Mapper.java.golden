@@ -1,9 +1,36 @@
 package com.example.demo.mapper;
 
+import java.math.BigDecimal;
+import java.sql.Timestamp;
+import java.util.List;
+import java.util.Map;
 import org.apache.ibatis.annotations.*;
 
 @Mapper
-public interface GaussCompleteExamplesMapper {
+public interface OpenCursorMapper {
 
-    // No direct DML operations for gauss_complete_examples
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:221 — pkg_open_cursor.proc_get_employee_cursor
+    List<Map<String, Object>> selectProcGetEmployeeCursor(@Param("pDeptId") Integer pDeptId, @Param("pMinSalary") java.math.BigDecimal pMinSalary);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:247 — pkg_open_cursor.proc_process_dynamic_query
+    int insertAuditLog(@Param("pTableName") String pTableName, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("vSql") String vSql);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:247 — pkg_open_cursor.proc_process_dynamic_query
+    List<Map<String, Object>> selectProcProcessDynamicQuery(@Param("pTableName") String pTableName, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:247 — pkg_open_cursor.proc_process_dynamic_query
+    int updateProcProcessDynamicQuery(@Param("pTableName") String pTableName, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("vRecId") Integer vRecId);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:247 — pkg_open_cursor.proc_process_dynamic_query
+    int updateProcProcessDynamicQuery_1(@Param("pTableName") String pTableName, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("vRecId") Integer vRecId);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:247 — pkg_open_cursor.proc_process_dynamic_query
+    int insertArchiveTable(@Param("pTableName") String pTableName, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("vRecId") Integer vRecId, @Param("vRecName") String vRecName, @Param("vRecStatus") String vRecStatus, @Param("vRecValue") java.math.BigDecimal vRecValue);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:247 — pkg_open_cursor.proc_process_dynamic_query
+    int deleteProcProcessDynamicQuery(@Param("pTableName") String pTableName, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("vRecId") Integer vRecId);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:247 — pkg_open_cursor.proc_process_dynamic_query
+    int insertExceptionLog(@Param("pTableName") String pTableName, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("vRecId") Integer vRecId, @Param("vRecStatus") String vRecStatus);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:247 — pkg_open_cursor.proc_process_dynamic_query
+    int insertErrorLog(@Param("pTableName") String pTableName, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("vRecId") Integer vRecId);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:247 — pkg_open_cursor.proc_process_dynamic_query
+    int insertPerformanceLog(@Param("pTableName") String pTableName, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("vRowCount") Integer vRowCount, @Param("vStartTime") java.sql.Timestamp vStartTime);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:344 — pkg_open_cursor.proc_paginated_query
+    List<Map<String, Object>> selectProcPaginatedQuery(@Param("pPageSize") Integer pPageSize, @Param("pPageNum") Integer pPageNum, @Param("vOffset") Integer vOffset);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:344 — pkg_open_cursor.proc_paginated_query
+    List<Map<String, Object>> selectProcPaginatedQuery_1(@Param("pPageSize") Integer pPageSize, @Param("pPageNum") Integer pPageNum);
 }

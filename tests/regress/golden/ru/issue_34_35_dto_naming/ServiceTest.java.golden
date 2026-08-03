@@ -1,0 +1,95 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue34OrderMapper;
+import com.example.demo.service.Issue34OrderService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_34_35_dto_naming.sql
+class Issue34OrderServiceTest {
+
+    @Mock
+    private Issue34OrderMapper issue34OrderMapper;
+
+    @InjectMocks
+    private Issue34OrderService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procCreateOrder_success() {
+        String pCustomerName = "test_pCustomerName";
+        String pProductCode = "test_pProductCode";
+        Integer pQuantity = 1;
+        java.math.BigDecimal pUnitPrice = new java.math.BigDecimal("99.99");
+        String pCreatedBy = "test_pCreatedBy";
+        AtomicReference<Long> pOrderIdRef = new AtomicReference<>(1L);
+        AtomicReference<java.math.BigDecimal> pTotalAmountRef = new AtomicReference<>(java.math.BigDecimal.ZERO);
+        AtomicReference<String> pStatusMsgRef = new AtomicReference<>(null);
+        when(issue34OrderMapper.selectTIssue34Order(any(), any(), any(), any(), any())).thenReturn(999L);
+        when(issue34OrderMapper.insertTIssue34Order(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue34OrderMapper.insertTIssue34OrderLog(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue34OrderMapper.selectTIssue34Order_1(any(), any())).thenReturn(999);
+        when(issue34OrderMapper.selectTIssue34Order_2(any(), any())).thenReturn(999);
+        when(issue34OrderMapper.selectTIssue34Order_3(any(), any())).thenReturn(999);
+        when(issue34OrderMapper.selectTIssue34Order_4(any(), any(), any())).thenReturn(999);
+        when(issue34OrderMapper.updateTIssue34Order(any(), any(), any())).thenReturn(1);
+        when(issue34OrderMapper.selectTIssue34Order_5(any(), any(), any())).thenReturn(999);
+        when(issue34OrderMapper.insertTIssue34OrderLog_1(any(), any(), any(), any())).thenReturn(1);
+        service.procCreateOrder(pCustomerName, pProductCode, pQuantity, pUnitPrice, pCreatedBy, pOrderIdRef, pTotalAmountRef, pStatusMsgRef);
+        verify(issue34OrderMapper, atLeast(0)).insertTIssue34Order(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procQueryOrderStats_success() {
+        String pStatus = "test_pStatus";
+        java.math.BigDecimal pMinAmount = new java.math.BigDecimal("99.99");
+        AtomicReference<Integer> pOrderCountRef = new AtomicReference<>(0);
+        AtomicReference<java.math.BigDecimal> pTotalRevenueRef = new AtomicReference<>(java.math.BigDecimal.ZERO);
+        AtomicReference<java.math.BigDecimal> pAvgAmountRef = new AtomicReference<>(java.math.BigDecimal.ZERO);
+        when(issue34OrderMapper.selectTIssue34Order(any(), any(), any(), any(), any())).thenReturn(999L);
+        when(issue34OrderMapper.insertTIssue34Order(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue34OrderMapper.insertTIssue34OrderLog(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue34OrderMapper.selectTIssue34Order_1(any(), any())).thenReturn(999);
+        when(issue34OrderMapper.selectTIssue34Order_2(any(), any())).thenReturn(999);
+        when(issue34OrderMapper.selectTIssue34Order_3(any(), any())).thenReturn(999);
+        when(issue34OrderMapper.selectTIssue34Order_4(any(), any(), any())).thenReturn(999);
+        when(issue34OrderMapper.updateTIssue34Order(any(), any(), any())).thenReturn(1);
+        when(issue34OrderMapper.selectTIssue34Order_5(any(), any(), any())).thenReturn(999);
+        when(issue34OrderMapper.insertTIssue34OrderLog_1(any(), any(), any(), any())).thenReturn(1);
+        service.procQueryOrderStats(pStatus, pMinAmount, pOrderCountRef, pTotalRevenueRef, pAvgAmountRef);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procUpdateOrder_success() {
+        Long pOrderId = 1L;
+        String pNewStatus = "test_pNewStatus";
+        String pUpdatedBy = "2024-01-01";
+        AtomicReference<String> pOldStatusRef = new AtomicReference<>(null);
+        AtomicReference<Integer> pRowsUpdatedRef = new AtomicReference<>(0);
+        when(issue34OrderMapper.selectTIssue34Order(any(), any(), any(), any(), any())).thenReturn(999L);
+        when(issue34OrderMapper.insertTIssue34Order(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue34OrderMapper.insertTIssue34OrderLog(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue34OrderMapper.selectTIssue34Order_1(any(), any())).thenReturn(999);
+        when(issue34OrderMapper.selectTIssue34Order_2(any(), any())).thenReturn(999);
+        when(issue34OrderMapper.selectTIssue34Order_3(any(), any())).thenReturn(999);
+        when(issue34OrderMapper.selectTIssue34Order_4(any(), any(), any())).thenReturn(999);
+        when(issue34OrderMapper.updateTIssue34Order(any(), any(), any())).thenReturn(1);
+        when(issue34OrderMapper.selectTIssue34Order_5(any(), any(), any())).thenReturn(999);
+        when(issue34OrderMapper.insertTIssue34OrderLog_1(any(), any(), any(), any())).thenReturn(1);
+        service.procUpdateOrder(pOrderId, pNewStatus, pUpdatedBy, pOldStatusRef, pRowsUpdatedRef);
+        verify(issue34OrderMapper, atLeast(0)).updateTIssue34Order(any(), any(), any());
+    }
+}

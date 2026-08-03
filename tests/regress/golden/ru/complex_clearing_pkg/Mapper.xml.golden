@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.ComplexClearingPkgMapper">
+
+    <!-- Source: {FIXTURES_ROOT}/complex_clearing_pkg.sql:109-116 — complex_clearing_pkg.log_audit_autonomous.insertAuditLog -->
+    <insert id="insertAuditLog" parameterType="string">
+        INSERT INTO audit_log (log_time, severity, message, session_id) VALUES (CURRENT_TIMESTAMP, #{pSeverity, jdbcType=VARCHAR, javaType=String}, #{pMsg, jdbcType=LONGVARCHAR, javaType=String}, pg_backend_pid())
+    </insert>
+
+    <!-- Source: {FIXTURES_ROOT}/complex_clearing_pkg.sql:121-150 — complex_clearing_pkg.recursive_validate.selectTradeRecord -->
+    <select id="selectTradeRecord" resultType="long">
+        select parent_trade_id FROM trade_record WHERE trade_id = #{pTradeId, jdbcType=BIGINT, javaType=Long}
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/complex_clearing_pkg.sql:155-203 — complex_clearing_pkg.check_cross_table_consistency.selectAccount -->
+    <select id="selectAccount" resultType="java.math.BigDecimal">
+        select balance FROM account WHERE account_id = #{pAccountId, jdbcType=BIGINT, javaType=Long}
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/complex_clearing_pkg.sql:155-203 — complex_clearing_pkg.check_cross_table_consistency.selectTradeRecord_1 -->
+    <select id="selectTradeRecord_1" resultType="java.math.BigDecimal">
+        SELECT COALESCE(SUM(amount - fee), 0) FROM trade_record WHERE account_id = #{pAccountId, jdbcType=BIGINT, javaType=Long} AND status = 'SETTLED'
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/complex_clearing_pkg.sql:208-375 — complex_clearing_pkg.handle_trade_change.updateTradeRecord -->
+    <update id="updateTradeRecord">
+        UPDATE trade_record SET status = 'ARCHIVED', deleted_at = current_timestamp WHERE trade_id = #{arg1}
+    </update>
+
+    <!-- Source: {FIXTURES_ROOT}/complex_clearing_pkg.sql:380-418 — complex_clearing_pkg.handle_account_change.selectTradeRecord_2 -->
+    <select id="selectTradeRecord_2" resultType="java.math.BigDecimal">
+        SELECT COALESCE(SUM(amount - fee), 0) FROM trade_record WHERE account_id = #{pNewRec.accountId} AND status IN ('SETTLED', 'PENDING')
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/complex_clearing_pkg.sql:380-418 — complex_clearing_pkg.handle_account_change.updateAccount -->
+    <update id="updateAccount">
+        UPDATE account SET balance = #{vDelta, jdbcType=NUMERIC, javaType=java.math.BigDecimal}, last_recalc = current_timestamp WHERE account_id = #{arg2}
+    </update>
+
+    <!-- Source: {FIXTURES_ROOT}/complex_clearing_pkg.sql:380-418 — complex_clearing_pkg.handle_account_change.selectTradeRecord_3 -->
+    <select id="selectTradeRecord_3" resultType="int">
+        select COUNT(*) FROM trade_record WHERE account_id = #{pNewRec.accountId} AND status = 'DISPUTED'
+                LIMIT 1
+    </select>
+
+</mapper>

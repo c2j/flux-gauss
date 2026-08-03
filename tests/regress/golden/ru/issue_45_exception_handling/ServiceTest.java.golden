@@ -1,0 +1,64 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue45ExceptionMapper;
+import com.example.demo.service.Issue45ExceptionService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_45_exception_handling.sql
+class Issue45ExceptionServiceTest {
+
+    @Mock
+    private Issue45ExceptionMapper issue45ExceptionMapper;
+
+    @InjectMocks
+    private Issue45ExceptionService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procLinkEtfRepay_success() {
+        String pSecurityCode = "test_pSecurityCode";
+        AtomicReference<String> pOSucceedRef = new AtomicReference<>(null);
+        AtomicReference<String> pOSecurityIdRef = new AtomicReference<>(null);
+        when(issue45ExceptionMapper.selectTIssue45Security(any())).thenReturn("test_value");
+        when(issue45ExceptionMapper.selectTIssue45SecurityBak(any())).thenReturn("test_value");
+        when(issue45ExceptionMapper.selectTIssue45Security_1(any())).thenReturn("test_value");
+        when(issue45ExceptionMapper.selectTIssue45Security_2(any())).thenReturn("test_value");
+        service.procLinkEtfRepay(pSecurityCode, pOSucceedRef, pOSecurityIdRef);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procSimpleException_success() {
+        String pSecurityCode = "test_pSecurityCode";
+        AtomicReference<String> pResultRef = new AtomicReference<>(null);
+        when(issue45ExceptionMapper.selectTIssue45Security(any())).thenReturn("test_value");
+        when(issue45ExceptionMapper.selectTIssue45SecurityBak(any())).thenReturn("test_value");
+        when(issue45ExceptionMapper.selectTIssue45Security_1(any())).thenReturn("test_value");
+        when(issue45ExceptionMapper.selectTIssue45Security_2(any())).thenReturn("test_value");
+        service.procSimpleException(pSecurityCode, pResultRef);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procNestedException_success() {
+        String pCode = "test_pCode";
+        AtomicReference<String> pMsgRef = new AtomicReference<>(null);
+        when(issue45ExceptionMapper.selectTIssue45Security(any())).thenReturn("test_value");
+        when(issue45ExceptionMapper.selectTIssue45SecurityBak(any())).thenReturn("test_value");
+        when(issue45ExceptionMapper.selectTIssue45Security_1(any())).thenReturn("test_value");
+        when(issue45ExceptionMapper.selectTIssue45Security_2(any())).thenReturn("test_value");
+        service.procNestedException(pCode, pMsgRef);
+    }
+}

@@ -1,0 +1,63 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue44NestedExcMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_44_if_elsif_goto_2.sql
+public class Issue44NestedExcService {
+    private static final Logger log = LoggerFactory.getLogger(Issue44NestedExcService.class);
+
+    private final Issue44NestedExcMapper issue44NestedExcMapper;
+
+    public Issue44NestedExcService(Issue44NestedExcMapper issue44NestedExcMapper) {
+        this.issue44NestedExcMapper = issue44NestedExcMapper;
+    }
+
+    // Source: pkg_issue44_nested_exc.proc_nested_exception_blocks (PROCEDURE) — {FIXTURES_ROOT}/issue_44_if_elsif_goto_2.sql:30-87
+    public void procNestedExceptionBlocks() {
+        String vConfig = null;
+        Integer vCount = 0;
+        String vDate = new java.text.SimpleDateFormat("yyyyMMdd").format(new java.sql.Timestamp(System.currentTimeMillis()));
+        String vFlag = null;
+        String vFlag2 = null;
+        String vMsg = null;
+        String __SQLERRM__ = "";
+        int __SQLCODE__ = 0;
+        try {
+            vFlag = "0";
+            vMsg = "success";
+            { var _val = issue44NestedExcMapper.selectTIssue44Config(); if (_val != null) vCount = (Integer) _val; }
+            if (vCount > 0) {
+                try {
+                    { var _val = issue44NestedExcMapper.selectTIssue44Config_1(); if (_val != null) vConfig = (String) _val; }
+                    if (java.util.Objects.equals(vFlag, "0")) {
+                        vConfig = String.valueOf(vConfig).concat(String.valueOf(",extra"));
+                        try {
+                            { var _val = issue44NestedExcMapper.selectTIssue44Config_2(vDate); if (_val != null) vFlag2 = (String) _val; }
+                        } catch (Exception __e1) {
+                            __SQLERRM__ = __e1.getMessage();
+                            __SQLCODE__ = -1;
+                            vFlag2 = "0";
+                        }
+                        if (java.util.Objects.equals(vFlag2, "0")) {
+                            vMsg = "log_written_first_time";
+                        }
+                    }
+                } catch (Exception __e2) {
+                    __SQLERRM__ = __e2.getMessage();
+                    __SQLCODE__ = -1;
+                    vMsg = "inner_block_error";
+                }
+            }
+        } catch (Exception __e3) {
+            __SQLERRM__ = __e3.getMessage();
+            __SQLCODE__ = -1;
+            vMsg = String.valueOf("outer_error:").concat(String.valueOf(__SQLERRM__));
+        }
+    }
+}

@@ -1,7 +1,46 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.example.demo.mapper.GaussCompleteExamplesMapper">
+<mapper namespace="com.example.demo.mapper.ForInSelectMapper">
 
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:75-185 — pkg_for_in_select.proc_sync_employee_bonus.insertBatchLog -->
+    <insert id="insertBatchLog">
+        INSERT INTO batch_log(batch_id, batch_type, start_time, status) VALUES (nextval('seq_batch_log'), 'BONUS_CALC', CURRENT_TIMESTAMP, 'RUNNING') RETURNING batch_id
+    </insert>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:75-185 — pkg_for_in_select.proc_sync_employee_bonus.selectProcSyncEmployeeBonus -->
+    <select id="selectProcSyncEmployeeBonus" resultType="java.util.LinkedHashMap">
+        ( SELECT e.employee_id, e.employee_name, e.department_id, e.salary, e.hire_date, d.department_name, (SELECT coalesce(SUM(bonus_amount), 0) FROM employee_bonus eb WHERE eb.emp_id = e.employee_id AND eb.bonus_year = EXTRACT(YEAR FROM CURRENT_TIMESTAMP) ) AS year_bonus_total FROM employees e JOIN departments d ON e.department_id = d.department_id WHERE e.status = 'ACTIVE' AND e.hire_date &lt;= (CURRENT_TIMESTAMP + (-6 || ' months')::interval) ORDER BY e.department_id, e.salary DESC )
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:75-185 — pkg_for_in_select.proc_sync_employee_bonus.insertBonusLimitLog -->
+    <insert id="insertBonusLimitLog">
+        INSERT INTO bonus_limit_log(log_time, emp_id, limit_reason) VALUES (CURRENT_TIMESTAMP, #{vEmp.employeeId}, 'Bonus capped at annual 20% limit')
+    </insert>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:75-185 — pkg_for_in_select.proc_sync_employee_bonus.insertEmployeeBonus -->
+    <insert id="insertEmployeeBonus">
+        INSERT INTO employee_bonus ( bonus_id, emp_id, bonus_amount, bonus_month, bonus_year, calc_reason, create_time ) VALUES ( nextval('seq_employee_bonus'), #{vEmp.employeeId}, #{vBonusAmt, jdbcType=NUMERIC, javaType=java.math.BigDecimal}, EXTRACT(MONTH FROM CURRENT_TIMESTAMP), EXTRACT(YEAR FROM CURRENT_TIMESTAMP), 'Q' || TO_CHAR(CURRENT_TIMESTAMP, 'Q') || ' performance bonus', CURRENT_TIMESTAMP ) RETURNING bonus_id
+    </insert>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:75-185 — pkg_for_in_select.proc_sync_employee_bonus.updateEmployeeBonus -->
+    <update id="updateEmployeeBonus">
+        UPDATE employee_bonus SET bonus_amount = #{vBonusAmt, jdbcType=NUMERIC, javaType=java.math.BigDecimal}, update_time = CURRENT_TIMESTAMP WHERE emp_id = #{vEmp.employeeId} AND bonus_year = EXTRACT(YEAR FROM CURRENT_TIMESTAMP) AND bonus_month = EXTRACT(MONTH FROM CURRENT_TIMESTAMP)
+    </update>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:75-185 — pkg_for_in_select.proc_sync_employee_bonus.insertErrorLog -->
+    <insert id="insertErrorLog">
+        INSERT INTO error_log(error_time, procedure_name, error_code, error_message, context) VALUES (CURRENT_TIMESTAMP, 'proc_sync_employee_bonus', 0, '', 'EmpID=' || #{vEmp.employeeId})
+    </insert>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:75-185 — pkg_for_in_select.proc_sync_employee_bonus.updateBatchLog -->
+    <update id="updateBatchLog">
+        UPDATE batch_log SET end_time = CURRENT_TIMESTAMP, status = 'SUCCESS', record_count = #{vProcessed, jdbcType=INTEGER, javaType=Integer}, total_amount = #{vTotalBonus, jdbcType=NUMERIC, javaType=java.math.BigDecimal}, message = 'Processed ' || #{vProcessed, jdbcType=INTEGER, javaType=Integer} || ' employees, total bonus: ' || #{vTotalBonus, jdbcType=NUMERIC, javaType=java.math.BigDecimal} WHERE batch_id = #{vLogId, jdbcType=INTEGER, javaType=Integer}
+    </update>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:75-185 — pkg_for_in_select.proc_sync_employee_bonus.updateBatchLog_1 -->
+    <update id="updateBatchLog_1">
+        UPDATE batch_log SET status = 'FAILED', end_time = CURRENT_TIMESTAMP, message = '' WHERE batch_id = #{vLogId, jdbcType=INTEGER, javaType=Integer}
+    </update>
 
 </mapper>

@@ -1,0 +1,212 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.ComplexClearingPkgMapper;
+import java.math.BigDecimal;
+import java.sql.Date;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
+
+@Service
+// Source: {FIXTURES_ROOT}/complex_clearing_pkg.sql
+public class ComplexClearingPkgService {
+    private static final Logger log = LoggerFactory.getLogger(ComplexClearingPkgService.class);
+
+    private final ComplexClearingPkgMapper complexClearingPkgMapper;
+    private static final java.math.BigDecimal cEpsilon = new java.math.BigDecimal("1e-9");
+    private static final Integer cMaxRetry = 3;
+    private static final String constant = "测试Unicode标识符";
+    private static final Throwable eDdlIntercept = null;
+    private static final Throwable eInfiniteLoopGuard = null;
+    private static final Throwable eInsufficientFunds = null;
+    private static final Throwable eJustBecause = null;
+    private static final Throwable eStaleData = null;
+    private static final Throwable eTriggerRecursion = null;
+    private static String gAuditTrail = "";
+    private static String gDdlStack = "";
+    private static final Long gLastTradeId = 0L;
+    private static final Integer gLoopCounter = 0;
+    private static Boolean gMutatingTableGuard = false;
+    private static final Object gPrivateCache = null;
+    private static final Integer gSessionCounter = 0;
+    private static Integer gTriggerDepth = 0;
+    private static final Object _return = null;
+
+    public ComplexClearingPkgService(ComplexClearingPkgMapper complexClearingPkgMapper) {
+        this.complexClearingPkgMapper = complexClearingPkgMapper;
+    }
+
+    public static class TradeRec {
+        public Object base;
+        public java.math.BigDecimal amount;
+        public Object status;
+    }
+
+    // Source: complex_clearing_pkg.私有函数_居然支持$特殊字符# (FUNCTION) — {FIXTURES_ROOT}/complex_clearing_pkg.sql:90-91
+    public java.math.BigDecimal _unnamed(java.math.BigDecimal pInput) {
+        return pInput.multiply((java.math.BigDecimal.valueOf(1).add(cEpsilon)));
+    }
+
+    // Source: complex_clearing_pkg.calc_fee (FUNCTION) — {FIXTURES_ROOT}/complex_clearing_pkg.sql:93-93
+    public java.math.BigDecimal calcFee(java.math.BigDecimal pAmount) {
+        return ((java.math.BigDecimal) this.calcFee(pAmount, 1));
+    }
+
+    // Source: complex_clearing_pkg.calc_fee (FUNCTION) — {FIXTURES_ROOT}/complex_clearing_pkg.sql:95-100
+    public java.math.BigDecimal calcFee(java.math.BigDecimal pAmount, int pVipLevel) {
+        java.math.BigDecimal vRate = java.math.BigDecimal.ZERO;
+        vRate = java.math.BigDecimal.valueOf((pVipLevel == 1 ? 0.0015 : pVipLevel == 2 ? 0.0010 : pVipLevel == 3 ? 0.0005 : 0.0020));
+        return pAmount.multiply(vRate).setScale((int)(2), java.math.RoundingMode.HALF_UP);
+    }
+
+    // Source: complex_clearing_pkg.calc_fee (FUNCTION) — {FIXTURES_ROOT}/complex_clearing_pkg.sql:102-107
+    public java.math.BigDecimal calcFee(java.math.BigDecimal pAmount, java.math.BigDecimal pDiscountRate, boolean pApplyCeil) {
+        java.math.BigDecimal vRaw = java.math.BigDecimal.ZERO;
+        vRaw = pAmount.multiply(pDiscountRate);
+        if (Boolean.TRUE.equals(pApplyCeil)) {
+            return vRaw.setScale(0, java.math.RoundingMode.CEILING);
+        } else {
+            return vRaw;
+        }
+    }
+
+    // Source: complex_clearing_pkg.log_audit_autonomous (PROCEDURE) — {FIXTURES_ROOT}/complex_clearing_pkg.sql:109-116
+    @Transactional
+    public void logAuditAutonomous(String pMsg, String pSeverity) {
+        String __SQLERRM__ = "";
+        int __SQLCODE__ = 0;
+        try {
+            complexClearingPkgMapper.insertAuditLog(pMsg, pSeverity);
+            // COMMIT;
+        } catch (Exception __e1) {
+            __SQLERRM__ = __e1.getMessage();
+            __SQLCODE__ = -1;
+            try { TransactionAspectSupport.currentTransactionStatus().setRollbackOnly(); } catch (Exception _tx) {}
+        }
+    }
+
+    // Source: complex_clearing_pkg.recursive_validate (FUNCTION) — {FIXTURES_ROOT}/complex_clearing_pkg.sql:121-150
+    public String recursiveValidate(long pTradeId, int pDepth) {
+        String vChain = "";
+        Long vParentId = 0L;
+        String vResult = null;
+        if (pDepth > 10) {
+            log.info("e_trigger_recursion");
+        }
+        { var _val = complexClearingPkgMapper.selectTradeRecord(pTradeId, pDepth); if (_val != null) vParentId = (Long) _val; }
+        if (vParentId != null) {
+            vResult = this.recursiveValidate(Long.parseLong(String.valueOf(vParentId)), pDepth + 1);
+            vChain = String.valueOf(String.valueOf(pTradeId).concat(String.valueOf("->"))).concat(String.valueOf(vResult));
+        } else {
+            vChain = String.valueOf(pTradeId).concat(String.valueOf("(root)"));
+        }
+        if ((pDepth == 0 && vChain.length() > 50)) {
+            return String.valueOf("DEEP_CHAIN:").concat(String.valueOf(vChain));
+        }
+        return String.valueOf(vChain);
+    }
+
+    // Source: complex_clearing_pkg.check_cross_table_consistency (FUNCTION) — {FIXTURES_ROOT}/complex_clearing_pkg.sql:155-203
+    public Boolean checkCrossTableConsistency(long pAccountId, int pCheckMode) {
+        java.math.BigDecimal vBalance = java.math.BigDecimal.ZERO;
+        java.math.BigDecimal vDiff = java.math.BigDecimal.ZERO;
+        java.math.BigDecimal vThreshold = java.math.BigDecimal.ZERO;
+        java.math.BigDecimal vTradeSum = java.math.BigDecimal.ZERO;
+        if (gMutatingTableGuard) {
+            this.logAuditAutonomous(String.valueOf("Mutating table guard hit for account ").concat(String.valueOf(pAccountId)), "WARN");
+            return true;
+        }
+        gMutatingTableGuard = true;
+        { var _val = complexClearingPkgMapper.selectAccount(pAccountId, pCheckMode); if (_val != null) vBalance = (java.math.BigDecimal) _val; }
+        { var _val = complexClearingPkgMapper.selectTradeRecord_1(pAccountId, pCheckMode); if (_val != null) vTradeSum = (java.math.BigDecimal) _val; }
+        vDiff = vBalance.subtract(vTradeSum).abs();
+        vThreshold = (pCheckMode == 1 ? cEpsilon : pCheckMode == 2 ? java.math.BigDecimal.valueOf(1.0) : java.math.BigDecimal.valueOf(999999999));
+        if (vDiff.compareTo(vThreshold) > 0) {
+            if (pCheckMode == 3) {
+                this.logAuditAutonomous(String.valueOf(String.valueOf(String.valueOf("Consistency mismatch: account=").concat(String.valueOf(pAccountId))).concat(String.valueOf(" diff="))).concat(String.valueOf(vDiff)), "WARN");
+                return true;
+            } else {
+                return false;
+            }
+        }
+        return true;
+        // UNREACHABLE: gMutatingTableGuard = false;
+    }
+
+    // Source: complex_clearing_pkg.handle_trade_change (PROCEDURE) — {FIXTURES_ROOT}/complex_clearing_pkg.sql:208-375
+    @Transactional
+    public void handleTradeChange(String pOp, Map<String, Object> pOldRec, Map<String, Object> pNewRec, String pTriggerName, AtomicReference<Boolean> oSkipDefault) {
+        // TODO: Auto-generated stub — complex PL/pgSQL pattern requires manual implementation
+    }
+
+    // Source: complex_clearing_pkg.handle_account_change (PROCEDURE) — {FIXTURES_ROOT}/complex_clearing_pkg.sql:380-418
+    @Transactional
+    public void handleAccountChange(String pOp, Map<String, Object> pOldRec, Map<String, Object> pNewRec, boolean pCascade) {
+        java.math.BigDecimal vDelta = java.math.BigDecimal.ZERO;
+        Integer vRelatedCount = 0;
+        if ((gTriggerDepth > 3 && pCascade)) {
+            this.logAuditAutonomous(String.valueOf("Account cascade suppressed at depth ").concat(String.valueOf(gTriggerDepth)), "WARN");
+            return;
+        }
+        if ((java.util.Objects.equals(pOp, "UPDATE") && pNewRec.getOrDefault("accountId", pNewRec.get("account_id")) != null)) {
+            { var _val = complexClearingPkgMapper.selectTradeRecord_2(pOp, pOldRec, pNewRec, pCascade); if (_val != null) vDelta = (java.math.BigDecimal) _val; }
+            if (vDelta.subtract(java.math.BigDecimal.valueOf(((Number) pNewRec.get("balance")).doubleValue())).abs().compareTo(java.math.BigDecimal.valueOf(1.0)) > 0) {
+                complexClearingPkgMapper.updateAccount(pOp, pOldRec, pNewRec, pCascade);
+                { var _val = complexClearingPkgMapper.selectTradeRecord_3(pOp, pOldRec, pNewRec, pCascade); if (_val != null) vRelatedCount = (Integer) _val; }
+                if (vRelatedCount > 0) {
+                    this.logAuditAutonomous(String.valueOf(String.valueOf(String.valueOf(String.valueOf("Account ").concat(String.valueOf(pNewRec.getOrDefault("accountId", pNewRec.get("account_id"))))).concat(String.valueOf(" has "))).concat(String.valueOf(vRelatedCount))).concat(String.valueOf(" disputed trades")), "WARN");
+                }
+            }
+        }
+    }
+
+    // Source: complex_clearing_pkg.handle_ddl_event (PROCEDURE) — {FIXTURES_ROOT}/complex_clearing_pkg.sql:423-450
+    public void handleDdlEvent(String pTag, String pObjectName, String pObjectType, String pCommand) {
+        String __SQLERRM__ = "";
+        int __SQLCODE__ = 0;
+        gDdlStack = String.valueOf(String.valueOf(String.valueOf(String.valueOf(gDdlStack).concat(String.valueOf(String.valueOf((char)(10))))).concat(String.valueOf(pTag))).concat(String.valueOf(":"))).concat(String.valueOf(pObjectName));
+        if (pTag.contains("DROP") && pObjectName.contains("trade")) {
+            log.info("e_ddl_intercept");
+        }
+        this.logAuditAutonomous(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf("DDL executed: ").concat(String.valueOf(pTag))).concat(String.valueOf(" on "))).concat(String.valueOf(pObjectType))).concat(String.valueOf(" "))).concat(String.valueOf(pObjectName)), "INFO");
+        if ((java.util.Objects.equals(pTag, "CREATE TABLE") && !pObjectName.matches("pg..*"))) {
+            try {
+                // SQL: ALTER TABLE ${pObjectName} ADD COLUMN IF NOT EXISTS created_by VARCHAR(50) DEFAULT CURRENT_USER
+                // SQL: ALTER TABLE ${pObjectName} ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            } catch (Exception __e1) {
+                __SQLERRM__ = __e1.getMessage();
+                __SQLCODE__ = -1;
+                this.logAuditAutonomous(String.valueOf(String.valueOf(String.valueOf("Auto-alter failed for ").concat(String.valueOf(pObjectName))).concat(String.valueOf(": "))).concat(String.valueOf(__SQLERRM__)), "WARN");
+            }
+        }
+    }
+
+    // Source: complex_clearing_pkg.run_clearing (PROCEDURE) — {FIXTURES_ROOT}/complex_clearing_pkg.sql:453-463
+    public void runClearing(java.sql.Date pBatchDate, int pParallelDegree, boolean pDryRun, AtomicReference<String> oSummary, AtomicReference<String> oStatus) {
+        if (gTriggerDepth > 0) {
+            this.logAuditAutonomous(String.valueOf("run_clearing called from trigger context at depth ").concat(String.valueOf(gTriggerDepth)), "WARN");
+        }
+        oStatus.set("SUCCESS");
+        oSummary.set("{}");
+    }
+
+    // Source: complex_clearing_pkg.get_suspicious_trades (FUNCTION) — {FIXTURES_ROOT}/complex_clearing_pkg.sql:465-477
+    public Object getSuspiciousTrades(java.math.BigDecimal pThreshold) {
+        java.util.List<Object> vCur = null;
+        /* OPEN vCur FOR SELECT t.*, a.account_name,
+                   (SELECT COUNT(*) FROM trade_record t2 WHERE t2.account_id = t.account_id AND t2.trade_date > t.trade_date - INTERVAL '30 days') as recent_count
+            FROM trade_record t
+            JOIN account a ON t.account_id = a.account_id
+            WHERE t.amount > p_threshold AND t.status IN ('PENDING', 'DISPUTED')
+              AND EXISTS (SELECT 1 FROM audit_log al WHERE al.message LIKE '%' || t.trade_id || '%' AND al.severity = 'WARN' AND al.log_time > CURRENT_TIMESTAMP - INTERVAL '7 days')
+            ORDER BY t.amount DESC — dynamic SQL, not materializable */
+        return vCur;
+    }
+}

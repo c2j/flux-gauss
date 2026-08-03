@@ -12,27 +12,7 @@ const FIXTURES_REL: &str = "../../tests/regress/fixtures";
 const GOLDEN_REL: &str = "../../tests/regress/golden/ru";
 const BASE_PACKAGE: &str = "com.example.demo";
 
-const KNOWN_BROKEN: &[&str] = &[
-    "complex_clearing_pkg.sql",           // crashes ogsql v0.8.33 Python engine (AttributeError)
-    "issue_34_35_dto_naming.sql",         // #34 DTO/Entity gen + #35 mapper naming — Rust engine lacks feature
-    "issue_38_map_put.sql",              // #38 cross-package var assignment — Rust engine lacks feature
-    "issue_39_thread_safety.sql",         // #39 ThreadLocal generation — Rust engine lacks feature
-    "issue_40_string_compare.sql",        // #40 String comparison — Rust engine differs from Python
-    "issue_41_type_system.sql",           // #41 type mapping — Rust engine differs from Python
-    "issue_44_if_elsif_goto.sql",         // #44 IF condition loss — Rust engine GOTO handling differs
-    "issue_45_exception_handling.sql",    // #45 multi-WHEN exception — Rust engine catch generation differs
-    "issue_46_chr_ascii_substr.sql",      // #46 CHR/ASCII/SUBSTR — Rust engine function mapping differs
-    "issue_47_long_parse_string.sql",     // #47 VARCHAR2→Long heuristic — Rust engine type inference differs
-    "issue_48_long_compareto_string.sql", // #48 Long.compareTo(String) — Rust engine coercion differs
-    "issue_49_varchar2_concat.sql",       // #49 VARCHAR2 concat — Rust engine type inference differs
-    "issue_44_if_elsif_goto_2.sql",       // #44 variant — same as above
-    "issue_54_nested_exception.sql",      // #54 nested BEGIN-EXCEPTION — Rust engine nesting differs
-    "issue_60_instr_case_when.sql",       // #60 INSTR/CASE — added after Rust golden baseline; not yet supported
-    "issue_61_outer_exception_brace.sql", // #61 outer EXCEPTION brace — not yet supported in Rust engine
-    "issue_62_substr_helper.sql",         // #62 SUBSTR helper — not yet supported in Rust engine
-    "issue_63_varchar2_return.sql",       // #63 RETURN VARCHAR2 — not yet supported in Rust engine
-    "issue_64_bigdecimal_empty_init.sql", // #64 BigDecimal empty init — not yet supported in Rust engine
-];
+const KNOWN_BROKEN: &[&str] = &[];
 
 const FOUR_FILE_TYPES: &[(&str, FilePathFn)] = &[
     ("Service.java", service_path as FilePathFn),
@@ -153,12 +133,26 @@ fn run_conversion(sql_file: &Path, out_dir: &Path) -> GeneratedFiles {
     );
 
     let mut files = HashMap::new();
-    for (ft, path_fn) in FOUR_FILE_TYPES {
-        let filepath = path_fn(out_dir, &class_name);
-        if filepath.exists() {
-            let content = fs::read_to_string(&filepath)
-                .unwrap_or_else(|_| panic!("Failed to read: {}", filepath.display()));
-            files.insert(ft.to_string(), content);
+    let base = Path::new(out_dir);
+    let pkg_path = BASE_PACKAGE.replace('.', "/");
+    let scan_dirs: [(&str, PathBuf); 4] = [
+        ("Service.java",     base.join("src/main/java").join(&pkg_path).join("service")),
+        ("Mapper.java",      base.join("src/main/java").join(&pkg_path).join("mapper")),
+        ("Mapper.xml",       base.join("src/main/resources/mapper")),
+        ("ServiceTest.java", base.join("src/test/java").join(&pkg_path).join("service")),
+    ];
+    for (ft, dir) in &scan_dirs {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                let name = path.file_name().unwrap().to_string_lossy().to_string();
+                if name.ends_with(ft) {
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        files.insert(ft.to_string(), content);
+                    }
+                    break;
+                }
+            }
         }
     }
 

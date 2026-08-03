@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.Issue34OrderMapper">
+
+    <!-- Source: {FIXTURES_ROOT}/issue_34_35_dto_naming.sql:71-114 — pkg_issue34_order.proc_create_order.selectTIssue34Order -->
+    <select id="selectTIssue34Order" resultType="long">
+        SELECT COALESCE(MAX(order_id), 0) + 1 FROM t_issue34_order
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_34_35_dto_naming.sql:71-114 — pkg_issue34_order.proc_create_order.insertTIssue34Order -->
+    <insert id="insertTIssue34Order">
+        INSERT INTO t_issue34_order ( order_id, customer_name, product_code, quantity, unit_price, total_amount, order_date, status, created_by, created_at ) VALUES ( #{vOrderId, jdbcType=BIGINT, javaType=Long}, #{pCustomerName, jdbcType=VARCHAR, javaType=String}, #{pProductCode, jdbcType=VARCHAR, javaType=String}, #{pQuantity, jdbcType=INTEGER, javaType=Integer}, #{pUnitPrice, jdbcType=NUMERIC, javaType=java.math.BigDecimal}, #{vAmount, jdbcType=NUMERIC, javaType=java.math.BigDecimal}, CURRENT_DATE, 'CREATED', #{pCreatedBy, jdbcType=VARCHAR, javaType=String}, CURRENT_TIMESTAMP )
+    </insert>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_34_35_dto_naming.sql:71-114 — pkg_issue34_order.proc_create_order.insertTIssue34OrderLog -->
+    <insert id="insertTIssue34OrderLog">
+        INSERT INTO t_issue34_order_log (log_id, order_id, action, log_time) VALUES (#{vOrderId, jdbcType=BIGINT, javaType=Long}, #{vOrderId, jdbcType=BIGINT, javaType=Long}, 'CREATE', CURRENT_TIMESTAMP)
+    </insert>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_34_35_dto_naming.sql:117-143 — pkg_issue34_order.proc_query_order_stats.selectTIssue34Order_1 -->
+    <select id="selectTIssue34Order_1" resultType="Object">
+        SELECT COUNT(*) FROM t_issue34_order WHERE status = #{pStatus, jdbcType=VARCHAR, javaType=String}
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_34_35_dto_naming.sql:117-143 — pkg_issue34_order.proc_query_order_stats.selectTIssue34Order_2 -->
+    <select id="selectTIssue34Order_2" resultType="Object">
+        SELECT COALESCE(SUM(total_amount), 0) FROM t_issue34_order WHERE status = #{pStatus, jdbcType=VARCHAR, javaType=String}
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_34_35_dto_naming.sql:117-143 — pkg_issue34_order.proc_query_order_stats.selectTIssue34Order_3 -->
+    <select id="selectTIssue34Order_3" resultType="Object">
+        SELECT COALESCE(AVG(total_amount), 0) FROM t_issue34_order WHERE status = #{pStatus, jdbcType=VARCHAR, javaType=String} AND total_amount &gt;= #{pMinAmount, jdbcType=NUMERIC, javaType=java.math.BigDecimal}
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_34_35_dto_naming.sql:146-175 — pkg_issue34_order.proc_update_order.selectTIssue34Order_4 -->
+    <select id="selectTIssue34Order_4" resultType="Object">
+        SELECT status FROM t_issue34_order WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_34_35_dto_naming.sql:146-175 — pkg_issue34_order.proc_update_order.updateTIssue34Order -->
+    <update id="updateTIssue34Order">
+        UPDATE t_issue34_order SET status = #{pNewStatus, jdbcType=VARCHAR, javaType=String} WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
+    </update>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_34_35_dto_naming.sql:146-175 — pkg_issue34_order.proc_update_order.selectTIssue34Order_5 -->
+    <select id="selectTIssue34Order_5" resultType="Object">
+        SELECT COUNT(*) FROM t_issue34_order WHERE order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long} AND status = #{pNewStatus, jdbcType=VARCHAR, javaType=String}
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_34_35_dto_naming.sql:146-175 — pkg_issue34_order.proc_update_order.insertTIssue34OrderLog_1 -->
+    <insert id="insertTIssue34OrderLog_1">
+        INSERT INTO t_issue34_order_log (log_id, order_id, action, old_status, new_status, log_time) VALUES (#{pOrderId, jdbcType=BIGINT, javaType=Long}, #{pOrderId, jdbcType=BIGINT, javaType=Long}, 'STATUS_CHANGE', #{pOldStatus, jdbcType=VARCHAR, javaType=String}, #{pNewStatus, jdbcType=VARCHAR, javaType=String}, CURRENT_TIMESTAMP)
+    </insert>
+
+</mapper>

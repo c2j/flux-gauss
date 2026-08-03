@@ -1,0 +1,74 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue48CompareMapper;
+import java.math.BigDecimal;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_48_long_compareto_string.sql
+public class Issue48CompareService {
+    private static final Logger log = LoggerFactory.getLogger(Issue48CompareService.class);
+
+    private final Issue48CompareMapper issue48CompareMapper;
+
+    public Issue48CompareService(Issue48CompareMapper issue48CompareMapper) {
+        this.issue48CompareMapper = issue48CompareMapper;
+    }
+
+    // Source: pkg_issue48_compare.proc_check_pro_id (PROCEDURE) — {FIXTURES_ROOT}/issue_48_long_compareto_string.sql:51-75
+    public void procCheckProId(long pProId, AtomicReference<String> pResult) {
+        Integer vCount = 0;
+        Long vProId = 0L;
+        vProId = ((Number)(pProId)).longValue();
+        if (java.util.Objects.equals(vProId, "9999")) {
+            pResult.set("MATCH_9999");
+        } else if (java.util.Objects.equals(vProId, "350")) {
+            pResult.set("MATCH_350");
+        } else {
+            pResult.set("NO_MATCH");
+        }
+        { var _val = issue48CompareMapper.selectDual(pProId); if (_val != null) vCount = (Integer) _val; }
+    }
+
+    // Source: pkg_issue48_compare.proc_check_count (PROCEDURE) — {FIXTURES_ROOT}/issue_48_long_compareto_string.sql:80-95
+    public void procCheckCount(long pCount, AtomicReference<String> pLabel) {
+        if (pCount == 0) {
+            pLabel.set("ZERO");
+        } else if (pCount == 100) {
+            pLabel.set("HUNDRED");
+        } else if (pCount > 1000) {
+            pLabel.set("LARGE");
+        } else {
+            pLabel.set("OTHER");
+        }
+    }
+
+    // Source: pkg_issue48_compare.proc_check_status (PROCEDURE) — {FIXTURES_ROOT}/issue_48_long_compareto_string.sql:100-116
+    public void procCheckStatus(String pStatus, AtomicReference<Integer> pCode) {
+        if (java.util.Objects.equals(pStatus, "0")) {
+            pCode.set(0);
+        } else if (java.util.Objects.equals(pStatus, "1")) {
+            pCode.set(1);
+        } else if (java.util.Objects.equals(pStatus, "2")) {
+            pCode.set(2);
+        } else {
+            pCode.set((-1));
+        }
+    }
+
+    // Source: pkg_issue48_compare.proc_compare_level (PROCEDURE) — {FIXTURES_ROOT}/issue_48_long_compareto_string.sql:122-135
+    public void procCompareLevel(java.math.BigDecimal pLevel, String pThreshold, AtomicReference<String> pResult) {
+        if (String.valueOf(pLevel).compareTo(pThreshold) >= 0) {
+            pResult.set("ABOVE");
+        } else if (pLevel.compareTo(java.math.BigDecimal.valueOf(0)) > 0) {
+            pResult.set("POSITIVE");
+        } else {
+            pResult.set("ZERO_OR_NEGATIVE");
+        }
+    }
+}

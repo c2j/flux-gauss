@@ -1,0 +1,52 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue47TypesMapper;
+import com.example.demo.service.Issue47TypesService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_47_long_parse_string.sql
+class Issue47TypesServiceTest {
+
+    @Mock
+    private Issue47TypesMapper issue47TypesMapper;
+
+    @InjectMocks
+    private Issue47TypesService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procSetStepNo_success() {
+        Integer pSeq = 1;
+        Integer pSubSeq = 1;
+        AtomicReference<String> pStepNoRef = new AtomicReference<>(null);
+        service.procSetStepNo(pSeq, pSubSeq, pStepNoRef);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procProcessId_success() {
+        String pType = "test_pType";
+        AtomicReference<String> pProIdRef = new AtomicReference<>(null);
+        service.procProcessId(pType, pProIdRef);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procCorrectVarchar_success() {
+        String pLabel = "test_pLabel";
+        AtomicReference<String> pValueRef = new AtomicReference<>(null);
+        service.procCorrectVarchar(pLabel, pValueRef);
+    }
+}

@@ -1,0 +1,32 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue64BdInitMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_64_bigdecimal_empty_init.sql
+public class Issue64BdInitService {
+    private static final Logger log = LoggerFactory.getLogger(Issue64BdInitService.class);
+
+    private final Issue64BdInitMapper issue64BdInitMapper;
+
+    public Issue64BdInitService(Issue64BdInitMapper issue64BdInitMapper) {
+        this.issue64BdInitMapper = issue64BdInitMapper;
+    }
+
+    // Source: pkg_issue64_bd_init.proc_empty_string_defaults (PROCEDURE) — {FIXTURES_ROOT}/issue_64_bigdecimal_empty_init.sql:22-37
+    public void procEmptyStringDefaults(String pId, AtomicReference<String> pResult) {
+        String vOpenfundMode = "";
+        String vOpenfundPriceFlag = "";
+        String vPgPrice = "";
+        String vPriceType = "";
+        vOpenfundMode = "M";
+        vPriceType = "T";
+        pResult.set(String.valueOf(String.valueOf(String.valueOf(String.valueOf(vOpenfundMode).concat(String.valueOf(vOpenfundPriceFlag))).concat(String.valueOf(vPriceType))).concat(String.valueOf(vPgPrice))));
+    }
+}

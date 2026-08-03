@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.Issue54NestedExcMapper">
+
+    <!-- Source: {FIXTURES_ROOT}/issue_54_nested_exception.sql:23-45 — pkg_issue54_nested_exc.proc_nested_block_in_handler.selectTIssue54Data -->
+    <select id="selectTIssue54Data" resultType="string">
+        select data_value FROM t_issue54_data WHERE data_key = 'config'
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_54_nested_exception.sql:23-45 — pkg_issue54_nested_exc.proc_nested_block_in_handler.selectTIssue54Data_1 -->
+    <select id="selectTIssue54Data_1" resultType="string">
+        select data_value FROM t_issue54_data WHERE data_key = 'fallback'
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_54_nested_exception.sql:48-74 — pkg_issue54_nested_exc.proc_three_level_nested.selectTIssue54Data_2 -->
+    <select id="selectTIssue54Data_2" resultType="string">
+        select data_value FROM t_issue54_data WHERE data_key = 'key2'
+                LIMIT 1
+    </select>
+
+</mapper>

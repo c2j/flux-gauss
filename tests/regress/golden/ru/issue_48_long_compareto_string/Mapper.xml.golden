@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.Issue48CompareMapper">
+
+    <!-- Source: {FIXTURES_ROOT}/issue_48_long_compareto_string.sql:51-75 — pkg_issue48_compare.proc_check_pro_id.selectDual -->
+    <select id="selectDual" parameterType="long" resultType="int">
+        select COUNT(*) FROM DUAL
+                LIMIT 1
+    </select>
+
+</mapper>

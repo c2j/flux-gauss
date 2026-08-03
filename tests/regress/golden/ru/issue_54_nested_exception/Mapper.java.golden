@@ -1,0 +1,16 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue54NestedExcMapper {
+
+    // {FIXTURES_ROOT}/issue_54_nested_exception.sql:23 — pkg_issue54_nested_exc.proc_nested_block_in_handler
+    String selectTIssue54Data();
+    // {FIXTURES_ROOT}/issue_54_nested_exception.sql:23 — pkg_issue54_nested_exc.proc_nested_block_in_handler
+    String selectTIssue54Data_1();
+        // [DUPLICATE] // {FIXTURES_ROOT}/issue_54_nested_exception.sql:48 — pkg_issue54_nested_exc.proc_three_level_nested
+        // [DUPLICATE] String selectTIssue54Data_1();
+    // {FIXTURES_ROOT}/issue_54_nested_exception.sql:48 — pkg_issue54_nested_exc.proc_three_level_nested
+    String selectTIssue54Data_2();
+}

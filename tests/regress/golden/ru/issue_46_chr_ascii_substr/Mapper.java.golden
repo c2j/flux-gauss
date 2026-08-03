@@ -1,0 +1,9 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue46FunctionsMapper {
+
+    // No direct DML operations for pkg_issue46_functions
+}

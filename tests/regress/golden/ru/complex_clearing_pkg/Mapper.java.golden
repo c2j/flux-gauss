@@ -1,0 +1,26 @@
+package com.example.demo.mapper;
+
+import java.math.BigDecimal;
+import java.util.Map;
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface ComplexClearingPkgMapper {
+
+    // {FIXTURES_ROOT}/complex_clearing_pkg.sql:109 — complex_clearing_pkg.log_audit_autonomous
+    int insertAuditLog(@Param("pMsg") String pMsg, @Param("pSeverity") String pSeverity);
+    // {FIXTURES_ROOT}/complex_clearing_pkg.sql:121 — complex_clearing_pkg.recursive_validate
+    Long selectTradeRecord(@Param("pTradeId") Long pTradeId, @Param("pDepth") Integer pDepth);
+    // {FIXTURES_ROOT}/complex_clearing_pkg.sql:155 — complex_clearing_pkg.check_cross_table_consistency
+    java.math.BigDecimal selectAccount(@Param("pAccountId") Long pAccountId, @Param("pCheckMode") Integer pCheckMode);
+    // {FIXTURES_ROOT}/complex_clearing_pkg.sql:155 — complex_clearing_pkg.check_cross_table_consistency
+    java.math.BigDecimal selectTradeRecord_1(@Param("pAccountId") Long pAccountId, @Param("pCheckMode") Integer pCheckMode);
+    // {FIXTURES_ROOT}/complex_clearing_pkg.sql:208 — complex_clearing_pkg.handle_trade_change
+    int updateTradeRecord(@Param("pOp") String pOp, @Param("pOldRec") Map<String, Object> pOldRec, @Param("pNewRec") Map<String, Object> pNewRec, @Param("pTriggerName") String pTriggerName);
+    // {FIXTURES_ROOT}/complex_clearing_pkg.sql:380 — complex_clearing_pkg.handle_account_change
+    java.math.BigDecimal selectTradeRecord_2(@Param("pOp") String pOp, @Param("pOldRec") Map<String, Object> pOldRec, @Param("pNewRec") Map<String, Object> pNewRec, @Param("pCascade") Boolean pCascade);
+    // {FIXTURES_ROOT}/complex_clearing_pkg.sql:380 — complex_clearing_pkg.handle_account_change
+    int updateAccount(@Param("pOp") String pOp, @Param("pOldRec") Map<String, Object> pOldRec, @Param("pNewRec") Map<String, Object> pNewRec, @Param("pCascade") Boolean pCascade);
+    // {FIXTURES_ROOT}/complex_clearing_pkg.sql:380 — complex_clearing_pkg.handle_account_change
+    Integer selectTradeRecord_3(@Param("pOp") String pOp, @Param("pOldRec") Map<String, Object> pOldRec, @Param("pNewRec") Map<String, Object> pNewRec, @Param("pCascade") Boolean pCascade);
+}

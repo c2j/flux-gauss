@@ -1,0 +1,69 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue46FunctionsMapper;
+import com.example.demo.service.Issue46FunctionsService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_46_chr_ascii_substr.sql
+class Issue46FunctionsServiceTest {
+
+    @Mock
+    private Issue46FunctionsMapper issue46FunctionsMapper;
+
+    @InjectMocks
+    private Issue46FunctionsService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procConvertTradeCode_success() {
+        String pZqdm = "test_pZqdm";
+        AtomicReference<String> pResultRef = new AtomicReference<>(null);
+        service.procConvertTradeCode(pZqdm, pResultRef);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procGetAscii_success() {
+        String pInput = "test_pInput";
+        AtomicReference<Integer> pCodeRef = new AtomicReference<>(0);
+        service.procGetAscii(pInput, pCodeRef);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procGetChar_success() {
+        Integer pAsciiCode = 1;
+        AtomicReference<String> pCharRef = new AtomicReference<>(null);
+        service.procGetChar(pAsciiCode, pCharRef);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procSubstrMixed_success() {
+        String pText = "test_pText";
+        String pStart = "test_pStart";
+        String pLen = "test_pLen";
+        AtomicReference<String> pResultRef = new AtomicReference<>(null);
+        service.procSubstrMixed(pText, pStart, pLen, pResultRef);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procRangeMapping_success() {
+        String pInput = "test_pInput";
+        AtomicReference<String> pResultRef = new AtomicReference<>(null);
+        service.procRangeMapping(pInput, pResultRef);
+    }
+}
