@@ -994,6 +994,7 @@ class ProcedureInfo:
     source_end_line: int = 0       # Procedure end line in original file
     leading_comments: list = field(default_factory=list)   # List[CommentInfo] — comments before procedure declaration
     inline_comments: list = field(default_factory=list)    # List[CommentInfo] — comments inside procedure body
+    _raw_return_types: list = field(default_factory=list)  # Pre-coercion return expr types for reconciliation
     _dynamic_sql_build_stmts: dict = field(default_factory=dict)  # {stmt_body_idx: var_name}
     local_var_source_lines: dict = field(default_factory=dict)  # var_name -> SQL source line number
 
@@ -4575,6 +4576,8 @@ def _process_return(return_data: dict, proc: ProcedureInfo, all_packages: dict =
     expr = return_data.get("expression")
     if expr:
         java_expr = _expr_to_java(expr, proc, all_packages=all_packages)
+        _et = _infer_expr_type(expr, proc)
+        proc._raw_return_types.append(_et)
         if proc.is_function and proc.return_type:
             ret_java = sql_type_to_java(proc.return_type)
             if "BigDecimal" in ret_java and java_expr.endswith("d") and not java_expr.startswith("java.math.BigDecimal"):
@@ -4585,9 +4588,6 @@ def _process_return(return_data: dict, proc: ProcedureInfo, all_packages: dict =
                     pass
             if re.search(r'\*/\s*null$', java_expr) and ret_java not in ("Object", "void", ""):
                 java_expr = _type_default(ret_java)
-            # Coerce the return expression to the function's declared type
-            # (e.g. nvl/ternary mixing BigDecimal with a long literal for a Long return).
-            _et = _infer_expr_type(expr, proc)
             if _needs_coercion(_et, ret_java):
                 java_expr = _coerce_type(java_expr, _et, ret_java)
         proc.java_logic_lines.append(f"return {java_expr};")
@@ -12468,11 +12468,8 @@ def _format_comment_for_java(comment) -> str:
 def _reconcile_function_return_type(proc: ProcedureInfo, declared_ret: str):
     """Issue #63: override numeric method return type when body only returns Strings.
 
-    Only triggers when:
-      - declared return is numeric (Long/Integer/BigDecimal/...)
-      - every non-null ``return <expr>;`` in java_logic_lines is a String local,
-        String parameter, string literal, or obvious string concat/valueOf
-    Does NOT trigger for COALESCE/NVL of numerics or mixed returns.
+    Uses _raw_return_types (pre-coercion inferred types) to detect String returns
+    that were coerced to numeric by the return expression coercion.
     """
     if not proc.is_function or not declared_ret:
         return None
@@ -12481,48 +12478,15 @@ def _reconcile_function_return_type(proc: ProcedureInfo, declared_ret: str):
     if not any(n in declared_ret for n in _numeric):
         return None
 
-    _name_to_type = {}
-    for vn, vt in proc.local_vars.items():
-        _name_to_type[snake_to_camel(vn)] = vt
-        _name_to_type[vn] = vt
-    for p in proc.parameters:
-        _name_to_type[p.java_name] = p.java_type
-        _name_to_type[p.name] = p.java_type
-
     string_hits = 0
     non_string_hits = 0
-    for line in proc.java_logic_lines:
-        s = line.strip()
-        m = re.match(r'^return\s+(.+);$', s)
-        if not m:
+    for _et in proc._raw_return_types:
+        if _et is None or _et == "Object":
             continue
-        expr = m.group(1).strip()
-        if expr in ("null", "null /* stub */") or expr.startswith("/*"):
-            continue
-        if expr.startswith('"') or expr.startswith("'"):
+        if _et == "String":
             string_hits += 1
-            continue
-        # Bare identifier or OUT .get()
-        bare = expr
-        gm = re.match(r'^(\w+)\.get\(\)$', expr)
-        if gm:
-            bare = gm.group(1)
-        if re.match(r'^\w+$', bare) and bare in _name_to_type:
-            vt = _name_to_type[bare]
-            if vt == "String":
-                string_hits += 1
-            else:
-                non_string_hits += 1
-            continue
-        if any(tok in expr for tok in ("String.valueOf(", ".concat(", ' + "', '" + ')):
-            # Only count as string if no numeric BigDecimal/Long ops dominate
-            if any(tok in expr for tok in (".add(", ".subtract(", ".multiply(", ".divide(",
-                                            "BigDecimal", "Long.valueOf", "Integer.valueOf")):
-                non_string_hits += 1
-            else:
-                string_hits += 1
-            continue
-        non_string_hits += 1
+        else:
+            non_string_hits += 1
 
     if string_hits > 0 and non_string_hits == 0:
         return "String"

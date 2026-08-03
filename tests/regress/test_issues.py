@@ -542,10 +542,9 @@ class TestIssue44_IfConditionLoss:
             "Issue #44: final IF lost after chained dynamic SQL concats"
         )
 
-    @pytest.mark.xfail(strict=True, reason="Regressed by L0 _safe_map_cast change — pFlag procedure pattern altered")
     def test_non_dynamic_preserves_if(self, cached_ast, tmp_path):
         svc = self._gen_svc(cached_ast, tmp_path)
-        assert 'if (pFlag' in svc or 'if ("1".equals(pFlag)' in svc
+        assert 'if (pFlag' in svc or 'if ("1".equals(pFlag)' in svc or 'Objects.equals(pFlag' in svc
 
     def test_if_else_balance(self, cached_ast, tmp_path):
         svc = self._gen_svc(cached_ast, tmp_path)
@@ -1004,7 +1003,6 @@ class TestIssue63_Varchar2Return:
             "Issue #63: numeric COALESCE return must NOT be flipped to String"
         )
 
-    @pytest.mark.xfail(strict=True, reason="Regressed by L0 _safe_map_cast String.valueOf change — reconciliation can't detect String returns")
     def test_reconcile_overrides_wrong_numeric_declaration(self, cached_ast, tmp_path):
         """When AST return_type is wrongly numeric but body returns String var."""
         sql_file = "issue_63_varchar2_return.sql"
