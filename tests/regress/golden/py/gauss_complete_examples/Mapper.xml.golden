@@ -56,8 +56,8 @@
         update batch_log set end_time = current_date, status = 'SUCCESS', record_count = #{vProcessed, jdbcType=INTEGER, javaType=Integer}, total_amount = #{vTotalBonus, jdbcType=NUMERIC, javaType=java.math.BigDecimal}, message = 'Processed ' || #{vProcessed, jdbcType=INTEGER, javaType=Integer} || ' employees, total bonus: ' || #{vTotalBonus, jdbcType=NUMERIC, javaType=java.math.BigDecimal} where batch_id = #{vLogId, jdbcType=INTEGER, javaType=Integer}
     </update>
 
-    <!-- Source: gauss_complete_examples.sql:227-227 — pkg_open_cursor.proc_get_employee_cursor.selectProcGetEmployeeCursor -->
-    <select id="selectProcGetEmployeeCursor" resultType="java.util.LinkedHashMap">
+    <!-- Source: gauss_complete_examples.sql:227-227 — pkg_open_cursor.proc_get_employee_cursor.selectProcGetEmployeeCursor_1 -->
+    <select id="selectProcGetEmployeeCursor_1" resultType="java.util.LinkedHashMap">
         select
           e.employee_id,
           e.employee_name,
@@ -83,8 +83,8 @@
         insert into audit_log (log_time, operation, sql_text, user_name) values (current_timestamp, 'DYNAMIC_QUERY', #{vSql, jdbcType=VARCHAR, javaType=String}, "user" )
     </insert>
 
-    <!-- Source: gauss_complete_examples.sql:278-278 — pkg_open_cursor.proc_process_dynamic_query.selectProcProcessDynamicQuery_1 -->
-    <select id="selectProcProcessDynamicQuery_1" parameterType="string" resultType="java.util.LinkedHashMap">
+    <!-- Source: gauss_complete_examples.sql:278-278 — pkg_open_cursor.proc_process_dynamic_query.selectProcProcessDynamicQuery_2 -->
+    <select id="selectProcProcessDynamicQuery_2" parameterType="string" resultType="java.util.LinkedHashMap">
         SELECT id, name, amount, status, create_time FROM ${pTableName}
         <where>
             <if test="pWhereClause != null">AND ${pWhereClause}</if>
@@ -117,8 +117,8 @@
         insert into exception_log (exception_time, record_id, exception_type, detail) values (current_timestamp, #{vRecId, jdbcType=INTEGER, javaType=Integer}, 'UNKNOWN_STATUS', #{vRecStatus, jdbcType=VARCHAR, javaType=String})
     </insert>
 
-    <!-- Source: gauss_complete_examples.sql:321-321 — pkg_open_cursor.proc_process_dynamic_query.insertErrorLog -->
-    <insert id="insertErrorLog">
+    <!-- Source: gauss_complete_examples.sql:321-321 — pkg_open_cursor.proc_process_dynamic_query.insertErrorLog_1 -->
+    <insert id="insertErrorLog_1">
         insert into error_log (error_time, context, sqlcode, sqlerrm) values (current_timestamp, 'Record ID=' || #{vRecId, jdbcType=INTEGER, javaType=Integer}, SQLCODE, SQLERRM)
     </insert>
 
@@ -127,8 +127,8 @@
         insert into performance_log (log_time, procedure_name, rows_processed, elapsed_ms) values (current_timestamp, 'proc_process_dynamic_query', #{vRowCount, jdbcType=INTEGER, javaType=Integer}, extract(EPOCH from (current_timestamp - #{vStartTime, jdbcType=TIMESTAMP, javaType=java.sql.Timestamp})) * 1000)
     </insert>
 
-    <!-- Source: gauss_complete_examples.sql:354-354 — pkg_open_cursor.proc_paginated_query.selectProcPaginatedQuery_2 -->
-    <select id="selectProcPaginatedQuery_2" resultType="java.util.LinkedHashMap">
+    <!-- Source: gauss_complete_examples.sql:354-354 — pkg_open_cursor.proc_paginated_query.selectProcPaginatedQuery_3 -->
+    <select id="selectProcPaginatedQuery_3" resultType="java.util.LinkedHashMap">
         select
           t.*,
           COUNT(*) over () AS total_rows
@@ -148,8 +148,8 @@
         order by rn
     </select>
 
-    <!-- Source: gauss_complete_examples.sql:372-372 — pkg_open_cursor.proc_paginated_query.selectProcPaginatedQuery_3 -->
-    <select id="selectProcPaginatedQuery_3" parameterType="integer" resultType="java.util.LinkedHashMap">
+    <!-- Source: gauss_complete_examples.sql:372-372 — pkg_open_cursor.proc_paginated_query.selectProcPaginatedQuery_4 -->
+    <select id="selectProcPaginatedQuery_4" parameterType="integer" resultType="java.util.LinkedHashMap">
         select
           COUNT(*) AS total_count,
           COUNT(distinct dept_id) AS dept_count,
@@ -160,13 +160,13 @@
         where status = 'ACTIVE'
     </select>
 
-    <!-- Source: gauss_complete_examples.sql:431-431 — pkg_dynamic_for_loop.proc_dynamic_for_processing.insertAuditLog -->
-    <insert id="insertAuditLog">
+    <!-- Source: gauss_complete_examples.sql:431-431 — pkg_dynamic_for_loop.proc_dynamic_for_processing.insertAuditLog_1 -->
+    <insert id="insertAuditLog_1">
         insert into audit_log (log_time, operation, sql_text, params) values (current_timestamp, 'DYNAMIC_FOR_LOOP', #{vSql, jdbcType=VARCHAR, javaType=String}, 'table=' || #{pTableName, jdbcType=VARCHAR, javaType=String} || ',type=' || #{pProcessType, jdbcType=VARCHAR, javaType=String})
     </insert>
 
-    <!-- Source: gauss_complete_examples.sql:435-435 — pkg_dynamic_for_loop.proc_dynamic_for_processing.selectProcDynamicForProcessing -->
-    <select id="selectProcDynamicForProcessing" parameterType="string" resultType="java.util.LinkedHashMap">
+    <!-- Source: gauss_complete_examples.sql:435-435 — pkg_dynamic_for_loop.proc_dynamic_for_processing.selectProcDynamicForProcessing_5 -->
+    <select id="selectProcDynamicForProcessing_5" parameterType="string" resultType="java.util.LinkedHashMap">
         SELECT /* FunctionCall:nvl */ FROM ${pTableName}
         <where>
             <if test="pWhereClause != null">AND ${pWhereClause}</if>
@@ -174,13 +174,13 @@
         <if test="pOrderBy != null">ORDER BY ${pOrderBy}</if>
     </select>
 
-    <!-- Source: gauss_complete_examples.sql:480-480 — pkg_dynamic_for_loop.proc_dynamic_for_processing.insertPerformanceLog -->
-    <insert id="insertPerformanceLog">
+    <!-- Source: gauss_complete_examples.sql:480-480 — pkg_dynamic_for_loop.proc_dynamic_for_processing.insertPerformanceLog_1 -->
+    <insert id="insertPerformanceLog_1">
         insert into performance_log (log_time, operation, rows_affected, elapsed_ms) values (current_timestamp, 'dynamic_for_' || #{pProcessType, jdbcType=VARCHAR, javaType=String}, #{vRowCount, jdbcType=INTEGER, javaType=Integer}, extract(EPOCH from (current_timestamp - #{vStartTime, jdbcType=TIMESTAMP, javaType=java.sql.Timestamp})) * 1000)
     </insert>
 
-    <!-- Source: gauss_complete_examples.sql:584-584 — pkg_cursor_advanced.proc_cursor_dynamic_using.selectProcCursorDynamicUsing -->
-    <select id="selectProcCursorDynamicUsing" resultType="java.util.LinkedHashMap">
+    <!-- Source: gauss_complete_examples.sql:584-584 — pkg_cursor_advanced.proc_cursor_dynamic_using.selectProcCursorDynamicUsing_6 -->
+    <select id="selectProcCursorDynamicUsing_6" resultType="java.util.LinkedHashMap">
         SELECT
                             t.id,
                             t.name,
@@ -200,8 +200,8 @@
         <if test="true">:${i}</if>
     </select>
 
-    <!-- Source: gauss_complete_examples.sql:586-586 — pkg_cursor_advanced.proc_cursor_dynamic_using.selectProcCursorDynamicUsing_1 -->
-    <select id="selectProcCursorDynamicUsing_1" resultType="java.util.LinkedHashMap">
+    <!-- Source: gauss_complete_examples.sql:586-586 — pkg_cursor_advanced.proc_cursor_dynamic_using.selectProcCursorDynamicUsing_7 -->
+    <select id="selectProcCursorDynamicUsing_7" resultType="java.util.LinkedHashMap">
         SELECT
                             t.id,
                             t.name,
@@ -221,8 +221,8 @@
         <if test="true">:${i}</if>
     </select>
 
-    <!-- Source: gauss_complete_examples.sql:588-588 — pkg_cursor_advanced.proc_cursor_dynamic_using.selectProcCursorDynamicUsing_2 -->
-    <select id="selectProcCursorDynamicUsing_2" resultType="java.util.LinkedHashMap">
+    <!-- Source: gauss_complete_examples.sql:588-588 — pkg_cursor_advanced.proc_cursor_dynamic_using.selectProcCursorDynamicUsing_8 -->
+    <select id="selectProcCursorDynamicUsing_8" resultType="java.util.LinkedHashMap">
         SELECT
                             t.id,
                             t.name,
@@ -242,8 +242,8 @@
         <if test="true">:${i}</if>
     </select>
 
-    <!-- Source: gauss_complete_examples.sql:591-591 — pkg_cursor_advanced.proc_cursor_dynamic_using.selectProcCursorDynamicUsing_3 -->
-    <select id="selectProcCursorDynamicUsing_3" resultType="java.util.LinkedHashMap">
+    <!-- Source: gauss_complete_examples.sql:591-591 — pkg_cursor_advanced.proc_cursor_dynamic_using.selectProcCursorDynamicUsing_9 -->
+    <select id="selectProcCursorDynamicUsing_9" resultType="java.util.LinkedHashMap">
         SELECT
                             t.id,
                             t.name,
@@ -263,13 +263,13 @@
         <if test="true">:${i}</if>
     </select>
 
-    <!-- Source: gauss_complete_examples.sql:594-594 — pkg_cursor_advanced.proc_cursor_dynamic_using.insertAuditLog -->
-    <insert id="insertAuditLog">
+    <!-- Source: gauss_complete_examples.sql:594-594 — pkg_cursor_advanced.proc_cursor_dynamic_using.insertAuditLog_2 -->
+    <insert id="insertAuditLog_2">
         insert into audit_log (log_time, operation, sql_text, bind_params) values (current_timestamp, 'CURSOR_DYNAMIC_ USING', #{vSql, jdbcType=VARCHAR, javaType=String}, 'status=' || #{pStatusList, jdbcType=VARCHAR, javaType=String} || ',min=' || #{pMinAmount, jdbcType=NUMERIC, javaType=java.math.BigDecimal} || ',date=' || #{pStartDate, jdbcType=DATE, javaType=java.sql.Date})
     </insert>
 
-    <!-- Source: gauss_complete_examples.sql:621-621 — pkg_cursor_advanced.func_get_order_cursor.selectFuncGetOrderCursor_4 -->
-    <select id="selectFuncGetOrderCursor_4" resultType="java.util.LinkedHashMap">
+    <!-- Source: gauss_complete_examples.sql:621-621 — pkg_cursor_advanced.func_get_order_cursor.selectFuncGetOrderCursor_10 -->
+    <select id="selectFuncGetOrderCursor_10" resultType="java.util.LinkedHashMap">
         select
           o.order_id,
           c.customer_name,
@@ -287,8 +287,8 @@
         order by total_amount desc
     </select>
 
-    <!-- Source: gauss_complete_examples.sql:631-631 — pkg_cursor_advanced.proc_multi_cursor_return.selectProcMultiCursorReturn_5 -->
-    <select id="selectProcMultiCursorReturn_5" parameterType="integer" resultType="java.util.LinkedHashMap">
+    <!-- Source: gauss_complete_examples.sql:631-631 — pkg_cursor_advanced.proc_multi_cursor_return.selectProcMultiCursorReturn_11 -->
+    <select id="selectProcMultiCursorReturn_11" parameterType="integer" resultType="java.util.LinkedHashMap">
         select
           q.*,
           ROW_NUMBER() over (order by q.priority desc, q.create_time) AS rn
@@ -297,8 +297,8 @@
         order by q.priority desc
     </select>
 
-    <!-- Source: gauss_complete_examples.sql:638-638 — pkg_cursor_advanced.proc_multi_cursor_return.selectProcMultiCursorReturn_6 -->
-    <select id="selectProcMultiCursorReturn_6" parameterType="integer" resultType="java.util.LinkedHashMap">
+    <!-- Source: gauss_complete_examples.sql:638-638 — pkg_cursor_advanced.proc_multi_cursor_return.selectProcMultiCursorReturn_12 -->
+    <select id="selectProcMultiCursorReturn_12" parameterType="integer" resultType="java.util.LinkedHashMap">
         select
           COUNT(*) AS total_rows,
           MIN(create_time) AS earliest,
@@ -311,22 +311,22 @@
         group by query_params
     </select>
 
-    <!-- Source: gauss_complete_examples.sql:669-669 — pkg_cursor_advanced.proc_paginate_with_using.selectProcPaginateWithUsing_7 -->
-    <select id="selectProcPaginateWithUsing_7" resultType="java.util.LinkedHashMap">
+    <!-- Source: gauss_complete_examples.sql:669-669 — pkg_cursor_advanced.proc_paginate_with_using.selectProcPaginateWithUsing_13 -->
+    <select id="selectProcPaginateWithUsing_13" resultType="java.util.LinkedHashMap">
         select *
         from ${pBaseSql} AS t
         limit #{pPageSize, jdbcType=INTEGER, javaType=Integer}
         offset #{vOffset, jdbcType=INTEGER, javaType=Integer}
     </select>
 
-    <!-- Source: gauss_complete_examples.sql:670-670 — pkg_cursor_advanced.proc_paginate_with_using.selectProcPaginateWithUsing_8 -->
-    <select id="selectProcPaginateWithUsing_8" resultType="java.util.LinkedHashMap">
+    <!-- Source: gauss_complete_examples.sql:670-670 — pkg_cursor_advanced.proc_paginate_with_using.selectProcPaginateWithUsing_14 -->
+    <select id="selectProcPaginateWithUsing_14" resultType="java.util.LinkedHashMap">
         select COUNT(*)
         from ${pBaseSql} AS t
     </select>
 
-    <!-- Source: gauss_complete_examples.sql:709-709 — pkg_cursor_lifecycle.proc_get_raw_cursor.selectProcGetRawCursor -->
-    <select id="selectProcGetRawCursor" parameterType="integer" resultType="java.util.LinkedHashMap">
+    <!-- Source: gauss_complete_examples.sql:709-709 — pkg_cursor_lifecycle.proc_get_raw_cursor.selectProcGetRawCursor_15 -->
+    <select id="selectProcGetRawCursor_15" parameterType="integer" resultType="java.util.LinkedHashMap">
         select
           emp_id AS employee_id,
           emp_name AS employee_name,
@@ -339,8 +339,8 @@
         order by salary desc
     </select>
 
-    <!-- Source: gauss_complete_examples.sql:728-728 — pkg_cursor_lifecycle.proc_enhance_cursor.updateProcEnhanceCursor -->
-    <update id="updateProcEnhanceCursor">
+    <!-- Source: gauss_complete_examples.sql:728-728 — pkg_cursor_lifecycle.proc_enhance_cursor.updateProcEnhanceCursor_2 -->
+    <update id="updateProcEnhanceCursor_2">
         create table ${vTemp} (employee_id INTEGER, employee_name varchar2(100), salary NUMERIC(18, 2), department_id INTEGER, hire_date DATE, years_of_service NUMERIC(5, 2), salary_level varchar2(20), bonus_eligible INTEGER)
     </update>
 
@@ -349,8 +349,8 @@
         insert into ${vTemp} values (#{vId, jdbcType=INTEGER, javaType=Integer}, #{vName, jdbcType=VARCHAR, javaType=String}, #{vSalary, jdbcType=NUMERIC, javaType=java.math.BigDecimal}, #{vDeptId, jdbcType=INTEGER, javaType=Integer}, #{vHireDate, jdbcType=DATE, javaType=java.sql.Date}, extract(year from current_date) - extract(year from #{vHireDate, jdbcType=DATE, javaType=java.sql.Date}), case when #{vSalary, jdbcType=NUMERIC, javaType=java.math.BigDecimal} &gt; 80000 then 'SENIOR' else 'JUNIOR' end, case when extract(year from current_date) - extract(year from #{vHireDate, jdbcType=DATE, javaType=java.sql.Date}) &gt;= 2 then 1 else 0 end)
     </insert>
 
-    <!-- Source: gauss_complete_examples.sql:748-748 — pkg_cursor_lifecycle.proc_enhance_cursor.selectProcEnhanceCursor_1 -->
-    <select id="selectProcEnhanceCursor_1" resultType="java.util.LinkedHashMap">
+    <!-- Source: gauss_complete_examples.sql:748-748 — pkg_cursor_lifecycle.proc_enhance_cursor.selectProcEnhanceCursor_16 -->
+    <select id="selectProcEnhanceCursor_16" resultType="java.util.LinkedHashMap">
         'SELECT * FROM ' || #{vTemp, jdbcType=VARCHAR, javaType=String} || ' ORDER BY salary DESC'
     </select>
 

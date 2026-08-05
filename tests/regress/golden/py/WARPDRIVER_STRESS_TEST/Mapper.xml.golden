@@ -13,8 +13,8 @@
         ${pSql}
     </update>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:162-162 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator.selectSpMainOrchestrator -->
-    <select id="selectSpMainOrchestrator" resultType="java.util.LinkedHashMap">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:162-162 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator.selectSpMainOrchestrator_2 -->
+    <select id="selectSpMainOrchestrator_2" resultType="java.util.LinkedHashMap">
         select
           order_id,
           total_amount,
@@ -26,8 +26,8 @@
         limit g_batch_size
     </select>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:169-169 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator.selectSpMainOrchestrator_1 -->
-    <select id="selectSpMainOrchestrator_1" resultType="java.util.LinkedHashMap">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:169-169 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator.selectSpMainOrchestrator_3 -->
+    <select id="selectSpMainOrchestrator_3" resultType="java.util.LinkedHashMap">
         select
           order_id,
           total_amount,
@@ -37,18 +37,18 @@
         order by create_time
     </select>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:197-197 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator.updateOrders -->
-    <update id="updateOrders">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:197-197 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator.updateOrders_1 -->
+    <update id="updateOrders_1">
         update orders set status = 'PROCESSING', process_time = current_timestamp where order_id = #{vRec.order_id}
     </update>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:256-256 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator.insertErrorLog -->
-    <insert id="insertErrorLog">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:256-256 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator.insertErrorLog_1 -->
+    <insert id="insertErrorLog_1">
         insert into error_log (log_id, order_id, err_msg, created_at) values (#{pLogId, jdbcType=BIGINT, javaType=Long}, #{vRec.order_id}, 'NEGATIVE_AMOUNT', current_timestamp)
     </insert>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:267-267 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator.insertOrderItemSnapshot -->
-    <insert id="insertOrderItemSnapshot">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:267-267 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator.insertOrderItemSnapshot_1 -->
+    <insert id="insertOrderItemSnapshot_1">
         insert into order_item_snapshot (log_id, item_data, created_at) values (#{pLogId, jdbcType=BIGINT, javaType=Long}, to_jsonb(#{vItemTab}(#{i, jdbcType=INTEGER, javaType=Integer})), current_timestamp)
     </insert>
 
@@ -65,8 +65,8 @@
                 LIMIT 1
     </select>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:323-323 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master.updateOrders_1 -->
-    <update id="updateOrders_1" parameterType="long">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:323-323 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master.updateOrders_2 -->
+    <update id="updateOrders_2" parameterType="long">
         update orders set version = version + 1, update_time = current_timestamp where order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long} AND version = (select version from orders where order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long})
     </update>
 
@@ -90,8 +90,8 @@
         delete from operation_logs where create_time &lt; #{vCutoff, jdbcType=TIMESTAMP, javaType=java.sql.Timestamp} AND log_id in (select log_id from operation_logs where create_time &lt; #{vCutoff, jdbcType=TIMESTAMP, javaType=java.sql.Timestamp} limit #{vBatch, jdbcType=INTEGER, javaType=Integer})
     </delete>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:414-414 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_skip_logic.selectSpGotoSkipLogic_2 -->
-    <select id="selectSpGotoSkipLogic_2" resultType="java.util.LinkedHashMap">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:414-414 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_skip_logic.selectSpGotoSkipLogic_4 -->
+    <select id="selectSpGotoSkipLogic_4" resultType="java.util.LinkedHashMap">
         select
           region_code,
           COUNT(*) AS cnt,
@@ -112,8 +112,8 @@
                 LIMIT 1
     </select>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:442-442 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.selectSpGotoDeepEscape -->
-    <select id="selectSpGotoDeepEscape" parameterType="long" resultType="java.util.LinkedHashMap">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:442-442 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.selectSpGotoDeepEscape_9 -->
+    <select id="selectSpGotoDeepEscape_9" parameterType="long" resultType="java.util.LinkedHashMap">
         select
           order_id,
           customer_id,
@@ -123,21 +123,21 @@
           AND process_flag = 'N'
     </select>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:442-442 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.selectSpGotoDeepEscape_1 -->
-    <select id="selectSpGotoDeepEscape_1" resultType="java.util.LinkedHashMap">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:442-442 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.selectSpGotoDeepEscape_10 -->
+    <select id="selectSpGotoDeepEscape_10" resultType="java.util.LinkedHashMap">
         select 1
         from black_list
         where customer_id = #{mainRec.customer_id}
           AND active = 'Y'
     </select>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:460-460 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.updateBulkOrders -->
-    <update id="updateBulkOrders">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:460-460 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.updateBulkOrders_4 -->
+    <update id="updateBulkOrders_4">
         update bulk_orders set process_flag = 'BLACKLIST', process_time = current_timestamp where order_id = #{mainRec.order_id}
     </update>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:460-460 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.selectSpGotoDeepEscape_2 -->
-    <select id="selectSpGotoDeepEscape_2" resultType="java.util.LinkedHashMap">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:460-460 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.selectSpGotoDeepEscape_11 -->
+    <select id="selectSpGotoDeepEscape_11" resultType="java.util.LinkedHashMap">
         select
           rule_id,
           threshold
@@ -145,8 +145,8 @@
         where rule_type = #{mainRec.order_type}
     </select>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:472-472 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.selectCustomerRisk -->
-    <select id="selectCustomerRisk" resultType="int">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:472-472 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.selectCustomerRisk_1 -->
+    <select id="selectCustomerRisk_1" resultType="int">
         select risk_score
         from customer_risk
         where customer_id = #{mainRec.customer_id}
@@ -154,13 +154,13 @@
                 LIMIT 1
     </select>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:477-477 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.updateBulkOrders_1 -->
-    <update id="updateBulkOrders_1">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:477-477 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.updateBulkOrders_5 -->
+    <update id="updateBulkOrders_5">
         update bulk_orders set process_flag = 'RISK_REJECT', reject_reason = 'RULE_' || #{riskRec.rule_id} where order_id = #{mainRec.order_id}
     </update>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:477-477 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.selectSpGotoDeepEscape_3 -->
-    <select id="selectSpGotoDeepEscape_3" resultType="java.util.LinkedHashMap">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:477-477 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.selectSpGotoDeepEscape_12 -->
+    <select id="selectSpGotoDeepEscape_12" resultType="java.util.LinkedHashMap">
         select
           product_id,
           required_qty
@@ -168,94 +168,94 @@
         where order_id = #{mainRec.order_id}
     </select>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:494-494 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.selectInventory -->
-    <select id="selectInventory" resultType="int">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:494-494 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.selectInventory_1 -->
+    <select id="selectInventory_1" resultType="int">
         select available_qty
         from inventory
         where product_id = #{stockRec.product_id}
                 LIMIT 1
     </select>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:497-497 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.updateBulkOrders_2 -->
-    <update id="updateBulkOrders_2">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:497-497 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.updateBulkOrders_6 -->
+    <update id="updateBulkOrders_6">
         update bulk_orders set process_flag = 'NO_STOCK', reject_reason = 'PROD_' || #{stockRec.product_id} where order_id = #{mainRec.order_id}
     </update>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:505-505 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.updateBulkOrders_3 -->
-    <update id="updateBulkOrders_3">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:505-505 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape.updateBulkOrders_7 -->
+    <update id="updateBulkOrders_7">
         update bulk_orders set process_flag = 'PASSED', process_time = current_timestamp where order_id = #{mainRec.order_id}
     </update>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:528-528 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders -->
-    <update id="updateOrders">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:528-528 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_15 -->
+    <update id="updateOrders_15">
         update orders set status = 'PENDING', submit_time = current_timestamp where order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
     </update>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:540-540 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_1 -->
-    <update id="updateOrders_1">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:540-540 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_16 -->
+    <update id="updateOrders_16">
         update orders set status = 'PAID', pay_time = current_timestamp where order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
     </update>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:545-545 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_2 -->
-    <update id="updateOrders_2">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:545-545 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_17 -->
+    <update id="updateOrders_17">
         update orders set status = 'CANCELLED', cancel_time = current_timestamp where order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
     </update>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:553-553 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_3 -->
-    <update id="updateOrders_3">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:553-553 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_18 -->
+    <update id="updateOrders_18">
         update orders set retry_count = #{vRetry, jdbcType=INTEGER, javaType=Integer}, last_retry = current_timestamp where order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
     </update>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:557-557 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_4 -->
-    <update id="updateOrders_4">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:557-557 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_19 -->
+    <update id="updateOrders_19">
         update orders set status = 'EXPIRED' where order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
     </update>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:566-566 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_5 -->
-    <update id="updateOrders_5">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:566-566 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_20 -->
+    <update id="updateOrders_20">
         update orders set status = 'SHIPPED', ship_time = current_timestamp where order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
     </update>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:571-571 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_6 -->
-    <update id="updateOrders_6">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:571-571 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_21 -->
+    <update id="updateOrders_21">
         update orders set status = 'REFUNDING', refund_apply_time = current_timestamp where order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
     </update>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:580-580 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_7 -->
-    <update id="updateOrders_7">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:580-580 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_22 -->
+    <update id="updateOrders_22">
         update orders set status = 'COMPLETED', complete_time = current_timestamp where order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
     </update>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:585-585 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_8 -->
-    <update id="updateOrders_8">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:585-585 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_23 -->
+    <update id="updateOrders_23">
         update orders set status = 'REFUNDING', refund_apply_time = current_timestamp where order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
     </update>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:594-594 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_9 -->
-    <update id="updateOrders_9">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:594-594 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_24 -->
+    <update id="updateOrders_24">
         update orders set status = 'REFUNDED', refund_time = current_timestamp where order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
     </update>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:600-600 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_10 -->
-    <update id="updateOrders_10">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:600-600 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_25 -->
+    <update id="updateOrders_25">
         update orders set status = 'PAID', refund_reject_time = current_timestamp where order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
     </update>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:606-606 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_11 -->
-    <update id="updateOrders_11">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:606-606 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.updateOrders_26 -->
+    <update id="updateOrders_26">
         update orders set status = 'PAID', partial_refund_amt = 100 where order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
     </update>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:618-618 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.selectOrders -->
-    <select id="selectOrders" resultType="string">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:618-618 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.selectOrders_2 -->
+    <select id="selectOrders_2" resultType="string">
         select status
         from orders
         where order_id = #{pOrderId, jdbcType=BIGINT, javaType=Long}
                 LIMIT 1
     </select>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:629-629 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.insertStateTransitions -->
-    <insert id="insertStateTransitions">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:629-629 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine.insertStateTransitions_1 -->
+    <insert id="insertStateTransitions_1">
         insert into state_transitions (order_id, event, from_state, to_state, trans_time) values (#{pOrderId, jdbcType=BIGINT, javaType=Long}, #{pEvent, jdbcType=VARCHAR, javaType=String}, 'AUTO', #{vState, jdbcType=VARCHAR, javaType=String}, current_timestamp)
     </insert>
 
@@ -264,8 +264,8 @@
         insert into job_dispatch_log (job_name, task_id, dispatch_time, status) values (#{vJobName, jdbcType=VARCHAR, javaType=String}, #{vTaskId, jdbcType=BIGINT, javaType=Long}, current_timestamp, 'DISPATCHED')
     </insert>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:709-709 — PKG_WARPDRIVER_STRESS_TEST.fn_recursive_tree_cleanup.selectFnRecursiveTreeCleanup -->
-    <select id="selectFnRecursiveTreeCleanup" resultType="java.util.LinkedHashMap">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:709-709 — PKG_WARPDRIVER_STRESS_TEST.fn_recursive_tree_cleanup.selectFnRecursiveTreeCleanup_13 -->
+    <select id="selectFnRecursiveTreeCleanup_13" resultType="java.util.LinkedHashMap">
         select node_id
         from tree_nodes
         where parent_id = #{pParentId, jdbcType=BIGINT, javaType=Long}
@@ -281,8 +281,8 @@
         delete from tree_nodes where node_id = #{vChildId, jdbcType=BIGINT, javaType=Long}
     </delete>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:777-777 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return.selectFnMultiCursorReturn_1 -->
-    <select id="selectFnMultiCursorReturn_1" parameterType="long" resultType="java.util.LinkedHashMap">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:777-777 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return.selectFnMultiCursorReturn_14 -->
+    <select id="selectFnMultiCursorReturn_14" parameterType="long" resultType="java.util.LinkedHashMap">
         select
           order_id,
           total_amount,
@@ -294,8 +294,8 @@
         limit 100
     </select>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:784-784 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return.selectFnMultiCursorReturn_2 -->
-    <select id="selectFnMultiCursorReturn_2" parameterType="long" resultType="java.util.LinkedHashMap">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:784-784 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return.selectFnMultiCursorReturn_15 -->
+    <select id="selectFnMultiCursorReturn_15" parameterType="long" resultType="java.util.LinkedHashMap">
         select
           payment_id,
           pay_amount,
@@ -333,8 +333,8 @@
                 LIMIT 1
     </select>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:818-818 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.updateAccounts -->
-    <update id="updateAccounts">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:818-818 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.updateAccounts_1 -->
+    <update id="updateAccounts_1">
         update accounts set balance = balance - #{pAmount, jdbcType=NUMERIC, javaType=java.math.BigDecimal}, pre_amount = #{pAmount, jdbcType=NUMERIC, javaType=java.math.BigDecimal} where account_id = #{pAccountId, jdbcType=BIGINT, javaType=Long}
     </update>
 
@@ -343,8 +343,8 @@
         insert into account_journal (account_id, dr_amount, cr_amount, remark) values (#{pAccountId, jdbcType=BIGINT, javaType=Long}, #{pAmount, jdbcType=NUMERIC, javaType=java.math.BigDecimal}, 0, 'PRE_DEBIT')
     </insert>
 
-    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:832-832 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.updateAccounts_1 -->
-    <update id="updateAccounts_1">
+    <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:832-832 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell.updateAccounts_2 -->
+    <update id="updateAccounts_2">
         update accounts set frozen_flag = 'Y' where account_id = #{pAccountId, jdbcType=BIGINT, javaType=Long}
     </update>
 

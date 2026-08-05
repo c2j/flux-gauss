@@ -33,55 +33,56 @@ class WarpdriverStressTestServiceTest {
         String pDetail = "test_pDetail";
         when(warpdriverStressTestMapper.insertAuditTrail(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateFnDynamicExecutor(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_1(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateOrders(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertErrorLog(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertOrderItemSnapshot(any(), any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_3(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateOrders_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertErrorLog_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertOrderItemSnapshot_1(any(), any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertDistributedLocks(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.selectOrders(any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.updateOrders_1(any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_2(any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertTransactionLog(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteDistributedLocks(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteOperationLogs(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_4(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectSettlementCount(any(), any(), any())).thenReturn("1");
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_1(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateBulkOrders(any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_2(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectCustomerRisk(any(), any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_1(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_3(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectInventory(any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_2(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateBulkOrders_3(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_1(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_2(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_3(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_4(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_5(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_6(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_7(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_8(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_9(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_10(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_11(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.selectOrders(any(), any())).thenReturn("1");
-        when(warpdriverStressTestMapper.insertStateTransitions(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_9(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_10(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateBulkOrders_4(any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_11(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectCustomerRisk_1(any(), any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_5(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_12(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectInventory_1(any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_6(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateBulkOrders_7(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_15(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_16(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_17(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_18(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_19(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_20(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_21(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_22(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_23(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_24(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_25(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_26(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.selectOrders_2(any(), any())).thenReturn("1");
+        when(warpdriverStressTestMapper.insertStateTransitions_1(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertJobDispatchLog(any(), any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_2(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts_1(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateAccounts_2(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertRiskEvents(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertNotifications(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertSpSavepointHell(any())).thenReturn(1);
@@ -98,55 +99,56 @@ class WarpdriverStressTestServiceTest {
         String pParam2 = "test_pParam2";
         when(warpdriverStressTestMapper.insertAuditTrail(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateFnDynamicExecutor(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_1(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateOrders(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertErrorLog(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertOrderItemSnapshot(any(), any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_3(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateOrders_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertErrorLog_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertOrderItemSnapshot_1(any(), any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertDistributedLocks(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.selectOrders(any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.updateOrders_1(any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_2(any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertTransactionLog(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteDistributedLocks(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteOperationLogs(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_4(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectSettlementCount(any(), any(), any())).thenReturn("1");
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_1(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateBulkOrders(any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_2(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectCustomerRisk(any(), any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_1(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_3(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectInventory(any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_2(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateBulkOrders_3(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_1(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_2(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_3(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_4(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_5(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_6(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_7(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_8(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_9(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_10(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_11(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.selectOrders(any(), any())).thenReturn("1");
-        when(warpdriverStressTestMapper.insertStateTransitions(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_9(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_10(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateBulkOrders_4(any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_11(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectCustomerRisk_1(any(), any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_5(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_12(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectInventory_1(any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_6(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateBulkOrders_7(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_15(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_16(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_17(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_18(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_19(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_20(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_21(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_22(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_23(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_24(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_25(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_26(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.selectOrders_2(any(), any())).thenReturn("1");
+        when(warpdriverStressTestMapper.insertStateTransitions_1(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertJobDispatchLog(any(), any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_2(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts_1(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateAccounts_2(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertRiskEvents(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertNotifications(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertSpSavepointHell(any())).thenReturn(1);
@@ -166,61 +168,62 @@ class WarpdriverStressTestServiceTest {
         AtomicReference<Long> pLogId = new AtomicReference<>(null);
         when(warpdriverStressTestMapper.insertAuditTrail(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateFnDynamicExecutor(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_1(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateOrders(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertErrorLog(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertOrderItemSnapshot(any(), any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_3(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateOrders_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertErrorLog_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertOrderItemSnapshot_1(any(), any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertDistributedLocks(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.selectOrders(any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.updateOrders_1(any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_2(any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertTransactionLog(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteDistributedLocks(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteOperationLogs(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_4(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectSettlementCount(any(), any(), any())).thenReturn("1");
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_1(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateBulkOrders(any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_2(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectCustomerRisk(any(), any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_1(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_3(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectInventory(any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_2(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateBulkOrders_3(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_1(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_2(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_3(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_4(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_5(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_6(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_7(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_8(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_9(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_10(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_11(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.selectOrders(any(), any())).thenReturn("1");
-        when(warpdriverStressTestMapper.insertStateTransitions(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_9(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_10(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateBulkOrders_4(any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_11(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectCustomerRisk_1(any(), any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_5(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_12(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectInventory_1(any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_6(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateBulkOrders_7(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_15(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_16(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_17(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_18(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_19(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_20(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_21(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_22(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_23(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_24(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_25(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_26(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.selectOrders_2(any(), any())).thenReturn("1");
+        when(warpdriverStressTestMapper.insertStateTransitions_1(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertJobDispatchLog(any(), any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_2(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts_1(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateAccounts_2(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertRiskEvents(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertNotifications(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertSpSavepointHell(any())).thenReturn(1);
         when(warpdriverStressTestMapper.selectAccounts_1(any(), any())).thenReturn(null);
         service.spMainOrchestrator(pBizDate, pMode, pTotalAmt, pLogId);
-        verify(warpdriverStressTestMapper, atLeast(0)).updateOrders(any(), any(), any());
+        verify(warpdriverStressTestMapper, atLeast(0)).updateOrders_1(any(), any(), any());
     }
 
     @Test
@@ -230,55 +233,56 @@ class WarpdriverStressTestServiceTest {
         AtomicReference<String> pResult = new AtomicReference<>(null);
         when(warpdriverStressTestMapper.insertAuditTrail(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateFnDynamicExecutor(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_1(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateOrders(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertErrorLog(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertOrderItemSnapshot(any(), any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_3(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateOrders_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertErrorLog_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertOrderItemSnapshot_1(any(), any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertDistributedLocks(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.selectOrders(any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.updateOrders_1(any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_2(any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertTransactionLog(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteDistributedLocks(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteOperationLogs(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_4(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectSettlementCount(any(), any(), any())).thenReturn("1");
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_1(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateBulkOrders(any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_2(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectCustomerRisk(any(), any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_1(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_3(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectInventory(any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_2(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateBulkOrders_3(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_1(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_2(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_3(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_4(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_5(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_6(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_7(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_8(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_9(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_10(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_11(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.selectOrders(any(), any())).thenReturn("1");
-        when(warpdriverStressTestMapper.insertStateTransitions(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_9(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_10(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateBulkOrders_4(any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_11(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectCustomerRisk_1(any(), any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_5(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_12(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectInventory_1(any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_6(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateBulkOrders_7(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_15(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_16(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_17(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_18(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_19(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_20(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_21(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_22(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_23(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_24(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_25(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_26(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.selectOrders_2(any(), any())).thenReturn("1");
+        when(warpdriverStressTestMapper.insertStateTransitions_1(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertJobDispatchLog(any(), any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_2(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts_1(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateAccounts_2(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertRiskEvents(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertNotifications(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertSpSavepointHell(any())).thenReturn(1);
@@ -293,55 +297,56 @@ class WarpdriverStressTestServiceTest {
         AtomicReference<Integer> pDeletedCnt = new AtomicReference<>(null);
         when(warpdriverStressTestMapper.insertAuditTrail(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateFnDynamicExecutor(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_1(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateOrders(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertErrorLog(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertOrderItemSnapshot(any(), any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_3(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateOrders_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertErrorLog_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertOrderItemSnapshot_1(any(), any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertDistributedLocks(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.selectOrders(any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.updateOrders_1(any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_2(any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertTransactionLog(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteDistributedLocks(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteOperationLogs(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_4(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectSettlementCount(any(), any(), any())).thenReturn("1");
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_1(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateBulkOrders(any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_2(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectCustomerRisk(any(), any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_1(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_3(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectInventory(any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_2(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateBulkOrders_3(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_1(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_2(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_3(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_4(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_5(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_6(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_7(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_8(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_9(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_10(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_11(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.selectOrders(any(), any())).thenReturn("1");
-        when(warpdriverStressTestMapper.insertStateTransitions(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_9(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_10(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateBulkOrders_4(any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_11(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectCustomerRisk_1(any(), any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_5(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_12(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectInventory_1(any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_6(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateBulkOrders_7(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_15(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_16(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_17(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_18(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_19(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_20(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_21(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_22(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_23(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_24(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_25(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_26(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.selectOrders_2(any(), any())).thenReturn("1");
+        when(warpdriverStressTestMapper.insertStateTransitions_1(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertJobDispatchLog(any(), any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_2(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts_1(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateAccounts_2(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertRiskEvents(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertNotifications(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertSpSavepointHell(any())).thenReturn(1);
@@ -357,55 +362,56 @@ class WarpdriverStressTestServiceTest {
         AtomicReference<String> pContent = new AtomicReference<>(null);
         when(warpdriverStressTestMapper.insertAuditTrail(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateFnDynamicExecutor(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_1(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateOrders(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertErrorLog(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertOrderItemSnapshot(any(), any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_3(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateOrders_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertErrorLog_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertOrderItemSnapshot_1(any(), any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertDistributedLocks(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.selectOrders(any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.updateOrders_1(any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_2(any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertTransactionLog(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteDistributedLocks(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteOperationLogs(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_4(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectSettlementCount(any(), any(), any())).thenReturn("1");
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_1(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateBulkOrders(any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_2(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectCustomerRisk(any(), any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_1(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_3(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectInventory(any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_2(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateBulkOrders_3(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_1(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_2(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_3(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_4(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_5(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_6(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_7(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_8(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_9(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_10(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_11(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.selectOrders(any(), any())).thenReturn("1");
-        when(warpdriverStressTestMapper.insertStateTransitions(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_9(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_10(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateBulkOrders_4(any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_11(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectCustomerRisk_1(any(), any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_5(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_12(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectInventory_1(any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_6(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateBulkOrders_7(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_15(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_16(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_17(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_18(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_19(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_20(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_21(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_22(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_23(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_24(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_25(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_26(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.selectOrders_2(any(), any())).thenReturn("1");
+        when(warpdriverStressTestMapper.insertStateTransitions_1(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertJobDispatchLog(any(), any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_2(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts_1(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateAccounts_2(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertRiskEvents(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertNotifications(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertSpSavepointHell(any())).thenReturn(1);
@@ -420,61 +426,62 @@ class WarpdriverStressTestServiceTest {
         AtomicReference<Integer> pInvalidCnt = new AtomicReference<>(null);
         when(warpdriverStressTestMapper.insertAuditTrail(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateFnDynamicExecutor(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_1(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateOrders(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertErrorLog(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertOrderItemSnapshot(any(), any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_3(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateOrders_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertErrorLog_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertOrderItemSnapshot_1(any(), any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertDistributedLocks(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.selectOrders(any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.updateOrders_1(any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_2(any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertTransactionLog(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteDistributedLocks(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteOperationLogs(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_4(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectSettlementCount(any(), any(), any())).thenReturn("1");
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_1(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateBulkOrders(any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_2(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectCustomerRisk(any(), any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_1(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_3(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectInventory(any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_2(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateBulkOrders_3(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_1(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_2(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_3(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_4(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_5(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_6(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_7(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_8(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_9(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_10(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_11(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.selectOrders(any(), any())).thenReturn("1");
-        when(warpdriverStressTestMapper.insertStateTransitions(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_9(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_10(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateBulkOrders_4(any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_11(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectCustomerRisk_1(any(), any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_5(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_12(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectInventory_1(any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_6(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateBulkOrders_7(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_15(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_16(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_17(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_18(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_19(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_20(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_21(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_22(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_23(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_24(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_25(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_26(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.selectOrders_2(any(), any())).thenReturn("1");
+        when(warpdriverStressTestMapper.insertStateTransitions_1(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertJobDispatchLog(any(), any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_2(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts_1(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateAccounts_2(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertRiskEvents(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertNotifications(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertSpSavepointHell(any())).thenReturn(1);
         when(warpdriverStressTestMapper.selectAccounts_1(any(), any())).thenReturn(null);
         service.spGotoDeepEscape(pBatchId, pInvalidCnt);
-        verify(warpdriverStressTestMapper, atLeast(0)).updateBulkOrders(any(), any());
+        verify(warpdriverStressTestMapper, atLeast(0)).updateBulkOrders_4(any(), any());
     }
 
     @org.junit.jupiter.api.Disabled("auto-generated mock cannot terminate while loop")
@@ -486,61 +493,62 @@ class WarpdriverStressTestServiceTest {
         AtomicReference<String> pFinalState = new AtomicReference<>(null);
         when(warpdriverStressTestMapper.insertAuditTrail(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateFnDynamicExecutor(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_1(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateOrders(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertErrorLog(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertOrderItemSnapshot(any(), any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_3(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateOrders_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertErrorLog_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertOrderItemSnapshot_1(any(), any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertDistributedLocks(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.selectOrders(any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.updateOrders_1(any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_2(any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertTransactionLog(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteDistributedLocks(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteOperationLogs(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_4(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectSettlementCount(any(), any(), any())).thenReturn("1");
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_1(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateBulkOrders(any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_2(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectCustomerRisk(any(), any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_1(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_3(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectInventory(any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_2(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateBulkOrders_3(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_1(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_2(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_3(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_4(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_5(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_6(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_7(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_8(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_9(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_10(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_11(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.selectOrders(any(), any())).thenReturn("1");
-        when(warpdriverStressTestMapper.insertStateTransitions(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_9(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_10(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateBulkOrders_4(any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_11(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectCustomerRisk_1(any(), any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_5(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_12(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectInventory_1(any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_6(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateBulkOrders_7(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_15(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_16(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_17(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_18(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_19(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_20(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_21(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_22(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_23(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_24(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_25(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_26(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.selectOrders_2(any(), any())).thenReturn("1");
+        when(warpdriverStressTestMapper.insertStateTransitions_1(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertJobDispatchLog(any(), any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_2(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts_1(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateAccounts_2(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertRiskEvents(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertNotifications(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertSpSavepointHell(any())).thenReturn(1);
         when(warpdriverStressTestMapper.selectAccounts_1(any(), any())).thenReturn(null);
         service.spGotoStateMachine(pOrderId, pEvent, pFinalState);
-        verify(warpdriverStressTestMapper, atLeast(0)).updateOrders(any(), any());
+        verify(warpdriverStressTestMapper, atLeast(0)).updateOrders_15(any(), any());
     }
 
     @Test
@@ -550,55 +558,56 @@ class WarpdriverStressTestServiceTest {
         String pJobPrefix = "test_pJobPrefix";
         when(warpdriverStressTestMapper.insertAuditTrail(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateFnDynamicExecutor(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_1(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateOrders(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertErrorLog(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertOrderItemSnapshot(any(), any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_3(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateOrders_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertErrorLog_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertOrderItemSnapshot_1(any(), any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertDistributedLocks(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.selectOrders(any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.updateOrders_1(any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_2(any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertTransactionLog(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteDistributedLocks(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteOperationLogs(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_4(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectSettlementCount(any(), any(), any())).thenReturn("1");
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_1(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateBulkOrders(any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_2(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectCustomerRisk(any(), any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_1(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_3(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectInventory(any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_2(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateBulkOrders_3(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_1(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_2(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_3(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_4(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_5(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_6(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_7(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_8(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_9(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_10(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_11(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.selectOrders(any(), any())).thenReturn("1");
-        when(warpdriverStressTestMapper.insertStateTransitions(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_9(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_10(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateBulkOrders_4(any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_11(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectCustomerRisk_1(any(), any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_5(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_12(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectInventory_1(any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_6(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateBulkOrders_7(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_15(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_16(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_17(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_18(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_19(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_20(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_21(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_22(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_23(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_24(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_25(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_26(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.selectOrders_2(any(), any())).thenReturn("1");
+        when(warpdriverStressTestMapper.insertStateTransitions_1(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertJobDispatchLog(any(), any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_2(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts_1(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateAccounts_2(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertRiskEvents(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertNotifications(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertSpSavepointHell(any())).thenReturn(1);
@@ -615,55 +624,56 @@ class WarpdriverStressTestServiceTest {
         Integer pDepth = 20;
         when(warpdriverStressTestMapper.insertAuditTrail(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateFnDynamicExecutor(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_1(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateOrders(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertErrorLog(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertOrderItemSnapshot(any(), any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_3(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateOrders_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertErrorLog_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertOrderItemSnapshot_1(any(), any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertDistributedLocks(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.selectOrders(any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.updateOrders_1(any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_2(any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertTransactionLog(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteDistributedLocks(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteOperationLogs(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_4(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectSettlementCount(any(), any(), any())).thenReturn("1");
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_1(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateBulkOrders(any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_2(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectCustomerRisk(any(), any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_1(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_3(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectInventory(any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_2(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateBulkOrders_3(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_1(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_2(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_3(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_4(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_5(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_6(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_7(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_8(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_9(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_10(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_11(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.selectOrders(any(), any())).thenReturn("1");
-        when(warpdriverStressTestMapper.insertStateTransitions(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_9(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_10(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateBulkOrders_4(any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_11(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectCustomerRisk_1(any(), any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_5(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_12(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectInventory_1(any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_6(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateBulkOrders_7(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_15(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_16(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_17(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_18(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_19(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_20(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_21(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_22(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_23(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_24(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_25(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_26(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.selectOrders_2(any(), any())).thenReturn("1");
+        when(warpdriverStressTestMapper.insertStateTransitions_1(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertJobDispatchLog(any(), any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_2(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts_1(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateAccounts_2(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertRiskEvents(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertNotifications(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertSpSavepointHell(any())).thenReturn(1);
@@ -680,55 +690,56 @@ class WarpdriverStressTestServiceTest {
         java.math.BigDecimal pDiscount = new java.math.BigDecimal("99.99");
         when(warpdriverStressTestMapper.insertAuditTrail(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateFnDynamicExecutor(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_1(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateOrders(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertErrorLog(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertOrderItemSnapshot(any(), any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_3(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateOrders_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertErrorLog_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertOrderItemSnapshot_1(any(), any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertDistributedLocks(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.selectOrders(any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.updateOrders_1(any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_2(any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertTransactionLog(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteDistributedLocks(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteOperationLogs(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_4(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectSettlementCount(any(), any(), any())).thenReturn("1");
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_1(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateBulkOrders(any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_2(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectCustomerRisk(any(), any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_1(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_3(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectInventory(any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_2(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateBulkOrders_3(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_1(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_2(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_3(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_4(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_5(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_6(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_7(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_8(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_9(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_10(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_11(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.selectOrders(any(), any())).thenReturn("1");
-        when(warpdriverStressTestMapper.insertStateTransitions(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_9(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_10(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateBulkOrders_4(any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_11(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectCustomerRisk_1(any(), any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_5(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_12(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectInventory_1(any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_6(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateBulkOrders_7(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_15(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_16(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_17(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_18(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_19(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_20(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_21(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_22(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_23(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_24(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_25(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_26(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.selectOrders_2(any(), any())).thenReturn("1");
+        when(warpdriverStressTestMapper.insertStateTransitions_1(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertJobDispatchLog(any(), any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_2(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts_1(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateAccounts_2(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertRiskEvents(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertNotifications(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertSpSavepointHell(any())).thenReturn(1);
@@ -745,55 +756,56 @@ class WarpdriverStressTestServiceTest {
         AtomicReference<Map<String, Object>> pCurPayments = new AtomicReference<>(null);
         when(warpdriverStressTestMapper.insertAuditTrail(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateFnDynamicExecutor(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_1(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateOrders(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertErrorLog(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertOrderItemSnapshot(any(), any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_3(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateOrders_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertErrorLog_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertOrderItemSnapshot_1(any(), any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertDistributedLocks(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.selectOrders(any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.updateOrders_1(any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_2(any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertTransactionLog(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteDistributedLocks(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteOperationLogs(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_4(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectSettlementCount(any(), any(), any())).thenReturn("1");
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_1(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateBulkOrders(any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_2(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectCustomerRisk(any(), any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_1(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_3(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectInventory(any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_2(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateBulkOrders_3(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_1(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_2(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_3(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_4(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_5(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_6(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_7(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_8(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_9(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_10(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_11(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.selectOrders(any(), any())).thenReturn("1");
-        when(warpdriverStressTestMapper.insertStateTransitions(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_9(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_10(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateBulkOrders_4(any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_11(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectCustomerRisk_1(any(), any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_5(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_12(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectInventory_1(any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_6(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateBulkOrders_7(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_15(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_16(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_17(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_18(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_19(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_20(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_21(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_22(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_23(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_24(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_25(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_26(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.selectOrders_2(any(), any())).thenReturn("1");
+        when(warpdriverStressTestMapper.insertStateTransitions_1(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertJobDispatchLog(any(), any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_2(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts_1(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateAccounts_2(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertRiskEvents(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertNotifications(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertSpSavepointHell(any())).thenReturn(1);
@@ -810,60 +822,61 @@ class WarpdriverStressTestServiceTest {
         AtomicReference<java.math.BigDecimal> pFinalBal = new AtomicReference<>(null);
         when(warpdriverStressTestMapper.insertAuditTrail(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateFnDynamicExecutor(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_1(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateOrders(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertErrorLog(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.insertOrderItemSnapshot(any(), any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_3(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateOrders_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertErrorLog_1(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertOrderItemSnapshot_1(any(), any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertDistributedLocks(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.selectOrders(any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.updateOrders_1(any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_2(any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertTransactionLog(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteDistributedLocks(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteOperationLogs(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_2(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("region_code", 1); m.put("cnt", 1); m.put("amt", 1); m.put("avg_fee", 1); when(warpdriverStressTestMapper.selectSpGotoSkipLogic_4(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectSettlementCount(any(), any(), any())).thenReturn("1");
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_1(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.updateBulkOrders(any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_2(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectCustomerRisk(any(), any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_1(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_3(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(warpdriverStressTestMapper.selectInventory(any(), any())).thenReturn(999);
-        when(warpdriverStressTestMapper.updateBulkOrders_2(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateBulkOrders_3(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_1(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_2(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_3(any(), any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_4(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_5(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_6(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_7(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_8(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_9(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_10(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.updateOrders_11(any(), any())).thenReturn(1);
-        when(warpdriverStressTestMapper.selectOrders(any(), any())).thenReturn("1");
-        when(warpdriverStressTestMapper.insertStateTransitions(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("customer_id", 1); m.put("order_type", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_9(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("1", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_10(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.updateBulkOrders_4(any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("rule_id", 1); m.put("threshold", 1); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_11(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectCustomerRisk_1(any(), any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_5(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("required_qty", 5); when(warpdriverStressTestMapper.selectSpGotoDeepEscape_12(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(warpdriverStressTestMapper.selectInventory_1(any(), any())).thenReturn(999);
+        when(warpdriverStressTestMapper.updateBulkOrders_6(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateBulkOrders_7(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_15(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_16(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_17(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_18(any(), any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_19(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_20(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_21(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_22(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_23(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_24(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_25(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateOrders_26(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.selectOrders_2(any(), any())).thenReturn("1");
+        when(warpdriverStressTestMapper.insertStateTransitions_1(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertJobDispatchLog(any(), any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_2(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2025-01-01"); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(999);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
-        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateAccounts_1(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.insertAccountJournal(any(), any())).thenReturn(1);
+        when(warpdriverStressTestMapper.updateAccounts_2(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertRiskEvents(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertNotifications(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertSpSavepointHell(any())).thenReturn(1);
         when(warpdriverStressTestMapper.selectAccounts_1(any(), any())).thenReturn(null);
         service.spSavepointHell(pAccountId, pAmount, pFinalBal);
-        verify(warpdriverStressTestMapper, atLeast(0)).updateAccounts(any(), any());
+        verify(warpdriverStressTestMapper, atLeast(0)).updateAccounts_1(any(), any());
     }
 }

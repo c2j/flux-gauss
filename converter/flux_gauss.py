@@ -2374,7 +2374,9 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
 
     # Process body statements
     body_stmts = block.get("body", [])
-    pkg_key = proc.package.lower() if proc.package else "default"
+    # Use single global counter key — one SQL file may contain multiple SQL packages
+    # that all feed into the same Mapper XML. Per-package keys cause duplicate IDs.
+    pkg_key = "_global"
     _ctr_id = id(_DML_COUNTER_BY_PKG)
     _ctr_val_id = id(_DML_COUNTER_BY_PKG.get(pkg_key))
     _has_key = pkg_key in _DML_COUNTER_BY_PKG
@@ -3147,11 +3149,11 @@ def _analyze_and_rewrite_goto(proc: ProcedureInfo, all_packages: dict, dml_count
 
     analysis = GotoAnalysis(labels=labels, gotos=gotos, pattern=pattern, label_stmt_map=label_stmt_map)
 
-    # Clear DML state before regeneration so mapper is generated from the second pass only
+    # Clear proc DML state — rewritten statements will re-populate.
+    # Do NOT reset dml_counter (it is package-level shared across procedures;
+    # resetting it causes duplicate method IDs with other procedures' DMLs).
     proc.dml_statements = []
     proc.service_calls = []
-    for k in list(dml_counter.keys()):
-        dml_counter[k] = 0
 
     if pattern == "A":
         _generate_cleanup_goto(proc, analysis, body_stmts, all_packages, dml_counter)
