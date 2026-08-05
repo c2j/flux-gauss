@@ -14510,10 +14510,16 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
             def _protect_do_blocks(m):
                 _protected.append(m.group(0))
                 return f"__IPROT_{len(_protected) - 1}__"
-            _init_content = re.sub(r'DO\s*\$\$.*?\$\$;', '', _init_content, flags=re.DOTALL | re.IGNORECASE)
+            def _convert_do_to_direct(m):
+                inner = m.group(0)
+                alters = re.findall(r'ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)\s+(.+?);', inner, re.IGNORECASE | re.DOTALL)
+                if alters:
+                    return " ".join(f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {c} {ty};" for t, c, ty in alters)
+                return ""
+            _init_content = re.sub(r'DO\s*\$\$.*?\$\$;', _convert_do_to_direct, _init_content, flags=re.DOTALL | re.IGNORECASE)
             _init_content = re.sub(
-                r'^(\s*ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+.+;)\s*$',
-                lambda m: m.group(1).strip(),
+                r'^(\s*ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+)(?!IF\s+NOT\s+EXISTS)(.+;)\s*$',
+                lambda m: m.group(1).strip() + " IF NOT EXISTS " + m.group(2).strip(),
                 _init_content, flags=re.MULTILINE | re.IGNORECASE
             )
             _init_content = re.sub(
@@ -14527,48 +14533,45 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
         else:
             lines.append(f"-- init_sql not found: {script}")
 
-    for tbl in sorted(_insert_by_table):
-        for ins in _insert_by_table[tbl]:
+    if is_remote:
+        lines.append("-- remote mode: fixture data loaded per-test via itest-fixtures/*.sql")
+    else:
+        for tbl in sorted(_insert_by_table):
+            for ins in _insert_by_table[tbl]:
+                lines.append("")
+                lines.append(f"{ins.rstrip(';')};")
+        _SEED_ID_OFFSET = 8000
+        _seed_inserts = []
+        _other_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped.upper().startswith("INSERT INTO"):
+                _seed_inserts.append(stripped.rstrip(";"))
+            else:
+                _other_lines.append(line)
+        lines = list(_other_lines)
+        for ins in _seed_inserts:
+            def _offset_tuple_ids(m):
+                paren = m.group(1)
+                first_num = m.group(2)
+                rest = m.group(3)
+                try:
+                    return paren + str(int(first_num) + _SEED_ID_OFFSET) + rest
+                except ValueError:
+                    return m.group(0)
+            adjusted = re.sub(r'(\()\s*(\d+)([^)]*\))', _offset_tuple_ids, ins)
             lines.append("")
-            lines.append(f"{ins.rstrip(';')};")
-
-    _SEED_ID_OFFSET = 8000
-    _seed_inserts = []
-    _other_lines = []
-    for line in lines:
-        stripped = line.strip()
-        if stripped.upper().startswith("INSERT INTO"):
-            _seed_inserts.append(stripped.rstrip(";"))
-        else:
-            _other_lines.append(line)
-    lines = list(_other_lines)
-    for ins in _seed_inserts:
-        def _offset_tuple_ids(m):
-            paren = m.group(1)
-            first_num = m.group(2)
-            rest = m.group(3)
-            try:
-                return paren + str(int(first_num) + _SEED_ID_OFFSET) + rest
-            except ValueError:
-                return m.group(0)
-        adjusted = re.sub(r'(\()\s*(\d+)([^)]*\))', _offset_tuple_ids, ins)
+            lines.append(f"{adjusted};")
+        _ALIAS_BACKFILL = [
+            "UPDATE employees SET employee_id = emp_id WHERE employee_id IS NULL;",
+            "UPDATE employees SET department_id = dept_id WHERE department_id IS NULL;",
+            "UPDATE employees SET salary = base_salary WHERE salary IS NULL AND base_salary IS NOT NULL;",
+            "UPDATE departments SET department_id = dept_id WHERE department_id IS NULL;",
+        ]
         lines.append("")
-        lines.append(f"{adjusted};")
-
-    # --- Column-alias backfill: re-run UPDATE SET alias = native AFTER all INSERTs ---
-    # Some INSERTs use native column names (emp_id, dept_id) while generated SQL
-    # references alias columns (employee_id, department_id).  Re-run the backfill
-    # so that rows inserted above also get their alias columns populated.
-    _ALIAS_BACKFILL = [
-        "UPDATE employees SET employee_id = emp_id WHERE employee_id IS NULL;",
-        "UPDATE employees SET department_id = dept_id WHERE department_id IS NULL;",
-        "UPDATE employees SET salary = base_salary WHERE salary IS NULL AND base_salary IS NOT NULL;",
-        "UPDATE departments SET department_id = dept_id WHERE department_id IS NULL;",
-    ]
-    lines.append("")
-    lines.append("-- Column-alias backfill (after all INSERTs)")
-    for _bf in _ALIAS_BACKFILL:
-        lines.append(_bf)
+        lines.append("-- Column-alias backfill (after all INSERTs)")
+        for _bf in _ALIAS_BACKFILL:
+            lines.append(_bf)
 
     content = "\n".join(lines)
     res_dir = base_path / "src/test/resources"
