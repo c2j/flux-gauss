@@ -14249,6 +14249,9 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
                     sequences_needed.add(m.group(1).lower())
 
     lines = []
+    _schema_m = re.search(r'currentSchema=(\w+)', itest_cfg.get("url", ""))
+    if _schema_m:
+        lines.append(f"CREATE SCHEMA IF NOT EXISTS {_schema_m.group(1)};")
     for seq in sorted(sequences_needed):
         lines.append(f'DROP SEQUENCE IF EXISTS {seq} CASCADE;')
     for seq in sorted(sequences_needed):
@@ -14424,16 +14427,11 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
     _sorted_tables.sort(key=lambda t: len(_fk_deps.get(t.lower(), set())), reverse=True)
 
     is_remote = itest_cfg.get("mode") == "remote"
-    if is_remote:
+    if not is_remote:
          for table in _sorted_tables:
              if table.lower() in _SYSTEM_OBJECTS:
                  continue
-             lines.append(f"DO $$ BEGIN EXECUTE 'DELETE FROM {table}'; EXCEPTION WHEN OTHERS THEN NULL; END $$;")
-    else:
-        for table in _sorted_tables:
-            if table.lower() in _SYSTEM_OBJECTS:
-                continue
-            lines.append(f'DROP TABLE IF EXISTS {table} CASCADE;')
+             lines.append(f'DROP TABLE IF EXISTS {table} CASCADE;')
     lines.append("")
     for table, columns in sorted(schema_map.items()):
         if table.lower() in _SYSTEM_OBJECTS:
@@ -14512,15 +14510,15 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
             def _protect_do_blocks(m):
                 _protected.append(m.group(0))
                 return f"__IPROT_{len(_protected) - 1}__"
-            _init_content = re.sub(r'DO\s*\$\$.*?\$\$;', _protect_do_blocks, _init_content, flags=re.DOTALL | re.IGNORECASE)
+            _init_content = re.sub(r'DO\s*\$\$.*?\$\$;', '', _init_content, flags=re.DOTALL | re.IGNORECASE)
             _init_content = re.sub(
                 r'^(\s*ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+.+;)\s*$',
-                lambda m: f"DO $$ BEGIN {m.group(1).strip()} EXCEPTION WHEN OTHERS THEN NULL; END $$;",
+                lambda m: m.group(1).strip(),
                 _init_content, flags=re.MULTILINE | re.IGNORECASE
             )
             _init_content = re.sub(
                 r'^(\s*(?:INSERT|UPDATE|DELETE)\s+.+;)\s*$',
-                lambda m: f"DO $$ BEGIN {m.group(1).strip()} EXCEPTION WHEN OTHERS THEN NULL; END $$;",
+                lambda m: m.group(1).strip(),
                 _init_content, flags=re.MULTILINE | re.IGNORECASE
             )
             for _pi, _ps in enumerate(_protected):
@@ -14532,7 +14530,7 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
     for tbl in sorted(_insert_by_table):
         for ins in _insert_by_table[tbl]:
             lines.append("")
-            lines.append(f"DO $$ BEGIN {ins.rstrip(';')}; EXCEPTION WHEN OTHERS THEN NULL; END $$;")
+            lines.append(f"{ins.rstrip(';')};")
 
     _SEED_ID_OFFSET = 8000
     _seed_inserts = []
@@ -14555,17 +14553,17 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
                 return m.group(0)
         adjusted = re.sub(r'(\()\s*(\d+)([^)]*\))', _offset_tuple_ids, ins)
         lines.append("")
-        lines.append(f"DO $$ BEGIN {adjusted}; EXCEPTION WHEN OTHERS THEN NULL; END $$;")
+        lines.append(f"{adjusted};")
 
     # --- Column-alias backfill: re-run UPDATE SET alias = native AFTER all INSERTs ---
     # Some INSERTs use native column names (emp_id, dept_id) while generated SQL
     # references alias columns (employee_id, department_id).  Re-run the backfill
     # so that rows inserted above also get their alias columns populated.
     _ALIAS_BACKFILL = [
-        "DO $$ BEGIN UPDATE employees SET employee_id = emp_id WHERE employee_id IS NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;",
-        "DO $$ BEGIN UPDATE employees SET department_id = dept_id WHERE department_id IS NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;",
-        "DO $$ BEGIN UPDATE employees SET salary = base_salary WHERE salary IS NULL AND base_salary IS NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;",
-        "DO $$ BEGIN UPDATE departments SET department_id = dept_id WHERE department_id IS NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;",
+        "UPDATE employees SET employee_id = emp_id WHERE employee_id IS NULL;",
+        "UPDATE employees SET department_id = dept_id WHERE department_id IS NULL;",
+        "UPDATE employees SET salary = base_salary WHERE salary IS NULL AND base_salary IS NOT NULL;",
+        "UPDATE departments SET department_id = dept_id WHERE department_id IS NULL;",
     ]
     lines.append("")
     lines.append("-- Column-alias backfill (after all INSERTs)")
