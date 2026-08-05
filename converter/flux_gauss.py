@@ -8877,6 +8877,10 @@ def _infer_expr_type(expr, proc: ProcedureInfo) -> str:
                     return p.java_type
             if name in _PACKAGE_CONSTANTS:
                 return _PACKAGE_CONSTANTS[name]
+            # Bare function call without parens (PL/SQL allows e.g. func_get_frame_date)
+            _udf_rt = _UDF_RETURN_TYPES.get((name.lower(), 0))
+            if _udf_rt:
+                return _udf_rt
             return "Object"
         elif key == "Literal":
             if isinstance(val, dict):
@@ -9630,11 +9634,20 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                                 _should_use_bigdecimal = True
                             except ValueError:
                                 pass
+                    # If the non-literal operand is a function call / bare function
+                    # name, it may return a non-numeric string (e.g. a date like
+                    # "2026-08-06"). BigDecimal would throw on parse — use
+                    # String.compareTo instead.
+                    _other_is_func = False
+                    if isinstance(right_raw, dict) and "Literal" not in right_raw and ("FunctionCall" in right_raw or "ColumnRef" in right_raw):
+                        _other_is_func = True
+                    if isinstance(left_raw, dict) and "Literal" not in left_raw and ("FunctionCall" in left_raw or "ColumnRef" in left_raw):
+                        _other_is_func = True
                     if right_type != "String" and ".get(" in right:
                         right = f"String.valueOf({right})"
                     if left_type != "String" and ".get(" in left:
                         left = f"String.valueOf({left})"
-                    if _should_use_bigdecimal:
+                    if _should_use_bigdecimal and not _other_is_func:
                         left_bd = f"new java.math.BigDecimal({left})"
                         right_bd = f"new java.math.BigDecimal({right})"
                         cmp_map = {"<": "<", ">": ">", "<=": "<=", ">=": ">="}
@@ -9775,6 +9788,9 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 if ".get(" in left and ".get(" not in right:
                     return f"!{right}.equals({left})"
                 return f"!java.util.Objects.equals({left}, {right})"
+            if op in ("<", ">", "<=", ">=") and _is_string_comparison(val, proc):
+                _rel_cmp = {"<": "< 0", ">": "> 0", "<=": "<= 0", ">=": ">= 0"}
+                return f"{left}.compareTo({right}) {_rel_cmp[op]}"
             _is_ts_cmp = ("Timestamp" in left_type or "Timestamp" in left) and ("Timestamp" in right_type or "Timestamp" in right)
             if _is_ts_cmp and op in (">", "<", ">=", "<="):
                 _ts_cmp = {"<": "before", ">": "after", "<=": "!after", ">=": "!before"}
@@ -14826,12 +14842,41 @@ def _itest_extract_join_tables(sql: str) -> list:
     return tables
 
 
+def _param_java_type(proc, param_name: str) -> str:
+    """Look up a procedure parameter's Java type by name."""
+    pl = param_name.lower()
+    for p in proc.parameters:
+        if p.name.lower() == pl or p.java_name.lower() == pl:
+            return p.java_type
+    return "String"
+
+
+def _itest_sql_value(java_value: str, sql_type: str) -> str:
+    """Convert a Java test expression to a SQL literal for fixture INSERT."""
+    v = java_value.strip()
+    m = re.match(r'^"(.*)"$', v)
+    if m:
+        return f"'{m.group(1)}'"
+    m = re.match(r'java\.sql\.Date\.valueOf\("([^"]*)"\)', v)
+    if m:
+        return f"'{m.group(1)}'"
+    m = re.match(r'java\.sql\.Timestamp\.valueOf\("([^"]*)"\)', v)
+    if m:
+        return f"'{m.group(1)}'"
+    m = re.match(r'new java\.math\.BigDecimal\("([^"]*)"\)', v)
+    if m:
+        return m.group(1)
+    return v
+
+
 def _itest_generate_test_value(col_name: str, sql_type: str) -> str:
     lower_type = (sql_type or "").lower()
     lower_col = col_name.lower()
     if any(t in lower_type for t in ("int", "serial", "bigserial")):
         if lower_col.startswith("parent_"):
             return "NULL"
+        if lower_col.startswith(("is_", "has_")) or lower_col in ("is_active", "is_deleted", "enabled"):
+            return "1"
         if "id" in lower_col or "no" in lower_col:
             return "1"
         return "10"
@@ -14875,9 +14920,12 @@ def _itest_generate_test_value(col_name: str, sql_type: str) -> str:
 def _itest_infer_test_data(proc: ProcedureInfo, pkg: PackageInfo, schema_map: dict, all_packages: dict = None) -> dict:
     handled = set()
     needed = {}
+    bindings = {}
     for dml in proc.dml_statements:
         sql = dml.sql_text or ""
         sql_lower = sql.lower().strip()
+        for _bm in re.finditer(r'(\w+)\s*=\s*(p_[a-z0-9_]+)', sql, re.IGNORECASE):
+            bindings[_bm.group(1).lower()] = snake_to_camel(_bm.group(2))
         if dml.sql_type == "insert":
             tbl = _itest_extract_table_from_insert(sql)
             if tbl:
@@ -14899,9 +14947,9 @@ def _itest_infer_test_data(proc: ProcedureInfo, pkg: PackageInfo, schema_map: di
             if jt not in handled and jt in schema_map and jt not in needed:
                 needed[jt] = schema_map[jt]
     if all_packages is None:
-        return needed
+        return needed, bindings
     _itest_add_transitive_tables(proc, pkg, schema_map, handled, needed, all_packages)
-    return needed
+    return needed, bindings
 
 
 def _itest_extract_columns_from_select(sql_lower: str, tbl: str, schema_map: dict) -> dict:
@@ -15020,13 +15068,14 @@ def _itest_add_transitive_tables(proc, pkg, schema_map, handled, needed, all_pac
                         break
 
 
-def _itest_write_fixtures(base_path: Path, proc: ProcedureInfo, pkg: PackageInfo, test_data: dict) -> str:
+def _itest_write_fixtures(base_path: Path, proc: ProcedureInfo, pkg: PackageInfo, test_data: dict, bindings: dict = None) -> str:
     if not test_data:
         return ""
     lines = []
     for table in sorted(test_data.keys()):
         lines.append(f"DELETE FROM {table};")
     _skip_prefixes = ("constraint", "check", "primary", "foreign", "unique", "index", "like")
+    bindings = bindings or {}
     for table, columns in sorted(test_data.items()):
         if not columns:
             continue
@@ -15039,7 +15088,13 @@ def _itest_write_fixtures(base_path: Path, proc: ProcedureInfo, pkg: PackageInfo
             if not re.match(r'^[a-zA-Z_]\w*$', col):
                 continue
             col_names.append(col)
-            values.append(_itest_generate_test_value(col, sql_type))
+            bound_param = bindings.get(col_lower)
+            if bound_param and proc is not None:
+                _pt = _param_java_type(proc, bound_param)
+                _pv = _default_test_value(_pt, bound_param, pkg=pkg)
+                values.append(_itest_sql_value(str(_pv), sql_type))
+            else:
+                values.append(_itest_generate_test_value(col, sql_type))
         cols_str = ", ".join(col_names)
         vals_str = ", ".join(values)
         lines.append(f"INSERT INTO {table} ({cols_str}) VALUES ({vals_str});")
@@ -15180,8 +15235,8 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
             all_args.append(p.java_name)
         args_str = ", ".join(all_args)
 
-        test_data = _itest_infer_test_data(proc, pkg, schema_map, all_packages)
-        sql_script = _itest_write_fixtures(base_path, proc, pkg, test_data)
+        test_data, test_bindings = _itest_infer_test_data(proc, pkg, schema_map, all_packages)
+        sql_script = _itest_write_fixtures(base_path, proc, pkg, test_data, test_bindings)
         if not sql_script and proc.dml_statements:
             dml_tables = set()
             for dml in proc.dml_statements:
