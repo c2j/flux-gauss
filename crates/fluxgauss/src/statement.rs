@@ -2353,7 +2353,7 @@ pub fn process_statement(
                         if !is_others {
                             has_business = true;
                         }
-                        let evar = format!("__e{}", crate::analyze::CATCH_VAR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+                        let evar = format!("__e{}", { let n = proc.catch_counter; proc.catch_counter += 1; n + 1 });
                         if is_others {
                             push_logic_line(proc, format!("}} catch (Exception {evar}) {{"));
                         } else {

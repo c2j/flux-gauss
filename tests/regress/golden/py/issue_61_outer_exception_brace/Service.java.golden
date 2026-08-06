@@ -1,0 +1,63 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue61OuterExceptionBraceMapper;
+import java.math.BigDecimal;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue61OuterExceptionBraceService {
+    private static final Logger log = LoggerFactory.getLogger(Issue61OuterExceptionBraceService.class);
+
+    private final Issue61OuterExceptionBraceMapper issue61OuterExceptionBraceMapper;
+
+    public Issue61OuterExceptionBraceService(Issue61OuterExceptionBraceMapper issue61OuterExceptionBraceMapper) {
+        this.issue61OuterExceptionBraceMapper = issue61OuterExceptionBraceMapper;
+    }
+    // Source: pkg_issue61_exc.prc_get_zs_price (PROCEDURE) — issue_61_outer_exception_brace.sql:26-80
+    public void prcGetZsPrice(String pISecurityId, String pIMarketType, AtomicReference<java.math.BigDecimal> pOMarketPrice, AtomicReference<String> pOPassFlag, AtomicReference<String> pOSucceed) {
+        try {
+            pOMarketPrice.set(null);
+            pOPassFlag.set(null);
+            pOSucceed.set(null);
+            if (java.util.Objects.equals(pIMarketType, "A")) {
+                try {
+                    pOMarketPrice.set(((java.math.BigDecimal) issue61OuterExceptionBraceMapper.selectTIssue61Bond(pISecurityId, pIMarketType)));
+                } catch (Exception e) { // OTHERS
+                    // WHEN OTHERS
+                    pOMarketPrice.set(java.math.BigDecimal.ZERO);
+                }
+            } else if (java.util.Objects.equals(pIMarketType, "B")) {
+                try {
+                    pOMarketPrice.set(((java.math.BigDecimal) issue61OuterExceptionBraceMapper.selectTIssue61Bond_1(pISecurityId, pIMarketType)));
+                } catch (Exception e2) { // OTHERS
+                    // WHEN OTHERS
+                    pOMarketPrice.set(java.math.BigDecimal.ZERO);
+                }
+            } else {
+                try {
+                    pOMarketPrice.set(((java.math.BigDecimal) issue61OuterExceptionBraceMapper.selectTIssue61Bond_2(pISecurityId, pIMarketType)));
+                } catch (Exception e3) { // OTHERS
+                    // WHEN OTHERS
+                    pOMarketPrice.set(java.math.BigDecimal.ZERO);
+                }
+            }
+            pOPassFlag.set("F");
+            pOSucceed.set("0");
+        } catch (Exception e4) { // EXCEPTION handlers — src: issue_61_outer_exception_brace.sql:26
+            pOMarketPrice.set(java.math.BigDecimal.valueOf(0));
+            if ("0".equals(pOSucceed.get())) {
+                pOSucceed.set("取" + pISecurityId + "中证行情价格子模块内部错误");
+            } else if ("1".equals(pOSucceed.get())) {
+                pOSucceed.set("WARN:" + pISecurityId);
+            } else {
+                pOSucceed.set("OTHER_ERR");
+            }
+            throw new BusinessException(e4.getMessage());
+        }
+    }
+}

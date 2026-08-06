@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.Issue44BugsMapper">
+
+    <!-- Source: {FIXTURES_ROOT}/issue_44_if_elsif_goto.sql:56-95 — pkg_issue44_bugs.proc_dynamic_sql_if_else.selectTIssue44Orders -->
+    <select id="selectTIssue44Orders" parameterType="string" resultType="int">
+        select COUNT(*) FROM t_issue44_orders WHERE status = COALESCE(#{pStatus, jdbcType=VARCHAR, javaType=String}, status)
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_44_if_elsif_goto.sql:56-95 — pkg_issue44_bugs.proc_dynamic_sql_if_else.selectTIssue44Orders_1 -->
+    <select id="selectTIssue44Orders_1" parameterType="string" resultType="string">
+        select order_name FROM t_issue44_orders WHERE status = #{pStatus, jdbcType=VARCHAR, javaType=String} LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_44_if_elsif_goto.sql:98-129 — pkg_issue44_bugs.proc_dynamic_sql_if_elsif.selectTIssue44Orders_2 -->
+    <select id="selectTIssue44Orders_2" resultType="string">
+        select COUNT(*) FROM t_issue44_orders WHERE order_name LIKE '%' || #{pFilter, jdbcType=VARCHAR, javaType=String} || '%'
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_44_if_elsif_goto.sql:132-160 — pkg_issue44_bugs.proc_nested_dynamic_if.selectTIssue44Orders_3 -->
+    <select id="selectTIssue44Orders_3" parameterType="string" resultType="java.math.BigDecimal">
+        SELECT COALESCE(SUM(amount), 0) FROM t_issue44_orders
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_44_if_elsif_goto.sql:163-184 — pkg_issue44_bugs.proc_non_dynamic_if_else.selectTIssue44Orders_4 -->
+    <select id="selectTIssue44Orders_4" parameterType="string" resultType="string">
+        select order_name FROM t_issue44_orders WHERE status = 'ACTIVE' LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_44_if_elsif_goto.sql:187-217 — pkg_issue44_bugs.proc_chained_if_with_concat.selectTIssue44Orders_5 -->
+    <select id="selectTIssue44Orders_5" parameterType="string" resultType="string">
+        select COUNT(*) FROM t_issue44_orders WHERE order_name LIKE '%' || #{pCode, jdbcType=VARCHAR, javaType=String} || '%'
+                LIMIT 1
+    </select>
+
+</mapper>

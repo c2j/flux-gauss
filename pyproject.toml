@@ -25,3 +25,6 @@ packages = ["converter"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "demo_migration: slow end-to-end demo yaml + mvn guard (~4 min, needs ogsql/Java/Maven)",
+]

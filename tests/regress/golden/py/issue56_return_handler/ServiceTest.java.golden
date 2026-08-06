@@ -1,0 +1,56 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue56ReturnHandlerMapper;
+import com.example.demo.service.Issue56ReturnHandlerService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class Issue56ReturnHandlerServiceTest {
+
+    @Mock
+    private Issue56ReturnHandlerMapper issue56ReturnHandlerMapper;
+
+    @InjectMocks
+    private Issue56ReturnHandlerService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procTwoHandlersFirstReturns_success() {
+        AtomicReference<String> pResult = new AtomicReference<>(null);
+        when(issue56ReturnHandlerMapper.selectTIssue56Data()).thenReturn("1");
+        when(issue56ReturnHandlerMapper.selectTIssue56Data_1()).thenReturn("1");
+        when(issue56ReturnHandlerMapper.selectTIssue56Data_2()).thenReturn("1");
+        service.procTwoHandlersFirstReturns(pResult);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procNestedBlockThenReturn_success() {
+        AtomicReference<String> pResult = new AtomicReference<>(null);
+        when(issue56ReturnHandlerMapper.selectTIssue56Data()).thenReturn("1");
+        when(issue56ReturnHandlerMapper.selectTIssue56Data_1()).thenReturn("1");
+        when(issue56ReturnHandlerMapper.selectTIssue56Data_2()).thenReturn("1");
+        service.procNestedBlockThenReturn(pResult);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procThreeHandlersReturns_success() {
+        AtomicReference<String> pResult = new AtomicReference<>(null);
+        when(issue56ReturnHandlerMapper.selectTIssue56Data()).thenReturn("1");
+        when(issue56ReturnHandlerMapper.selectTIssue56Data_1()).thenReturn("1");
+        when(issue56ReturnHandlerMapper.selectTIssue56Data_2()).thenReturn("1");
+        service.procThreeHandlersReturns(pResult);
+    }
+}

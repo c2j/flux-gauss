@@ -1,0 +1,9 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue40CompareMapper {
+
+    // No direct DML operations for pkg_issue40_compare
+}

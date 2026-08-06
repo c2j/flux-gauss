@@ -1,0 +1,91 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue45ExceptionMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_45_exception_handling.sql
+public class Issue45ExceptionService {
+    private static final Logger log = LoggerFactory.getLogger(Issue45ExceptionService.class);
+
+    private final Issue45ExceptionMapper issue45ExceptionMapper;
+
+    public Issue45ExceptionService(Issue45ExceptionMapper issue45ExceptionMapper) {
+        this.issue45ExceptionMapper = issue45ExceptionMapper;
+    }
+
+    // Source: pkg_issue45_exception.proc_link_etf_repay (PROCEDURE) — {FIXTURES_ROOT}/issue_45_exception_handling.sql:66-99
+    public void procLinkEtfRepay(String pSecurityCode, AtomicReference<String> pOSucceed, AtomicReference<String> pOSecurityId) {
+        String vSecurityId = null;
+        String __SQLERRM__ = "";
+        int __SQLCODE__ = 0;
+        try {
+            { var _val = issue45ExceptionMapper.selectTIssue45Security(pSecurityCode); if (_val != null) vSecurityId = (String) _val; }
+            pOSucceed.set("FOUND_MAIN");
+            pOSecurityId.set(String.valueOf(vSecurityId));
+        } catch (BusinessException __e1) { // no_data_found
+            __SQLERRM__ = __e1.getMessage();
+            __SQLCODE__ = -1;
+            try {
+                { var _val = issue45ExceptionMapper.selectTIssue45SecurityBak(pSecurityCode); if (_val != null) vSecurityId = (String) _val; }
+                pOSucceed.set("FOUND_BAK");
+                pOSecurityId.set(String.valueOf(vSecurityId));
+            } catch (Exception __e2) {
+                __SQLERRM__ = __e2.getMessage();
+                __SQLCODE__ = -1;
+                pOSucceed.set("ERROR: 没有在证券代码维护中维护！");
+                pOSecurityId.set("");
+            }
+        } catch (Exception __e3) {
+            __SQLERRM__ = __e3.getMessage();
+            __SQLCODE__ = -1;
+            pOSucceed.set("ERROR: 证券代码查询异常");
+            pOSecurityId.set("");
+        }
+    }
+
+    // Source: pkg_issue45_exception.proc_simple_exception (PROCEDURE) — {FIXTURES_ROOT}/issue_45_exception_handling.sql:104-118
+    public void procSimpleException(String pSecurityCode, AtomicReference<String> pResult) {
+        String vId = null;
+        String __SQLERRM__ = "";
+        int __SQLCODE__ = 0;
+        try {
+            { var _val = issue45ExceptionMapper.selectTIssue45Security_1(pSecurityCode); if (_val != null) vId = (String) _val; }
+            pResult.set(String.valueOf(String.valueOf("OK: ").concat(String.valueOf(vId))));
+        } catch (Exception __e1) {
+            __SQLERRM__ = __e1.getMessage();
+            __SQLCODE__ = -1;
+            pResult.set(String.valueOf(String.valueOf("ERROR: ").concat(String.valueOf(__SQLERRM__))));
+        }
+    }
+
+    // Source: pkg_issue45_exception.proc_nested_exception (PROCEDURE) — {FIXTURES_ROOT}/issue_45_exception_handling.sql:123-144
+    public void procNestedException(String pCode, AtomicReference<String> pMsg) {
+        String vValue = null;
+        String __SQLERRM__ = "";
+        int __SQLCODE__ = 0;
+        try {
+            try {
+                { var _val = issue45ExceptionMapper.selectTIssue45Security_2(pCode); if (_val != null) vValue = (String) _val; }
+                pMsg.set(String.valueOf(String.valueOf("VALUE: ").concat(String.valueOf(vValue))));
+            } catch (BusinessException __e1) { // no_data_found
+                __SQLERRM__ = __e1.getMessage();
+                __SQLCODE__ = -1;
+                pMsg.set(String.valueOf(String.valueOf("NOT_FOUND: ").concat(String.valueOf(pCode))));
+            } catch (Exception __e2) {
+                __SQLERRM__ = __e2.getMessage();
+                __SQLCODE__ = -1;
+                pMsg.set(String.valueOf(String.valueOf("SYSTEM_ERROR: ").concat(String.valueOf(__SQLERRM__))));
+            }
+        } catch (Exception __e3) {
+            __SQLERRM__ = __e3.getMessage();
+            __SQLCODE__ = -1;
+            pMsg.set("OUTER_ERROR");
+        }
+    }
+}

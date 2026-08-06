@@ -12,22 +12,7 @@ const FIXTURES_REL: &str = "../../tests/regress/fixtures";
 const GOLDEN_REL: &str = "../../tests/regress/golden/ru";
 const BASE_PACKAGE: &str = "com.example.demo";
 
-const KNOWN_BROKEN: &[&str] = &[
-    "complex_clearing_pkg.sql",
-    "issue_34_35_dto_naming.sql",
-    "issue_38_map_put.sql",
-    "issue_39_thread_safety.sql",
-    "issue_40_string_compare.sql",
-    "issue_41_type_system.sql",
-    "issue_44_if_elsif_goto.sql",
-    "issue_45_exception_handling.sql",
-    "issue_46_chr_ascii_substr.sql",
-    "issue_47_long_parse_string.sql",
-    "issue_48_long_compareto_string.sql",
-    "issue_49_varchar2_concat.sql",
-    "issue_44_if_elsif_goto_2.sql",
-    "issue_54_nested_exception.sql",
-];
+const KNOWN_BROKEN: &[&str] = &[];
 
 const FOUR_FILE_TYPES: &[(&str, FilePathFn)] = &[
     ("Service.java", service_path as FilePathFn),
@@ -119,7 +104,7 @@ fn normalize(content: &str) -> String {
 }
 
 fn is_golden_gen_mode() -> bool {
-    env::var("REGEN_RUST_GOLDEN").is_ok() || env::var("CI").is_ok()
+    env::var("REGEN_RUST_GOLDEN").is_ok()
 }
 
 struct GeneratedFiles {
@@ -148,12 +133,26 @@ fn run_conversion(sql_file: &Path, out_dir: &Path) -> GeneratedFiles {
     );
 
     let mut files = HashMap::new();
-    for (ft, path_fn) in FOUR_FILE_TYPES {
-        let filepath = path_fn(out_dir, &class_name);
-        if filepath.exists() {
-            let content = fs::read_to_string(&filepath)
-                .unwrap_or_else(|_| panic!("Failed to read: {}", filepath.display()));
-            files.insert(ft.to_string(), content);
+    let base = Path::new(out_dir);
+    let pkg_path = BASE_PACKAGE.replace('.', "/");
+    let scan_dirs: [(&str, PathBuf); 4] = [
+        ("Service.java",     base.join("src/main/java").join(&pkg_path).join("service")),
+        ("Mapper.java",      base.join("src/main/java").join(&pkg_path).join("mapper")),
+        ("Mapper.xml",       base.join("src/main/resources/mapper")),
+        ("ServiceTest.java", base.join("src/test/java").join(&pkg_path).join("service")),
+    ];
+    for (ft, dir) in &scan_dirs {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                let name = path.file_name().unwrap().to_string_lossy().to_string();
+                if name.ends_with(ft) {
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        files.insert(ft.to_string(), content);
+                    }
+                    break;
+                }
+            }
         }
     }
 

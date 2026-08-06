@@ -32,7 +32,7 @@ public class Issue44IfElsifGoto2Service {
             if (vCount > 0) {
                 try {
                     vConfig = issue44IfElsifGoto2Mapper.selectTIssue44Config();
-                    if ("0".equals(vFlag)) {
+                    if (java.util.Objects.equals(vFlag, "0")) {
                         vConfig = vConfig + ",extra";
                         try {
                             vFlag2 = issue44IfElsifGoto2Mapper.selectTIssue44Config_1(vDate);
@@ -40,17 +40,17 @@ public class Issue44IfElsifGoto2Service {
                             // WHEN OTHERS
                             vFlag2 = "0";
                         }
-                        if ("0".equals(vFlag2)) {
+                        if (java.util.Objects.equals(vFlag2, "0")) {
                             vMsg = "log_written_first_time";
                         }
                     }
-                } catch (Exception e) { // OTHERS
+                } catch (Exception e2) { // OTHERS
                     // WHEN OTHERS
                     vMsg = "inner_block_error";
                 }
             }
-        } catch (Exception e) { // EXCEPTION handlers — src: issue_44_if_elsif_goto_2.sql:30
-            vMsg = "outer_error:" + e.getMessage();
+        } catch (Exception e3) { // EXCEPTION handlers — src: issue_44_if_elsif_goto_2.sql:30
+            vMsg = "outer_error:" + e3.getMessage();
         }
     }
 }

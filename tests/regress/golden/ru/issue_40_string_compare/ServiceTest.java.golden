@@ -1,0 +1,53 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue40CompareMapper;
+import com.example.demo.service.Issue40CompareService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_40_string_compare.sql
+class Issue40CompareServiceTest {
+
+    @Mock
+    private Issue40CompareMapper issue40CompareMapper;
+
+    @InjectMocks
+    private Issue40CompareService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procCheckStatus_success() {
+        String pStatus = "test_pStatus";
+        AtomicReference<String> pResultRef = new AtomicReference<>(null);
+        service.procCheckStatus(pStatus, pResultRef);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procValidateLevel_success() {
+        String pLevel = "test_pLevel";
+        String pMinLevel = "test_pMinLevel";
+        AtomicReference<Boolean> pIsValidRef = new AtomicReference<>(null);
+        service.procValidateLevel(pLevel, pMinLevel, pIsValidRef);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procCompareVersions_success() {
+        String pVersion = "test_pVersion";
+        String pMinVer = "test_pMinVer";
+        AtomicReference<Boolean> pOkRef = new AtomicReference<>(null);
+        service.procCompareVersions(pVersion, pMinVer, pOkRef);
+    }
+}

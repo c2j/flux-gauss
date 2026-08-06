@@ -1,0 +1,9 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue62SubstrMapper {
+
+    // No direct DML operations for pkg_issue62_substr
+}

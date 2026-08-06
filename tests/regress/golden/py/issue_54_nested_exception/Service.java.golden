@@ -1,0 +1,66 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue54NestedExceptionMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue54NestedExceptionService {
+    private static final Logger log = LoggerFactory.getLogger(Issue54NestedExceptionService.class);
+
+    private final Issue54NestedExceptionMapper issue54NestedExceptionMapper;
+
+    public Issue54NestedExceptionService(Issue54NestedExceptionMapper issue54NestedExceptionMapper) {
+        this.issue54NestedExceptionMapper = issue54NestedExceptionMapper;
+    }
+    // Source: pkg_issue54_nested_exc.proc_nested_block_in_handler (PROCEDURE) — issue_54_nested_exception.sql:23-45
+    public void procNestedBlockInHandler(AtomicReference<String> pResult) {
+        String vMsg = null;
+        String vData = null;
+        try {
+            pResult.set(null);
+            vData = issue54NestedExceptionMapper.selectTIssue54Data();
+            if (vData == null) {
+                vMsg = "no_config";
+            }
+        } catch (Exception e) { // EXCEPTION handlers — src: issue_54_nested_exception.sql:23
+            try {
+                // SqlStatement
+                pResult.set("fallback_ok");
+            } catch (Exception e2) { // OTHERS
+                // WHEN OTHERS
+                pResult.set("fallback_failed");
+            }
+        }
+    }
+
+    // Source: pkg_issue54_nested_exc.proc_three_level_nested (PROCEDURE) — issue_54_nested_exception.sql:48-74
+    public void procThreeLevelNested(AtomicReference<String> pResult) {
+        String vVal = null;
+        String vTmp = null;
+        try {
+            pResult.set(null);
+            vVal = "start";
+            try {
+                vTmp = issue54NestedExceptionMapper.selectTIssue54Data_1();
+                vVal = vTmp;
+            } catch (Exception e) { // OTHERS
+                // WHEN OTHERS
+                try {
+                    vTmp = issue54NestedExceptionMapper.selectTIssue54Data_2();
+                    vVal = vTmp;
+                } catch (Exception e2) { // OTHERS
+                    // WHEN OTHERS
+                    vVal = "deepest_fallback";
+                }
+            }
+            pResult.set(String.valueOf(vVal));
+        } catch (Exception e3) { // EXCEPTION handlers — src: issue_54_nested_exception.sql:48
+            pResult.set("outer_fallback");
+        }
+    }
+}

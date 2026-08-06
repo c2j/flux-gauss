@@ -1,0 +1,16 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue45ExceptionMapper {
+
+    // {FIXTURES_ROOT}/issue_45_exception_handling.sql:66 — pkg_issue45_exception.proc_link_etf_repay
+    String selectTIssue45Security(@Param("pSecurityCode") String pSecurityCode);
+    // {FIXTURES_ROOT}/issue_45_exception_handling.sql:66 — pkg_issue45_exception.proc_link_etf_repay
+    String selectTIssue45SecurityBak(@Param("pSecurityCode") String pSecurityCode);
+    // {FIXTURES_ROOT}/issue_45_exception_handling.sql:104 — pkg_issue45_exception.proc_simple_exception
+    String selectTIssue45Security_1(@Param("pSecurityCode") String pSecurityCode);
+    // {FIXTURES_ROOT}/issue_45_exception_handling.sql:123 — pkg_issue45_exception.proc_nested_exception
+    String selectTIssue45Security_2(@Param("pCode") String pCode);
+}

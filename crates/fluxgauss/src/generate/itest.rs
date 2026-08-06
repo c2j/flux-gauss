@@ -16,6 +16,8 @@ pub fn write_itest_class(
     precomputed_schema_map: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
     encoding: &'static Encoding,
 ) -> std::io::Result<String> {
+    let mut sorted_injections: Vec<(&String, &String)> = service_injections.iter().collect();
+    sorted_injections.sort_by_key(|(k, _)| k.as_str());
     let itest_dir = base_path.join(format!(
         "src/test/java/{}/itest",
         base_package.replace('.', "/")
@@ -57,7 +59,7 @@ pub fn write_itest_class(
         imports.insert("import java.util.concurrent.atomic.AtomicReference;".to_string());
     }
 
-    for (svc_var_inj, pkg_name) in service_injections {
+    for &(svc_var_inj, pkg_name) in &sorted_injections {
         let svc_class_inj = if !pkg_name.is_empty() {
             format!("{}Service", package_to_classname(pkg_name))
         } else {
@@ -268,7 +270,7 @@ pub fn write_itest_class(
     w.line("@Autowired");
     w.line(&format!("private {} {};", class_name, svc_var));
 
-    for (svc_var_inj, _pkg_name) in service_injections {
+    for &(svc_var_inj, _pkg_name) in &sorted_injections {
         let svc_class_inj = if let Some(pn) = service_injections.get(svc_var_inj) {
             if !pn.is_empty() {
                 format!("{}Service", package_to_classname(pn))

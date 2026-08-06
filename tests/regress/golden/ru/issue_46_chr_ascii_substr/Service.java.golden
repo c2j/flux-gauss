@@ -1,0 +1,62 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue46FunctionsMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_46_chr_ascii_substr.sql
+public class Issue46FunctionsService {
+    private static final Logger log = LoggerFactory.getLogger(Issue46FunctionsService.class);
+
+    private final Issue46FunctionsMapper issue46FunctionsMapper;
+
+    public Issue46FunctionsService(Issue46FunctionsMapper issue46FunctionsMapper) {
+        this.issue46FunctionsMapper = issue46FunctionsMapper;
+    }
+
+    // Source: pkg_issue46_functions.proc_convert_trade_code (PROCEDURE) — {FIXTURES_ROOT}/issue_46_chr_ascii_substr.sql:61-76
+    public void procConvertTradeCode(String pZqdm, AtomicReference<String> pResult) {
+        Integer vChar1 = 0;
+        Integer vChar2 = 0;
+        String vChr = null;
+        vChar1 = (int)String.valueOf(pZqdm).substring(Math.min(String.valueOf(pZqdm).length(), Math.max(0, (5) - 1)), Math.min(String.valueOf(pZqdm).length(), Math.max(0, (5) - 1) + (1))).charAt(0);
+        vChar2 = (int)String.valueOf(pZqdm).substring(Math.min(String.valueOf(pZqdm).length(), Math.max(0, (6) - 1)), Math.min(String.valueOf(pZqdm).length(), Math.max(0, (6) - 1) + (1))).charAt(0);
+        vChr = String.valueOf(String.valueOf((char)(vChar1 + 48))).concat(String.valueOf(String.valueOf(pZqdm).substring(Math.min(String.valueOf(pZqdm).length(), Math.max(0, (7) - 1)), Math.min(String.valueOf(pZqdm).length(), Math.max(0, (7) - 1) + (1)))));
+        pResult.set(String.valueOf(vChr));
+    }
+
+    // Source: pkg_issue46_functions.proc_get_ascii (PROCEDURE) — {FIXTURES_ROOT}/issue_46_chr_ascii_substr.sql:82-89
+    public void procGetAscii(String pInput, AtomicReference<Integer> pCode) {
+        pCode.set((int)String.valueOf(pInput).substring(Math.min(String.valueOf(pInput).length(), Math.max(0, (1) - 1)), Math.min(String.valueOf(pInput).length(), Math.max(0, (1) - 1) + (1))).charAt(0));
+    }
+
+    // Source: pkg_issue46_functions.proc_get_char (PROCEDURE) — {FIXTURES_ROOT}/issue_46_chr_ascii_substr.sql:96-103
+    public void procGetChar(int pAsciiCode, AtomicReference<String> pChar) {
+        pChar.set(String.valueOf(String.valueOf((char)(pAsciiCode))));
+    }
+
+    // Source: pkg_issue46_functions.proc_substr_mixed (PROCEDURE) — {FIXTURES_ROOT}/issue_46_chr_ascii_substr.sql:110-120
+    public void procSubstrMixed(String pText, String pStart, String pLen, AtomicReference<String> pResult) {
+        pResult.set(String.valueOf(String.valueOf(pText).substring(Math.min(String.valueOf(pText).length(), Math.max(0, (pStart) - 1)), Math.min(String.valueOf(pText).length(), Math.max(0, (pStart) - 1) + (pLen)))));
+    }
+
+    // Source: pkg_issue46_functions.proc_range_mapping (PROCEDURE) — {FIXTURES_ROOT}/issue_46_chr_ascii_substr.sql:126-143
+    public void procRangeMapping(String pInput, AtomicReference<String> pResult) {
+        Integer vNum = 0;
+        vNum = (int)String.valueOf(pInput).substring(Math.min(String.valueOf(pInput).length(), Math.max(0, (1) - 1)), Math.min(String.valueOf(pInput).length(), Math.max(0, (1) - 1) + (1))).charAt(0);
+        if ((vNum >= 49 && vNum <= 57)) {
+            pResult.set(String.valueOf(String.valueOf((char)(vNum + 16))));
+        } else if ((vNum >= 65 && vNum <= 74)) {
+            pResult.set(String.valueOf(String.valueOf((char)(vNum - 16))));
+        } else if ((vNum >= 75 && vNum <= 84)) {
+            pResult.set(String.valueOf(String.valueOf((char)(vNum - 30))));
+        } else {
+            pResult.set(String.valueOf(String.valueOf((char)(vNum))));
+        }
+    }
+}

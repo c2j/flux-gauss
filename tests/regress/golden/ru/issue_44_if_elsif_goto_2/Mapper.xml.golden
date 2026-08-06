@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.Issue44NestedExcMapper">
+
+    <!-- Source: {FIXTURES_ROOT}/issue_44_if_elsif_goto_2.sql:30-87 — pkg_issue44_nested_exc.proc_nested_exception_blocks.selectTIssue44Config -->
+    <select id="selectTIssue44Config" resultType="int">
+        select COUNT(1) FROM t_issue44_config WHERE status = '1'
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_44_if_elsif_goto_2.sql:30-87 — pkg_issue44_nested_exc.proc_nested_exception_blocks.selectTIssue44Config_1 -->
+    <select id="selectTIssue44Config_1" resultType="string">
+        select config_value FROM t_issue44_config WHERE config_key = 'split_pkg_code'
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_44_if_elsif_goto_2.sql:30-87 — pkg_issue44_nested_exc.proc_nested_exception_blocks.selectTIssue44Config_2 -->
+    <select id="selectTIssue44Config_2" resultType="string">
+        select '1' FROM t_issue44_config WHERE EXISTS ( SELECT 1 FROM t_issue44_log WHERE proc_name = 'test' AND log_date = #{vDate, jdbcType=VARCHAR, javaType=String} AND step_no = '9' )
+                LIMIT 1
+    </select>
+
+</mapper>

@@ -1,0 +1,42 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue62SubstrHelperMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue62SubstrHelperService {
+    private static final Logger log = LoggerFactory.getLogger(Issue62SubstrHelperService.class);
+
+    private final Issue62SubstrHelperMapper issue62SubstrHelperMapper;
+
+    public Issue62SubstrHelperService(Issue62SubstrHelperMapper issue62SubstrHelperMapper) {
+        this.issue62SubstrHelperMapper = issue62SubstrHelperMapper;
+    }
+
+    private String _substr(String str, Object pos) {
+        return _substr(str, pos, str.length());
+    }
+
+    private String _substr(String str, Object pos, Object len) {
+        if (str == null) str = "";
+        int p = (pos instanceof Number) ? ((Number) pos).intValue() : Integer.parseInt(String.valueOf(pos));
+        int l = (len instanceof Number) ? ((Number) len).intValue() : Integer.parseInt(String.valueOf(len));
+        int start = Math.max(0, p - 1);
+        int end = Math.min(str.length(), start + l);
+        if (start > end) start = end;
+        return str.substring(start, end);
+    }
+    // Source: pkg_issue62_substr.proc_substr_basic (PROCEDURE) — issue_62_substr_helper.sql:16-25
+    public void procSubstrBasic(String pId, AtomicReference<String> pResult) {
+        String vPart = null;
+        pResult.set(null);
+        vPart = _substr(String.valueOf(pId), (3), (3));
+        pResult.set(String.valueOf(_substr(String.valueOf(pId), (1), (2)) + "-" + vPart));
+        pResult.set(String.valueOf((String) pResult.get() + _substr(String.valueOf(pId), (6))));
+    }
+}

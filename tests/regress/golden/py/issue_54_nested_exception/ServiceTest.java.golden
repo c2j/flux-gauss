@@ -1,0 +1,46 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue54NestedExceptionMapper;
+import com.example.demo.service.Issue54NestedExceptionService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class Issue54NestedExceptionServiceTest {
+
+    @Mock
+    private Issue54NestedExceptionMapper issue54NestedExceptionMapper;
+
+    @InjectMocks
+    private Issue54NestedExceptionService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procNestedBlockInHandler_success() {
+        AtomicReference<String> pResult = new AtomicReference<>(null);
+        when(issue54NestedExceptionMapper.selectTIssue54Data()).thenReturn("1");
+        when(issue54NestedExceptionMapper.selectTIssue54Data_1()).thenReturn("1");
+        when(issue54NestedExceptionMapper.selectTIssue54Data_2()).thenReturn("1");
+        service.procNestedBlockInHandler(pResult);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procThreeLevelNested_success() {
+        AtomicReference<String> pResult = new AtomicReference<>(null);
+        when(issue54NestedExceptionMapper.selectTIssue54Data()).thenReturn("1");
+        when(issue54NestedExceptionMapper.selectTIssue54Data_1()).thenReturn("1");
+        when(issue54NestedExceptionMapper.selectTIssue54Data_2()).thenReturn("1");
+        service.procThreeLevelNested(pResult);
+    }
+}

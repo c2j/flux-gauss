@@ -1,0 +1,116 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue41TypesMapper;
+import java.math.BigDecimal;
+import java.sql.Date;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_41_type_system.sql
+public class Issue41TypesService {
+    private static final Logger log = LoggerFactory.getLogger(Issue41TypesService.class);
+
+    private final Issue41TypesMapper issue41TypesMapper;
+    private static final java.math.BigDecimal maxCredit = new java.math.BigDecimal("100000.00");
+    private static final java.math.BigDecimal minBalance = new java.math.BigDecimal("0.00");
+    private static final Throwable accountNotFound = null;
+    private static final Throwable insufficientFunds = null;
+    private static final Throwable invalidAmount = null;
+
+    public Issue41TypesService(Issue41TypesMapper issue41TypesMapper) {
+        this.issue41TypesMapper = issue41TypesMapper;
+    }
+
+    // Source: pkg_issue41_types.proc_transfer (PROCEDURE) — {FIXTURES_ROOT}/issue_41_type_system.sql:64-112
+    @Transactional
+    public void procTransfer(long pFromAccount, long pToAccount, java.math.BigDecimal pAmount, java.sql.Date pTransferDate, boolean pIsUrgent, AtomicReference<java.math.BigDecimal> pNewBalance, AtomicReference<String> pStatus) {
+        java.math.BigDecimal vFromBalance = java.math.BigDecimal.ZERO;
+        java.math.BigDecimal vToBalance = java.math.BigDecimal.ZERO;
+        { var _val = issue41TypesMapper.selectTIssue41Account(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent); if (_val != null) vFromBalance = (java.math.BigDecimal) _val; }
+        if (vFromBalance.compareTo(pAmount) < 0) {
+            log.info("");
+        }
+        if (pIsUrgent) {
+            pStatus.set("URGENT TRANSFER");
+        }
+        vFromBalance = vFromBalance.subtract(pAmount);
+        issue41TypesMapper.updateTIssue41Account(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent, vFromBalance);
+        { var _val = issue41TypesMapper.selectTIssue41Account_1(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent); if (_val != null) vToBalance = (java.math.BigDecimal) _val; }
+        vToBalance = vToBalance.add(pAmount);
+        issue41TypesMapper.updateTIssue41Account_1(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent, vToBalance);
+        pNewBalance.set(vFromBalance);
+        pStatus.set("TRANSFER COMPLETE");
+    }
+
+    // Source: pkg_issue41_types.proc_withdraw (PROCEDURE) — {FIXTURES_ROOT}/issue_41_type_system.sql:115-155
+    @Transactional
+    public void procWithdraw(long pAccountId, java.math.BigDecimal pAmount, AtomicReference<java.math.BigDecimal> pNewBalance, AtomicReference<String> pStatus) {
+        java.math.BigDecimal vBalance = java.math.BigDecimal.ZERO;
+        String __SQLERRM__ = "";
+        int __SQLCODE__ = 0;
+        try {
+            { var _val = issue41TypesMapper.selectTIssue41Account_2(pAccountId, pAmount); if (_val != null) vBalance = (java.math.BigDecimal) _val; }
+            if (pAmount.compareTo(java.math.BigDecimal.valueOf(0)) <= 0) {
+                log.info("");
+            }
+            if (vBalance.compareTo(pAmount) < 0) {
+                log.info("");
+            }
+            vBalance = vBalance.subtract(pAmount);
+            issue41TypesMapper.updateTIssue41Account_2(pAccountId, pAmount, vBalance);
+            pNewBalance.set(vBalance);
+            pStatus.set("WITHDRAWAL SUCCESS");
+        } catch (BusinessException __e1) { // insufficient_funds
+            __SQLERRM__ = __e1.getMessage();
+            __SQLCODE__ = -1;
+            pStatus.set("Insufficient funds");
+            pNewBalance.set(vBalance);
+        } catch (BusinessException __e2) { // invalid_amount
+            __SQLERRM__ = __e2.getMessage();
+            __SQLCODE__ = -1;
+            pStatus.set("Invalid amount");
+            pNewBalance.set(vBalance);
+        } catch (Exception __e3) {
+            __SQLERRM__ = __e3.getMessage();
+            __SQLCODE__ = -1;
+            pStatus.set(String.valueOf(String.valueOf("Error: ").concat(String.valueOf(__SQLERRM__))));
+            pNewBalance.set(vBalance);
+        }
+    }
+
+    // Source: pkg_issue41_types.proc_validate_account (PROCEDURE) — {FIXTURES_ROOT}/issue_41_type_system.sql:158-186
+    public void procValidateAccount(long pAccountId, AtomicReference<Boolean> pIsValid, AtomicReference<java.math.BigDecimal> pBalance) {
+        Throwable eAccountClosed = null;
+        Boolean vActive = false;
+        java.math.BigDecimal vBalance = java.math.BigDecimal.ZERO;
+        String __SQLERRM__ = "";
+        int __SQLCODE__ = 0;
+        try {
+            Map<String, Object> _row = issue41TypesMapper.selectTIssue41Account_3(pAccountId);
+            if (_row != null) {
+                vBalance = (_row.get("v_balance") instanceof java.math.BigDecimal ? (java.math.BigDecimal) _row.get("v_balance") : java.math.BigDecimal.ZERO);
+                vActive = _row.get("v_active");
+            }
+            if (!vActive) {
+                log.info("");
+            }
+            pIsValid.set(true);
+            pBalance.set(vBalance);
+        } catch (BusinessException __e1) { // NO_DATA_FOUND
+            __SQLERRM__ = __e1.getMessage();
+            __SQLCODE__ = -1;
+            log.info("");
+        } catch (BusinessException __e2) { // e_account_closed
+            __SQLERRM__ = __e2.getMessage();
+            __SQLCODE__ = -1;
+            pIsValid.set(false);
+            pBalance.set(java.math.BigDecimal.valueOf(0L));
+        }
+    }
+}

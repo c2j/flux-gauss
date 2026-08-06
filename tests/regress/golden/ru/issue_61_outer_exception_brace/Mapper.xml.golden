@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.Issue61ExcMapper">
+
+    <!-- Source: {FIXTURES_ROOT}/issue_61_outer_exception_brace.sql:26-80 — pkg_issue61_exc.prc_get_zs_price.selectTIssue61Bond -->
+    <select id="selectTIssue61Bond" parameterType="string" resultType="Object">
+        select t.market_price FROM t_issue61_bond t WHERE t.security_id = #{pISecurityId, jdbcType=VARCHAR, javaType=String} AND t.market_type = 'A'
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_61_outer_exception_brace.sql:26-80 — pkg_issue61_exc.prc_get_zs_price.selectTIssue61Bond_1 -->
+    <select id="selectTIssue61Bond_1" parameterType="string" resultType="Object">
+        select t.market_price FROM t_issue61_bond t WHERE t.security_id = #{pISecurityId, jdbcType=VARCHAR, javaType=String} AND t.market_type = 'B'
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_61_outer_exception_brace.sql:26-80 — pkg_issue61_exc.prc_get_zs_price.selectTIssue61Bond_2 -->
+    <select id="selectTIssue61Bond_2" parameterType="string" resultType="Object">
+        select t.market_price FROM t_issue61_bond t WHERE t.security_id = #{pISecurityId, jdbcType=VARCHAR, javaType=String}
+                LIMIT 1
+    </select>
+
+</mapper>

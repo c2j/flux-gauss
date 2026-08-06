@@ -47,9 +47,9 @@ public class Issue47LongParseStringService {
     public void procProcessId(String pType, AtomicReference<String> pProId) {
         String vProId = null;
         pProId.set(null);
-        if ("NEW".equals(pType)) {
+        if (java.util.Objects.equals(pType, "NEW")) {
             vProId = "6034";
-        } else if ("OLD".equals(pType)) {
+        } else if (java.util.Objects.equals(pType, "OLD")) {
             vProId = "5821";
         } else {
             vProId = "9999";

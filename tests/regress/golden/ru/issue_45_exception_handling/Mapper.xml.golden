@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.Issue45ExceptionMapper">
+
+    <!-- Source: {FIXTURES_ROOT}/issue_45_exception_handling.sql:66-99 — pkg_issue45_exception.proc_link_etf_repay.selectTIssue45Security -->
+    <select id="selectTIssue45Security" parameterType="string" resultType="string">
+        select t.security_id FROM t_issue45_security t WHERE t.security_name = #{pSecurityCode, jdbcType=VARCHAR, javaType=String}
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_45_exception_handling.sql:66-99 — pkg_issue45_exception.proc_link_etf_repay.selectTIssue45SecurityBak -->
+    <select id="selectTIssue45SecurityBak" parameterType="string" resultType="string">
+        select t.security_id FROM t_issue45_security_bak t WHERE t.security_name = #{pSecurityCode, jdbcType=VARCHAR, javaType=String}
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_45_exception_handling.sql:104-118 — pkg_issue45_exception.proc_simple_exception.selectTIssue45Security_1 -->
+    <select id="selectTIssue45Security_1" parameterType="string" resultType="string">
+        select t.security_id FROM t_issue45_security t WHERE t.security_name = #{pSecurityCode, jdbcType=VARCHAR, javaType=String}
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_45_exception_handling.sql:123-144 — pkg_issue45_exception.proc_nested_exception.selectTIssue45Security_2 -->
+    <select id="selectTIssue45Security_2" parameterType="string" resultType="string">
+        select t.security_name FROM t_issue45_security t WHERE t.security_id = #{pCode, jdbcType=VARCHAR, javaType=String}
+                LIMIT 1
+    </select>
+
+</mapper>

@@ -1,0 +1,14 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue56ReturnHandlerMapper {
+
+        // pkg_issue56_return_handler.sql:20 — pkg_issue56_return_handler.proc_two_handlers_first_returns
+String selectTIssue56Data();
+// pkg_issue56_return_handler.sql:36 — pkg_issue56_return_handler.proc_nested_block_then_return
+String selectTIssue56Data_1();
+// pkg_issue56_return_handler.sql:64 — pkg_issue56_return_handler.proc_three_handlers_returns
+String selectTIssue56Data_2();
+}

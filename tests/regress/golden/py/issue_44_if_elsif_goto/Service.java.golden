@@ -36,9 +36,9 @@ public class Issue44IfElsifGotoService {
             vName = issue44IfElsifGotoMapper.selectTIssue44Orders(pStatus, pDate);
             pResult.set(String.valueOf(vName));
         } else {
-            if ("ACTIVE".equals(pStatus)) {
+            if (java.util.Objects.equals(pStatus, "ACTIVE")) {
                 pResult.set("NO_ACTIVE_ORDERS");
-            } else if ("PENDING".equals(pStatus)) {
+            } else if (java.util.Objects.equals(pStatus, "PENDING")) {
                 pResult.set("NO_PENDING_ORDERS");
             } else {
                 pResult.set("NO_ORDERS");
@@ -79,7 +79,7 @@ public class Issue44IfElsifGotoService {
         java.math.BigDecimal vAmount = java.math.BigDecimal.ZERO;
         pResult.set(null);
         vSql = "SELECT COALESCE(SUM(amount), 0) FROM t_issue44_orders WHERE 1=1";
-        if ("SUMMARY".equals(pType)) {
+        if (java.util.Objects.equals(pType, "SUMMARY")) {
             vSql = vSql + " GROUP BY status";
         } else {
             if (pSubType != null) {
@@ -90,7 +90,7 @@ public class Issue44IfElsifGotoService {
         if (vAmount == null) vAmount = java.math.BigDecimal.ZERO;
         if (vAmount.compareTo(java.math.BigDecimal.valueOf(0)) > 0) {
             pResult.set("AMOUNT: " + vAmount);
-        } else if ("SUMMARY".equals(pType)) {
+        } else if (java.util.Objects.equals(pType, "SUMMARY")) {
             pResult.set("ZERO_SUMMARY");
         } else {
             pResult.set("ZERO");
@@ -101,10 +101,10 @@ public class Issue44IfElsifGotoService {
     public void procNonDynamicIfElse(String pFlag, AtomicReference<String> pResult) {
         String vName = null;
         pResult.set(null);
-        if ("1".equals(pFlag)) {
+        if (java.util.Objects.equals(pFlag, "1")) {
             vName = issue44IfElsifGotoMapper.selectTIssue44Orders_1(pFlag);
             pResult.set(String.valueOf(vName));
-        } else if ("2".equals(pFlag)) {
+        } else if (java.util.Objects.equals(pFlag, "2")) {
             if (vName == null) {
                 pResult.set("NULL_NAME");
             } else {
@@ -121,7 +121,7 @@ public class Issue44IfElsifGotoService {
         Integer vCount = 0;
         pResult.set(null);
         vSql = "SELECT COUNT(*) FROM t_issue44_orders WHERE 1=1";
-        if ("A".equals(pCode)) {
+        if (java.util.Objects.equals(pCode, "A")) {
             vSql = vSql + " AND status = 'ACTIVE'";
         }
         if (String.valueOf(pCode).length() > 1) {

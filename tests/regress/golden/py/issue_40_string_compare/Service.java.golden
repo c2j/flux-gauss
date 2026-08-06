@@ -20,11 +20,11 @@ public class Issue40StringCompareService {
     // Source: pkg_issue40_compare.proc_check_status (PROCEDURE) — issue_40_string_compare.sql:38-53
     public void procCheckStatus(String pStatus, AtomicReference<String> pResult) {
         pResult.set(null);
-        if ("ACTIVE".equals(pStatus)) {
+        if (java.util.Objects.equals(pStatus, "ACTIVE")) {
             pResult.set("OK");
-        } else if ("INACTIVE".equals(pStatus)) {
+        } else if (java.util.Objects.equals(pStatus, "INACTIVE")) {
             pResult.set("DISABLED");
-        } else if ("PENDING".equals(pStatus)) {
+        } else if (java.util.Objects.equals(pStatus, "PENDING")) {
             pResult.set("WAIT");
         } else {
             pResult.set("UNKNOWN");
@@ -44,7 +44,7 @@ public class Issue40StringCompareService {
     // Source: pkg_issue40_compare.proc_compare_versions (PROCEDURE) — issue_40_string_compare.sql:74-92
     public void procCompareVersions(String pVersion, String pMinVer, AtomicReference<Boolean> pOk) {
         pOk.set(null);
-        if ("0".equals(pVersion)) {
+        if (java.util.Objects.equals(pVersion, "0")) {
             pOk.set(false);
             return;
         }

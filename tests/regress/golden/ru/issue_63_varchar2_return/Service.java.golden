@@ -1,0 +1,59 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue63RetMapper;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_63_varchar2_return.sql
+public class Issue63RetService {
+    private static final Logger log = LoggerFactory.getLogger(Issue63RetService.class);
+
+    private final Issue63RetMapper issue63RetMapper;
+
+    public Issue63RetService(Issue63RetMapper issue63RetMapper) {
+        this.issue63RetMapper = issue63RetMapper;
+    }
+
+    // Source: pkg_issue63_ret.fnc_get_open_fund_value (FUNCTION) — {FIXTURES_ROOT}/issue_63_varchar2_return.sql:32-54
+    public String fncGetOpenFundValue(String pIDate, String pIPriceDate, String pISecurityId) {
+        String vBonusValue = null;
+        String vMarketPrice = null;
+        String __SQLERRM__ = "";
+        int __SQLCODE__ = 0;
+        vMarketPrice = "";
+        vBonusValue = "0";
+        try {
+            Map<String, Object> _row = issue63RetMapper.selectTIssue63Fund(pIDate, pIPriceDate, pISecurityId);
+            if (_row != null) {
+                vMarketPrice = (_row.get("v_market_price") instanceof String ? (String) _row.get("v_market_price") : _row.get("v_market_price") != null ? String.valueOf(_row.get("v_market_price")) : null);
+                vBonusValue = (_row.get("v_bonus_value") instanceof String ? (String) _row.get("v_bonus_value") : _row.get("v_bonus_value") != null ? String.valueOf(_row.get("v_bonus_value")) : null);
+            }
+        } catch (Exception __e1) {
+            __SQLERRM__ = __e1.getMessage();
+            __SQLCODE__ = -1;
+            vMarketPrice = "0";
+            vBonusValue = "0";
+        }
+        vMarketPrice = String.valueOf(vMarketPrice).concat(String.valueOf(vBonusValue));
+        return String.valueOf(vMarketPrice);
+    }
+
+    // Source: pkg_issue63_ret.fnc_trd_get_unit_cash (FUNCTION) — {FIXTURES_ROOT}/issue_63_varchar2_return.sql:56-63
+    public String fncTrdGetUnitCash(String pIDate) {
+        String pOUnitCash = null;
+        pOUnitCash = String.valueOf("CASH_").concat(String.valueOf(pIDate));
+        return String.valueOf(pOUnitCash);
+    }
+
+    // Source: pkg_issue63_ret.fnc_get_price_num (FUNCTION) — {FIXTURES_ROOT}/issue_63_varchar2_return.sql:65-72
+    public Long fncGetPriceNum(String pIId) {
+        Long vTotal = 0L;
+        vTotal = (vTotal != null ? vTotal : 0) + 1;
+        return ((Number)((vTotal != null ? vTotal : 0))).longValue();
+    }
+}

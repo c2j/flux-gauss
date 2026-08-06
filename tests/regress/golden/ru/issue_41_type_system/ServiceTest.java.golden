@@ -1,0 +1,82 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue41TypesMapper;
+import com.example.demo.service.Issue41TypesService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_41_type_system.sql
+class Issue41TypesServiceTest {
+
+    @Mock
+    private Issue41TypesMapper issue41TypesMapper;
+
+    @InjectMocks
+    private Issue41TypesService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procTransfer_success() {
+        Long pFromAccount = 100L;
+        Long pToAccount = 100L;
+        java.math.BigDecimal pAmount = new java.math.BigDecimal("99.99");
+        java.sql.Date pTransferDate = java.sql.Date.valueOf("2024-01-01");
+        Boolean pIsUrgent = true;
+        AtomicReference<java.math.BigDecimal> pNewBalanceRef = new AtomicReference<>(java.math.BigDecimal.ZERO);
+        AtomicReference<String> pStatusRef = new AtomicReference<>(null);
+        when(issue41TypesMapper.selectTIssue41Account(any(), any(), any(), any(), any())).thenReturn(new java.math.BigDecimal("999.99"));
+        when(issue41TypesMapper.updateTIssue41Account(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue41TypesMapper.selectTIssue41Account_1(any(), any(), any(), any(), any())).thenReturn(new java.math.BigDecimal("999.99"));
+        when(issue41TypesMapper.updateTIssue41Account_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue41TypesMapper.selectTIssue41Account_2(any(), any())).thenReturn(new java.math.BigDecimal("999.99"));
+        when(issue41TypesMapper.updateTIssue41Account_2(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("balance", java.math.BigDecimal.TEN); m.put("isActive", true); m.put("v_active", 1L); m.put("v_balance", java.math.BigDecimal.TEN); when(issue41TypesMapper.selectTIssue41Account_3(any())).thenReturn(m); }
+        service.procTransfer(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent, pNewBalanceRef, pStatusRef);
+        verify(issue41TypesMapper, atLeast(0)).updateTIssue41Account(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procWithdraw_success() {
+        Long pAccountId = 1L;
+        java.math.BigDecimal pAmount = new java.math.BigDecimal("99.99");
+        AtomicReference<java.math.BigDecimal> pNewBalanceRef = new AtomicReference<>(java.math.BigDecimal.ZERO);
+        AtomicReference<String> pStatusRef = new AtomicReference<>(null);
+        when(issue41TypesMapper.selectTIssue41Account(any(), any(), any(), any(), any())).thenReturn(new java.math.BigDecimal("999.99"));
+        when(issue41TypesMapper.updateTIssue41Account(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue41TypesMapper.selectTIssue41Account_1(any(), any(), any(), any(), any())).thenReturn(new java.math.BigDecimal("999.99"));
+        when(issue41TypesMapper.updateTIssue41Account_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue41TypesMapper.selectTIssue41Account_2(any(), any())).thenReturn(new java.math.BigDecimal("999.99"));
+        when(issue41TypesMapper.updateTIssue41Account_2(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("balance", java.math.BigDecimal.TEN); m.put("isActive", true); m.put("v_active", 1L); m.put("v_balance", java.math.BigDecimal.TEN); when(issue41TypesMapper.selectTIssue41Account_3(any())).thenReturn(m); }
+        service.procWithdraw(pAccountId, pAmount, pNewBalanceRef, pStatusRef);
+        verify(issue41TypesMapper, atLeast(0)).updateTIssue41Account_2(any(), any(), any());
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procValidateAccount_success() {
+        Long pAccountId = 1L;
+        AtomicReference<Boolean> pIsValidRef = new AtomicReference<>(null);
+        AtomicReference<java.math.BigDecimal> pBalanceRef = new AtomicReference<>(java.math.BigDecimal.ZERO);
+        when(issue41TypesMapper.selectTIssue41Account(any(), any(), any(), any(), any())).thenReturn(new java.math.BigDecimal("999.99"));
+        when(issue41TypesMapper.updateTIssue41Account(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue41TypesMapper.selectTIssue41Account_1(any(), any(), any(), any(), any())).thenReturn(new java.math.BigDecimal("999.99"));
+        when(issue41TypesMapper.updateTIssue41Account_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(issue41TypesMapper.selectTIssue41Account_2(any(), any())).thenReturn(new java.math.BigDecimal("999.99"));
+        when(issue41TypesMapper.updateTIssue41Account_2(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("balance", java.math.BigDecimal.TEN); m.put("isActive", true); m.put("v_active", 1L); m.put("v_balance", java.math.BigDecimal.TEN); when(issue41TypesMapper.selectTIssue41Account_3(any())).thenReturn(m); }
+        service.procValidateAccount(pAccountId, pIsValidRef, pBalanceRef);
+    }
+}

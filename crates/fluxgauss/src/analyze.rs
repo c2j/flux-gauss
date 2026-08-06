@@ -1,9 +1,6 @@
 use crate::context::{AnalysisContext, ScanContext};
 use crate::types::{ConversionError, PackageInfo, ProcedureInfo};
 use ogsql_parser::ast::plpgsql::PlStatement;
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-pub(crate) static CATCH_VAR_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 pub fn analyze_procedure(
     proc: &mut ProcedureInfo,
@@ -113,7 +110,7 @@ pub fn analyze_procedure(
             for handler in &exc_block.handlers {
                 let is_others = handler.conditions.is_empty()
                     || handler.conditions.iter().any(|c| c.eq_ignore_ascii_case("others"));
-                let evar = format!("__e{}", CATCH_VAR_COUNTER.fetch_add(1, Ordering::Relaxed));
+                let evar = format!("__e{}", { let n = proc.catch_counter; proc.catch_counter += 1; n + 1 });
                 if is_others {
                     proc.java_logic_lines.push(format!("}} catch (Exception {evar}) {{"));
                 } else {

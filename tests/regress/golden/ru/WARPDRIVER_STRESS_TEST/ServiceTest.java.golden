@@ -153,8 +153,8 @@ class WarpdriverStressTestServiceTest {
     void test_spMainOrchestrator_success() {
         String pBizDate = "2024-01-01";
         String pMode = "test_pMode";
-        AtomicReference<java.math.BigDecimal> pTotalAmtRef = new AtomicReference<>(null);
-        AtomicReference<Long> pLogIdRef = new AtomicReference<>(null);
+        AtomicReference<java.math.BigDecimal> pTotalAmtRef = new AtomicReference<>(java.math.BigDecimal.ZERO);
+        AtomicReference<Long> pLogIdRef = new AtomicReference<>(1L);
         when(warpdriverStressTestMapper.insertAuditTrail(any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator(any(), any(), any(), any())).thenReturn(java.util.List.of(m)); }
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_1(any(), any(), any())).thenReturn(java.util.List.of(m)); }
@@ -276,7 +276,7 @@ class WarpdriverStressTestServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_spGotoLoopPurge_success() {
         Integer pRetentionDays = 1;
-        AtomicReference<Integer> pDeletedCntRef = new AtomicReference<>(null);
+        AtomicReference<Integer> pDeletedCntRef = new AtomicReference<>(0);
         when(warpdriverStressTestMapper.insertAuditTrail(any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator(any(), any(), any(), any())).thenReturn(java.util.List.of(m)); }
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_1(any(), any(), any())).thenReturn(java.util.List.of(m)); }
@@ -399,7 +399,7 @@ class WarpdriverStressTestServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_spGotoDeepEscape_success() {
         Long pBatchId = 1L;
-        AtomicReference<Integer> pInvalidCntRef = new AtomicReference<>(null);
+        AtomicReference<Integer> pInvalidCntRef = new AtomicReference<>(0);
         when(warpdriverStressTestMapper.insertAuditTrail(any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator(any(), any(), any(), any())).thenReturn(java.util.List.of(m)); }
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_1(any(), any(), any())).thenReturn(java.util.List.of(m)); }
@@ -768,7 +768,7 @@ class WarpdriverStressTestServiceTest {
     void test_spSavepointHell_success() {
         Long pAccountId = 1L;
         java.math.BigDecimal pAmount = new java.math.BigDecimal("99.99");
-        AtomicReference<java.math.BigDecimal> pFinalBalRef = new AtomicReference<>(null);
+        AtomicReference<java.math.BigDecimal> pFinalBalRef = new AtomicReference<>(java.math.BigDecimal.ZERO);
         when(warpdriverStressTestMapper.insertAuditTrail(any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator(any(), any(), any(), any())).thenReturn(java.util.List.of(m)); }
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_1(any(), any(), any())).thenReturn(java.util.List.of(m)); }

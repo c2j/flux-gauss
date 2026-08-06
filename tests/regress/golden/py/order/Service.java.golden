@@ -35,7 +35,7 @@ public class OrderService {
         _row = orderMapper.selectTOrders(pOrderId);
         if (_row == null) _row = java.util.Collections.emptyMap();
         _sqlRowCount = (_row != null && !_row.isEmpty()) ? 1 : 0;
-        vProductId = (_row.get("product_id") != null ? (_row.get("product_id") instanceof Number ? ((Number) _row.get("product_id")).longValue() : Long.parseLong(String.valueOf(_row.get("product_id")))) : 0L);
+        vProductId = (_row.get("product_id") != null ? (_row.get("product_id") instanceof Number ? ((Number) (_row.get("product_id"))).longValue() : Long.parseLong(String.valueOf(_row.get("product_id")))) : 0L);
         vQty = (_row.get("qty") != null ? (_row.get("qty") instanceof Number ? ((Number) _row.get("qty")).intValue() : Integer.parseInt(String.valueOf(_row.get("qty")))) : 0);
         // CALL pkg_inventory.release_stock(...)
         _sqlRowCount = orderMapper.updateTOrders(pOrderId);

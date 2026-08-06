@@ -1,0 +1,14 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue61ExcMapper {
+
+    // {FIXTURES_ROOT}/issue_61_outer_exception_brace.sql:26 — pkg_issue61_exc.prc_get_zs_price
+    Object selectTIssue61Bond(@Param("pISecurityId") String pISecurityId, @Param("pIMarketType") String pIMarketType);
+    // {FIXTURES_ROOT}/issue_61_outer_exception_brace.sql:26 — pkg_issue61_exc.prc_get_zs_price
+    Object selectTIssue61Bond_1(@Param("pISecurityId") String pISecurityId, @Param("pIMarketType") String pIMarketType);
+    // {FIXTURES_ROOT}/issue_61_outer_exception_brace.sql:26 — pkg_issue61_exc.prc_get_zs_price
+    Object selectTIssue61Bond_2(@Param("pISecurityId") String pISecurityId, @Param("pIMarketType") String pIMarketType);
+}

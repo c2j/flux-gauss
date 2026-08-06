@@ -1,0 +1,70 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue47TypesMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_47_long_parse_string.sql
+public class Issue47TypesService {
+    private static final Logger log = LoggerFactory.getLogger(Issue47TypesService.class);
+
+    private final Issue47TypesMapper issue47TypesMapper;
+
+    public Issue47TypesService(Issue47TypesMapper issue47TypesMapper) {
+        this.issue47TypesMapper = issue47TypesMapper;
+    }
+
+    // Source: pkg_issue47_types.proc_set_step_no (PROCEDURE) — {FIXTURES_ROOT}/issue_47_long_parse_string.sql:52-80
+    public void procSetStepNo(int pSeq, int pSubSeq, AtomicReference<String> pStepNo) {
+        String vStepNo = null;
+        if (pSeq == 1) {
+            if (pSubSeq == 1) {
+                vStepNo = "1.1";
+            } else {
+                vStepNo = String.valueOf("1.").concat(String.valueOf(String.valueOf(pSubSeq)));
+            }
+        } else if (pSeq == 2) {
+            if (pSubSeq == 5) {
+                vStepNo = "2.5.1";
+            } else if (pSubSeq == 7) {
+                vStepNo = "2.7";
+            } else if (pSubSeq == 8) {
+                vStepNo = "2.8";
+            } else {
+                vStepNo = String.valueOf("2.").concat(String.valueOf(String.valueOf(pSubSeq)));
+            }
+        } else {
+            vStepNo = String.valueOf(String.valueOf(pSeq)).concat(String.valueOf(".0"));
+        }
+        pStepNo.set(String.valueOf(vStepNo));
+    }
+
+    // Source: pkg_issue47_types.proc_process_id (PROCEDURE) — {FIXTURES_ROOT}/issue_47_long_parse_string.sql:88-106
+    public void procProcessId(String pType, AtomicReference<String> pProId) {
+        String vProId = null;
+        if (java.util.Objects.equals(pType, "NEW")) {
+            vProId = "6034";
+        } else if (java.util.Objects.equals(pType, "OLD")) {
+            vProId = "5821";
+        } else {
+            vProId = "9999";
+        }
+        vProId = String.valueOf(vProId).concat(String.valueOf(",8208,9,354,360,370,6034,5821"));
+        pProId.set(String.valueOf(vProId));
+    }
+
+    // Source: pkg_issue47_types.proc_correct_varchar (PROCEDURE) — {FIXTURES_ROOT}/issue_47_long_parse_string.sql:112-123
+    public void procCorrectVarchar(String pLabel, AtomicReference<String> pValue) {
+        String vLabel = null;
+        vLabel = String.valueOf(pLabel);
+        if (java.util.Objects.equals(vLabel.length(), "0")) {
+            vLabel = "DEFAULT";
+        }
+        pValue.set(String.valueOf(vLabel));
+    }
+}

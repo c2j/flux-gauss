@@ -1,54 +1,130 @@
 package com.example.demo.service;
 
 import com.example.demo.exception.BusinessException;
-import com.example.demo.mapper.GaussCompleteExamplesMapper;
-import java.util.Collections;
+import com.example.demo.mapper.OpenCursorMapper;
+import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
 
 @Service
 // Source: {FIXTURES_ROOT}/gauss_complete_examples.sql
-public class GaussCompleteExamplesService {
-    private static final Logger log = LoggerFactory.getLogger(GaussCompleteExamplesService.class);
+public class OpenCursorService {
+    private static final Logger log = LoggerFactory.getLogger(OpenCursorService.class);
 
-    private final GaussCompleteExamplesMapper gaussCompleteExamplesMapper;
+    private final OpenCursorMapper openCursorMapper;
 
-    public GaussCompleteExamplesService(GaussCompleteExamplesMapper gaussCompleteExamplesMapper) {
-        this.gaussCompleteExamplesMapper = gaussCompleteExamplesMapper;
+    public OpenCursorService(OpenCursorMapper openCursorMapper) {
+        this.openCursorMapper = openCursorMapper;
     }
 
-    // Source: string_split (FUNCTION) — {FIXTURES_ROOT}/gauss_complete_examples.sql:5-31
-    public Object stringSplit(String pString, String pDelimiter) {
-        List<String> vArray = null;
-        Integer vEnd = 0;
-        Integer vIdx = 1;
-        Integer vStart = 1;
-        if (pString == null) {
-            return vArray;
+    // Source: pkg_open_cursor.proc_get_employee_cursor (PROCEDURE) — {FIXTURES_ROOT}/gauss_complete_examples.sql:221-245
+    public void procGetEmployeeCursor(int pDeptId, java.math.BigDecimal pMinSalary, AtomicReference<Object> pResult) {
+        List<Map<String, Object>> pResultResult = null;
+        int pResultIdx = 0;
+        Object p_result = null;
+        pResultResult = openCursorMapper.selectProcGetEmployeeCursor(pDeptId, pMinSalary);
+        if (pResultResult == null) pResultResult = new java.util.ArrayList<>();
+        pResultIdx = 0;
+    }
+
+    // Source: pkg_open_cursor.proc_process_dynamic_query (PROCEDURE) — {FIXTURES_ROOT}/gauss_complete_examples.sql:247-342
+    @Transactional
+    public void procProcessDynamicQuery(String pTableName, String pWhereClause, String pOrderBy) {
+        Integer vBatchSize = 500;
+        Object vCursor = null;
+        Integer vRecId = 0;
+        String vRecName = null;
+        String vRecStatus = null;
+        java.sql.Timestamp vRecTime = null;
+        java.math.BigDecimal vRecValue = java.math.BigDecimal.ZERO;
+        Integer vRowCount = 0;
+        String vSql = null;
+        java.sql.Timestamp vStartTime = null;
+        List<Map<String, Object>> vCursorResult = null;
+        int vCursorIdx = 0;
+        Object v_cursor = null;
+        boolean found = false;
+        String __SQLERRM__ = "";
+        int __SQLCODE__ = 0;
+        try {
+            vStartTime = new java.sql.Timestamp(System.currentTimeMillis());
+            vSql = String.valueOf("SELECT id, name, amount, status, create_time FROM ").concat(String.valueOf(pTableName));
+            openCursorMapper.insertAuditLog(pTableName, pWhereClause, pOrderBy, vSql);
+            vCursorResult = openCursorMapper.selectProcProcessDynamicQuery(pTableName, pWhereClause, pOrderBy);
+            if (vCursorResult == null) vCursorResult = new java.util.ArrayList<>();
+            vCursorIdx = 0;
+            while (true) {
+                found = vCursorIdx < vCursorResult.size();
+                if (found) {
+                    Map<String, Object> _row = vCursorResult.get(vCursorIdx);
+                    vCursorIdx++;
+                    vRecId = (_row.get("v_rec_id") instanceof Number ? ((Number) _row.get("v_rec_id")).intValue() : 0);
+                    vRecName = (_row.get("v_rec_name") instanceof String ? (String) _row.get("v_rec_name") : _row.get("v_rec_name") != null ? String.valueOf(_row.get("v_rec_name")) : null);
+                    vRecValue = (_row.get("v_rec_value") instanceof java.math.BigDecimal ? (java.math.BigDecimal) _row.get("v_rec_value") : java.math.BigDecimal.ZERO);
+                    vRecStatus = (_row.get("v_rec_status") instanceof String ? (String) _row.get("v_rec_status") : _row.get("v_rec_status") != null ? String.valueOf(_row.get("v_rec_status")) : null);
+                    vRecTime = (_row.get("v_rec_time") instanceof java.sql.Timestamp ? (java.sql.Timestamp) _row.get("v_rec_time") : null);
+                }
+                if (!found) { break; }
+                vRowCount = vRowCount + 1;
+                try {
+                    // case vRecStatus:
+                    if (vRecStatus.equals("PENDING")) {
+                        openCursorMapper.updateProcProcessDynamicQuery(pTableName, pWhereClause, pOrderBy, vRecId);
+                    } else if (vRecStatus.equals("PROCESSING")) {
+                        if (vRecTime.compareTo(new java.sql.Timestamp(new java.sql.Timestamp(System.currentTimeMillis()).getTime() - (long)(java.time.Duration.ofHours((long)2).toMillis()) * 24 * 60 * 60 * 1000)) < 0) {
+                            openCursorMapper.updateProcProcessDynamicQuery_1(pTableName, pWhereClause, pOrderBy, vRecId);
+                        }
+                    } else if (vRecStatus.equals("COMPLETED")) {
+                        openCursorMapper.insertArchiveTable(pTableName, pWhereClause, pOrderBy, vRecId, vRecName, vRecStatus, vRecValue);
+                        openCursorMapper.deleteProcProcessDynamicQuery(pTableName, pWhereClause, pOrderBy, vRecId);
+                    } else {
+                        openCursorMapper.insertExceptionLog(pTableName, pWhereClause, pOrderBy, vRecId, vRecStatus);
+                    }
+                    if (java.util.Objects.equals((vRowCount % vBatchSize), 0)) {
+                        // COMMIT;
+                    }
+                } catch (Exception __e1) {
+                    __SQLERRM__ = __e1.getMessage();
+                    __SQLCODE__ = -1;
+                    openCursorMapper.insertErrorLog(pTableName, pWhereClause, pOrderBy, vRecId);
+                    continue;
+                }
+            }
+            // COMMIT;
+            // CLOSE vCursor;
+            openCursorMapper.insertPerformanceLog(pTableName, pWhereClause, pOrderBy, vRowCount, vStartTime);
+        } catch (Exception __e2) {
+            __SQLERRM__ = __e2.getMessage();
+            __SQLCODE__ = -1;
+            if (vCursor != null) {
+                // CLOSE vCursor;
+            }
+            try { TransactionAspectSupport.currentTransactionStatus().setRollbackOnly(); } catch (Exception _tx) {}
+            log.info("");
         }
-        vEnd = String.valueOf(pString).indexOf(String.valueOf(pDelimiter), Math.max(0, (vStart) - 1)) + 1;
-        while (vEnd > 0) {
-            // CALL v_array(vIdx)
-            // SQL: := trim ( SUBSTR ( p_string , v_start , v_end - v_start ) )
-            vIdx = vIdx + 1;
-            vStart = vEnd + pDelimiter.length();
-            vEnd = String.valueOf(pString).indexOf(String.valueOf(pDelimiter), Math.max(0, (vStart) - 1)) + 1;
-        }
-        // CALL v_array(vIdx)
-        // SQL: := trim ( SUBSTR ( p_string , v_start ) )
-        return vArray;
     }
 
-    // Source: array_length (FUNCTION) — {FIXTURES_ROOT}/gauss_complete_examples.sql:35-41
-    public Integer arrayLength(Object pArray) {
-        return ((java.util.List<?>) pArray).size();
-    }
-
-    public java.util.List<String> stringToArray(String str, String delimiter) {
-        if (str == null || str.isEmpty()) return java.util.Collections.emptyList();
-        return java.util.Arrays.asList(str.split(java.util.regex.Pattern.quote(delimiter)));
+    // Source: pkg_open_cursor.proc_paginated_query (PROCEDURE) — {FIXTURES_ROOT}/gauss_complete_examples.sql:344-381
+    public void procPaginatedQuery(int pPageSize, int pPageNum, AtomicReference<Object> pDataCursor, AtomicReference<Object> pCountCursor) {
+        Integer vOffset = 0;
+        List<Map<String, Object>> pCountCursorResult = null;
+        int pCountCursorIdx = 0;
+        List<Map<String, Object>> pDataCursorResult = null;
+        int pDataCursorIdx = 0;
+        Object p_count_cursor = null;
+        Object p_data_cursor = null;
+        vOffset = (pPageNum - 1) * pPageSize;
+        pDataCursorResult = openCursorMapper.selectProcPaginatedQuery(pPageSize, pPageNum, vOffset);
+        if (pDataCursorResult == null) pDataCursorResult = new java.util.ArrayList<>();
+        pDataCursorIdx = 0;
+        pCountCursorResult = openCursorMapper.selectProcPaginatedQuery_1(pPageSize, pPageNum);
+        if (pCountCursorResult == null) pCountCursorResult = new java.util.ArrayList<>();
+        pCountCursorIdx = 0;
     }
 }

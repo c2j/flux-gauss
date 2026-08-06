@@ -523,6 +523,7 @@ _PACKAGE_CONSTANTS = {}  # module-level: maps snake_case name → java_type for 
 _PACKAGE_VARIABLES = {}  # module-level: maps snake_case name → {"java_type": str, "default": str, "package": str}
 _PACKAGE_VAR_WRITTEN: set = set()  # module-level: set of package variable names (snake_case) that are assigned to during analysis
 _DML_COUNTER_BY_PKG: dict = {}  # module-level: shared DML method name counters per package
+_DML_CTR_TRACKER: int | None = None  # module-level: tracks id(_DML_COUNTER_BY_PKG) to detect replacement across analyze_procedure calls
 _UDF_RETURN_TYPES = {}  # module-level: maps (func_name_lower, arg_count) → java_type for user-defined functions
 _LOG_FH = None
 
@@ -993,6 +994,7 @@ class ProcedureInfo:
     source_end_line: int = 0       # Procedure end line in original file
     leading_comments: list = field(default_factory=list)   # List[CommentInfo] — comments before procedure declaration
     inline_comments: list = field(default_factory=list)    # List[CommentInfo] — comments inside procedure body
+    _raw_return_types: list = field(default_factory=list)  # Pre-coercion return expr types for reconciliation
     _dynamic_sql_build_stmts: dict = field(default_factory=dict)  # {stmt_body_idx: var_name}
     local_var_source_lines: dict = field(default_factory=dict)  # var_name -> SQL source line number
 
@@ -2282,6 +2284,7 @@ def _remove_dynamic_sql_build_lines(proc: ProcedureInfo, stmt_cp_map: dict):
 
 def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
     """Analyze a procedure's body to extract DML, service calls, and Java logic."""
+    global _DML_CTR_TRACKER
     block = proc.body
     if not block:
         return
@@ -2371,18 +2374,20 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
 
     # Process body statements
     body_stmts = block.get("body", [])
-    pkg_key = proc.package.lower() if proc.package else "default"
+    # Use single global counter key — one SQL file may contain multiple SQL packages
+    # that all feed into the same Mapper XML. Per-package keys cause duplicate IDs.
+    pkg_key = "_global"
     _ctr_id = id(_DML_COUNTER_BY_PKG)
     _ctr_val_id = id(_DML_COUNTER_BY_PKG.get(pkg_key))
     _has_key = pkg_key in _DML_COUNTER_BY_PKG
     if not _has_key:
         _log(f"[DMLNEWKEY] {proc.proc_name}: key {pkg_key!r} being created (was missing)", to_stdout=False)
 
-    if not hasattr(_DML_COUNTER_BY_PKG, '_tracker'):
-        _DML_COUNTER_BY_PKG._tracker = _ctr_id
-    elif _DML_COUNTER_BY_PKG._tracker != _ctr_id:
-        _log(f"[DMLLOST] {proc.proc_name}: _DML_COUNTER_BY_PKG was REPLACED! old={_DML_COUNTER_BY_PKG._tracker} new={_ctr_id}", to_stdout=False)
-        _DML_COUNTER_BY_PKG._tracker = _ctr_id
+    if _DML_CTR_TRACKER is None:
+        _DML_CTR_TRACKER = _ctr_id
+    elif _DML_CTR_TRACKER != _ctr_id:
+        _log(f"[DMLLOST] {proc.proc_name}: _DML_COUNTER_BY_PKG was REPLACED! old={_DML_CTR_TRACKER} new={_ctr_id}", to_stdout=False)
+        _DML_CTR_TRACKER = _ctr_id
     if _has_key and _ctr_val_id == id(None):
         _log(f"[DMLLOST] {proc.proc_name}: key {pkg_key!r} value became None!", to_stdout=False)
     if pkg_key not in _DML_COUNTER_BY_PKG:
@@ -3144,11 +3149,11 @@ def _analyze_and_rewrite_goto(proc: ProcedureInfo, all_packages: dict, dml_count
 
     analysis = GotoAnalysis(labels=labels, gotos=gotos, pattern=pattern, label_stmt_map=label_stmt_map)
 
-    # Clear DML state before regeneration so mapper is generated from the second pass only
+    # Clear proc DML state — rewritten statements will re-populate.
+    # Do NOT reset dml_counter (it is package-level shared across procedures;
+    # resetting it causes duplicate method IDs with other procedures' DMLs).
     proc.dml_statements = []
     proc.service_calls = []
-    for k in list(dml_counter.keys()):
-        dml_counter[k] = 0
 
     if pattern == "A":
         _generate_cleanup_goto(proc, analysis, body_stmts, all_packages, dml_counter)
@@ -4573,6 +4578,8 @@ def _process_return(return_data: dict, proc: ProcedureInfo, all_packages: dict =
     expr = return_data.get("expression")
     if expr:
         java_expr = _expr_to_java(expr, proc, all_packages=all_packages)
+        _et = _infer_expr_type(expr, proc)
+        proc._raw_return_types.append(_et)
         if proc.is_function and proc.return_type:
             ret_java = sql_type_to_java(proc.return_type)
             if "BigDecimal" in ret_java and java_expr.endswith("d") and not java_expr.startswith("java.math.BigDecimal"):
@@ -4583,9 +4590,6 @@ def _process_return(return_data: dict, proc: ProcedureInfo, all_packages: dict =
                     pass
             if re.search(r'\*/\s*null$', java_expr) and ret_java not in ("Object", "void", ""):
                 java_expr = _type_default(ret_java)
-            # Coerce the return expression to the function's declared type
-            # (e.g. nvl/ternary mixing BigDecimal with a long literal for a Long return).
-            _et = _infer_expr_type(expr, proc)
             if _needs_coercion(_et, ret_java):
                 java_expr = _coerce_type(java_expr, _et, ret_java)
         proc.java_logic_lines.append(f"return {java_expr};")
@@ -4644,9 +4648,10 @@ def _is_primitive_producing(expr: str) -> bool:
         return True
     if re.search(r'Math\.\w+\s*\(', s):
         return True
-    if re.search(r'\s[*\/]\s', s):
+    s_no_strings = re.sub(r'"[^"]*"', '""', s)
+    if re.search(r'\s[*\/]\s', s_no_strings):
         return True
-    if re.search(r'\s[+\-]\s', s) and re.search(r'(\.(doubleValue|longValue|intValue|floatValue|getTime)\(\)|parse(Double|Long|Int|Float)\(|\(\(Number\)|Math\.)', s):
+    if re.search(r'\s[+\-]\s', s_no_strings) and re.search(r'(\.(doubleValue|longValue|intValue|floatValue|getTime)\(\)|parse(Double|Long|Int|Float)\(|\(\(Number\)|Math\.)', s_no_strings):
         return True
     return False
 
@@ -4675,7 +4680,7 @@ def _safe_map_cast(var_type: str, expr: str) -> str:
     if var_type == "Double":
         return f"({expr} != null ? ({expr} instanceof Number ? ((Number) {expr}).doubleValue() : Double.parseDouble(String.valueOf({expr}))) : 0.0d)"
     if var_type == "String":
-        return f"(String) {expr}"
+        return f"({expr} != null ? String.valueOf({expr}) : \"\")"
     if "BigDecimal" in var_type:
         return f"({expr} != null ? ({expr} instanceof java.math.BigDecimal ? (java.math.BigDecimal) {expr} : new java.math.BigDecimal(String.valueOf({expr}))) : java.math.BigDecimal.ZERO)"
     if var_type == "java.sql.Date":
@@ -6480,7 +6485,7 @@ def _wrap_handler_stmts(stmts, proc, all_packages,
                     _PACKAGE_VAR_WRITTEN.add(_exc_var_name)
                 expr_raw = sv.get("expression", {})
                 expr = _expr_to_java(expr_raw, proc, all_packages=all_packages)
-                errm_repl = "e.getMessage()" if in_catch else '""'
+                errm_repl = "__SQLERRM__" if in_catch else '""'
                 expr = re.sub(r'\bsqlerrm\b', errm_repl, expr, flags=re.IGNORECASE)
                 expr = re.sub(r'\bsqlcode\b', 'String.valueOf(-1)', expr, flags=re.IGNORECASE)
                 if target in out_java_names:
@@ -6593,7 +6598,7 @@ def _wrap_handler_stmts(stmts, proc, all_packages,
                     _lines.extend(else_lines)
                 _lines.append(f"{indent}}}")
             elif sk == "Raise":
-                errm = "e.getMessage()" if in_catch else '"exception"'
+                errm = "__SQLERRM__" if in_catch else '"exception"'
                 _lines.append(f"{indent}throw new BusinessException({errm});")
             elif sk == "Return":
                 _lines.append(f"{indent}return;")
@@ -8872,6 +8877,10 @@ def _infer_expr_type(expr, proc: ProcedureInfo) -> str:
                     return p.java_type
             if name in _PACKAGE_CONSTANTS:
                 return _PACKAGE_CONSTANTS[name]
+            # Bare function call without parens (PL/SQL allows e.g. func_get_frame_date)
+            _udf_rt = _UDF_RETURN_TYPES.get((name.lower(), 0))
+            if _udf_rt:
+                return _udf_rt
             return "Object"
         elif key == "Literal":
             if isinstance(val, dict):
@@ -9147,6 +9156,34 @@ def _needs_coercion(source_type: str, target_type: str) -> bool:
     return True
 
 
+_BD_RETURNING_METHODS = frozenset({
+    "multiply", "add", "subtract", "divide", "setScale", "abs", "negate",
+    "pow", "max", "min", "round", "movePointLeft", "movePointRight", "ulp",
+})
+
+
+def _expr_is_bigdecimal_producing(expr: str) -> bool:
+    s = expr.strip()
+    if s.startswith((
+        "java.math.BigDecimal.", "BigDecimal.ZERO", "BigDecimal.ONE",
+        "BigDecimal.TEN", "new java.math.BigDecimal(", "new BigDecimal(",
+    )):
+        return True
+    if s.endswith(")"):
+        depth = 0
+        for i in range(len(s) - 1, -1, -1):
+            if s[i] == ")":
+                depth += 1
+            elif s[i] == "(":
+                depth -= 1
+                if depth == 0:
+                    m = re.search(r"\.(\w+)$", s[:i])
+                    if m and m.group(1) in _BD_RETURNING_METHODS:
+                        return True
+                    break
+    return False
+
+
 def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
     """Coerce a Java expression from source_type to target_type.
 
@@ -9182,6 +9219,10 @@ def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
                 return f"{expr}.floatValue()"
         # Non-BigDecimal source -> BigDecimal target
         if tgt == "java.math.BigDecimal":
+            if _expr_is_bigdecimal_producing(expr):
+                return expr
+            if ".get(" in expr and not _is_primitive_producing(expr):
+                return _safe_map_cast("java.math.BigDecimal", expr)
             return f"java.math.BigDecimal.valueOf({expr})"
         # Non-BigDecimal -> non-BigDecimal (Integer<->Long, Integer<->Double, etc.)
         if tgt == "Integer":
@@ -9593,11 +9634,20 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                                 _should_use_bigdecimal = True
                             except ValueError:
                                 pass
+                    # If the non-literal operand is a function call / bare function
+                    # name, it may return a non-numeric string (e.g. a date like
+                    # "2026-08-06"). BigDecimal would throw on parse — use
+                    # String.compareTo instead.
+                    _other_is_func = False
+                    if isinstance(right_raw, dict) and "Literal" not in right_raw and ("FunctionCall" in right_raw or "ColumnRef" in right_raw):
+                        _other_is_func = True
+                    if isinstance(left_raw, dict) and "Literal" not in left_raw and ("FunctionCall" in left_raw or "ColumnRef" in left_raw):
+                        _other_is_func = True
                     if right_type != "String" and ".get(" in right:
                         right = f"String.valueOf({right})"
                     if left_type != "String" and ".get(" in left:
                         left = f"String.valueOf({left})"
-                    if _should_use_bigdecimal:
+                    if _should_use_bigdecimal and not _other_is_func:
                         left_bd = f"new java.math.BigDecimal({left})"
                         right_bd = f"new java.math.BigDecimal({right})"
                         cmp_map = {"<": "<", ">": ">", "<=": "<=", ">=": ">="}
@@ -9704,7 +9754,14 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             _is_ts_right = "Timestamp" in right_type or "Timestamp" in right or "java.sql.Date" in right or right_type in ("java.sql.Date", "java.util.Date")
             _is_dur_left = ".toMillis()" in left
             _is_dur_right = ".toMillis()" in right
+            _extract_tails = (".getYear()", ".getMonthValue()", ".getDayOfMonth()",
+                              ".getDayOfWeek()", ".getDayOfYear()", ".getHour()",
+                              ".getMinute()", ".getSecond()", ".toLocalDate()")
+            _left_is_extract = any(left.rstrip().endswith(t) for t in _extract_tails)
+            _right_is_extract = any(right.rstrip().endswith(t) for t in _extract_tails)
             if op == "-" and _is_ts_left and _is_ts_right:
+                if _left_is_extract or _right_is_extract:
+                    return f"({left} - {right})"
                 return f"({left}.getTime() - {right}.getTime())"
             if op == "-" and _is_ts_left and _is_dur_right:
                 return f"new java.sql.Timestamp({left}.getTime() - {right})"
@@ -9731,6 +9788,9 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 if ".get(" in left and ".get(" not in right:
                     return f"!{right}.equals({left})"
                 return f"!java.util.Objects.equals({left}, {right})"
+            if op in ("<", ">", "<=", ">=") and _is_string_comparison(val, proc):
+                _rel_cmp = {"<": "< 0", ">": "> 0", "<=": "<= 0", ">=": ">= 0"}
+                return f"{left}.compareTo({right}) {_rel_cmp[op]}"
             _is_ts_cmp = ("Timestamp" in left_type or "Timestamp" in left) and ("Timestamp" in right_type or "Timestamp" in right)
             if _is_ts_cmp and op in (">", "<", ">=", "<="):
                 _ts_cmp = {"<": "before", ">": "after", "<=": "!after", ">=": "!before"}
@@ -9802,7 +9862,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                         return 'java.util.Arrays.toString(e.getStackTrace())'
                     else:
                         # Generic fallback for any future ExceptionContext functions
-                        return f'e.getMessage()'
+                        return '__SQLERRM__'
                 elif _builtin_category == "TypeConstructor":
                     if args_java:
                         arg0 = args_java[0]
@@ -12426,11 +12486,8 @@ def _format_comment_for_java(comment) -> str:
 def _reconcile_function_return_type(proc: ProcedureInfo, declared_ret: str):
     """Issue #63: override numeric method return type when body only returns Strings.
 
-    Only triggers when:
-      - declared return is numeric (Long/Integer/BigDecimal/...)
-      - every non-null ``return <expr>;`` in java_logic_lines is a String local,
-        String parameter, string literal, or obvious string concat/valueOf
-    Does NOT trigger for COALESCE/NVL of numerics or mixed returns.
+    Uses _raw_return_types (pre-coercion inferred types) to detect String returns
+    that were coerced to numeric by the return expression coercion.
     """
     if not proc.is_function or not declared_ret:
         return None
@@ -12439,48 +12496,15 @@ def _reconcile_function_return_type(proc: ProcedureInfo, declared_ret: str):
     if not any(n in declared_ret for n in _numeric):
         return None
 
-    _name_to_type = {}
-    for vn, vt in proc.local_vars.items():
-        _name_to_type[snake_to_camel(vn)] = vt
-        _name_to_type[vn] = vt
-    for p in proc.parameters:
-        _name_to_type[p.java_name] = p.java_type
-        _name_to_type[p.name] = p.java_type
-
     string_hits = 0
     non_string_hits = 0
-    for line in proc.java_logic_lines:
-        s = line.strip()
-        m = re.match(r'^return\s+(.+);$', s)
-        if not m:
+    for _et in proc._raw_return_types:
+        if _et is None or _et == "Object":
             continue
-        expr = m.group(1).strip()
-        if expr in ("null", "null /* stub */") or expr.startswith("/*"):
-            continue
-        if expr.startswith('"') or expr.startswith("'"):
+        if _et == "String":
             string_hits += 1
-            continue
-        # Bare identifier or OUT .get()
-        bare = expr
-        gm = re.match(r'^(\w+)\.get\(\)$', expr)
-        if gm:
-            bare = gm.group(1)
-        if re.match(r'^\w+$', bare) and bare in _name_to_type:
-            vt = _name_to_type[bare]
-            if vt == "String":
-                string_hits += 1
-            else:
-                non_string_hits += 1
-            continue
-        if any(tok in expr for tok in ("String.valueOf(", ".concat(", ' + "', '" + ')):
-            # Only count as string if no numeric BigDecimal/Long ops dominate
-            if any(tok in expr for tok in (".add(", ".subtract(", ".multiply(", ".divide(",
-                                            "BigDecimal", "Long.valueOf", "Integer.valueOf")):
-                non_string_hits += 1
-            else:
-                string_hits += 1
-            continue
-        non_string_hits += 1
+        else:
+            non_string_hits += 1
 
     if string_hits > 0 and non_string_hits == 0:
         return "String"
@@ -12768,7 +12792,11 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
         body_lines = cleaned_lines
 
     if ret_type != "void":
-        body_lines = [line.replace("return;", "return null;") if line.strip() == "return;" else line for line in body_lines]
+        _ret_default = "0" if ret_type in ("Integer", "int", "Long", "long", "Short", "Byte") else "null"
+        body_lines = [line.replace("return;", f"return {_ret_default};") if line.strip() == "return;" else line for line in body_lines]
+
+    body_lines = [line.replace("String.valueOf(null)", '""') for line in body_lines]
+    body_lines = [line.replace("new java.math.BigDecimal(\"\")", "java.math.BigDecimal.ZERO") for line in body_lines]
 
     # Pre-pass: strip trailing dead code before stub check
     _last_ret = -1
@@ -13366,7 +13394,7 @@ def _default_test_value(java_type: str, param_name: str, pkg=None) -> str:
         if "dept" in name_lower:
             return "20"
         return "1"
-    if java_type == "java.math.BigDecimal":
+    if "bigdecimal" in lower or java_type == "BigDecimal":
         return "new java.math.BigDecimal(\"99.99\")"
     if "big_decimal" in lower:
         return "new java.math.BigDecimal(\"99.99\")"
@@ -13406,7 +13434,7 @@ def _default_test_value(java_type: str, param_name: str, pkg=None) -> str:
                 return f"new {svc_class}Service.{java_type}()"
     if "string" in lower or lower == "object":
         if "date" in name_lower:
-            return "\"20240101\""
+            return "\"2024-01-01\""
         if any(kw in name_lower for kw in ("list", "ids", "task_list", "id_list", "values")):
             return "\"1,2,3\""
         if any(kw in name_lower for kw in ("flag", "amount", "seqno", "interfaceseq", "operflag", "stepno", "count", "quantity", "qty", "price", "total")):
@@ -13786,7 +13814,7 @@ def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bo
     if dml_result_type == "Long":
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(999L);"
     if dml_result_type == "String":
-        return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(\"test\");"
+        return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(\"1\");"
     if dml_result_type == "Boolean":
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(true);"
     if dml_result_type == "java.math.BigDecimal":
@@ -14237,6 +14265,9 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
                     sequences_needed.add(m.group(1).lower())
 
     lines = []
+    _schema_m = re.search(r'currentSchema=(\w+)', itest_cfg.get("url", ""))
+    if _schema_m:
+        lines.append(f"CREATE SCHEMA IF NOT EXISTS {_schema_m.group(1)};")
     for seq in sorted(sequences_needed):
         lines.append(f'DROP SEQUENCE IF EXISTS {seq} CASCADE;')
     for seq in sorted(sequences_needed):
@@ -14412,16 +14443,11 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
     _sorted_tables.sort(key=lambda t: len(_fk_deps.get(t.lower(), set())), reverse=True)
 
     is_remote = itest_cfg.get("mode") == "remote"
-    if is_remote:
+    if not is_remote:
          for table in _sorted_tables:
              if table.lower() in _SYSTEM_OBJECTS:
                  continue
-             lines.append(f"DO $$ BEGIN EXECUTE 'DELETE FROM {table}'; EXCEPTION WHEN OTHERS THEN NULL; END $$;")
-    else:
-        for table in _sorted_tables:
-            if table.lower() in _SYSTEM_OBJECTS:
-                continue
-            lines.append(f'DROP TABLE IF EXISTS {table} CASCADE;')
+             lines.append(f'DROP TABLE IF EXISTS {table} CASCADE;')
     lines.append("")
     for table, columns in sorted(schema_map.items()):
         if table.lower() in _SYSTEM_OBJECTS:
@@ -14500,15 +14526,21 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
             def _protect_do_blocks(m):
                 _protected.append(m.group(0))
                 return f"__IPROT_{len(_protected) - 1}__"
-            _init_content = re.sub(r'DO\s*\$\$.*?\$\$;', _protect_do_blocks, _init_content, flags=re.DOTALL | re.IGNORECASE)
+            def _convert_do_to_direct(m):
+                inner = m.group(0)
+                alters = re.findall(r'ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)\s+(.+?);', inner, re.IGNORECASE | re.DOTALL)
+                if alters:
+                    return " ".join(f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {c} {ty};" for t, c, ty in alters)
+                return ""
+            _init_content = re.sub(r'DO\s*\$\$.*?\$\$;', _convert_do_to_direct, _init_content, flags=re.DOTALL | re.IGNORECASE)
             _init_content = re.sub(
-                r'^(\s*ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+.+;)\s*$',
-                lambda m: f"DO $$ BEGIN {m.group(1).strip()} EXCEPTION WHEN OTHERS THEN NULL; END $$;",
+                r'^(\s*ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+)(?!IF\s+NOT\s+EXISTS)(.+;)\s*$',
+                lambda m: m.group(1).strip() + " IF NOT EXISTS " + m.group(2).strip(),
                 _init_content, flags=re.MULTILINE | re.IGNORECASE
             )
             _init_content = re.sub(
                 r'^(\s*(?:INSERT|UPDATE|DELETE)\s+.+;)\s*$',
-                lambda m: f"DO $$ BEGIN {m.group(1).strip()} EXCEPTION WHEN OTHERS THEN NULL; END $$;",
+                lambda m: m.group(1).strip(),
                 _init_content, flags=re.MULTILINE | re.IGNORECASE
             )
             for _pi, _ps in enumerate(_protected):
@@ -14517,48 +14549,45 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
         else:
             lines.append(f"-- init_sql not found: {script}")
 
-    for tbl in sorted(_insert_by_table):
-        for ins in _insert_by_table[tbl]:
+    if is_remote:
+        lines.append("-- remote mode: fixture data loaded per-test via itest-fixtures/*.sql")
+    else:
+        for tbl in sorted(_insert_by_table):
+            for ins in _insert_by_table[tbl]:
+                lines.append("")
+                lines.append(f"{ins.rstrip(';')};")
+        _SEED_ID_OFFSET = 8000
+        _seed_inserts = []
+        _other_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped.upper().startswith("INSERT INTO"):
+                _seed_inserts.append(stripped.rstrip(";"))
+            else:
+                _other_lines.append(line)
+        lines = list(_other_lines)
+        for ins in _seed_inserts:
+            def _offset_tuple_ids(m):
+                paren = m.group(1)
+                first_num = m.group(2)
+                rest = m.group(3)
+                try:
+                    return paren + str(int(first_num) + _SEED_ID_OFFSET) + rest
+                except ValueError:
+                    return m.group(0)
+            adjusted = re.sub(r'(\()\s*(\d+)([^)]*\))', _offset_tuple_ids, ins)
             lines.append("")
-            lines.append(f"DO $$ BEGIN {ins.rstrip(';')}; EXCEPTION WHEN OTHERS THEN NULL; END $$;")
-
-    _SEED_ID_OFFSET = 8000
-    _seed_inserts = []
-    _other_lines = []
-    for line in lines:
-        stripped = line.strip()
-        if stripped.upper().startswith("INSERT INTO"):
-            _seed_inserts.append(stripped.rstrip(";"))
-        else:
-            _other_lines.append(line)
-    lines = list(_other_lines)
-    for ins in _seed_inserts:
-        def _offset_tuple_ids(m):
-            paren = m.group(1)
-            first_num = m.group(2)
-            rest = m.group(3)
-            try:
-                return paren + str(int(first_num) + _SEED_ID_OFFSET) + rest
-            except ValueError:
-                return m.group(0)
-        adjusted = re.sub(r'(\()\s*(\d+)([^)]*\))', _offset_tuple_ids, ins)
+            lines.append(f"{adjusted};")
+        _ALIAS_BACKFILL = [
+            "UPDATE employees SET employee_id = emp_id WHERE employee_id IS NULL;",
+            "UPDATE employees SET department_id = dept_id WHERE department_id IS NULL;",
+            "UPDATE employees SET salary = base_salary WHERE salary IS NULL AND base_salary IS NOT NULL;",
+            "UPDATE departments SET department_id = dept_id WHERE department_id IS NULL;",
+        ]
         lines.append("")
-        lines.append(f"DO $$ BEGIN {adjusted}; EXCEPTION WHEN OTHERS THEN NULL; END $$;")
-
-    # --- Column-alias backfill: re-run UPDATE SET alias = native AFTER all INSERTs ---
-    # Some INSERTs use native column names (emp_id, dept_id) while generated SQL
-    # references alias columns (employee_id, department_id).  Re-run the backfill
-    # so that rows inserted above also get their alias columns populated.
-    _ALIAS_BACKFILL = [
-        "DO $$ BEGIN UPDATE employees SET employee_id = emp_id WHERE employee_id IS NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;",
-        "DO $$ BEGIN UPDATE employees SET department_id = dept_id WHERE department_id IS NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;",
-        "DO $$ BEGIN UPDATE employees SET salary = base_salary WHERE salary IS NULL AND base_salary IS NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;",
-        "DO $$ BEGIN UPDATE departments SET department_id = dept_id WHERE department_id IS NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;",
-    ]
-    lines.append("")
-    lines.append("-- Column-alias backfill (after all INSERTs)")
-    for _bf in _ALIAS_BACKFILL:
-        lines.append(_bf)
+        lines.append("-- Column-alias backfill (after all INSERTs)")
+        for _bf in _ALIAS_BACKFILL:
+            lines.append(_bf)
 
     content = "\n".join(lines)
     res_dir = base_path / "src/test/resources"
@@ -14813,12 +14842,41 @@ def _itest_extract_join_tables(sql: str) -> list:
     return tables
 
 
+def _param_java_type(proc, param_name: str) -> str:
+    """Look up a procedure parameter's Java type by name."""
+    pl = param_name.lower()
+    for p in proc.parameters:
+        if p.name.lower() == pl or p.java_name.lower() == pl:
+            return p.java_type
+    return "String"
+
+
+def _itest_sql_value(java_value: str, sql_type: str) -> str:
+    """Convert a Java test expression to a SQL literal for fixture INSERT."""
+    v = java_value.strip()
+    m = re.match(r'^"(.*)"$', v)
+    if m:
+        return f"'{m.group(1)}'"
+    m = re.match(r'java\.sql\.Date\.valueOf\("([^"]*)"\)', v)
+    if m:
+        return f"'{m.group(1)}'"
+    m = re.match(r'java\.sql\.Timestamp\.valueOf\("([^"]*)"\)', v)
+    if m:
+        return f"'{m.group(1)}'"
+    m = re.match(r'new java\.math\.BigDecimal\("([^"]*)"\)', v)
+    if m:
+        return m.group(1)
+    return v
+
+
 def _itest_generate_test_value(col_name: str, sql_type: str) -> str:
     lower_type = (sql_type or "").lower()
     lower_col = col_name.lower()
     if any(t in lower_type for t in ("int", "serial", "bigserial")):
         if lower_col.startswith("parent_"):
             return "NULL"
+        if lower_col.startswith(("is_", "has_")) or lower_col in ("is_active", "is_deleted", "enabled"):
+            return "1"
         if "id" in lower_col or "no" in lower_col:
             return "1"
         return "10"
@@ -14862,9 +14920,12 @@ def _itest_generate_test_value(col_name: str, sql_type: str) -> str:
 def _itest_infer_test_data(proc: ProcedureInfo, pkg: PackageInfo, schema_map: dict, all_packages: dict = None) -> dict:
     handled = set()
     needed = {}
+    bindings = {}
     for dml in proc.dml_statements:
         sql = dml.sql_text or ""
         sql_lower = sql.lower().strip()
+        for _bm in re.finditer(r'(\w+)\s*=\s*(p_[a-z0-9_]+)', sql, re.IGNORECASE):
+            bindings[_bm.group(1).lower()] = snake_to_camel(_bm.group(2))
         if dml.sql_type == "insert":
             tbl = _itest_extract_table_from_insert(sql)
             if tbl:
@@ -14886,9 +14947,9 @@ def _itest_infer_test_data(proc: ProcedureInfo, pkg: PackageInfo, schema_map: di
             if jt not in handled and jt in schema_map and jt not in needed:
                 needed[jt] = schema_map[jt]
     if all_packages is None:
-        return needed
+        return needed, bindings
     _itest_add_transitive_tables(proc, pkg, schema_map, handled, needed, all_packages)
-    return needed
+    return needed, bindings
 
 
 def _itest_extract_columns_from_select(sql_lower: str, tbl: str, schema_map: dict) -> dict:
@@ -15007,13 +15068,14 @@ def _itest_add_transitive_tables(proc, pkg, schema_map, handled, needed, all_pac
                         break
 
 
-def _itest_write_fixtures(base_path: Path, proc: ProcedureInfo, pkg: PackageInfo, test_data: dict) -> str:
+def _itest_write_fixtures(base_path: Path, proc: ProcedureInfo, pkg: PackageInfo, test_data: dict, bindings: dict = None) -> str:
     if not test_data:
         return ""
     lines = []
     for table in sorted(test_data.keys()):
         lines.append(f"DELETE FROM {table};")
     _skip_prefixes = ("constraint", "check", "primary", "foreign", "unique", "index", "like")
+    bindings = bindings or {}
     for table, columns in sorted(test_data.items()):
         if not columns:
             continue
@@ -15026,7 +15088,13 @@ def _itest_write_fixtures(base_path: Path, proc: ProcedureInfo, pkg: PackageInfo
             if not re.match(r'^[a-zA-Z_]\w*$', col):
                 continue
             col_names.append(col)
-            values.append(_itest_generate_test_value(col, sql_type))
+            bound_param = bindings.get(col_lower)
+            if bound_param and proc is not None:
+                _pt = _param_java_type(proc, bound_param)
+                _pv = _default_test_value(_pt, bound_param, pkg=pkg)
+                values.append(_itest_sql_value(str(_pv), sql_type))
+            else:
+                values.append(_itest_generate_test_value(col, sql_type))
         cols_str = ", ".join(col_names)
         vals_str = ", ".join(values)
         lines.append(f"INSERT INTO {table} ({cols_str}) VALUES ({vals_str});")
@@ -15167,8 +15235,8 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
             all_args.append(p.java_name)
         args_str = ", ".join(all_args)
 
-        test_data = _itest_infer_test_data(proc, pkg, schema_map, all_packages)
-        sql_script = _itest_write_fixtures(base_path, proc, pkg, test_data)
+        test_data, test_bindings = _itest_infer_test_data(proc, pkg, schema_map, all_packages)
+        sql_script = _itest_write_fixtures(base_path, proc, pkg, test_data, test_bindings)
         if not sql_script and proc.dml_statements:
             dml_tables = set()
             for dml in proc.dml_statements:

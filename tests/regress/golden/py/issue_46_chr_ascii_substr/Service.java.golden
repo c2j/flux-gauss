@@ -17,22 +17,36 @@ public class Issue46ChrAsciiSubstrService {
     public Issue46ChrAsciiSubstrService(Issue46ChrAsciiSubstrMapper issue46ChrAsciiSubstrMapper) {
         this.issue46ChrAsciiSubstrMapper = issue46ChrAsciiSubstrMapper;
     }
+
+    private String _substr(String str, Object pos) {
+        return _substr(str, pos, str.length());
+    }
+
+    private String _substr(String str, Object pos, Object len) {
+        if (str == null) str = "";
+        int p = (pos instanceof Number) ? ((Number) pos).intValue() : Integer.parseInt(String.valueOf(pos));
+        int l = (len instanceof Number) ? ((Number) len).intValue() : Integer.parseInt(String.valueOf(len));
+        int start = Math.max(0, p - 1);
+        int end = Math.min(str.length(), start + l);
+        if (start > end) start = end;
+        return str.substring(start, end);
+    }
     // Source: pkg_issue46_functions.proc_convert_trade_code (PROCEDURE) — issue_46_chr_ascii_substr.sql:61-76
     public void procConvertTradeCode(String pZqdm, AtomicReference<String> pResult) {
         Integer vChar1 = 0;
         Integer vChar2 = 0;
         String vChr = null;
         pResult.set(null);
-        vChar1 = String.valueOf(pZqdm.substring(Math.max(0, (5) - 1), Math.min(String.valueOf(pZqdm).length(), Math.max(0, (5) - 1) + (1)))).charAt(0);
-        vChar2 = String.valueOf(pZqdm.substring(Math.max(0, (6) - 1), Math.min(String.valueOf(pZqdm).length(), Math.max(0, (6) - 1) + (1)))).charAt(0);
-        vChr = String.valueOf((char)(vChar1 + 48)) + String.valueOf(pZqdm).substring(Math.max(0, (7) - 1), Math.min(String.valueOf(pZqdm).length(), Math.max(0, (7) - 1) + (1)));
+        vChar1 = String.valueOf(_substr(String.valueOf(pZqdm), (5), (1))).charAt(0);
+        vChar2 = String.valueOf(_substr(String.valueOf(pZqdm), (6), (1))).charAt(0);
+        vChr = String.valueOf((char)(vChar1 + 48)) + _substr(String.valueOf(pZqdm), (7), (1));
         pResult.set(String.valueOf(vChr));
     }
 
     // Source: pkg_issue46_functions.proc_get_ascii (PROCEDURE) — issue_46_chr_ascii_substr.sql:82-89
     public void procGetAscii(String pInput, AtomicReference<Integer> pCode) {
         pCode.set(null);
-        pCode.set(Integer.valueOf(String.valueOf(pInput.substring(Math.max(0, (1) - 1), Math.min(String.valueOf(pInput).length(), Math.max(0, (1) - 1) + (1)))).charAt(0)));
+        pCode.set(Integer.valueOf(String.valueOf(_substr(String.valueOf(pInput), (1), (1))).charAt(0)));
     }
 
     // Source: pkg_issue46_functions.proc_get_char (PROCEDURE) — issue_46_chr_ascii_substr.sql:96-103
@@ -44,14 +58,14 @@ public class Issue46ChrAsciiSubstrService {
     // Source: pkg_issue46_functions.proc_substr_mixed (PROCEDURE) — issue_46_chr_ascii_substr.sql:110-120
     public void procSubstrMixed(String pText, String pStart, String pLen, AtomicReference<String> pResult) {
         pResult.set(null);
-        pResult.set(String.valueOf(pText).substring(Math.max(0, (pStart) - 1), Math.min(String.valueOf(pText).length(), Math.max(0, (pStart) - 1) + (pLen))));
+        pResult.set(String.valueOf(_substr(String.valueOf(pText), (pStart), (pLen))));
     }
 
     // Source: pkg_issue46_functions.proc_range_mapping (PROCEDURE) — issue_46_chr_ascii_substr.sql:126-143
     public void procRangeMapping(String pInput, AtomicReference<String> pResult) {
         Integer vNum = 0;
         pResult.set(null);
-        vNum = String.valueOf(pInput.substring(Math.max(0, (1) - 1), Math.min(String.valueOf(pInput).length(), Math.max(0, (1) - 1) + (1)))).charAt(0);
+        vNum = String.valueOf(_substr(String.valueOf(pInput), (1), (1))).charAt(0);
         if (vNum >= 49 && vNum <= 57) {
             pResult.set(String.valueOf((char)(vNum + 16)));
         } else if (vNum >= 65 && vNum <= 74) {

@@ -27,8 +27,8 @@ class Issue44IfElsifGoto2ServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procNestedExceptionBlocks_success() {
         when(issue44IfElsifGoto2Mapper.selectTIssue44ConfigCount1()).thenReturn(999);
-        when(issue44IfElsifGoto2Mapper.selectTIssue44Config()).thenReturn("test");
-        when(issue44IfElsifGoto2Mapper.selectTIssue44Config_1(any())).thenReturn("test");
+        when(issue44IfElsifGoto2Mapper.selectTIssue44Config()).thenReturn("1");
+        when(issue44IfElsifGoto2Mapper.selectTIssue44Config_1(any())).thenReturn("1");
         service.procNestedExceptionBlocks();
     }
 }

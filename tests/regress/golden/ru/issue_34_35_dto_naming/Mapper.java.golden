@@ -1,0 +1,29 @@
+package com.example.demo.mapper;
+
+import java.math.BigDecimal;
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue34OrderMapper {
+
+    // {FIXTURES_ROOT}/issue_34_35_dto_naming.sql:71 — pkg_issue34_order.proc_create_order
+    Long selectTIssue34Order(@Param("pCustomerName") String pCustomerName, @Param("pProductCode") String pProductCode, @Param("pQuantity") Integer pQuantity, @Param("pUnitPrice") java.math.BigDecimal pUnitPrice, @Param("pCreatedBy") String pCreatedBy);
+    // {FIXTURES_ROOT}/issue_34_35_dto_naming.sql:71 — pkg_issue34_order.proc_create_order
+    int insertTIssue34Order(@Param("pCustomerName") String pCustomerName, @Param("pProductCode") String pProductCode, @Param("pQuantity") Integer pQuantity, @Param("pUnitPrice") java.math.BigDecimal pUnitPrice, @Param("pCreatedBy") String pCreatedBy, @Param("vAmount") java.math.BigDecimal vAmount, @Param("vOrderId") Long vOrderId);
+    // {FIXTURES_ROOT}/issue_34_35_dto_naming.sql:71 — pkg_issue34_order.proc_create_order
+    int insertTIssue34OrderLog(@Param("pCustomerName") String pCustomerName, @Param("pProductCode") String pProductCode, @Param("pQuantity") Integer pQuantity, @Param("pUnitPrice") java.math.BigDecimal pUnitPrice, @Param("pCreatedBy") String pCreatedBy, @Param("vOrderId") Long vOrderId);
+    // {FIXTURES_ROOT}/issue_34_35_dto_naming.sql:117 — pkg_issue34_order.proc_query_order_stats
+    Object selectTIssue34Order_1(@Param("pStatus") String pStatus, @Param("pMinAmount") java.math.BigDecimal pMinAmount);
+    // {FIXTURES_ROOT}/issue_34_35_dto_naming.sql:117 — pkg_issue34_order.proc_query_order_stats
+    Object selectTIssue34Order_2(@Param("pStatus") String pStatus, @Param("pMinAmount") java.math.BigDecimal pMinAmount);
+    // {FIXTURES_ROOT}/issue_34_35_dto_naming.sql:117 — pkg_issue34_order.proc_query_order_stats
+    Object selectTIssue34Order_3(@Param("pStatus") String pStatus, @Param("pMinAmount") java.math.BigDecimal pMinAmount);
+    // {FIXTURES_ROOT}/issue_34_35_dto_naming.sql:146 — pkg_issue34_order.proc_update_order
+    Object selectTIssue34Order_4(@Param("pOrderId") Long pOrderId, @Param("pNewStatus") String pNewStatus, @Param("pUpdatedBy") String pUpdatedBy);
+    // {FIXTURES_ROOT}/issue_34_35_dto_naming.sql:146 — pkg_issue34_order.proc_update_order
+    int updateTIssue34Order(@Param("pOrderId") Long pOrderId, @Param("pNewStatus") String pNewStatus, @Param("pUpdatedBy") String pUpdatedBy);
+    // {FIXTURES_ROOT}/issue_34_35_dto_naming.sql:146 — pkg_issue34_order.proc_update_order
+    Object selectTIssue34Order_5(@Param("pOrderId") Long pOrderId, @Param("pNewStatus") String pNewStatus, @Param("pUpdatedBy") String pUpdatedBy);
+    // {FIXTURES_ROOT}/issue_34_35_dto_naming.sql:146 — pkg_issue34_order.proc_update_order
+    int insertTIssue34OrderLog_1(@Param("pOrderId") Long pOrderId, @Param("pNewStatus") String pNewStatus, @Param("pUpdatedBy") String pUpdatedBy, @Param("pOldStatus") String pOldStatus);
+}
