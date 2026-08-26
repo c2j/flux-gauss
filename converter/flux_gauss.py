@@ -5037,10 +5037,23 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
             java_expr = f"java.math.BigDecimal.valueOf({java_expr})"
         elif expr_type == "boolean" or re.match(r'^false\s*/\*', _top):
             java_expr = "java.math.BigDecimal.ZERO /* stub */"
-    elif target_type == "String" and expr_type not in ("String", "Object", None):
-        if _is_numeric_literal(expression):
-            java_expr = f"String.valueOf({java_expr})"
-        elif expr_type in ("Integer", "int", "Long", "long", "Double", "double"):
+    _get_expr = java_expr.strip()
+    _get_open = None
+    if _get_expr.endswith(")"):
+        _depth = 0
+        for _idx in range(len(_get_expr) - 1, -1, -1):
+            if _get_expr[_idx] == ")":
+                _depth += 1
+            elif _get_expr[_idx] == "(":
+                _depth -= 1
+                if _depth == 0:
+                    _get_open = _idx
+                    break
+    _outer_call = re.search(r'([A-Za-z_$][\w$]*)\s*$', _get_expr[:_get_open]) if _get_open is not None else None
+    _is_direct_call = _outer_call is not None
+    _is_direct_map_get = _is_direct_call and _outer_call.group(1) == "get"
+    if target_type == "String" and expr_type not in ("String", None):
+        if expr_type != "Object" or (_is_direct_call and not _is_direct_map_get):
             java_expr = f"String.valueOf({java_expr})"
 
     # Cast Map.get() results when assigning to typed variables
@@ -5048,7 +5061,7 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
         # Stubbed function call — use the target type's default instead of null
         if target_type not in ("Object", "Map<String, Object>", "void", ""):
             java_expr = _type_default(target_type)
-    elif ".get(" in java_expr and target_type not in ("Object", "Map<String, Object>", "") and not re.match(r'^(false|null)\s*/\*', java_expr):
+    elif _is_direct_map_get and target_type not in ("Object", "Map<String, Object>", "") and not re.match(r'^(false|null)\s*/\*', java_expr):
         if target_type == "String":
             java_expr = f"(String) {java_expr}"
         elif "BigDecimal" in target_type:
@@ -9085,7 +9098,7 @@ def _coerce_java_arg(a_java: str, target_type: str) -> str:
         if target_type in ("int", "Integer"):
             return f"Integer.parseInt(String.valueOf({a_java}))"
         if "BigDecimal" in target_type:
-            return f"new java.math.BigDecimal(String.valueOf({a_java}))"
+            return _safe_map_cast("java.math.BigDecimal", a_java)
         if target_type == "String":
             return f"(String) {a_java}"
         if target_type == "java.sql.Date":

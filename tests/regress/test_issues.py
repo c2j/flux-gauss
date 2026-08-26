@@ -1170,6 +1170,27 @@ class TestIssue75_LoopExceptionBrace:
         assert "处理语句失败" not in svc, "Issue #75: statement processing failed"
 
 
+# ── String-target coercion of same-class helper calls ───────────
+
+class TestStringTargetHelperCoercion:
+    """Known non-String and Object helper returns must convert safely to String."""
+
+    def test_helper_results_use_safe_string_conversion(self, cached_ast, tmp_path):
+        sql_file = "pkg_string_helper_coercion.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+
+        assert "public java.math.BigDecimal jsonObject(" in svc
+        assert "public Object jsonAppend(" in svc
+        assert re.search(r'\(String\)\s+this\.', svc) is None, (
+            "String target must not cast a same-class non-String helper result"
+        )
+        assert re.search(r'vItem\s*=\s*String\.valueOf\(this\.jsonObject\(', svc)
+        assert re.search(r'vJson\s*=\s*String\.valueOf\(this\.jsonAppend\(', svc)
+        assert re.search(r'vRec\.get\("amount"\)\s*!=\s*null', svc)
+
+
 # ── Meta: Verify all issue fixtures parse correctly ──────────────
 
 class TestIssueFixturesParse:
@@ -1194,6 +1215,7 @@ class TestIssueFixturesParse:
         "issue_62_substr_helper.sql",
         "issue_63_varchar2_return.sql",
         "issue_64_bigdecimal_empty_init.sql",
+        "pkg_string_helper_coercion.sql",
     ]
 
     @pytest.mark.parametrize("sql_file", ISSUE_FIXTURES)
