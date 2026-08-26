@@ -8245,6 +8245,7 @@ SQL_FUNCTION_MAP = {
     "length": "__EXPR__String.valueOf({args0}).length()",
     "to_char": "__HANDLER__",
     "to_number": "Long.valueOf",
+    "intervaltonum": "__EXPR__({args0})",
     "to_clob": "{args0}",
     "to_date": "__HANDLER__",
     "to_timestamp": "java.sql.Timestamp.valueOf",
@@ -9284,7 +9285,10 @@ def _needs_coercion(source_type: str, target_type: str) -> bool:
     if src.startswith("List<") or tgt.startswith("List<"):
         return False
 
-    # java.sql.Date / Timestamp -- no numeric coercion
+    # java.sql.Date / Timestamp -- no numeric coercion, but String→temporal
+    # empty-string assignment must still be rewritten (to null) so it compiles.
+    if tgt.startswith("java.sql.") and src == "String":
+        return True
     if src.startswith("java.sql.") or tgt.startswith("java.sql."):
         return False
 
@@ -9337,6 +9341,9 @@ def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
 
     src = _normalize_type(source_type)
     tgt = _normalize_type(target_type)
+    _es = expr.strip()
+    if _es.startswith("String.valueOf(") and _is_numeric_type(tgt) and ".length()" not in _es:
+        src = "String"
 
     # Numeric to numeric conversions
     if _is_numeric_type(src) and _is_numeric_type(tgt):
@@ -9382,6 +9389,12 @@ def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
         if src == "java.math.BigDecimal":
             return f"{expr}.toString()"
         return f"String.valueOf({expr})"
+
+    if src == "String" and tgt.startswith("java.sql."):
+        stripped = expr.strip()
+        if stripped == '""' or stripped == "''":
+            return "null"
+        return expr
 
     # String to numeric
     if src == "String" and _is_numeric_type(tgt):
@@ -9879,12 +9892,10 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 return f"Math.pow({left_d}, {right_d})"
             java_op = _java_op(op)
             if op in ("+", "-", "*", "/") and (".get(" in left or ".get(" in right or left_type == "String" or right_type == "String"):
-                if op == "+" and left_type == "String" and right_type == "String":
-                    pass
-                else:
-                    left_d = f"((Number) ({left} != null ? {left} : 0.0d)).doubleValue()" if (".get(" in left and not _is_primitive_producing(left)) else (f"({left} != null ? Double.parseDouble({left}) : 0.0d)" if left_type == "String" else f"((Number) ({left})).doubleValue()")
-                    right_d = f"((Number) ({right} != null ? {right} : 0.0d)).doubleValue()" if (".get(" in right and not _is_primitive_producing(right)) else (f"({right} != null ? Double.parseDouble({right}) : 0.0d)" if right_type == "String" else f"((Number) ({right})).doubleValue()")
-                    return f"({left_d} {java_op} {right_d})"
+                # Oracle/Gauss `+` on VARCHAR2 is numeric addition; concat is `||`.
+                left_d = f"((Number) ({left} != null ? {left} : 0.0d)).doubleValue()" if (".get(" in left and not _is_primitive_producing(left)) else (f"({left} != null ? Double.parseDouble({left}) : 0.0d)" if left_type == "String" else f"((Number) ({left})).doubleValue()")
+                right_d = f"((Number) ({right} != null ? {right} : 0.0d)).doubleValue()" if (".get(" in right and not _is_primitive_producing(right)) else (f"({right} != null ? Double.parseDouble({right}) : 0.0d)" if right_type == "String" else f"((Number) ({right})).doubleValue()")
+                return f"({left_d} {java_op} {right_d})"
             _is_ts_left = "Timestamp" in left_type or "Timestamp" in left or "java.sql.Date" in left or left_type in ("java.sql.Date", "java.util.Date")
             _is_ts_right = "Timestamp" in right_type or "Timestamp" in right or "java.sql.Date" in right or right_type in ("java.sql.Date", "java.util.Date")
             _is_dur_left = ".toMillis()" in left
