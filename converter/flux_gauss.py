@@ -2401,8 +2401,17 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
         try:
             _process_statement(stmt, proc, all_packages, dml_counter)
         except Exception as e:
+            # Issue #75: a partially-emitted statement can leave an orphaned
+            # `try {` (or any unbalanced brace), producing uncompilable Java.
+            # Roll the emitted lines back to the pre-statement checkpoint so
+            # output stays brace-balanced, then emit one balanced marker.
+            del proc.java_logic_lines[pre_idx:]
             stmt_preview = str(stmt)[:120] if stmt else "<empty>"
-            proc.java_logic_lines.append(f"// ERROR: 处理语句失败 - {str(e).replace('*/', '').replace(chr(10), ' ')}")
+            proc._had_statement_error = True
+            proc.java_logic_lines.append(
+                f"// TODO: 语句转换失败，已跳过 - {str(e).replace('*/', '').replace(chr(10), ' ')}"
+            )
+            _record_todo("STATEMENT_PROCESSING_FAILED", proc, stmt_preview)
             _log(f"      ⚠ Statement error in {proc.name}: {e}\n        stmt: {stmt_preview}", to_stdout=False)
             _log(traceback.format_exc(), to_stdout=False)
         post_idx = len(proc.java_logic_lines)
@@ -5459,6 +5468,9 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
                     dynamic_conditions=dynamic_conditions,
                     base_sql=sql_text,
                 ))
+                _list_counter = getattr(proc, '_list_var_counter', 0) + 1
+                proc._list_var_counter = _list_counter
+                list_var = f"{var_java}List" if _list_counter == 1 else f"{var_java}List_{_list_counter}"
                 proc.java_logic_lines.append(
                     f"List<Map<String, Object>> {list_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});"
                 )
@@ -5501,6 +5513,9 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
                     raw_sql_for_params = sql_text
                     sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
                     mapper_method = _dml_method_name("select", proc.proc_name, dml_counter)
+                    _list_counter = getattr(proc, '_list_var_counter', 0) + 1
+                    proc._list_var_counter = _list_counter
+                    list_var = f"{var_java}List" if _list_counter == 1 else f"{var_java}List_{_list_counter}"
                     _add_dml(proc, DmlStatement(
                         sql_type="select",
                         method_id=mapper_method,
@@ -13008,6 +13023,16 @@ def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureI
     """Return (has_issues: bool, failed_checks: list[str])."""
     all_text = " ".join(body_lines)
     failed = []
+
+    _stripped = []
+    for _l in body_lines:
+        _s = re.sub(r'"(?:[^"\\]|\\.)*"', '""', _l)
+        _s = re.sub(r"'(?:[^'\\]|\\.)*'", "''", _s)
+        _s = re.sub(r'//.*$', '', _s)
+        _stripped.append(_s)
+    _delta = sum(l.count("{") - l.count("}") for l in _stripped)
+    if _delta != 0:
+        failed.append(f"brace imbalance delta={_delta}")
 
     if re.search(r'\bv_cursorResult\b', all_text) and "vCursorResult" not in all_text and "v_cursorResult =" not in all_text:
         failed.append("cursor 结果变量 'v_cursorResult' 未正确初始化")

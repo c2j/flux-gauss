@@ -1137,6 +1137,39 @@ class TestIssue64_BigDecimalEmptyInit:
         assert bad == [], f"Issue #64: numeric empty-string inits still present: {bad}"
 
 
+# ── Issue #75: orphaned try after statement failure ──────────────
+
+class TestIssue75_LoopExceptionBrace:
+    """Issue #75: try without catch when statement processing fails inside a
+    Block's exception handler. Guards brace balance, not one syntactic shape."""
+
+    def test_service_braces_balanced(self, cached_ast, tmp_path):
+        sql_file = "issue_75_loop_exception_brace.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+        delta = svc.count("{") - svc.count("}")
+        assert delta == 0, f"Issue #75: brace imbalance delta={delta}"
+
+    def test_no_orphaned_try(self, cached_ast, tmp_path):
+        sql_file = "issue_75_loop_exception_brace.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        # every `try {` must be followed by a `} catch` or `} finally`
+        n_try = len(re.findall(r'\btry\s*\{', svc))
+        n_handler = len(re.findall(r'\}\s*(catch|finally)\b', svc))
+        assert n_try <= n_handler, (
+            f"Issue #75: {n_try} try blocks but only {n_handler} catch/finally handlers"
+        )
+
+    def test_no_statement_processing_error(self, cached_ast, tmp_path):
+        sql_file = "issue_75_loop_exception_brace.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert "list_var" not in svc, "Issue #75: list_var leaked into output"
+        assert "处理语句失败" not in svc, "Issue #75: statement processing failed"
+
+
 # ── Meta: Verify all issue fixtures parse correctly ──────────────
 
 class TestIssueFixturesParse:
