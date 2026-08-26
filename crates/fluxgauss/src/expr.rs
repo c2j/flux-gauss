@@ -245,6 +245,16 @@ pub(crate) fn resolve_var_java_type(expr: &str, proc: &ProcedureInfo) -> Option<
     None
 }
 
+/// True when the expression is a single unqualified variable reference, i.e. the
+/// only shape for which `resolve_var_java_type` describes the EXPRESSION rather
+/// than merely its receiver.
+fn is_bare_identifier(expr: &str) -> bool {
+    let t = expr.trim();
+    !t.is_empty()
+        && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+        && !t.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(true)
+}
+
 fn has_decimal_literal(expr: &str) -> bool {
     let bytes = expr.as_bytes();
     let mut i = 0;
@@ -264,7 +274,7 @@ fn has_decimal_literal(expr: &str) -> bool {
     false
 }
 
-/// True if the rendered expression can yield a Java `double`.
+/// True if the rendered expression yields a Java `double`.
 fn produces_double(expr: &str) -> bool {
     expr.contains("Double.parseDouble")
         || expr.contains(".doubleValue()")
@@ -272,6 +282,22 @@ fn produces_double(expr: &str) -> bool {
         || expr.contains("Math.sqrt")
         || expr.contains(" / ")
         || has_decimal_literal(expr)
+}
+
+/// True if the expression yields a PRIMITIVE int. Java will not convert `int` to
+/// a boxed `Long`, so such an expression must never be passed through unboxed to
+/// a Long target — it has to be routed via `((Number) expr).longValue()`.
+fn produces_primitive_int(expr: &str) -> bool {
+    expr.contains(".length()")
+        || expr.contains(".size()")
+        || expr.contains(".indexOf(")
+        || expr.contains(".lastIndexOf(")
+        || expr.contains(".compareTo(")
+        || expr.contains(".hashCode()")
+        || expr.contains(".charAt(")
+        || expr.contains(".ordinal()")
+        || expr.contains(".intValue()")
+        || expr.contains("(int)")
 }
 
 pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &ProcedureInfo) -> String {
@@ -318,20 +344,27 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
     }
     // Issue #72: never emit `(Number) <String>`. When the source resolves to a
     // String and the target is numeric, parse instead of cast.
-    if let Some(src) = resolve_var_java_type(trimmed, proc) {
-        if src == "String" {
+    //
+    // Only a BARE identifier qualifies. resolve_var_java_type() base-splits on
+    // '.'/'(' and so reports the RECEIVER's type: for `strVar.length()` it says
+    // "String" even though the expression is an int. Wrapping that would emit
+    // Long.parseLong(int), which does not compile. String.valueOf() is used
+    // defensively so any future mis-resolution degrades to a runtime concern
+    // rather than a compile break.
+    if is_bare_identifier(trimmed) {
+        if resolve_var_java_type(trimmed, proc).as_deref() == Some("String") {
             match target_type {
                 Some(t) if t == "Long" || t == "long" => {
-                    return format!("Long.parseLong({})", trimmed);
+                    return format!("Long.parseLong(String.valueOf({}))", trimmed);
                 }
                 Some(t) if t == "Integer" || t == "int" => {
-                    return format!("Integer.parseInt({})", trimmed);
+                    return format!("Integer.parseInt(String.valueOf({}))", trimmed);
                 }
                 Some(t) if t == "Double" || t == "double" => {
-                    return format!("Double.parseDouble({})", trimmed);
+                    return format!("Double.parseDouble(String.valueOf({}))", trimmed);
                 }
                 Some(t) if t.contains("BigDecimal") => {
-                    return format!("new java.math.BigDecimal({})", trimmed);
+                    return format!("new java.math.BigDecimal(String.valueOf({}))", trimmed);
                 }
                 _ => {}
             }
@@ -440,7 +473,8 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
         }
         Some(t) if (t == "Long" || t == "long")
             && (trimmed.contains(" * ") || trimmed.contains(" + ") || trimmed.contains(" - ") || trimmed.contains(" / "))
-            && !produces_double(trimmed) => {
+            && !produces_double(trimmed)
+            && !produces_primitive_int(trimmed) => {
             trimmed.to_string()
         }
         Some(t) if (t == "Long" || t == "long") => {

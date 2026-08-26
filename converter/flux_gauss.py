@@ -4703,6 +4703,14 @@ def _is_bare_long_literal(expr: str) -> bool:
     return bool(re.match(r'^-?\d+[Ll]$', expr.strip()))
 
 
+# Java methods returning a PRIMITIVE int/long. Their results cannot take
+# `.longValue()`, so coercion must box via `((Number) expr)` instead.
+_PRIMITIVE_METHOD_RE = (
+    r'\.(length|size|indexOf|lastIndexOf|compareTo|compareToIgnoreCase'
+    r'|hashCode|charAt|codePointAt|ordinal|getTime)\s*\([^()]*\)'
+)
+
+
 def _is_primitive_producing(expr: str) -> bool:
     if not expr:
         return False
@@ -4714,6 +4722,8 @@ def _is_primitive_producing(expr: str) -> bool:
     core = s.rstrip(")").rstrip("(")
     if re.search(r'\.(intValue|longValue|doubleValue|floatValue)$', core):
         return True
+    if re.search(_PRIMITIVE_METHOD_RE + r'\s*$', s):
+        return True
     if re.search(r'(Double|Float|Long|Integer)\.parse(Double|Float|Long|Int)\s*\(', s):
         return True
     if re.search(r'\(\(Number\)\s*', s):
@@ -4723,7 +4733,7 @@ def _is_primitive_producing(expr: str) -> bool:
     s_no_strings = re.sub(r'"[^"]*"', '""', s)
     if re.search(r'\s[*\/]\s', s_no_strings):
         return True
-    if re.search(r'\s[+\-]\s', s_no_strings) and re.search(r'(\.(doubleValue|longValue|intValue|floatValue|getTime)\(\)|parse(Double|Long|Int|Float)\(|\(\(Number\)|Math\.)', s_no_strings):
+    if re.search(r'\s[+\-]\s', s_no_strings) and re.search(r'(\.(doubleValue|longValue|intValue|floatValue|getTime)\(\)|parse(Double|Long|Int|Float)\(|\(\(Number\)|Math\.|' + _PRIMITIVE_METHOD_RE + r')', s_no_strings):
         return True
     return False
 
