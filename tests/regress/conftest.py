@@ -8,9 +8,11 @@ Key concerns:
    handles this gracefully.
 3. Golden file tests use --regress-save / --regress-update CLI flags.
 """
+import hashlib
 import json
 import os
 import subprocess
+import warnings
 import pytest
 import sys
 
@@ -132,46 +134,73 @@ def _run_ogsql_parse(sql_path: str) -> dict:
     return json.loads(result.stdout)
 
 
-def _get_cached_ast(sql_file: str) -> dict:
-    """Get AST for a SQL file. Reads from cache if available,
-    otherwise parses with ogsql and writes cache.
+def _resolve_fixture_path(sql_file: str):
+    sql_full = os.path.join(FIXTURES_DIR, sql_file) \
+        if not os.path.isabs(sql_file) else sql_file
+    if os.path.isfile(sql_full):
+        return sql_full
+    alt_path = os.path.join(
+        os.path.dirname(__file__), '..', '..', 'demo-project', 'sql', sql_file
+    )
+    return alt_path if os.path.isfile(alt_path) else None
 
-    sql_file: base filename (e.g. "pkg_order.sql") located in FIXTURES_DIR.
+
+def _sql_content_hash(sql_full: str) -> str:
+    with open(sql_full, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def _get_cached_ast(sql_file: str) -> dict:
+    """Get AST for a SQL file, reparsing when the SQL no longer matches the cache.
+
+    The cache is committed so the suite can run without the ogsql binary. It is
+    keyed by filename only, so a stale entry would otherwise make an edited
+    fixture silently test its OLD content. A sidecar .sha256 of the SQL guards
+    that: on mismatch (or a legacy entry with no sidecar) the file is reparsed
+    when ogsql is available, and only falls back to the stale cache when it
+    isn't.
     """
     cache_key = sql_file.replace("/", "_").replace("\\", "_")
     cache_path = os.path.join(AST_CACHE_DIR, f"{cache_key}.json")
+    hash_path = f"{cache_path}.sha256"
 
-    # 1. Try cache
+    sql_full = _resolve_fixture_path(sql_file)
+    current_hash = _sql_content_hash(sql_full) if sql_full else None
+
     if os.path.exists(cache_path):
-        with open(cache_path, encoding="utf-8") as f:
-            return json.load(f)
+        cached_hash = None
+        if os.path.exists(hash_path):
+            with open(hash_path, encoding="utf-8") as f:
+                cached_hash = f.read().strip()
+        if current_hash is not None and cached_hash == current_hash:
+            with open(cache_path, encoding="utf-8") as f:
+                return json.load(f)
+        if not _check_ogsql():
+            warnings.warn(
+                f"AST cache for {sql_file} does not match the fixture content and "
+                f"ogsql is unavailable to reparse; using the stale cache. "
+                f"Set OGSQL_BIN to refresh.",
+                stacklevel=2,
+            )
+            with open(cache_path, encoding="utf-8") as f:
+                return json.load(f)
 
-    # 2. Need ogsql to parse
     if not _check_ogsql():
         pytest.skip(
             f"ogsql binary not available and AST not cached for {sql_file}. "
             f"Set OGSQL_BIN env var or place ogsql on PATH."
         )
 
-    # 3. Parse and cache
-    sql_full = os.path.join(FIXTURES_DIR, sql_file) \
-        if not os.path.isabs(sql_file) else sql_file
-
-    if not os.path.isfile(sql_full):
-        # Try as relative to project root (fallback)
-        alt_path = os.path.join(
-            os.path.dirname(__file__), '..', '..', 'demo-project', 'sql', sql_file
-        )
-        if os.path.isfile(alt_path):
-            sql_full = alt_path
-        else:
-            pytest.skip(f"SQL fixture not found: {sql_full}")
+    if sql_full is None:
+        pytest.skip(f"SQL fixture not found: {sql_file}")
 
     ast = _run_ogsql_parse(sql_full)
 
     os.makedirs(AST_CACHE_DIR, exist_ok=True)
     with open(cache_path, "w", encoding="utf-8") as f:
         json.dump(ast, f, indent=2)
+    with open(hash_path, "w", encoding="utf-8") as f:
+        f.write(current_hash or "")
 
     return ast
 
