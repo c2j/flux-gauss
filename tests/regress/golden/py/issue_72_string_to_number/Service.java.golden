@@ -1,0 +1,33 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue72StringToNumberMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue72StringToNumberService {
+    private static final Logger log = LoggerFactory.getLogger(Issue72StringToNumberService.class);
+
+    private final Issue72StringToNumberMapper issue72StringToNumberMapper;
+
+    public Issue72StringToNumberService(Issue72StringToNumberMapper issue72StringToNumberMapper) {
+        this.issue72StringToNumberMapper = issue72StringToNumberMapper;
+    }
+    // Source: pkg_issue72.prc_type_wall (PROCEDURE) — issue_72_string_to_number.sql:7-18
+    public void prcTypeWall(String pIDate, AtomicReference<String> pOSucceed) {
+        Long vCount = 0L;
+        Long vAmt = 0L;
+        String vFlag = null;
+        pOSucceed.set(null);
+        vFlag = "1";
+        vCount = Long.parseLong(vFlag);
+        vAmt = ((Number) (((vFlag != null ? Double.parseDouble(vFlag) : 0.0d) * ((Number) (0.5d)).doubleValue()))).longValue();
+        if (vCount.compareTo(Long.valueOf(0)) > 0) {
+            pOSucceed.set("0");
+        }
+    }
+}
