@@ -16301,6 +16301,7 @@ def _run_mcp_server():
             # ── Phase 3: Extract procedures ──
             packages = []
             all_package_names = {}
+            _merge_keys = {}
             all_skipped = []
 
             for sql_file in resolved_sql_files:
@@ -16367,7 +16368,14 @@ def _run_mcp_server():
                     if pkg_name in all_package_names:
                         _merge_package_info(all_package_names[pkg_name], pkg, all_skipped)
                     else:
-                        all_package_names[pkg_name] = pkg
+                        _mk = package_to_classname(pkg_name)
+                        _existing = _merge_keys.get(_mk)
+                        if _existing is not None:
+                            _merge_package_info(all_package_names[_existing], pkg, all_skipped)
+                            all_package_names[pkg_name] = all_package_names[_existing]
+                        else:
+                            _merge_keys[_mk] = pkg_name
+                            all_package_names[pkg_name] = pkg
 
                     for _p in procedures:
                         if _p.is_function and _p.return_type:
@@ -16377,7 +16385,7 @@ def _run_mcp_server():
                     parse_errors_map[basename] = [{"parse_error": str(e)}]
                     continue
 
-            packages = list(all_package_names.values())
+            packages = list({id(_p): _p for _p in all_package_names.values()}.values())
 
             # ── Phase 4: Analyze procedures ──
             if not packages:
@@ -16735,6 +16743,11 @@ def main():
     # ── Phase 1: Parse SQL files (use cache for unchanged) ──
     packages = []
     all_package_names = {}
+    # generated-Service-class name -> first package name that produced it. Names
+    # differing only in case emit the SAME Service file, so this is the key that
+    # must drive merging; all_package_names stays keyed by raw name because
+    # cross-package call resolution looks packages up by that name.
+    _merge_keys = {}
     sql_file_to_pkg = defaultdict(set)
     all_skipped = []
     n_sql = len(sql_files)
@@ -16812,9 +16825,13 @@ def main():
                 if vname not in _PACKAGE_CONSTANTS:
                     _PACKAGE_VARIABLES[vname] = {**vdata, "package": pkg_name}
             pkg = PackageInfo(package_name=pkg_name, procedures=procedures, package_vars=pkg_vars, source_file=basename, source_files=[basename], java_package=sql_file_to_java_package.get(sql_file, ""), comments=pkg_level_comments, custom_types=custom_types)
-            if pkg_name in all_package_names:
-                _merge_package_info(all_package_names[pkg_name], pkg, all_skipped)
+            _merge_key = package_to_classname(pkg_name)
+            _existing_name = _merge_keys.get(_merge_key)
+            if _existing_name is not None:
+                _merge_package_info(all_package_names[_existing_name], pkg, all_skipped)
+                all_package_names[pkg_name] = all_package_names[_existing_name]
             else:
+                _merge_keys[_merge_key] = pkg_name
                 all_package_names[pkg_name] = pkg
             sql_file_to_pkg[sql_file].add(pkg_name)
 
@@ -16835,7 +16852,7 @@ def main():
 
     _progress_done("Parse", n_sql)
 
-    packages = list(all_package_names.values())
+    packages = list({id(_p): _p for _p in all_package_names.values()}.values())
 
     # ── Phase 2: Analyze all procedures ──
     all_procs = [(pkg, proc) for pkg in packages for proc in pkg.procedures]

@@ -421,12 +421,18 @@ fn phase1_parse(
 
     crate::progress::progress_done("Parse", total);
 
+    // Key on the emitted Service class, not the raw package name: that is the
+    // real invariant (one PackageInfo per generated file). Raw names differing
+    // only in case — app.PKG_LOG vs other.pkg_log — collapse to the same
+    // LogService.java, so keying on them would still let one silently
+    // overwrite the other.
     let mut packages_by_name: BTreeMap<String, PackageInfo> = BTreeMap::new();
     for package in packages {
-        if let Some(existing) = packages_by_name.get_mut(&package.package_name) {
+        let key = crate::naming::package_to_classname(&package.package_name);
+        if let Some(existing) = packages_by_name.get_mut(&key) {
             merge_package_info(existing, package, &mut skipped);
         } else {
-            packages_by_name.insert(package.package_name.clone(), package);
+            packages_by_name.insert(key, package);
         }
     }
     let packages: Vec<PackageInfo> = packages_by_name.into_values().collect();
@@ -542,7 +548,7 @@ fn track_package_origins(
         let Some(name) = name else { continue };
         let Some(registration_name) = name.last() else { continue };
         origins
-            .entry(registration_name.to_string())
+            .entry(crate::naming::package_to_classname(registration_name))
             .or_default()
             .insert(name.join("."));
     }
