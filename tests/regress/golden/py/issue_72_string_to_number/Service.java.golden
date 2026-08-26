@@ -17,7 +17,7 @@ public class Issue72StringToNumberService {
     public Issue72StringToNumberService(Issue72StringToNumberMapper issue72StringToNumberMapper) {
         this.issue72StringToNumberMapper = issue72StringToNumberMapper;
     }
-    // Source: pkg_issue72.prc_type_wall (PROCEDURE) — issue_72_string_to_number.sql:7-18
+    // Source: pkg_issue72.prc_type_wall (PROCEDURE) — issue_72_string_to_number.sql:8-19
     public void prcTypeWall(String pIDate, AtomicReference<String> pOSucceed) {
         Long vCount = 0L;
         Long vAmt = 0L;
@@ -27,6 +27,20 @@ public class Issue72StringToNumberService {
         vCount = Long.parseLong(vFlag);
         vAmt = ((Number) (((vFlag != null ? Double.parseDouble(vFlag) : 0.0d) * ((Number) (0.5d)).doubleValue()))).longValue();
         if (vCount.compareTo(Long.valueOf(0)) > 0) {
+            pOSucceed.set("0");
+        }
+    }
+
+    // Source: pkg_issue72.prc_str_method_wall (PROCEDURE) — issue_72_string_to_number.sql:21-32
+    public void prcStrMethodWall(String pIn, AtomicReference<String> pOSucceed) {
+        Long vLen = 0L;
+        String vStr = null;
+        Long vNext = 0L;
+        pOSucceed.set(null);
+        vStr = "abc";
+        vLen = ((Number) (String.valueOf(pIn).length())).longValue();
+        vNext = ((Number) (String.valueOf(vStr).length() + 1)).longValue();
+        if (vLen.compareTo(Long.valueOf(0)) > 0 && vNext.compareTo(Long.valueOf(0)) > 0) {
             pOSucceed.set("0");
         }
     }
