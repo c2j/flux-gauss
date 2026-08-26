@@ -360,7 +360,7 @@ impl PackageSummary {
     }
 
     pub fn find_procedure(&self, proc_name: &str) -> Option<&ProcedureSummary> {
-        self.procedures.iter().find(|p| p.proc_name == proc_name)
+        self.procedures.iter().find(|p| p.proc_name.eq_ignore_ascii_case(proc_name))
     }
 }
 
