@@ -1,0 +1,46 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue75LoopExceptionBraceMapper;
+import com.example.demo.service.Issue75LoopExceptionBraceService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class Issue75LoopExceptionBraceServiceTest {
+
+    @Mock
+    private Issue75LoopExceptionBraceMapper issue75LoopExceptionBraceMapper;
+
+    @InjectMocks
+    private Issue75LoopExceptionBraceService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procNestedBlockBodyFails_success() {
+        AtomicReference<String> pResult = new AtomicReference<>(null);
+        { var m = new java.util.HashMap<String,Object>(); m.put("v", 1); when(issue75LoopExceptionBraceMapper.selectProcNestedBlockBodyFails()).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("v", 1); when(issue75LoopExceptionBraceMapper.selectProcLoopExcHandler_1()).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("v", 1); when(issue75LoopExceptionBraceMapper.selectProcLoopExcHandler_2()).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        service.procNestedBlockBodyFails(pResult);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procLoopExcHandler_success() {
+        AtomicReference<String> pResult = new AtomicReference<>(null);
+        { var m = new java.util.HashMap<String,Object>(); m.put("v", 1); when(issue75LoopExceptionBraceMapper.selectProcNestedBlockBodyFails()).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("v", 1); when(issue75LoopExceptionBraceMapper.selectProcLoopExcHandler_1()).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("v", 1); when(issue75LoopExceptionBraceMapper.selectProcLoopExcHandler_2()).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        service.procLoopExcHandler(pResult);
+    }
+}

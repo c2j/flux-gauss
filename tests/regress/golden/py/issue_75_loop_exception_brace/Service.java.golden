@@ -1,0 +1,57 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue75LoopExceptionBraceMapper;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue75LoopExceptionBraceService {
+    private static final Logger log = LoggerFactory.getLogger(Issue75LoopExceptionBraceService.class);
+
+    private final Issue75LoopExceptionBraceMapper issue75LoopExceptionBraceMapper;
+
+    public Issue75LoopExceptionBraceService(Issue75LoopExceptionBraceMapper issue75LoopExceptionBraceMapper) {
+        this.issue75LoopExceptionBraceMapper = issue75LoopExceptionBraceMapper;
+    }
+    // Source: pkg_issue75.proc_nested_block_body_fails (PROCEDURE) — issue_75_loop_exception_brace.sql:14-27
+    public void procNestedBlockBodyFails(AtomicReference<String> pResult) {
+        String vTmp = null;
+        pResult.set(null);
+        try {
+            List<Map<String, Object>> r2List = issue75LoopExceptionBraceMapper.selectProcNestedBlockBodyFails();
+            for (Map<String, Object> r2 : r2List) {
+                vTmp = /* TODO: v() */ null;
+            }
+        } catch (Exception e) { // OTHERS
+            // WHEN OTHERS
+            vTmp = "fallback";
+        }
+        pResult.set(String.valueOf(vTmp));
+    }
+
+    // Source: pkg_issue75.proc_loop_exc_handler (PROCEDURE) — issue_75_loop_exception_brace.sql:29-46
+    public void procLoopExcHandler(AtomicReference<String> pResult) {
+        String vTmp = null;
+        pResult.set(null);
+        List<Map<String, Object>> recList = issue75LoopExceptionBraceMapper.selectProcLoopExcHandler_1();
+        for (Map<String, Object> rec : recList) {
+            try {
+                vTmp = /* TODO: v() */ null;
+            } catch (Exception e) { // OTHERS
+                // WHEN OTHERS
+                List<Map<String, Object>> r2List_2 = issue75LoopExceptionBraceMapper.selectProcLoopExcHandler_2();
+                for (Map<String, Object> r2 : r2List_2) {
+                    vTmp = /* TODO: v() */ null;
+                }
+                continue;
+            }
+        }
+        pResult.set(String.valueOf(vTmp));
+    }
+}

@@ -55,6 +55,11 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("total_count", java.math.BigDecimal.TEN); m.put("dept_count", "test"); m.put("avg_salary", java.math.BigDecimal.TEN); m.put("min_salary", java.math.BigDecimal.TEN); m.put("max_salary", java.math.BigDecimal.TEN); when(gaussCompleteExamplesMapper.selectProcPaginatedQuery_4(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(gaussCompleteExamplesMapper.insertAuditLog_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcDynamicForProcessing_5(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(gaussCompleteExamplesMapper.insertProcDynamicForProcessing(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_2(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_3(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_4(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertScanLog(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(gaussCompleteExamplesMapper.insertPerformanceLog_1(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_6(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_7(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
@@ -67,8 +72,8 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_13(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("count", 5); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_14(any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("employee_id", 1); m.put("employee_name", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("department_id", 1); m.put("hire_date", "2025-01-01"); when(gaussCompleteExamplesMapper.selectProcGetRawCursor_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_2(any())).thenReturn(1);
-        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_5(any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcEnhanceCursor_16(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         var result = service.stringSplit(pString, pDelimiter);
         assertNotNull(result);
@@ -99,6 +104,11 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("total_count", java.math.BigDecimal.TEN); m.put("dept_count", "test"); m.put("avg_salary", java.math.BigDecimal.TEN); m.put("min_salary", java.math.BigDecimal.TEN); m.put("max_salary", java.math.BigDecimal.TEN); when(gaussCompleteExamplesMapper.selectProcPaginatedQuery_4(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(gaussCompleteExamplesMapper.insertAuditLog_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcDynamicForProcessing_5(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(gaussCompleteExamplesMapper.insertProcDynamicForProcessing(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_2(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_3(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_4(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertScanLog(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(gaussCompleteExamplesMapper.insertPerformanceLog_1(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_6(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_7(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
@@ -111,8 +121,8 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_13(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("count", 5); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_14(any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("employee_id", 1); m.put("employee_name", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("department_id", 1); m.put("hire_date", "2025-01-01"); when(gaussCompleteExamplesMapper.selectProcGetRawCursor_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_2(any())).thenReturn(1);
-        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_5(any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcEnhanceCursor_16(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         var result = service.arrayLength(pArray);
         assertNotNull(result);
@@ -143,6 +153,11 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("total_count", java.math.BigDecimal.TEN); m.put("dept_count", "test"); m.put("avg_salary", java.math.BigDecimal.TEN); m.put("min_salary", java.math.BigDecimal.TEN); m.put("max_salary", java.math.BigDecimal.TEN); when(gaussCompleteExamplesMapper.selectProcPaginatedQuery_4(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(gaussCompleteExamplesMapper.insertAuditLog_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcDynamicForProcessing_5(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(gaussCompleteExamplesMapper.insertProcDynamicForProcessing(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_2(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_3(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_4(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertScanLog(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(gaussCompleteExamplesMapper.insertPerformanceLog_1(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_6(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_7(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
@@ -155,8 +170,8 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_13(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("count", 5); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_14(any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("employee_id", 1); m.put("employee_name", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("department_id", 1); m.put("hire_date", "2025-01-01"); when(gaussCompleteExamplesMapper.selectProcGetRawCursor_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_2(any())).thenReturn(1);
-        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_5(any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcEnhanceCursor_16(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         var result = service.funcGetBonusRate(pDeptId);
         assertNotNull(result);
@@ -186,6 +201,11 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("total_count", java.math.BigDecimal.TEN); m.put("dept_count", "test"); m.put("avg_salary", java.math.BigDecimal.TEN); m.put("min_salary", java.math.BigDecimal.TEN); m.put("max_salary", java.math.BigDecimal.TEN); when(gaussCompleteExamplesMapper.selectProcPaginatedQuery_4(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(gaussCompleteExamplesMapper.insertAuditLog_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcDynamicForProcessing_5(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(gaussCompleteExamplesMapper.insertProcDynamicForProcessing(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_2(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_3(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_4(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertScanLog(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(gaussCompleteExamplesMapper.insertPerformanceLog_1(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_6(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_7(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
@@ -198,8 +218,8 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_13(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("count", 5); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_14(any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("employee_id", 1); m.put("employee_name", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("department_id", 1); m.put("hire_date", "2025-01-01"); when(gaussCompleteExamplesMapper.selectProcGetRawCursor_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_2(any())).thenReturn(1);
-        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_5(any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcEnhanceCursor_16(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         service.procSyncEmployeeBonus();
         verify(gaussCompleteExamplesMapper, atLeast(0)).insertBatchLog(any());
@@ -232,6 +252,11 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("total_count", java.math.BigDecimal.TEN); m.put("dept_count", "test"); m.put("avg_salary", java.math.BigDecimal.TEN); m.put("min_salary", java.math.BigDecimal.TEN); m.put("max_salary", java.math.BigDecimal.TEN); when(gaussCompleteExamplesMapper.selectProcPaginatedQuery_4(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(gaussCompleteExamplesMapper.insertAuditLog_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcDynamicForProcessing_5(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(gaussCompleteExamplesMapper.insertProcDynamicForProcessing(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_2(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_3(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_4(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertScanLog(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(gaussCompleteExamplesMapper.insertPerformanceLog_1(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_6(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_7(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
@@ -244,8 +269,8 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_13(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("count", 5); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_14(any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("employee_id", 1); m.put("employee_name", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("department_id", 1); m.put("hire_date", "2025-01-01"); when(gaussCompleteExamplesMapper.selectProcGetRawCursor_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_2(any())).thenReturn(1);
-        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_5(any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcEnhanceCursor_16(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         service.procGetEmployeeCursor(pDeptId, pMinSalary, pResult);
     }
@@ -277,6 +302,11 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("total_count", java.math.BigDecimal.TEN); m.put("dept_count", "test"); m.put("avg_salary", java.math.BigDecimal.TEN); m.put("min_salary", java.math.BigDecimal.TEN); m.put("max_salary", java.math.BigDecimal.TEN); when(gaussCompleteExamplesMapper.selectProcPaginatedQuery_4(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(gaussCompleteExamplesMapper.insertAuditLog_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcDynamicForProcessing_5(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(gaussCompleteExamplesMapper.insertProcDynamicForProcessing(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_2(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_3(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_4(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertScanLog(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(gaussCompleteExamplesMapper.insertPerformanceLog_1(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_6(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_7(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
@@ -289,8 +319,8 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_13(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("count", 5); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_14(any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("employee_id", 1); m.put("employee_name", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("department_id", 1); m.put("hire_date", "2025-01-01"); when(gaussCompleteExamplesMapper.selectProcGetRawCursor_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_2(any())).thenReturn(1);
-        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_5(any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcEnhanceCursor_16(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         service.procProcessDynamicQuery(pTableName, pWhereClause, pOrderBy);
         verify(gaussCompleteExamplesMapper, atLeast(0)).insertAuditLog(any(), any(), any(), any());
@@ -324,6 +354,11 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("total_count", java.math.BigDecimal.TEN); m.put("dept_count", "test"); m.put("avg_salary", java.math.BigDecimal.TEN); m.put("min_salary", java.math.BigDecimal.TEN); m.put("max_salary", java.math.BigDecimal.TEN); when(gaussCompleteExamplesMapper.selectProcPaginatedQuery_4(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(gaussCompleteExamplesMapper.insertAuditLog_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcDynamicForProcessing_5(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(gaussCompleteExamplesMapper.insertProcDynamicForProcessing(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_2(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_3(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_4(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertScanLog(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(gaussCompleteExamplesMapper.insertPerformanceLog_1(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_6(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_7(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
@@ -336,8 +371,8 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_13(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("count", 5); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_14(any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("employee_id", 1); m.put("employee_name", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("department_id", 1); m.put("hire_date", "2025-01-01"); when(gaussCompleteExamplesMapper.selectProcGetRawCursor_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_2(any())).thenReturn(1);
-        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_5(any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcEnhanceCursor_16(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         service.procPaginatedQuery(pPageSize, pPageNum, pDataCursor, pCountCursor);
     }
@@ -371,6 +406,11 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("total_count", java.math.BigDecimal.TEN); m.put("dept_count", "test"); m.put("avg_salary", java.math.BigDecimal.TEN); m.put("min_salary", java.math.BigDecimal.TEN); m.put("max_salary", java.math.BigDecimal.TEN); when(gaussCompleteExamplesMapper.selectProcPaginatedQuery_4(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(gaussCompleteExamplesMapper.insertAuditLog_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcDynamicForProcessing_5(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(gaussCompleteExamplesMapper.insertProcDynamicForProcessing(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_2(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_3(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_4(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertScanLog(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(gaussCompleteExamplesMapper.insertPerformanceLog_1(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_6(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_7(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
@@ -383,10 +423,11 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_13(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("count", 5); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_14(any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("employee_id", 1); m.put("employee_name", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("department_id", 1); m.put("hire_date", "2025-01-01"); when(gaussCompleteExamplesMapper.selectProcGetRawCursor_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_2(any())).thenReturn(1);
-        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_5(any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcEnhanceCursor_16(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         service.procDynamicForProcessing(pTableName, pSelectColumns, pWhereClause, pOrderBy, pProcessType);
+        verify(gaussCompleteExamplesMapper, atLeast(0)).insertAuditLog_1(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -418,6 +459,11 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("total_count", java.math.BigDecimal.TEN); m.put("dept_count", "test"); m.put("avg_salary", java.math.BigDecimal.TEN); m.put("min_salary", java.math.BigDecimal.TEN); m.put("max_salary", java.math.BigDecimal.TEN); when(gaussCompleteExamplesMapper.selectProcPaginatedQuery_4(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(gaussCompleteExamplesMapper.insertAuditLog_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcDynamicForProcessing_5(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(gaussCompleteExamplesMapper.insertProcDynamicForProcessing(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_2(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_3(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_4(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertScanLog(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(gaussCompleteExamplesMapper.insertPerformanceLog_1(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_6(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_7(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
@@ -430,8 +476,8 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_13(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("count", 5); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_14(any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("employee_id", 1); m.put("employee_name", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("department_id", 1); m.put("hire_date", "2025-01-01"); when(gaussCompleteExamplesMapper.selectProcGetRawCursor_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_2(any())).thenReturn(1);
-        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_5(any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcEnhanceCursor_16(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         service.procCursorDynamicUsing(pTableName, pStatusList, pMinAmount, pStartDate, pResult);
         verify(gaussCompleteExamplesMapper, atLeast(0)).insertAuditLog_2(any(), any(), any(), any(), any());
@@ -464,6 +510,11 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("total_count", java.math.BigDecimal.TEN); m.put("dept_count", "test"); m.put("avg_salary", java.math.BigDecimal.TEN); m.put("min_salary", java.math.BigDecimal.TEN); m.put("max_salary", java.math.BigDecimal.TEN); when(gaussCompleteExamplesMapper.selectProcPaginatedQuery_4(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(gaussCompleteExamplesMapper.insertAuditLog_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcDynamicForProcessing_5(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(gaussCompleteExamplesMapper.insertProcDynamicForProcessing(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_2(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_3(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_4(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertScanLog(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(gaussCompleteExamplesMapper.insertPerformanceLog_1(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_6(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_7(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
@@ -476,8 +527,8 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_13(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("count", 5); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_14(any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("employee_id", 1); m.put("employee_name", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("department_id", 1); m.put("hire_date", "2025-01-01"); when(gaussCompleteExamplesMapper.selectProcGetRawCursor_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_2(any())).thenReturn(1);
-        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_5(any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcEnhanceCursor_16(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         var result = service.funcGetOrderCursor(pCustomerId, pDateFrom, pDateTo);
         assertNotNull(result);
@@ -510,6 +561,11 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("total_count", java.math.BigDecimal.TEN); m.put("dept_count", "test"); m.put("avg_salary", java.math.BigDecimal.TEN); m.put("min_salary", java.math.BigDecimal.TEN); m.put("max_salary", java.math.BigDecimal.TEN); when(gaussCompleteExamplesMapper.selectProcPaginatedQuery_4(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(gaussCompleteExamplesMapper.insertAuditLog_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcDynamicForProcessing_5(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(gaussCompleteExamplesMapper.insertProcDynamicForProcessing(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_2(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_3(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_4(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertScanLog(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(gaussCompleteExamplesMapper.insertPerformanceLog_1(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_6(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_7(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
@@ -522,8 +578,8 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_13(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("count", 5); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_14(any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("employee_id", 1); m.put("employee_name", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("department_id", 1); m.put("hire_date", "2025-01-01"); when(gaussCompleteExamplesMapper.selectProcGetRawCursor_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_2(any())).thenReturn(1);
-        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_5(any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcEnhanceCursor_16(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         service.procMultiCursorReturn(pQueryId, pDataCursor, pMetaCursor);
     }
@@ -558,6 +614,11 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("total_count", java.math.BigDecimal.TEN); m.put("dept_count", "test"); m.put("avg_salary", java.math.BigDecimal.TEN); m.put("min_salary", java.math.BigDecimal.TEN); m.put("max_salary", java.math.BigDecimal.TEN); when(gaussCompleteExamplesMapper.selectProcPaginatedQuery_4(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(gaussCompleteExamplesMapper.insertAuditLog_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcDynamicForProcessing_5(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(gaussCompleteExamplesMapper.insertProcDynamicForProcessing(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_2(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_3(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_4(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertScanLog(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(gaussCompleteExamplesMapper.insertPerformanceLog_1(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_6(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_7(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
@@ -570,8 +631,8 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_13(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("count", 5); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_14(any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("employee_id", 1); m.put("employee_name", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("department_id", 1); m.put("hire_date", "2025-01-01"); when(gaussCompleteExamplesMapper.selectProcGetRawCursor_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_2(any())).thenReturn(1);
-        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_5(any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcEnhanceCursor_16(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         service.procPaginateWithUsing(pBaseSql, pPageSize, pPageNum, pBindValues, pDataCursor, pTotalCursor);
     }
@@ -602,6 +663,11 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("total_count", java.math.BigDecimal.TEN); m.put("dept_count", "test"); m.put("avg_salary", java.math.BigDecimal.TEN); m.put("min_salary", java.math.BigDecimal.TEN); m.put("max_salary", java.math.BigDecimal.TEN); when(gaussCompleteExamplesMapper.selectProcPaginatedQuery_4(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(gaussCompleteExamplesMapper.insertAuditLog_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcDynamicForProcessing_5(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(gaussCompleteExamplesMapper.insertProcDynamicForProcessing(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_2(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_3(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_4(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertScanLog(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(gaussCompleteExamplesMapper.insertPerformanceLog_1(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_6(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_7(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
@@ -614,8 +680,8 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_13(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("count", 5); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_14(any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("employee_id", 1); m.put("employee_name", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("department_id", 1); m.put("hire_date", "2025-01-01"); when(gaussCompleteExamplesMapper.selectProcGetRawCursor_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_2(any())).thenReturn(1);
-        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_5(any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcEnhanceCursor_16(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         service.procGetRawCursor(pDeptId, pCursor);
     }
@@ -647,6 +713,11 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("total_count", java.math.BigDecimal.TEN); m.put("dept_count", "test"); m.put("avg_salary", java.math.BigDecimal.TEN); m.put("min_salary", java.math.BigDecimal.TEN); m.put("max_salary", java.math.BigDecimal.TEN); when(gaussCompleteExamplesMapper.selectProcPaginatedQuery_4(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(gaussCompleteExamplesMapper.insertAuditLog_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcDynamicForProcessing_5(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(gaussCompleteExamplesMapper.insertProcDynamicForProcessing(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_2(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_3(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_4(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertScanLog(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(gaussCompleteExamplesMapper.insertPerformanceLog_1(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_6(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_7(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
@@ -659,11 +730,11 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_13(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("count", 5); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_14(any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("employee_id", 1); m.put("employee_name", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("department_id", 1); m.put("hire_date", "2025-01-01"); when(gaussCompleteExamplesMapper.selectProcGetRawCursor_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_2(any())).thenReturn(1);
-        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_5(any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcEnhanceCursor_16(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         service.procEnhanceCursor(pInCursor, pOutCursor);
-        verify(gaussCompleteExamplesMapper, atLeast(0)).updateProcEnhanceCursor_2(any());
+        verify(gaussCompleteExamplesMapper, atLeast(0)).updateProcEnhanceCursor_5(any());
     }
 
     @org.junit.jupiter.api.Disabled("auto-generated mock cannot terminate while loop")
@@ -694,6 +765,11 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("total_count", java.math.BigDecimal.TEN); m.put("dept_count", "test"); m.put("avg_salary", java.math.BigDecimal.TEN); m.put("min_salary", java.math.BigDecimal.TEN); m.put("max_salary", java.math.BigDecimal.TEN); when(gaussCompleteExamplesMapper.selectProcPaginatedQuery_4(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(gaussCompleteExamplesMapper.insertAuditLog_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcDynamicForProcessing_5(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(gaussCompleteExamplesMapper.insertProcDynamicForProcessing(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_2(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_3(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_4(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertScanLog(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(gaussCompleteExamplesMapper.insertPerformanceLog_1(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_6(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_7(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
@@ -706,8 +782,8 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_13(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("count", 5); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_14(any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("employee_id", 1); m.put("employee_name", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("department_id", 1); m.put("hire_date", "2025-01-01"); when(gaussCompleteExamplesMapper.selectProcGetRawCursor_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_2(any())).thenReturn(1);
-        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_5(any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcEnhanceCursor_16(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         service.procConsumeCursor(pCursor, pMap, pSummary);
     }
@@ -737,6 +813,11 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("total_count", java.math.BigDecimal.TEN); m.put("dept_count", "test"); m.put("avg_salary", java.math.BigDecimal.TEN); m.put("min_salary", java.math.BigDecimal.TEN); m.put("max_salary", java.math.BigDecimal.TEN); when(gaussCompleteExamplesMapper.selectProcPaginatedQuery_4(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(gaussCompleteExamplesMapper.insertAuditLog_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcDynamicForProcessing_5(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(gaussCompleteExamplesMapper.insertProcDynamicForProcessing(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_2(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_3(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcDynamicForProcessing_4(any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertScanLog(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(gaussCompleteExamplesMapper.insertPerformanceLog_1(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_6(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("status", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("create_time", "2025-01-01"); m.put("customer_id", 1); m.put("customer_name", "test"); m.put("amount_level", java.math.BigDecimal.TEN); m.put("days_elapsed", 1); when(gaussCompleteExamplesMapper.selectProcCursorDynamicUsing_7(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
@@ -749,8 +830,8 @@ class GaussCompleteExamplesServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_13(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("count", 5); when(gaussCompleteExamplesMapper.selectProcPaginateWithUsing_14(any(), any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("employee_id", 1); m.put("employee_name", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("department_id", 1); m.put("hire_date", "2025-01-01"); when(gaussCompleteExamplesMapper.selectProcGetRawCursor_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_2(any())).thenReturn(1);
-        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.updateProcEnhanceCursor_5(any())).thenReturn(1);
+        when(gaussCompleteExamplesMapper.insertProcEnhanceCursor_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); when(gaussCompleteExamplesMapper.selectProcEnhanceCursor_16(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         service.procFullPipeline(pDeptId);
     }

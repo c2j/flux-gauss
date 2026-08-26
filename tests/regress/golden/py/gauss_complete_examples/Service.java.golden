@@ -230,14 +230,35 @@ public class GaussCompleteExamplesService {
         String vStatus = null;
         java.math.BigDecimal vAmount = java.math.BigDecimal.ZERO;
         String vName = null;
-        Integer vRec = 0;
         int _sqlRowCount = 0;
         try {
             java.sql.Timestamp vStartTime = null;
             java.sql.Timestamp vCreateTime = null;
             vStartTime = new java.sql.Timestamp(System.currentTimeMillis());
             _sqlRowCount = gaussCompleteExamplesMapper.insertAuditLog_1(pTableName, pSelectColumns, pWhereClause, pOrderBy, pProcessType, vSql);
-            // ERROR: 处理语句失败 - local variable 'list_var' referenced before assignment
+            List<Map<String, Object>> vRecList = gaussCompleteExamplesMapper.selectProcDynamicForProcessing_5(pTableName, pSelectColumns, pWhereClause, pOrderBy, pProcessType);
+            for (Map<String, Object> vRec : vRecList) {
+                vRowCount = vRowCount + 1;
+                vPkId = (vRec.get("id") != null ? (vRec.get("id") instanceof Number ? ((Number) vRec.get("id")).intValue() : Integer.parseInt(String.valueOf(vRec.get("id")))) : 0);
+                vStatus = (String) vRec.get("status");
+                vAmount = (java.math.BigDecimal) vRec.get("amount");
+                vName = (String) vRec.get("name");
+                vCreateTime = (java.sql.Timestamp) vRec.get("create_time");
+                if (java.util.Objects.equals(pProcessType, "ARCHIVE")) {
+                    vProcessSql = "INSERT INTO " + pTableName + "_hist\n                        SELECT *, :1, :2 FROM " + pTableName + " WHERE id = :3";
+                    _sqlRowCount = gaussCompleteExamplesMapper.insertProcDynamicForProcessing(pTableName, vPkId);
+                    _sqlRowCount = gaussCompleteExamplesMapper.updateProcDynamicForProcessing_2(pTableName, vPkId);
+                } else if (java.util.Objects.equals(pProcessType, "UPDATE")) {
+                    _sqlRowCount = gaussCompleteExamplesMapper.updateProcDynamicForProcessing_3(pTableName, vPkId);
+                } else if (java.util.Objects.equals(pProcessType, "DELETE")) {
+                    _sqlRowCount = gaussCompleteExamplesMapper.updateProcDynamicForProcessing_4(pTableName, vPkId);
+                } else {
+                    _sqlRowCount = gaussCompleteExamplesMapper.insertScanLog(pTableName, pSelectColumns, pWhereClause, pOrderBy, pProcessType, vPkId, vStatus);
+                }
+                if (((vRowCount) % (vBatchCommit)) == 0) {
+                    // COMMIT — auto-committed by Spring @Transactional boundary
+                }
+            }
             // COMMIT — auto-committed by Spring @Transactional boundary
             _sqlRowCount = gaussCompleteExamplesMapper.insertPerformanceLog_1(pTableName, pSelectColumns, pWhereClause, pOrderBy, pProcessType, vRowCount, vStartTime);
         } catch (Exception e) { // EXCEPTION handlers — src: gauss_complete_examples.sql:403
@@ -358,7 +379,7 @@ public class GaussCompleteExamplesService {
         java.sql.Date vHireDate = null;
         pOutCursor.set(null);
         java.util.Map<String, Object> _row = null;
-        _sqlRowCount = gaussCompleteExamplesMapper.updateProcEnhanceCursor_2(vTemp);
+        _sqlRowCount = gaussCompleteExamplesMapper.updateProcEnhanceCursor_5(vTemp);
         while (true) {
             found = pInCursorIdx < (pInCursorResult != null ? pInCursorResult.size() : 0);
             if (found) {
@@ -371,7 +392,7 @@ public class GaussCompleteExamplesService {
                 vHireDate = (_row.get("v_hire_date") instanceof java.sql.Timestamp ? new java.sql.Date(((java.sql.Timestamp) _row.get("v_hire_date")).getTime()) : (java.sql.Date) _row.get("v_hire_date"));
             }
             if (!(pInCursorIdx < pInCursorResult.size())) { break; }
-            _sqlRowCount = gaussCompleteExamplesMapper.insertProcEnhanceCursor(vId, vName, vSalary, vDeptId, vHireDate, vTemp);
+            _sqlRowCount = gaussCompleteExamplesMapper.insertProcEnhanceCursor_1(vId, vName, vSalary, vDeptId, vHireDate, vTemp);
         }
         // cursor p_in_cursor closed
         pOutCursorResult = gaussCompleteExamplesMapper.selectProcEnhanceCursor_16(pInCursor, vTemp);
