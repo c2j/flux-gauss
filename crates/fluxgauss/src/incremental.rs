@@ -7,8 +7,16 @@ use sha2::{Digest, Sha256};
 
 use crate::types::{PackageInfo, ServiceCall};
 
+/// Bumped whenever a converter or parser change makes previously cached ASTs
+/// unsafe to reuse. A mismatch discards the whole manifest, forcing a reparse.
+/// Also folds in the ogsql-parser version, since the two engines are pinned
+/// separately (see AGENTS.md) and a parser bump silently changes AST shape.
+const CACHE_SCHEMA_VERSION: &str = concat!("2:ogsql-", env!("CARGO_PKG_VERSION"));
+
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct Manifest {
+    #[serde(default)]
+    schema_version: String,
     files: HashMap<String, FileEntry>,
 }
 
@@ -85,13 +93,27 @@ impl IncrementalState {
         }
     }
 
+    pub fn cached_ast_path_for_test(&self, sql_file: &Path) -> PathBuf {
+        self.cached_ast_path(sql_file)
+    }
+
     fn cached_ast_path(&self, sql_file: &Path) -> PathBuf {
-        let safe: String = sql_file
-            .to_string_lossy()
+        // The readable part is lossy: every non-alphanumeric collapses to '_',
+        // so "x/a.sql" and "x_a.sql" produce the same stem. The manifest keys by
+        // FULL path, so without a disambiguator is_cached() could report a hit
+        // while the stored AST belongs to the other file — silently generating
+        // the wrong Service. A digest of the full path makes the name unique.
+        let full = sql_file.to_string_lossy();
+        let safe: String = full
             .chars()
             .map(|c| if c.is_alphanumeric() || c == '.' { c } else { '_' })
             .collect();
-        self.cache_dir.join("ast").join(format!("{}.json", safe))
+        let mut hasher = Sha256::new();
+        hasher.update(full.as_bytes());
+        let digest = format!("{:x}", hasher.finalize());
+        self.cache_dir
+            .join("ast")
+            .join(format!("{}.{}.json", safe, &digest[..12]))
     }
 
     pub fn save_cached_ast(&self, sql_file: &Path, json: &str) -> std::io::Result<()> {
@@ -109,13 +131,20 @@ impl IncrementalState {
     pub fn load_manifest_inner(&self) -> std::io::Result<Manifest> {
         let path = self.cache_dir.join("manifest.json");
         let content = std::fs::read_to_string(path)?;
-        Ok(serde_json::from_str(&content).unwrap_or_default())
+        let manifest: Manifest = serde_json::from_str(&content).unwrap_or_default();
+        if manifest.schema_version != CACHE_SCHEMA_VERSION {
+            return Ok(Manifest::default());
+        }
+        Ok(manifest)
     }
 
     pub fn save_manifest(&self) -> std::io::Result<()> {
         let path = self.cache_dir.join("manifest.json");
         if let Some(manifest) = &self.manifest {
-            let json = serde_json::to_string_pretty(manifest)?;
+            let json = serde_json::to_string_pretty(&Manifest {
+                schema_version: CACHE_SCHEMA_VERSION.to_string(),
+                files: manifest.files.clone(),
+            })?;
             std::fs::write(path, json)?;
         }
         Ok(())

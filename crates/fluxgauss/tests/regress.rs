@@ -497,3 +497,32 @@ fn issue_71_cross_schema_package_collision_is_reported() {
         "collision warning must be visible in the conversion report"
     );
 }
+
+#[test]
+fn issue_70_distinct_paths_do_not_share_one_ast_cache_entry() {
+    // "x/a.sql" and "x_a.sql" both sanitize to "x_a.sql". Before the path digest
+    // was added they shared a cache file, so a warm run could load the WRONG
+    // file's AST and silently drop a package.
+    let tmp = tempfile::tempdir().expect("Failed to create temp dir");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("x")).unwrap();
+    std::fs::write(
+        root.join("x/a.sql"),
+        "CREATE OR REPLACE PACKAGE pkg_alpha IS\n  PROCEDURE alpha_one(p IN VARCHAR2);\nEND pkg_alpha;\n/\nCREATE OR REPLACE PACKAGE BODY pkg_alpha IS\n  PROCEDURE alpha_one(p IN VARCHAR2) IS BEGIN NULL; END;\nEND pkg_alpha;\n/\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("x_a.sql"),
+        "CREATE OR REPLACE PACKAGE pkg_beta IS\n  PROCEDURE beta_one(p IN VARCHAR2);\nEND pkg_beta;\n/\nCREATE OR REPLACE PACKAGE BODY pkg_beta IS\n  PROCEDURE beta_one(p IN VARCHAR2) IS BEGIN NULL; END;\nEND pkg_beta;\n/\n",
+    )
+    .unwrap();
+
+    let state = fluxgauss::incremental::IncrementalState::new(root.join("out"), false);
+    let a = state.cached_ast_path_for_test(&root.join("x/a.sql"));
+    let b = state.cached_ast_path_for_test(&root.join("x_a.sql"));
+    assert_ne!(
+        a, b,
+        "distinct source paths must not share one AST cache file: {:?}",
+        a
+    );
+}
