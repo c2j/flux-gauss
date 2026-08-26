@@ -1291,25 +1291,27 @@ fn process_sql_statement(
                              .cloned()
                              .unwrap_or_else(|| "Object".to_string());
                          let rt = infer_select_result_type(&declared_type, &clean_sql);
-                          let line = if rt.contains("Map") && declared_type.contains("Map") {
-                              format!("{{ var _row = mapper.{}({}); if (_row != null) {{ {} = _row; }} }}", method_id, args, var_java)
+                          let line = if declared_type.contains("Map") {
+                              format!("{{ Object _tmp = mapper.{}({}); {} = (_tmp instanceof java.util.Map) ? (java.util.Map<String, Object>) _tmp : null; }}", method_id, args, var_java)
+                          } else if rt != declared_type && matches!(declared_type.as_str(), "Long" | "long" | "Integer" | "int" | "Double" | "double" | "Float" | "float" | "BigDecimal") {
+                              format!("{{ Object _strResult = mapper.{}({}); if (_strResult != null) {{ /* concatenated string assigned to {} var */ }} }}", method_id, args, declared_type)
                           } else if declared_type == "Long" || declared_type == "long" {
-                              format!("{{ var _val = mapper.{}({}); if (_val != null) {} = (_val instanceof Number ? ((Number)_val).longValue() : Long.parseLong(String.valueOf(_val))); }}", method_id, args, var_java)
+                              format!("{{ Object _val = mapper.{}({}); if (_val != null) {} = (_val instanceof Number ? ((Number)_val).longValue() : Long.parseLong(String.valueOf(_val))); }}", method_id, args, var_java)
                           } else if declared_type == "Integer" || declared_type == "int" {
-                              format!("{{ var _val = mapper.{}({}); if (_val != null) {} = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }}", method_id, args, var_java)
+                              format!("{{ Object _val = mapper.{}({}); if (_val != null) {} = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }}", method_id, args, var_java)
                           } else if declared_type == "String" {
                               format!("{} = String.valueOf(mapper.{}({}));", var_java, method_id, args)
                           } else if declared_type != "Object" {
-                              format!("{{ var _val = mapper.{}({}); if (_val != null) {} = ({}) _val; }}", method_id, args, var_java, declared_type)
+                              format!("{{ Object _val = mapper.{}({}); if (_val != null) {} = ({}) _val; }}", method_id, args, var_java, declared_type)
                           } else {
-                              format!("{{ var _val = mapper.{}({}); if (_val != null) {} = _val; }}", method_id, args, var_java)
+                              format!("{{ Object _val = mapper.{}({}); if (_val != null) {} = _val; }}", method_id, args, var_java)
                           };
                         (rt, line, String::new())
                     }
                 } else {
                     // Multiple INTO targets or qualified names — use Map
                     let row_var = next_select_var_name(proc);
-                    let line = format!("Map<String, Object> {} = mapper.{}({});", row_var, method_id, args);
+                    let line = format!("Object {}_obj = mapper.{}({}); Map<String, Object> {} = ({}_obj instanceof java.util.Map) ? (java.util.Map<String, Object>) {}_obj : null;", row_var, method_id, args, row_var, row_var, row_var);
                     proc.imports.insert("import java.util.Map;".to_string());
                     ("Map<String, Object>".to_string(), line, row_var)
                 };

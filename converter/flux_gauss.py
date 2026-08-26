@@ -2126,13 +2126,22 @@ def _promote_out_local_vars(proc: ProcedureInfo, all_packages: dict):
             proc.local_vars[orig_name] = new_type
             # Keep local_var_defaults — codegen wraps it into AtomicReference constructor
             var_java = snake_to_camel(orig_name)
+            m_ar = re.match(r'^AtomicReference<(.+)>$', new_type)
+            _string_inner = bool(m_ar and 'String' in m_ar.group(1))
             patched = []
             for line in proc.java_logic_lines:
-                patched.append(_patch_promoted_var_reads(line, var_java))
+                if m_ar:
+                    m_assign = re.match(rf'^(\s*){re.escape(var_java)} = (.*);\s*$', line)
+                    if m_assign and not re.match(r'^new (java\.util\.concurrent\.atomic\.)?AtomicReference<>', m_assign.group(2).strip()):
+                        rhs = m_assign.group(2)
+                        if 'String' in m_ar.group(1) and not rhs.strip().startswith('"') and rhs.strip() != 'null':
+                            rhs = f'String.valueOf({rhs})'
+                        line = f'{m_assign.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<>({rhs});'
+                patched.append(_patch_promoted_var_reads(line, var_java, string_inner=_string_inner))
             proc.java_logic_lines = patched
 
 
-def _patch_promoted_var_reads(line: str, var_java: str) -> str:
+def _patch_promoted_var_reads(line: str, var_java: str, string_inner: bool = False) -> str:
     import re
     # Remove .get() from promoted vars passed as OUT args to method/mapper calls
     if f'{var_java}.get()' in line and (re.search(rf'\bthis\.\w+\(', line) or 'Mapper.' in line):
@@ -2151,6 +2160,14 @@ def _patch_promoted_var_reads(line: str, var_java: str) -> str:
         f'{var_java}.get()',
         line,
     )
+    if string_inner:
+        _vget = f'{var_java}.get()'
+        line = line.replace(f'((Number) ({_vget})).doubleValue()', f'Double.parseDouble(String.valueOf({_vget}))')
+        line = line.replace(f'((Number) {_vget}).doubleValue()', f'Double.parseDouble(String.valueOf({_vget}))')
+        line = line.replace(f'((Number) ({_vget}))', f'Double.parseDouble(String.valueOf({_vget}))')
+        line = line.replace(f'((Number) {_vget})', f'Double.parseDouble(String.valueOf({_vget}))')
+        line = re.sub(rf'(?<![\w.)]){re.escape(_vget)}\s*([*/+\-])', rf'Double.parseDouble(String.valueOf({_vget})) \1', line)
+        line = re.sub(rf'([*/+\-])\s*{re.escape(_vget)}', rf'\1 Double.parseDouble(String.valueOf({_vget}))', line)
     return line
 
 
@@ -4665,6 +4682,8 @@ def _process_return(return_data: dict, proc: ProcedureInfo, all_packages: dict =
         proc._raw_return_types.append(_et)
         if proc.is_function and proc.return_type:
             ret_java = sql_type_to_java(proc.return_type)
+            if ret_java == "String" and re.match(r'^(Long|Integer|Double)\.parse(L|I|D)\w*\(', java_expr.strip()):
+                java_expr = f"String.valueOf({java_expr})"
             if "BigDecimal" in ret_java and java_expr.endswith("d") and not java_expr.startswith("java.math.BigDecimal"):
                 try:
                     float_val = float(java_expr[:-1])
@@ -4878,6 +4897,24 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
                 expr = f"new java.math.BigDecimal(String.valueOf({expr}))"
         proc.java_logic_lines.append(f"{target}.set({expr});")
     else:
+        if target_var_type and target_var_type.startswith("AtomicReference<"):
+            _ar_inner_t = target_var_type[len("AtomicReference<"):-1]
+            if "String" in _ar_inner_t and not expr.strip().startswith('"') and expr.strip() != "null":
+                expr = f"String.valueOf({expr})"
+            proc.java_logic_lines.append(f"{target} = new java.util.concurrent.atomic.AtomicReference<>({expr});")
+            return
+        if target_var_type == "String" and expr.strip().startswith("(Object) "):
+            expr = f"String.valueOf({expr.strip()})"
+        if target_var_type and "Timestamp" in target_var_type and "Timestamp" not in expr:
+            if "mapper." in expr or "Mapper." in expr or ".select" in expr:
+                expr = _coerce_type(expr, "Object", target_var_type)
+        _m_numlong = re.match(r'^\(\(Number\)\s*\((.*)\)\)\.longValue\(\)$', expr.strip())
+        if target_var_type in ("Long", "long") and _m_numlong and _is_primitive_producing(_m_numlong.group(1)):
+            expr = f"(long) ({_m_numlong.group(1)})"
+        elif target_var_type in ("Long", "long") and _is_primitive_producing(expr) and "longValue" not in expr:
+            expr = f"(long) ({expr})"
+        elif target_var_type in ("Long", "long") and expr.strip().startswith("this.") and "longValue" not in expr and ".get()" not in expr:
+            expr = _coerce_type(expr, "Object", "Long")
         if target_var_type == "Long" and _is_bare_int_literal(expr):
             expr = f"Long.valueOf({expr})"
         if target_var_type in ("Long", "long") and ".indexOf(" in expr and "(long)" not in expr:
@@ -4894,7 +4931,7 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
         elif target_var_type and target_var_type not in ("String", "Integer", "int", "Object", "BigDecimal", "java.math.BigDecimal", "Long", "long", "boolean", "Boolean") and ".get(" in expr and not expr.startswith("("):
             expr = f"({target_var_type}) {expr}"
         elif target_var_type in ("BigDecimal", "java.math.BigDecimal") and "mapper." in expr and "BigDecimal" not in expr:
-            expr = f"((java.math.BigDecimal) {expr})"
+            expr = f"new java.math.BigDecimal(String.valueOf({expr}))"
         proc.java_logic_lines.append(f"{target} = {expr};")
         if ("Mapper" in expr or "mapper" in expr) and target_var_type in ("Long", "Integer", "int"):
             _null_default = "0L" if target_var_type == "Long" else "0"
@@ -5119,6 +5156,8 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
             java_expr = f"java.math.BigDecimal.valueOf({java_expr})"
         elif expr_type in ("Integer", "int", "Long", "long", "Double", "double", "Float", "float") and not _already_bd:
             java_expr = f"java.math.BigDecimal.valueOf({java_expr})"
+        elif ".get(" in java_expr and not _already_bd:
+            java_expr = f"new java.math.BigDecimal(String.valueOf({java_expr} != null ? {java_expr} : 0))"
         elif expr_type == "boolean" or re.match(r'^false\s*/\*', _top):
             java_expr = "java.math.BigDecimal.ZERO /* stub */"
     # Scan for the OUTERMOST call over a literal-masked copy: an unbalanced paren
@@ -5505,6 +5544,20 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
         low = _coerce_for_int(low_expr)
         high = _coerce_for_int(high_expr)
         reverse = range_data.get("reverse", False)
+
+        _var_bare_used = any(re.match(rf'^\s*{var_java} = ', l) for l in proc.java_logic_lines)
+        if _var_bare_used:
+            _alias = f"_{var_java}"
+            if reverse:
+                proc.java_logic_lines.append(f"for (int {_alias} = {high}; {_alias} >= {low}; {_alias}--) {{")
+            else:
+                proc.java_logic_lines.append(f"for (int {_alias} = {low}; {_alias} <= {high}; {_alias}++) {{")
+            proc.java_logic_lines.append(f"{var_java} = {_alias};")
+            for s in _iter_statements(body_stmts):
+                _process_statement(s, proc, all_packages, dml_counter)
+            _indent_last_lines(proc, 1)
+            proc.java_logic_lines.append("}")
+            return
 
         if reverse:
             proc.java_logic_lines.append(f"for (int {var_java} = {high}; {var_java} >= {low}; {var_java}--) {{")
@@ -8616,7 +8669,10 @@ def _handle_function(func_name, args_java, proc):
             arg = args_java[0]
             if _is_bigdecimal_expr(arg, proc):
                 return f"({arg}).abs()"
-        return f"Math.abs({args_java[0] if args_java else '0'})"
+            if ".get(" in arg:
+                arg = f"((Number)({arg} != null ? {arg} : 0)).doubleValue()"
+            return f"Math.abs({arg})"
+        return "Math.abs(0)"
 
     elif func_name == "ceil":
         if args_java:
@@ -8667,7 +8723,7 @@ def _handle_function(func_name, args_java, proc):
             _is_primitive = any(op in arg0 for op in (" / ", " * ", " + ", " - ")) or arg0.endswith("d") or arg0.endswith("f") or arg0.endswith("D")
             if _is_primitive:
                 return f"(double) Math.round(({arg0}) * Math.pow(10, {_scale_dbl})) / Math.pow(10, {_scale_dbl})"
-            return f"(double) Math.round(({arg0}).doubleValue() * Math.pow(10, {_scale_dbl})) / Math.pow(10, {_scale_dbl})"
+            return f"(double) Math.round(Double.parseDouble(String.valueOf({arg0})) * Math.pow(10, {_scale_dbl})) / Math.pow(10, {_scale_dbl})"
         elif len(args_java) == 1:
             arg0 = args_java[0]
             if _is_bd_arg(arg0):
@@ -9337,6 +9393,17 @@ def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
     - Boolean -> Integer/Long: (expr ? 1 : 0) / (expr ? 1L : 0L)
     """
     if not _needs_coercion(source_type, target_type):
+        src0 = _normalize_type(source_type)
+        tgt0 = _normalize_type(target_type)
+        _e0 = expr.strip()
+        if src0 == "Object" and tgt0 == "String" and _e0 != "null":
+            return f"String.valueOf({expr})"
+        if src0 == "Object" and "Timestamp" in tgt0 and _e0 != "null":
+            return f"java.sql.Timestamp.valueOf(String.valueOf({expr}))"
+        if src0 == "Object" and tgt0 == "Long" and _e0 != "null":
+            return f"({expr} instanceof Number ? ((Number) ({expr})).longValue() : Long.parseLong(String.valueOf({expr})))"
+        if src0 == "Object" and tgt0 == "java.math.BigDecimal" and _e0 != "null":
+            return f"new java.math.BigDecimal(String.valueOf({expr}))"
         return expr
 
     src = _normalize_type(source_type)
@@ -9394,6 +9461,12 @@ def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
         stripped = expr.strip()
         if stripped == '""' or stripped == "''":
             return "null"
+        if "Timestamp" in tgt:
+            if "Timestamp" in stripped or ".parse(" in stripped:
+                return expr
+            return f"java.sql.Timestamp.valueOf(String.valueOf({expr}))"
+        if tgt == "java.sql.Date":
+            return f"java.sql.Date.valueOf(String.valueOf({expr}))"
         return expr
 
     # String to numeric
@@ -9759,6 +9832,16 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     return f"{left}.compareTo({right}) {cmp_map[op]} 0"
 
                 if is_str and not is_bd and op in (">", "<", ">=", "<="):
+                    if _is_numeric_literal(val.get("right")):
+                        return f"Double.parseDouble(String.valueOf({left})) {op} {right}"
+                    if _is_numeric_literal(val.get("left")):
+                        return f"{left} {op} Double.parseDouble(String.valueOf({right}))"
+                    if "Timestamp" in left_type and right_type == "String" and "Timestamp" not in right and ".get(" not in right:
+                        _l_ts = f"((java.sql.Timestamp) ({left}))" if ".get(" in left else left
+                        return f"{_l_ts}.compareTo(java.sql.Timestamp.valueOf(String.valueOf({right}))) {op} 0"
+                    if "Timestamp" in right_type and left_type == "String" and "Timestamp" not in left:
+                        _r_ts = f"((java.sql.Timestamp) ({right}))" if ".get(" in right else right
+                        return f"java.sql.Timestamp.valueOf(String.valueOf({left})).compareTo({_r_ts}) {op} 0"
                     # Issue #40: String.compareTo() is lexicographic ("10" < "3").
                     # Use BigDecimal when at least one operand is a numeric literal.
                     right_raw = val.get("right")
@@ -9867,20 +9950,20 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 if is_bd and op in ("+", "-", "*", "/") and not (left_type.startswith("java.sql.") or right_type.startswith("java.sql.")):
                     arith_map = {"+": "add", "-": "subtract", "*": "multiply", "/": "divide"}
                     method = arith_map[op]
-                    if _is_numeric_literal(val.get("left")):
-                        left = f"java.math.BigDecimal.valueOf({left})"
-                    elif "BigDecimal" not in left_type:
-                        if "?" in left and "null" in left:
-                            left = _wrap_ternary_nullsafe_bd(left)
-                        else:
-                            left = f"java.math.BigDecimal.valueOf({left})"
-                    if _is_numeric_literal(val.get("right")):
-                        right = f"java.math.BigDecimal.valueOf({right})"
-                    elif "BigDecimal" not in right_type:
-                        if "?" in right and "null" in right:
-                            right = _wrap_ternary_nullsafe_bd(right)
-                        else:
-                            right = f"java.math.BigDecimal.valueOf({right})"
+
+                    def _bd_operand(x, x_type):
+                        if "BigDecimal" in x_type or "BigDecimal" in x:
+                            return x
+                        if _is_numeric_literal_expr(x):
+                            return f"java.math.BigDecimal.valueOf({x})"
+                        if x_type == "String" or "_substr(" in x or ".get(" in x:
+                            return f"new java.math.BigDecimal(String.valueOf({x}))"
+                        if "?" in x and "null" in x:
+                            return _wrap_ternary_nullsafe_bd(x)
+                        return f"java.math.BigDecimal.valueOf({x})"
+
+                    left = _bd_operand(left, left_type)
+                    right = _bd_operand(right, right_type)
                     return f"{left}.{method}({right})"
 
                 if is_bd and op == "||":
@@ -9891,11 +9974,36 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 right_d = f"((Number) ({right} != null ? {right} : 0.0d)).doubleValue()" if (".get(" in right and not _is_primitive_producing(right)) else (f"({right} != null ? Double.parseDouble({right}) : 0.0d)" if right_type == "String" else f"((Number) ({right})).doubleValue()")
                 return f"Math.pow({left_d}, {right_d})"
             java_op = _java_op(op)
-            if op in ("+", "-", "*", "/") and (".get(" in left or ".get(" in right or left_type == "String" or right_type == "String"):
+            def _is_string_get(e):
+                m = re.match(r'^([A-Za-z_]\w*)\.get\(\)$', e.strip())
+                if not m:
+                    return False
+                base = m.group(1)
+                for vn, vt in proc.local_vars.items():
+                    if snake_to_camel(vn) == base and "String" in vt:
+                        return True
+                for pp in proc.parameters:
+                    if pp.java_name == base and "String" in pp.java_type:
+                        return True
+                return False
+
+            _left_str = left_type == "String" or left.strip().startswith("_substr(") or _is_string_get(left)
+            _right_str = right_type == "String" or right.strip().startswith("_substr(") or _is_string_get(right)
+
+            def _num_operand(x, x_str):
+                if x_str:
+                    return f"({x} != null ? Double.parseDouble(String.valueOf({x})) : 0.0d)"
+                if ".get(" in x and not _is_primitive_producing(x):
+                    return f"((Number) ({x} != null ? {x} : 0.0d)).doubleValue()"
+                if _is_primitive_producing(x):
+                    return f"({x})"
+                if "_substr(" in x and "parseDouble" not in x and ".doubleValue()" not in x and ".longValue()" not in x:
+                    return f"({x} != null ? Double.parseDouble(String.valueOf({x})) : 0.0d)"
+                return f"((Number) ({x})).doubleValue()"
+
+            if op in ("+", "-", "*", "/") and (_left_str or _right_str or ".get(" in left or ".get(" in right):
                 # Oracle/Gauss `+` on VARCHAR2 is numeric addition; concat is `||`.
-                left_d = f"((Number) ({left} != null ? {left} : 0.0d)).doubleValue()" if (".get(" in left and not _is_primitive_producing(left)) else (f"({left} != null ? Double.parseDouble({left}) : 0.0d)" if left_type == "String" else f"((Number) ({left})).doubleValue()")
-                right_d = f"((Number) ({right} != null ? {right} : 0.0d)).doubleValue()" if (".get(" in right and not _is_primitive_producing(right)) else (f"({right} != null ? Double.parseDouble({right}) : 0.0d)" if right_type == "String" else f"((Number) ({right})).doubleValue()")
-                return f"({left_d} {java_op} {right_d})"
+                return f"({_num_operand(left, _left_str)} {java_op} {_num_operand(right, _right_str)})"
             _is_ts_left = "Timestamp" in left_type or "Timestamp" in left or "java.sql.Date" in left or left_type in ("java.sql.Date", "java.util.Date")
             _is_ts_right = "Timestamp" in right_type or "Timestamp" in right or "java.sql.Date" in right or right_type in ("java.sql.Date", "java.util.Date")
             _is_dur_left = ".toMillis()" in left
@@ -9935,6 +10043,10 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     return f"!{right}.equals({left})"
                 return f"!java.util.Objects.equals({left}, {right})"
             if op in ("<", ">", "<=", ">=") and _is_string_comparison(val, proc):
+                if "Timestamp" in left_type and right_type == "String" and "Timestamp" not in right:
+                    right = _coerce_type(right, "String", "java.sql.Timestamp")
+                elif "Timestamp" in right_type and left_type == "String" and "Timestamp" not in left:
+                    left = _coerce_type(left, "String", "java.sql.Timestamp")
                 _rel_cmp = {"<": "< 0", ">": "> 0", "<=": "<= 0", ">=": ">= 0"}
                 return f"{left}.compareTo({right}) {_rel_cmp[op]}"
             _is_ts_cmp = ("Timestamp" in left_type or "Timestamp" in left) and ("Timestamp" in right_type or "Timestamp" in right)
@@ -10030,6 +10142,17 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                         args_str = ", ".join(args_java)
                 if func_name_lower in ("nvl", "nvl2", "coalesce") and args_java:
                     _a0 = args_java[0].strip()
+                    if func_name_lower == "nvl" and len(args_java) >= 2 and _a0.startswith("(") and "?" in _a0 and _is_primitive_producing(_a0):
+                        return _a0
+                    _prim_parse_pfx = None
+                    for _pfx in ("Double.parseDouble(String.valueOf(", "Long.parseLong(String.valueOf(", "Integer.parseInt(String.valueOf("):
+                        if _a0.startswith(_pfx) and _a0.endswith("))"):
+                            _prim_parse_pfx = _pfx
+                            break
+                    if _prim_parse_pfx and func_name_lower == "nvl" and len(args_java) >= 2:
+                        _inner = _a0[len(_prim_parse_pfx):-2]
+                        if not _is_primitive_producing(_inner):
+                            return f"({_inner} != null ? {_a0} : {args_java[1]})"
                     _m0 = re.search(r'\.(intValue|longValue|doubleValue|floatValue)\(\)\s*\)*$', _a0)
                     if _m0:
                         _box = {"intValue": "Integer", "longValue": "Long", "doubleValue": "Double", "floatValue": "Float"}[_m0.group(1)]
@@ -12657,6 +12780,44 @@ def _reconcile_function_return_type(proc: ProcedureInfo, declared_ret: str):
     return None
 
 
+def _drop_unreachable_fallback(lines):
+    last = None
+    for i in range(len(lines) - 1, -1, -1):
+        s = lines[i].strip()
+        if not s or s.startswith('//'):
+            continue
+        last = (i, s)
+        break
+    if not last or not re.match(r'^return\b.*;$', last[1]):
+        return lines
+    ret_i = last[0]
+    catch_line = None
+    for j in range(ret_i - 1, -1, -1):
+        if re.match(r'^\}\s*catch\b', lines[j].strip()):
+            catch_line = j
+            break
+    if catch_line is None:
+        return lines
+
+    def _last_stmt_before(before):
+        for k in range(before, -1, -1):
+            sk = lines[k].strip()
+            if sk and not sk.startswith('//'):
+                return sk
+        return None
+
+    lt = _last_stmt_before(catch_line - 1)
+    lc = None
+    for k in range(ret_i - 1, catch_line, -1):
+        sk = lines[k].strip()
+        if sk and not sk.startswith('//') and sk != '}':
+            lc = sk
+            break
+    if lt and lt.split()[0] in ('return', 'throw') and lc and lc.split()[0] in ('return', 'throw'):
+        return lines[:ret_i]
+    return lines
+
+
 def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: dict = None) -> str:
     params = []
     out_params = []
@@ -12687,6 +12848,12 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
         _reconciled = _reconcile_function_return_type(proc, ret_type)
         if _reconciled:
             ret_type = _reconciled
+        if ret_type == "String":
+            proc.java_logic_lines = [
+                re.sub(r'^(\s*return )((?:Long|Integer|Double)\.parse\w+\([^;]*\));$', r'\1String.valueOf(\2);', l)
+                for l in proc.java_logic_lines
+            ]
+        proc.java_logic_lines = _drop_unreachable_fallback(proc.java_logic_lines)
         _imp = _resolve_import(ret_type)
         if _imp:
             proc.imports.add(_imp)
@@ -12721,12 +12888,19 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
         top_level_insert_idx = 0
         _loop_vars = getattr(proc, '_loop_vars', set())
         _pkg_var_names = getattr(proc, '_pkg_var_names', set())
+        _all_logic_text = "\n".join(proc.java_logic_lines)
+        _for_decl_names = set(re.findall(r'for \((?:int |long |Integer |Long |Map<String, Object> )(\w+)', _all_logic_text))
+        _bare_assign_names = set(re.findall(r'^\s*(\w+) = ', _all_logic_text, re.M))
         for var_name, var_type in proc.local_vars.items():
             var_java = snake_to_camel(var_name)
-            if var_java not in out_java_names and var_name not in _loop_vars and var_name not in _pkg_var_names:
+            _suppress_decl = (var_name in _loop_vars
+                              and (var_java in _for_decl_names or var_java not in _bare_assign_names))
+            if var_java not in out_java_names and not _suppress_decl and var_name not in _pkg_var_names:
                 default_val = proc.local_var_defaults.get(var_name, _default_for_type(var_type))
                 if var_type.startswith("AtomicReference<"):
                     inner = proc.local_var_defaults.get(var_name)
+                    if inner and "String" in var_type and not inner.startswith('"') and inner != "null":
+                        inner = f"String.valueOf({inner})"
                     default_val = f"new AtomicReference<>({inner})" if inner else _default_for_type(var_type)
                 elif var_name in proc.local_var_defaults and _is_numeric_default(default_val, var_type):
                     default_val = _wrap_default_for_type(default_val, var_type)
@@ -13094,6 +13268,7 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
 
     has_complex_issues, _failed_checks = _has_compilation_issues(body_lines, out_params, proc)
 
+    body_lines = _drop_unreachable_fallback(body_lines)
     body_lines = _merge_duplicate_catches(body_lines)
 
     if has_complex_issues:
