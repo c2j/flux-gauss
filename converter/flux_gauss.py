@@ -1001,12 +1001,13 @@ class ProcedureInfo:
 
 @dataclass
 class PackageInfo:
-    """All procedures in a single package (SQL file)."""
+    """All procedures in a package, potentially merged from multiple SQL files."""
     package_name: str  # e.g., pkg_order
     procedures: list = field(default_factory=list)  # List[ProcedureInfo]
     table_refs: set = field(default_factory=set)    # Tables referenced
     package_vars: dict = field(default_factory=dict)  # name -> {"java_type": ..., "default": ...}
     source_file: str = ""  # Original SQL file name
+    source_files: list = field(default_factory=list)  # All SQL files contributing to this package
     comments: list = field(default_factory=list)  # List[CommentInfo] — package-level comments not in any procedure
     java_package: str = ""  # Custom Java package override (empty = use BASE_PACKAGE)
     custom_types: dict = field(default_factory=dict)  # name -> {"kind": "record"/"varray", "fields"/...}
@@ -1024,6 +1025,68 @@ class SkippedItem:
     detail: str
     line_start: int = 0
     line_end: int = 0
+
+
+def _merge_package_info(existing: PackageInfo, incoming: PackageInfo,
+                        skipped_items: list) -> PackageInfo:
+    """Merge one same-named package into another, keeping first on conflicts."""
+    if not existing.source_files:
+        existing.source_files = [existing.source_file] if existing.source_file else []
+    incoming_files = incoming.source_files or ([incoming.source_file] if incoming.source_file else [])
+    for source_file in incoming_files:
+        if source_file not in existing.source_files:
+            existing.source_files.append(source_file)
+
+    seen_procedures = {
+        (proc.proc_name, len(proc.parameters)) for proc in existing.procedures
+    }
+    for proc in incoming.procedures:
+        key = (proc.proc_name, len(proc.parameters))
+        if key in seen_procedures:
+            skipped_items.append(SkippedItem(
+                sql_file=proc.source_file or incoming.source_file,
+                statement_type="ROUTINE",
+                category="MERGE_CONFLICT",
+                name=proc.name,
+                detail=("Duplicate routine while merging package "
+                        f"{existing.package_name}; kept first definition"),
+                line_start=proc.source_start_line,
+                line_end=proc.source_end_line,
+            ))
+            continue
+        seen_procedures.add(key)
+        existing.procedures.append(proc)
+
+    for field_name in ("package_vars", "custom_types"):
+        target = getattr(existing, field_name)
+        for key, value in getattr(incoming, field_name).items():
+            if key in target:
+                skipped_items.append(SkippedItem(
+                    sql_file=incoming.source_file,
+                    statement_type=field_name.upper(),
+                    category="MERGE_CONFLICT",
+                    name=key,
+                    detail=(f"Conflicting {field_name} entry while merging package "
+                            f"{existing.package_name}; kept first definition"),
+                ))
+            else:
+                target[key] = value
+
+    existing.comments.extend(incoming.comments)
+    existing.table_refs.update(incoming.table_refs)
+    if (existing.java_package and incoming.java_package
+            and existing.java_package != incoming.java_package):
+        skipped_items.append(SkippedItem(
+            sql_file=incoming.source_file,
+            statement_type="JAVA_PACKAGE",
+            category="MERGE_CONFLICT",
+            name=existing.package_name,
+            detail=(f"Conflicting Java package '{incoming.java_package}'; kept first "
+                    f"'{existing.java_package}'"),
+        ))
+    elif not existing.java_package:
+        existing.java_package = incoming.java_package
+    return existing
 
 
 @dataclass
@@ -14153,8 +14216,8 @@ def _clean_stale_packages(output_dir: str, old_manifest: dict, current_packages:
     current_pkg_names = {p.package_name for p in current_packages}
     old_pkg_jp = {}
     for info in old_manifest.get("files", {}).values():
-        pkg = info.get("package")
-        if pkg:
+        package_names = info.get("packages") or ([info.get("package")] if info.get("package") else [])
+        for pkg in package_names:
             old_pkg_jp[pkg] = info.get("java_package", "")
     old_pkgs = set(old_pkg_jp.keys())
     removed = old_pkgs - current_pkg_names
@@ -16255,7 +16318,9 @@ def _run_mcp_server():
                     for p in procedures:
                         p._source_path = sql_file
                     comments = extract_comments(ast)
-                    _map_comments_to_procedures(comments, procedures, source_file=basename)
+                    pkg_level_comments = _map_comments_to_procedures(
+                        comments, procedures, source_file=basename
+                    )
 
                     if not procedures:
                         continue
@@ -16284,12 +16349,15 @@ def _run_mcp_server():
                         procedures=procedures,
                         package_vars=pkg_vars,
                         source_file=basename,
+                        source_files=[basename],
                         java_package=java_pkg,
-                        comments=[],
+                        comments=pkg_level_comments,
                         custom_types=custom_types,
                     )
-                    packages.append(pkg)
-                    all_package_names[pkg_name] = pkg
+                    if pkg_name in all_package_names:
+                        _merge_package_info(all_package_names[pkg_name], pkg, all_skipped)
+                    else:
+                        all_package_names[pkg_name] = pkg
 
                     for _p in procedures:
                         if _p.is_function and _p.return_type:
@@ -16298,6 +16366,8 @@ def _run_mcp_server():
                 except Exception as e:
                     parse_errors_map[basename] = [{"parse_error": str(e)}]
                     continue
+
+            packages = list(all_package_names.values())
 
             # ── Phase 4: Analyze procedures ──
             if not packages:
@@ -16655,7 +16725,7 @@ def main():
     # ── Phase 1: Parse SQL files (use cache for unchanged) ──
     packages = []
     all_package_names = {}
-    sql_file_to_pkg = {}
+    sql_file_to_pkg = defaultdict(set)
     all_skipped = []
     n_sql = len(sql_files)
 
@@ -16731,10 +16801,12 @@ def main():
             for vname, vdata in pkg_vars.items():
                 if vname not in _PACKAGE_CONSTANTS:
                     _PACKAGE_VARIABLES[vname] = {**vdata, "package": pkg_name}
-            pkg = PackageInfo(package_name=pkg_name, procedures=procedures, package_vars=pkg_vars, source_file=basename, java_package=sql_file_to_java_package.get(sql_file, ""), comments=pkg_level_comments, custom_types=custom_types)
-            packages.append(pkg)
-            all_package_names[pkg_name] = pkg
-            sql_file_to_pkg[sql_file] = pkg_name
+            pkg = PackageInfo(package_name=pkg_name, procedures=procedures, package_vars=pkg_vars, source_file=basename, source_files=[basename], java_package=sql_file_to_java_package.get(sql_file, ""), comments=pkg_level_comments, custom_types=custom_types)
+            if pkg_name in all_package_names:
+                _merge_package_info(all_package_names[pkg_name], pkg, all_skipped)
+            else:
+                all_package_names[pkg_name] = pkg
+            sql_file_to_pkg[sql_file].add(pkg_name)
 
             for _p in procedures:
                 if _p.is_function and _p.return_type:
@@ -16752,6 +16824,8 @@ def main():
             continue
 
     _progress_done("Parse", n_sql)
+
+    packages = list(all_package_names.values())
 
     # ── Phase 2: Analyze all procedures ──
     all_procs = [(pkg, proc) for pkg in packages for proc in pkg.procedures]
@@ -16789,7 +16863,11 @@ def main():
     if full_regen or not is_incremental:
         changed_pkg_names = None
     else:
-        directly_changed = {sql_file_to_pkg[f] for f in changed_files if f in sql_file_to_pkg}
+        directly_changed = {
+            pkg_name
+            for f in changed_files if f in sql_file_to_pkg
+            for pkg_name in sql_file_to_pkg[f]
+        }
         changed_pkg_names = _find_dependent_packages(packages, directly_changed)
         _log(f"\n  Incremental: regenerating {len(changed_pkg_names)}/{len(packages)} packages")
 
@@ -16823,7 +16901,8 @@ def main():
     for f in sql_files:
         new_manifest["files"][f] = {
             "hash": _compute_file_hash(f),
-            "package": sql_file_to_pkg.get(f, ""),
+            "packages": sorted(sql_file_to_pkg.get(f, set())),
+            "package": next(iter(sorted(sql_file_to_pkg.get(f, set()))), ""),
             "java_package": sql_file_to_java_package.get(f, ""),
         }
     _save_manifest(output_dir, new_manifest)

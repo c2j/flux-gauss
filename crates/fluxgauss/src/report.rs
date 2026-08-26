@@ -273,6 +273,7 @@ mod tests {
             table_refs: Default::default(),
             package_vars: Default::default(),
             source_file: "test.sql".into(),
+            source_files: Vec::new(),
             comments: vec![],
             java_package: "com.example".into(),
             custom_types: Default::default(),

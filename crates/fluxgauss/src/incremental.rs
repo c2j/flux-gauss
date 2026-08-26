@@ -15,7 +15,8 @@ struct Manifest {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct FileEntry {
     hash: String,
-    package: String,
+    #[serde(default)]
+    packages: Vec<String>,
     java_package: String,
 }
 
@@ -126,13 +127,22 @@ impl IncrementalState {
         package: &str,
         java_package: &str,
     ) -> std::io::Result<()> {
+        self.update_file_packages(sql_file, &[package.to_string()], java_package)
+    }
+
+    pub fn update_file_packages(
+        &mut self,
+        sql_file: &Path,
+        packages: &[String],
+        java_package: &str,
+    ) -> std::io::Result<()> {
         let hash = Self::compute_hash(sql_file)?;
         let manifest = self.manifest.get_or_insert_with(Manifest::default);
         manifest.files.insert(
             sql_file.to_string_lossy().into_owned(),
             FileEntry {
                 hash,
-                package: package.to_string(),
+                packages: packages.to_vec(),
                 java_package: java_package.to_string(),
             },
         );
@@ -357,7 +367,7 @@ mod tests {
             .files
             .get(&sql_path.to_string_lossy().into_owned())
             .unwrap();
-        assert_eq!(entry.package, "pkg_a");
+        assert_eq!(entry.packages, vec!["pkg_a"]);
 
         std::fs::write(&sql_path, "v2").unwrap();
         state
@@ -370,7 +380,7 @@ mod tests {
             .files
             .get(&sql_path.to_string_lossy().into_owned())
             .unwrap();
-        assert_eq!(entry.package, "pkg_b");
+        assert_eq!(entry.packages, vec!["pkg_b"]);
     }
 
     #[test]
@@ -432,6 +442,7 @@ mod tests {
                 table_refs: HashSet::new(),
                 package_vars: HashMap::new(),
                 source_file: "a.sql".into(),
+                source_files: Vec::new(),
                 comments: vec![],
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),
@@ -453,6 +464,7 @@ mod tests {
                 table_refs: HashSet::new(),
                 package_vars: HashMap::new(),
                 source_file: "b.sql".into(),
+                source_files: Vec::new(),
                 comments: vec![],
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),
@@ -468,6 +480,7 @@ mod tests {
                 table_refs: HashSet::new(),
                 package_vars: HashMap::new(),
                 source_file: "c.sql".into(),
+                source_files: Vec::new(),
                 comments: vec![],
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),
@@ -496,6 +509,7 @@ mod tests {
             table_refs: HashSet::new(),
             package_vars: HashMap::new(),
             source_file: "iso.sql".into(),
+            source_files: Vec::new(),
             comments: vec![],
             java_package: "com.example".into(),
             custom_types: HashMap::new(),
@@ -526,6 +540,7 @@ mod tests {
                 table_refs: HashSet::new(),
                 package_vars: HashMap::new(),
                 source_file: "a.sql".into(),
+                source_files: Vec::new(),
                 comments: vec![],
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),
@@ -547,6 +562,7 @@ mod tests {
                 table_refs: HashSet::new(),
                 package_vars: HashMap::new(),
                 source_file: "b.sql".into(),
+                source_files: Vec::new(),
                 comments: vec![],
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),
@@ -562,6 +578,7 @@ mod tests {
                 table_refs: HashSet::new(),
                 package_vars: HashMap::new(),
                 source_file: "c.sql".into(),
+                source_files: Vec::new(),
                 comments: vec![],
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),

@@ -1470,6 +1470,7 @@ mod tests {
                     table_refs: Default::default(),
                     package_vars: Default::default(),
                     source_file: String::new(),
+                    source_files: Vec::new(),
                     comments: Vec::new(),
                     java_package: String::new(),
                     custom_types: Default::default(),

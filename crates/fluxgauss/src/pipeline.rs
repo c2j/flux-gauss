@@ -5,7 +5,8 @@ use crate::config::AppConfig;
 use crate::context::AnalysisContext;
 use crate::incremental::IncrementalState;
 use crate::types::{
-    AnalyzedPackages, ConversionError, PackageSummary, ParsedPackages, UnresolvedCall,
+    AnalyzedPackages, ConversionError, PackageInfo, PackageSummary, ParsedPackages, SkippedItem,
+    UnresolvedCall,
 };
 
 pub struct FileValidateResult {
@@ -318,7 +319,6 @@ fn phase1_parse(
     let base_package = config.base_package_or_default();
 
     let mut packages = Vec::new();
-    let mut summaries = Vec::new();
     let mut skipped = Vec::new();
     let mut errors = Vec::new();
     let mut package_origins: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
@@ -340,6 +340,13 @@ fn phase1_parse(
                         &sql_file.to_string_lossy(),
                         &base_package,
                     );
+                    let package_names: Vec<String> = result.packages.iter()
+                        .map(|pkg| pkg.package_name.clone())
+                        .collect();
+                    let java_package = result.packages.first()
+                        .map(|pkg| pkg.java_package.as_str())
+                        .unwrap_or("");
+                    let _ = incremental.update_file_packages(sql_file, &package_names, java_package);
                     packages.extend(result.packages);
                     skipped.extend(result.skipped);
                     errors.extend(result.errors);
@@ -399,10 +406,13 @@ fn phase1_parse(
             &sql_file.to_string_lossy(),
             &base_package,
         );
-
-        for pkg in &result.packages {
-            summaries.push(crate::types::PackageSummary::from_package(pkg));
-        }
+        let package_names: Vec<String> = result.packages.iter()
+            .map(|pkg| pkg.package_name.clone())
+            .collect();
+        let java_package = result.packages.first()
+            .map(|pkg| pkg.java_package.as_str())
+            .unwrap_or("");
+        let _ = incremental.update_file_packages(sql_file, &package_names, java_package);
 
         packages.extend(result.packages);
         skipped.extend(result.skipped);
@@ -410,6 +420,18 @@ fn phase1_parse(
     }
 
     crate::progress::progress_done("Parse", total);
+
+    let mut packages_by_name: BTreeMap<String, PackageInfo> = BTreeMap::new();
+    for package in packages {
+        if let Some(existing) = packages_by_name.get_mut(&package.package_name) {
+            merge_package_info(existing, package, &mut skipped);
+        } else {
+            packages_by_name.insert(package.package_name.clone(), package);
+        }
+    }
+    let packages: Vec<PackageInfo> = packages_by_name.into_values().collect();
+    let summaries = packages.iter().map(PackageSummary::from_package).collect();
+    let _ = incremental.save_manifest();
 
     let warnings = package_origins
         .into_iter()
@@ -428,6 +450,80 @@ fn phase1_parse(
         warnings,
         skipped,
         errors,
+    }
+}
+
+fn merge_package_info(existing: &mut PackageInfo, incoming: PackageInfo, skipped: &mut Vec<SkippedItem>) {
+    if existing.source_files.is_empty() && !existing.source_file.is_empty() {
+        existing.source_files.push(existing.source_file.clone());
+    }
+    for source_file in incoming.source_files.iter().chain(std::iter::once(&incoming.source_file)) {
+        if !source_file.is_empty() && !existing.source_files.contains(source_file) {
+            existing.source_files.push(source_file.clone());
+        }
+    }
+
+    let mut seen: BTreeSet<(String, usize)> = existing.procedures.iter()
+        .map(|proc| (proc.proc_name.clone(), proc.parameters.len()))
+        .collect();
+    for proc in incoming.procedures {
+        let key = (proc.proc_name.clone(), proc.parameters.len());
+        if !seen.insert(key) {
+            skipped.push(SkippedItem {
+                item_type: "ROUTINE".into(),
+                name: proc.name.clone(),
+                source_file: proc.source_file.clone(),
+                line_number: proc.source_start_line,
+                reason: format!(
+                    "Duplicate routine while merging package {}; kept first definition",
+                    existing.package_name
+                ),
+            });
+        } else {
+            existing.procedures.push(proc);
+        }
+    }
+
+    for (name, value) in incoming.package_vars {
+        if existing.package_vars.contains_key(&name) {
+            skipped.push(SkippedItem {
+                item_type: "PACKAGE_VARS".into(),
+                name,
+                source_file: incoming.source_file.clone(),
+                line_number: 0,
+                reason: format!("Conflicting package variable while merging {}; kept first definition", existing.package_name),
+            });
+        } else {
+            existing.package_vars.insert(name, value);
+        }
+    }
+    for (name, value) in incoming.custom_types {
+        if existing.custom_types.contains_key(&name) {
+            skipped.push(SkippedItem {
+                item_type: "CUSTOM_TYPES".into(),
+                name,
+                source_file: incoming.source_file.clone(),
+                line_number: 0,
+                reason: format!("Conflicting custom type while merging {}; kept first definition", existing.package_name),
+            });
+        } else {
+            existing.custom_types.insert(name, value);
+        }
+    }
+    existing.comments.extend(incoming.comments);
+    existing.table_refs.extend(incoming.table_refs);
+    if !incoming.java_package.is_empty() {
+        if existing.java_package.is_empty() {
+            existing.java_package = incoming.java_package;
+        } else if existing.java_package != incoming.java_package {
+            skipped.push(SkippedItem {
+                item_type: "JAVA_PACKAGE".into(),
+                name: existing.package_name.clone(),
+                source_file: incoming.source_file,
+                line_number: 0,
+                reason: format!("Conflicting Java package while merging {}; kept first definition", existing.package_name),
+            });
+        }
     }
 }
 

@@ -759,6 +759,7 @@ fn build_package_info(
         table_refs,
         package_vars,
         source_file: source_file.into(),
+        source_files: vec![source_file.into()],
         comments: Vec::new(),
         java_package,
         custom_types,
