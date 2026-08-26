@@ -196,6 +196,76 @@ pub(crate) fn java_int_lit(digits: &str) -> String {
     trimmed.to_string()
 }
 
+/// Resolve the declared Java type of a variable expression.
+/// Handles already-rendered camelCase Java expressions against snake_case keys.
+/// Cascade: local_vars -> parameters -> package_vars -> out_local_vars.
+pub(crate) fn resolve_var_java_type(expr: &str, proc: &ProcedureInfo) -> Option<String> {
+    let name = expr.trim();
+    let base = name
+        .split(|c: char| c == '.' || c == '(')
+        .next()
+        .unwrap_or(name);
+    if base.is_empty() {
+        return None;
+    }
+    if let Some(ty) = proc.local_vars.get(&base.to_lowercase()) {
+        return Some(ty.clone());
+    }
+    let base_key = base.to_lowercase().replace('_', "");
+    for (var_name, var_type) in &proc.local_vars {
+        if var_name.to_lowercase().replace('_', "") == base_key {
+            return Some(var_type.clone());
+        }
+    }
+    for p in &proc.parameters {
+        if p.name.to_lowercase().replace('_', "") == base_key
+            || crate::naming::snake_to_camel(&p.name) == base
+        {
+            return Some(p.java_type.clone());
+        }
+    }
+    for (var_name, info) in &proc.package_vars {
+        if var_name.to_lowercase().replace('_', "") == base_key {
+            return Some(info.java_type.clone());
+        }
+    }
+    for (var_name, ty) in &proc.out_local_vars {
+        if var_name.to_lowercase().replace('_', "") == base_key {
+            return Some(ty.clone());
+        }
+    }
+    None
+}
+
+fn has_decimal_literal(expr: &str) -> bool {
+    let bytes = expr.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit()
+            && (i == 0 || (!bytes[i - 1].is_ascii_alphanumeric() && bytes[i - 1] != b'_'))
+        {
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i + 1 < bytes.len() && bytes[i] == b'.' && bytes[i + 1].is_ascii_digit() {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+/// True if the rendered expression can yield a Java `double`.
+fn produces_double(expr: &str) -> bool {
+    expr.contains("Double.parseDouble")
+        || expr.contains(".doubleValue()")
+        || expr.contains("Math.pow")
+        || expr.contains("Math.sqrt")
+        || expr.contains(" / ")
+        || has_decimal_literal(expr)
+}
+
 pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &ProcedureInfo) -> String {
     let trimmed = expr.trim();
     // Early-exit: if target is BigDecimal and expr is already a BigDecimal value,
@@ -237,6 +307,27 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
             }
         }
         return trimmed.to_string();
+    }
+    // Issue #72: never emit `(Number) <String>`. When the source resolves to a
+    // String and the target is numeric, parse instead of cast.
+    if let Some(src) = resolve_var_java_type(trimmed, proc) {
+        if src == "String" {
+            match target_type {
+                Some(t) if t == "Long" || t == "long" => {
+                    return format!("Long.parseLong({})", trimmed);
+                }
+                Some(t) if t == "Integer" || t == "int" => {
+                    return format!("Integer.parseInt({})", trimmed);
+                }
+                Some(t) if t == "Double" || t == "double" => {
+                    return format!("Double.parseDouble({})", trimmed);
+                }
+                Some(t) if t.contains("BigDecimal") => {
+                    return format!("new java.math.BigDecimal({})", trimmed);
+                }
+                _ => {}
+            }
+        }
     }
     match target_type {
         Some(t) if t.contains("BigDecimal") && trimmed.starts_with('"') => {
@@ -339,7 +430,9 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
         Some(t) if (t == "Long" || t == "long") && trimmed.contains("BigDecimal") => {
             format!("({}).longValue()", trimmed)
         }
-        Some(t) if (t == "Long" || t == "long") && (trimmed.contains(" * ") || trimmed.contains(" + ") || trimmed.contains(" - ") || trimmed.contains(" / ")) => {
+        Some(t) if (t == "Long" || t == "long")
+            && (trimmed.contains(" * ") || trimmed.contains(" + ") || trimmed.contains(" - ") || trimmed.contains(" / "))
+            && !produces_double(trimmed) => {
             trimmed.to_string()
         }
         Some(t) if (t == "Long" || t == "long") => {
@@ -1970,6 +2063,29 @@ mod tests {
 
     fn empty_proc() -> ProcedureInfo {
         ProcedureInfo::new("pkg.test".into(), "pkg".into(), "test".into())
+    }
+
+    #[test]
+    fn test_resolve_var_java_type_maps_rendered_camel_case_to_snake_case() {
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_flag".into(), "String".into());
+
+        assert_eq!(resolve_var_java_type("vFlag", &proc), Some("String".into()));
+    }
+
+    #[test]
+    fn test_produces_double_detects_decimal_and_double_operations() {
+        assert!(produces_double("vFlag * 0.5"));
+        assert!(produces_double("Double.parseDouble(vFlag) * 2"));
+        assert!(produces_double("total / count"));
+        assert!(produces_double("Math.sqrt(total)"));
+        assert!(produces_double("value * 1.0e3"));
+    }
+
+    #[test]
+    fn test_produces_double_preserves_integral_arithmetic_passthrough() {
+        assert!(!produces_double("left + right"));
+        assert!(!produces_double("left * 2"));
     }
 
     #[test]

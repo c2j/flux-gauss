@@ -230,3 +230,33 @@ fn regress_pipeline_smoke() {
         }
     }
 }
+
+#[test]
+fn issue_72_string_to_number_coercion_compiles() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let sql_file = manifest_dir
+        .join(FIXTURES_REL)
+        .join("issue_72_string_to_number.sql");
+    let tmp = tempfile::tempdir().expect("Failed to create temp dir");
+    let generated = run_conversion(&sql_file, &tmp.path().join("dest"));
+    let service = generated
+        .files
+        .get("Service.java")
+        .expect("Service.java not generated");
+
+    assert!(
+        !service.contains("((Number)(vFlag))"),
+        "String variable must never be cast to Number:\n{}",
+        service
+    );
+    assert!(
+        service.contains("Long.parseLong(vFlag)"),
+        "String-to-Long assignment must use parse-style conversion:\n{}",
+        service
+    );
+    assert!(
+        !service.contains("vAmt = Double.parseDouble"),
+        "double-producing arithmetic must be coerced before Long assignment:\n{}",
+        service
+    );
+}
