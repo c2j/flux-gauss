@@ -70,6 +70,13 @@ pub fn write_mapper_interface(
             norm = last.to_string();
         }
         norm = re_t.replace_all(&norm, "$1 $3").to_string();
+        // Java overloads by parameter types only — return type must not keep two
+        // methods like `Long foo(String, Map, String)` vs `String foo(String, Map, String)`.
+        if let Some(paren) = norm.find('(') {
+            if let Some(name_start) = norm[..paren].rfind(char::is_whitespace) {
+                norm = format!("{}{}", &norm[name_start + 1..paren], &norm[paren..]);
+            }
+        }
         if sig_map.contains(&norm) {
             let commented: Vec<String> = m.lines()
                 .map(|l| format!("    // [DUPLICATE] {}", l))

@@ -396,9 +396,32 @@ fn coerce_default_value(java_type: &str, default_val: &str) -> String {
         }
         return default_val.to_string();
     }
+    if tl.contains("string") {
+        if trimmed.parse::<i64>().is_ok() {
+            return format!("\"{}\"", trimmed);
+        }
+    }
+    if tl.contains("timestamp") {
+        if trimmed == "\"\"" || trimmed == "''" || trimmed.is_empty() {
+            return "null".to_string();
+        }
+    }
+    if tl.contains("java.sql.date") || tl.ends_with("date") {
+        if trimmed == "\"\"" || trimmed == "''" || trimmed.is_empty() {
+            return "null".to_string();
+        }
+    }
     if tl.contains("long") {
+        if trimmed == "\"\"" || trimmed == "''" || trimmed.is_empty() {
+            return "0L".to_string();
+        }
         if trimmed.parse::<i64>().is_ok() && !trimmed.ends_with('l') && !trimmed.ends_with('L') {
             return format!("{}L", trimmed);
+        }
+    }
+    if tl.contains("integer") || tl == "int" {
+        if trimmed == "\"\"" || trimmed == "''" || trimmed.is_empty() {
+            return "0".to_string();
         }
     }
     if tl.contains("double") {

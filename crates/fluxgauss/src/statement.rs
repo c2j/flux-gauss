@@ -1291,15 +1291,19 @@ fn process_sql_statement(
                              .cloned()
                              .unwrap_or_else(|| "Object".to_string());
                          let rt = infer_select_result_type(&declared_type, &clean_sql);
-                         let line = if rt.contains("Map") {
-                             format!("{{ var _row = mapper.{}({}); if (_row != null) {{ {} = _row; }} }}", method_id, args, var_java)
-                         } else if rt != declared_type {
-                             format!("String _{} = mapper.{}({});", var_name, method_id, args)
-                         } else if declared_type != "Object" {
-                             format!("{{ var _val = mapper.{}({}); if (_val != null) {} = ({}) _val; }}", method_id, args, var_java, declared_type)
-                         } else {
-                             format!("{{ var _val = mapper.{}({}); if (_val != null) {} = _val; }}", method_id, args, var_java)
-                         };
+                          let line = if rt.contains("Map") && declared_type.contains("Map") {
+                              format!("{{ var _row = mapper.{}({}); if (_row != null) {{ {} = _row; }} }}", method_id, args, var_java)
+                          } else if declared_type == "Long" || declared_type == "long" {
+                              format!("{{ var _val = mapper.{}({}); if (_val != null) {} = (_val instanceof Number ? ((Number)_val).longValue() : Long.parseLong(String.valueOf(_val))); }}", method_id, args, var_java)
+                          } else if declared_type == "Integer" || declared_type == "int" {
+                              format!("{{ var _val = mapper.{}({}); if (_val != null) {} = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }}", method_id, args, var_java)
+                          } else if declared_type == "String" {
+                              format!("{} = String.valueOf(mapper.{}({}));", var_java, method_id, args)
+                          } else if declared_type != "Object" {
+                              format!("{{ var _val = mapper.{}({}); if (_val != null) {} = ({}) _val; }}", method_id, args, var_java, declared_type)
+                          } else {
+                              format!("{{ var _val = mapper.{}({}); if (_val != null) {} = _val; }}", method_id, args, var_java)
+                          };
                         (rt, line, String::new())
                     }
                 } else {

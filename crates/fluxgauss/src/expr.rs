@@ -43,7 +43,10 @@ fn as_double_expr(expr: &str) -> String {
 }
 
 fn parse_string_math_arg(expr: &str, proc: &ProcedureInfo) -> String {
-    if resolve_var_java_type(expr, proc).as_deref() == Some("String") {
+    if expr.contains(".get(")
+        || resolve_var_java_type(expr, proc).as_deref() == Some("String")
+        || resolve_var_java_type(expr, proc).as_deref() == Some("Object")
+    {
         as_double_expr(expr)
     } else {
         expr.to_string()
@@ -248,6 +251,34 @@ pub(crate) fn resolve_var_java_type(expr: &str, proc: &ProcedureInfo) -> Option<
 /// True when the expression is a single unqualified variable reference, i.e. the
 /// only shape for which `resolve_var_java_type` describes the EXPRESSION rather
 /// than merely its receiver.
+fn looks_like_string_expr(expr: &str) -> bool {
+    let t = expr.trim();
+    t.starts_with('"') || t.starts_with("String.valueOf(")
+}
+
+fn looks_like_timestamp_expr(expr: &str, proc: &ProcedureInfo) -> bool {
+    let t = expr.trim();
+    if t.starts_with("new java.sql.Timestamp") || t.starts_with("java.sql.Timestamp") {
+        return true;
+    }
+    is_bare_identifier(t)
+        && resolve_var_java_type(t, proc)
+            .as_deref()
+            .map(|s| s.contains("Timestamp"))
+            .unwrap_or(false)
+}
+
+fn looks_like_numeric_expr(expr: &str) -> bool {
+    let t = expr.trim();
+    t.ends_with("L")
+        || t.ends_with("l")
+        || t.contains(".longValue()")
+        || t.contains(".intValue()")
+        || t.contains(".doubleValue()")
+        || t.contains("Long.parseLong")
+        || t.contains("Integer.parseInt")
+}
+
 fn is_bare_identifier(expr: &str) -> bool {
     let t = expr.trim();
     !t.is_empty()
@@ -341,6 +372,43 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
             }
         }
         return trimmed.to_string();
+    }
+    // String literal → numeric. `"1"` / `"3.1"` must parse; `(Number)("1")` does not compile.
+    if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+        let inner = &trimmed[1..trimmed.len() - 1];
+        match target_type {
+            Some(t) if t == "Long" || t == "long" => {
+                if inner.is_empty() {
+                    return "0L".to_string();
+                }
+                if inner.parse::<i64>().is_ok() {
+                    return format!("{}L", inner);
+                }
+                return format!("((Number)(Double.parseDouble({}))).longValue()", trimmed);
+            }
+            Some(t) if t == "Integer" || t == "int" => {
+                if inner.is_empty() {
+                    return "0".to_string();
+                }
+                if inner.parse::<i32>().is_ok() {
+                    return inner.to_string();
+                }
+                return format!("((Number)(Double.parseDouble({}))).intValue()", trimmed);
+            }
+            Some(t) if t == "Double" || t == "double" => {
+                if inner.is_empty() {
+                    return "0.0d".to_string();
+                }
+                return format!("Double.parseDouble({})", trimmed);
+            }
+            Some(t) if t.contains("BigDecimal") => {
+                if inner.is_empty() {
+                    return "java.math.BigDecimal.ZERO".to_string();
+                }
+                return format!("new java.math.BigDecimal({})", trimmed);
+            }
+            _ => {}
+        }
     }
     // Issue #72: never emit `(Number) <String>`. When the source resolves to a
     // String and the target is numeric, parse instead of cast.
@@ -473,12 +541,22 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
         }
         Some(t) if (t == "Long" || t == "long")
             && (trimmed.contains(" * ") || trimmed.contains(" + ") || trimmed.contains(" - ") || trimmed.contains(" / "))
+            && !trimmed.starts_with("new ")
             && !produces_double(trimmed)
             && !produces_primitive_int(trimmed) => {
             trimmed.to_string()
         }
         Some(t) if (t == "Long" || t == "long") => {
-            format!("((Number)({})).longValue()", trimmed)
+            if looks_like_timestamp_expr(trimmed, proc) {
+                format!("{}.getTime()", trimmed)
+            } else if looks_like_string_expr(trimmed) {
+                format!("Long.parseLong(String.valueOf({}))", trimmed)
+            } else {
+                format!("((Number)({})).longValue()", trimmed)
+            }
+        }
+        Some(t) if t == "String" && looks_like_numeric_expr(trimmed) => {
+            format!("String.valueOf({})", trimmed)
         }
         _ => expr.to_string()
     }
@@ -1023,14 +1101,18 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
     }
 
     let is_arith = matches!(op, "*" | "+" | "-" | "/");
-    let l_is_ts = (is_timestamp_or_date_var(&l, proc)
-        || l.contains("java.sql.Date.valueOf(") || l.contains("java.sql.Timestamp.valueOf(") || l.contains("new java.sql.Date(") || l.contains("new java.sql.Timestamp("))
-        && !l.contains(".getYear()") && !l.contains(".getMonthValue()") && !l.contains(".getDayOfMonth()")
-        && !l.contains(".getHour()") && !l.contains(".getMinute()") && !l.contains(".getSecond()");
-    let r_is_ts = (is_timestamp_or_date_var(&r, proc)
-        || r.contains("java.sql.Date.valueOf(") || r.contains("java.sql.Timestamp.valueOf(") || r.contains("new java.sql.Date(") || r.contains("new java.sql.Timestamp("))
-        && !r.contains(".getYear()") && !r.contains(".getMonthValue()") && !r.contains(".getDayOfMonth()")
-        && !r.contains(".getHour()") && !r.contains(".getMinute()") && !r.contains(".getSecond()");
+    let l_trim = l.trim();
+    let r_trim = r.trim();
+    let l_is_ts = is_timestamp_or_date_var(&l, proc)
+        || l_trim.starts_with("java.sql.Date.valueOf(")
+        || l_trim.starts_with("java.sql.Timestamp.valueOf(")
+        || l_trim.starts_with("new java.sql.Date(")
+        || l_trim.starts_with("new java.sql.Timestamp(");
+    let r_is_ts = is_timestamp_or_date_var(&r, proc)
+        || r_trim.starts_with("java.sql.Date.valueOf(")
+        || r_trim.starts_with("java.sql.Timestamp.valueOf(")
+        || r_trim.starts_with("new java.sql.Date(")
+        || r_trim.starts_with("new java.sql.Timestamp(");
     if is_arith {
         if op == "-" && (l_is_ts || r_is_ts) {
             if l_is_ts && r_is_ts {
@@ -1384,6 +1466,9 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         "LOWER" => format!("String.valueOf({}).toLowerCase()", jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")),
         "TRIM" => format!("{}.trim()", jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")),
         "LENGTH" => format!("{}.length()", jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")),
+        "INTERVALTONUM" | "INTERVAL_TO_NUM" => {
+            jargs.first().cloned().unwrap_or_else(|| "0L".to_string())
+        }
         "ABS" => {
             let arg = jargs.first().map(|s| s.as_str()).unwrap_or("0");
             if is_bigdecimal_var(arg, proc) {

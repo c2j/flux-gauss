@@ -3510,6 +3510,8 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
     _external_labels = goto_labels - _loop_labels_internal
     _needs_dispatch = len(_external_labels) > 0
     _goto_target_var = "_gotoTarget"
+    if _needs_dispatch:
+        proc.java_logic_lines.append(f"String {_goto_target_var} = null;")
 
     def _process_with_goto_replace(stmt):
         if not isinstance(stmt, dict):
@@ -3670,8 +3672,6 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
     if _loop_idx is not None:
         for stmt in body_stmts[:_loop_idx]:
             _process_with_goto_replace(stmt)
-        if _needs_dispatch:
-            proc.java_logic_lines.append(f'String {_goto_target_var} = null;')
 
     # Phase 2: the loop
     if _loop_idx is not None:
@@ -6562,6 +6562,13 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
                     else:
                         a_java = _coerce_java_arg(a_java, tptype)
                 resolved_args.append(a_java)
+        if target_proc_info:
+            while len(resolved_args) < len(target_proc_info.parameters):
+                _pad = target_proc_info.parameters[len(resolved_args)]
+                if _pad.is_out:
+                    resolved_args.append("new java.util.concurrent.atomic.AtomicReference<>(null)")
+                else:
+                    resolved_args.append("null")
         args_java = ", ".join(resolved_args)
         is_self_call = (matched_pkg.lower() == proc.package.lower())
         if is_self_call:
@@ -9210,6 +9217,9 @@ def _coerce_java_arg(a_java: str, target_type: str) -> str:
             return f"String.valueOf({a_java})"
     if target_type == "java.sql.Date" and a_java.startswith('"') and a_java.endswith('"'):
         return f"java.sql.Date.valueOf({a_java})"
+    if target_type in ("int", "Integer"):
+        if re.search(r'\.getTime\(\)|\.longValue\(\)|[0-9]L\b', a_java):
+            return f"(int)({a_java})"
     # Integer/boxed-type passed to Long parameter: Java requires explicit coercion
     if target_type in ("long", "Long"):
         stripped = a_java.strip()
