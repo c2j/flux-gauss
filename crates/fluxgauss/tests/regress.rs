@@ -260,3 +260,28 @@ fn issue_72_string_to_number_coercion_compiles() {
         service
     );
 }
+
+#[test]
+fn issue_72b_math_string_arguments_are_parsed() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let sql_file = manifest_dir
+        .join(FIXTURES_REL)
+        .join("issue_72b_math_string_args.sql");
+    let tmp = tempfile::tempdir().expect("Failed to create temp dir");
+    let generated = run_conversion(&sql_file, &tmp.path().join("dest"));
+    let service = generated
+        .files
+        .get("Service.java")
+        .expect("Service.java not generated");
+
+    assert!(
+        service.contains("Math.abs(Double.parseDouble(String.valueOf(vFlag)))"),
+        "ABS(String) must parse its argument before calling Math.abs:\n{}",
+        service
+    );
+    assert!(
+        service.contains("Math.round(Double.parseDouble(String.valueOf(vFlag)))"),
+        "ROUND(String) must parse its argument before calling Math.round:\n{}",
+        service
+    );
+}

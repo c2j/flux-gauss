@@ -42,6 +42,14 @@ fn as_double_expr(expr: &str) -> String {
     format!("Double.parseDouble(String.valueOf({}))", t)
 }
 
+fn parse_string_math_arg(expr: &str, proc: &ProcedureInfo) -> String {
+    if resolve_var_java_type(expr, proc).as_deref() == Some("String") {
+        as_double_expr(expr)
+    } else {
+        expr.to_string()
+    }
+}
+
 pub fn expr_to_java(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> String {
     expr_to_java_impl(expr, proc)
 }
@@ -1347,16 +1355,16 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             if is_bigdecimal_var(arg, proc) {
                 format!("{}.abs()", arg)
             } else {
-                format!("Math.abs({})", arg)
+                format!("Math.abs({})", parse_string_math_arg(arg, proc))
             }
         }
-        "FLOOR" => format!("Math.floor({})", jargs.first().map(|s| s.as_str()).unwrap_or("0")),
+        "FLOOR" => format!("Math.floor({})", parse_string_math_arg(jargs.first().map(|s| s.as_str()).unwrap_or("0"), proc)),
         "CEIL" | "CEILING" => {
             let arg = jargs.first().map(|s| s.as_str()).unwrap_or("0");
             if is_bigdecimal_var(arg, proc) {
                 format!("{}.setScale(0, java.math.RoundingMode.CEILING)", arg)
             } else {
-                format!("Math.ceil({})", arg)
+                format!("Math.ceil({})", parse_string_math_arg(arg, proc))
             }
         }
         "ROUND" => {
@@ -1373,16 +1381,16 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                     let scale_dbl = if is_bigdecimal_var(&jargs[1], proc) {
                         format!("{}.doubleValue()", jargs[1])
                     } else {
-                        jargs[1].clone()
+                        parse_string_math_arg(&jargs[1], proc)
                     };
-                    format!("Math.round({} * Math.pow(10, {})) / Math.pow(10, {})", jargs[0], scale_dbl, scale_dbl)
+                    format!("Math.round({} * Math.pow(10, {})) / Math.pow(10, {})", parse_string_math_arg(arg, proc), scale_dbl, scale_dbl)
                 }
             } else {
                 let arg = jargs.first().map(|s| s.as_str()).unwrap_or("0");
                 if is_bigdecimal_var(arg, proc) {
                     format!("{}.setScale(0, java.math.RoundingMode.HALF_UP)", arg)
                 } else {
-                    format!("Math.round({})", arg)
+                    format!("Math.round({})", parse_string_math_arg(arg, proc))
                 }
             }
         }
@@ -1403,7 +1411,7 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         "EXP" => format!("Math.exp({})", as_double_expr(jargs.first().map(|s| s.as_str()).unwrap_or("0"))),
         "PI" | "PG_PI" => "Math.PI".into(),
         "RANDOM" => "Math.random()".into(),
-        "MOD" if jargs.len() >= 2 => format!("({} % {})", jargs[0], jargs[1]),
+        "MOD" if jargs.len() >= 2 => format!("({} % {})", parse_string_math_arg(&jargs[0], proc), parse_string_math_arg(&jargs[1], proc)),
         "GREATEST" if !jargs.is_empty() => {
             jargs.iter().skip(1).fold(jargs[0].clone(), |acc, arg| format!("Math.max({}, {})", acc, arg))
         }
@@ -1647,7 +1655,7 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             let sub = if jargs[1].starts_with('"') || jargs[1].starts_with('\'') { jargs[1].clone() } else { format!("String.valueOf({})", jargs[1]) };
             format!("{}.indexOf({}) + 1", s, sub)
         }
-        "TRUNC" if jargs.len() >= 1 => format!("(int) Math.floor((double)({}))", jargs[0]),
+        "TRUNC" if jargs.len() >= 1 => format!("(int) Math.floor((double)({}))", parse_string_math_arg(&jargs[0], proc)),
         "JSONB_ARRAY_LENGTH" => format!("this.jsonbArrayLength({})", jargs.join(", ")),
         "JSONB_BUILD_OBJECT" => {
             let coerced: Vec<String> = jargs.iter().enumerate().map(|(i, a)| {
