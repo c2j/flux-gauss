@@ -332,7 +332,7 @@ fn issue_72_string_to_number_coercion_compiles() {
         service
     );
     assert!(
-        service.contains("Long.parseLong(vFlag)"),
+        service.contains("Long.parseLong(String.valueOf(vFlag))"),
         "String-to-Long assignment must use parse-style conversion:\n{}",
         service
     );
@@ -341,6 +341,21 @@ fn issue_72_string_to_number_coercion_compiles() {
         "double-producing arithmetic must be coerced before Long assignment:\n{}",
         service
     );
+
+    for bad in [
+        "Long.parseLong(pIn.length())",
+        "Integer.parseInt(pIn.length())",
+        "Long.parseLong(vStr.length())",
+        "Integer.parseInt(vStr.length())",
+    ] {
+        assert!(
+            !service.contains(bad),
+            "a method call ON a String is not itself a String — parsing its int \
+             result does not compile. Found `{}` in:\n{}",
+            bad,
+            service
+        );
+    }
 }
 
 #[test]
