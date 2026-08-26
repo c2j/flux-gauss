@@ -15,6 +15,7 @@ pub struct ConversionReport {
     pub total_cross_calls: usize,
     pub mappings: Vec<ProcedureMapping>,
     pub skipped: Vec<SkippedItem>,
+    pub warnings: Vec<String>,
     pub errors: Vec<String>,
     pub unresolved_calls: Vec<UnresolvedCall>,
     pub stub_count: usize,
@@ -33,6 +34,7 @@ impl ConversionReport {
             total_cross_calls: 0,
             mappings: Vec::new(),
             skipped: Vec::new(),
+            warnings: Vec::new(),
             errors: Vec::new(),
             unresolved_calls: Vec::new(),
             stub_count: 0,
@@ -115,6 +117,17 @@ impl ConversionReport {
             lines.push(String::new());
         }
 
+        if !self.warnings.is_empty() {
+            lines.push("---".into());
+            lines.push(String::new());
+            lines.push("## ⚠️ 警告".into());
+            lines.push(String::new());
+            for warning in &self.warnings {
+                lines.push(format!("- {}", warning));
+            }
+            lines.push(String::new());
+        }
+
         if !self.errors.is_empty() {
             lines.push("---".into());
             lines.push(String::new());
@@ -159,6 +172,7 @@ impl ConversionReport {
 pub fn build_report(
     packages: &[PackageInfo],
     skipped: Vec<SkippedItem>,
+    warnings: Vec<String>,
     unresolved_calls: Vec<UnresolvedCall>,
     stub_count: usize,
     config_path: &str,
@@ -201,6 +215,7 @@ pub fn build_report(
         total_cross_calls,
         mappings,
         skipped,
+        warnings,
         errors: Vec::new(),
         unresolved_calls,
         stub_count,
@@ -265,6 +280,7 @@ mod tests {
         };
         let report = build_report(
             &[pkg],
+            vec![],
             vec![],
             vec![],
             0,

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 
 use crate::config::AppConfig;
@@ -298,7 +298,7 @@ pub fn run_pipeline(
         packages,
         generated_files: generated,
         errors,
-        warnings: Vec::new(),
+        warnings: analyzed.warnings,
         skipped,
         unresolved_calls: ctx.unresolved_calls.clone(),
         stub_count: ctx.stub_procedures.len(),
@@ -321,6 +321,7 @@ fn phase1_parse(
     let mut summaries = Vec::new();
     let mut skipped = Vec::new();
     let mut errors = Vec::new();
+    let mut package_origins: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let total = sql_files.len();
 
     for (idx, sql_file) in sql_files.iter().enumerate() {
@@ -333,6 +334,7 @@ fn phase1_parse(
                 if let Ok(parse_output) =
                     serde_json::from_str::<ogsql_parser::parser::ParseOutput>(&ast_json)
                 {
+                    track_package_origins(&parse_output, &mut package_origins);
                     let result = crate::extract::extract_from_parse_output(
                         &parse_output,
                         &sql_file.to_string_lossy(),
@@ -386,6 +388,7 @@ fn phase1_parse(
             errors: Vec::new(),
             comments: Vec::new(),
         };
+        track_package_origins(&parse_output, &mut package_origins);
 
         if let Ok(json) = serde_json::to_string(&parse_output) {
             let _ = incremental.save_cached_ast(sql_file, &json);
@@ -408,11 +411,44 @@ fn phase1_parse(
 
     crate::progress::progress_done("Parse", total);
 
+    let warnings = package_origins
+        .into_iter()
+        .filter_map(|(registration_name, qualified_names)| {
+            (qualified_names.len() > 1).then(|| format!(
+                "Package registration collision: {} fold into '{}'; schemas are merged for Python parity",
+                qualified_names.into_iter().collect::<Vec<_>>().join(", "),
+                registration_name,
+            ))
+        })
+        .collect();
+
     ParsedPackages {
         packages,
         summaries,
+        warnings,
         skipped,
         errors,
+    }
+}
+
+fn track_package_origins(
+    parse_output: &ogsql_parser::parser::ParseOutput,
+    origins: &mut BTreeMap<String, BTreeSet<String>>,
+) {
+    use ogsql_parser::ast::Statement;
+
+    for statement in &parse_output.statements {
+        let name = match &statement.statement {
+            Statement::CreatePackage(pkg) => Some(&pkg.node.name),
+            Statement::CreatePackageBody(pkg) => Some(&pkg.node.name),
+            _ => None,
+        };
+        let Some(name) = name else { continue };
+        let Some(registration_name) = name.last() else { continue };
+        origins
+            .entry(registration_name.to_string())
+            .or_default()
+            .insert(name.join("."));
     }
 }
 
@@ -492,6 +528,7 @@ fn phase2_analyze(
     AnalyzedPackages {
         packages,
         summaries: parsed.summaries,
+        warnings: parsed.warnings,
         skipped: parsed.skipped,
         errors,
     }

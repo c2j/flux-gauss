@@ -1,0 +1,30 @@
+CREATE OR REPLACE PACKAGE BIGFUND.PKG_LOG IS
+    PROCEDURE inst_log(p_i_msg IN VARCHAR2);
+END PKG_LOG;
+/
+
+CREATE OR REPLACE PACKAGE BODY BIGFUND.PKG_LOG IS
+    PROCEDURE inst_log(p_i_msg IN VARCHAR2) IS
+    BEGIN
+        NULL;
+    END;
+END PKG_LOG;
+/
+
+CREATE OR REPLACE PACKAGE BIGFUND.PKG_BIZ IS
+    g_prefix VARCHAR2(16) := 'BIZ';
+    TYPE t_result IS RECORD (
+        status_code NUMBER,
+        status_text VARCHAR2(64)
+    );
+    PROCEDURE do_it(p_i_msg IN VARCHAR2);
+END PKG_BIZ;
+/
+
+CREATE OR REPLACE PACKAGE BODY BIGFUND.PKG_BIZ IS
+    PROCEDURE do_it(p_i_msg IN VARCHAR2) IS
+    BEGIN
+        PKG_LOG.inst_log(p_i_msg);
+    END;
+END PKG_BIZ;
+/

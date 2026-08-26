@@ -433,6 +433,7 @@ pub struct ProcedureMapping {
 pub struct ParsedPackages {
     pub packages: Vec<PackageInfo>,
     pub summaries: Vec<PackageSummary>,
+    pub warnings: Vec<String>,
     pub skipped: Vec<SkippedItem>,
     pub errors: Vec<ConversionError>,
 }
@@ -440,6 +441,7 @@ pub struct ParsedPackages {
 pub struct AnalyzedPackages {
     pub packages: Vec<PackageInfo>,
     pub summaries: Vec<PackageSummary>,
+    pub warnings: Vec<String>,
     pub skipped: Vec<SkippedItem>,
     pub errors: Vec<ConversionError>,
 }
