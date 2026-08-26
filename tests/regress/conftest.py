@@ -303,4 +303,6 @@ KNOWN_BROKEN_FIXTURES = {
 MULTI_FILE_FIXTURES = {
     "issue_70_fnc_a.sql",
     "issue_70_fnc_b.sql",
+    "issue_70_casefold_upper.sql",
+    "issue_70_casefold_lower.sql",
 }

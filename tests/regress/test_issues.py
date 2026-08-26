@@ -127,6 +127,18 @@ class TestIssue70_MultiFileStandaloneRoutines:
         assert "fncA(" in svc
         assert "fncB(" in svc
 
+    def test_case_variant_package_names_merge_into_one_service(self, tmp_path):
+        """app.PKG_CASEFOLD and other.pkg_casefold both emit CasefoldService.java,
+        so they must merge rather than one silently overwriting the other."""
+        out_dir = _run_cli_pipeline(
+            ["issue_70_casefold_upper.sql", "issue_70_casefold_lower.sql"], tmp_path
+        )
+        svc = _read_generated(out_dir, _service_path(out_dir, "Casefold"))
+
+        assert svc, "CasefoldService not generated"
+        assert "instEntry(" in svc, f"method from the UPPER-case package lost:\n{svc}"
+        assert "delEntry(" in svc, f"method from the lower-case package lost:\n{svc}"
+
     def test_other_source_file_change_regenerates_merged_service(self, tmp_path):
         source_dir = Path(tmp_path) / "sql"
         source_dir.mkdir()
