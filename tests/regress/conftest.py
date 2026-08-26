@@ -14,6 +14,14 @@ import subprocess
 import pytest
 import sys
 
+if sys.version_info < (3, 10):
+    raise RuntimeError(
+        f"flux-gauss requires Python >= 3.10 (converter/flux_gauss.py uses PEP 604 "
+        f"`int | None` syntax, which raises TypeError on 3.9). Detected {sys.version.split()[0]}. "
+        f"Create a venv with a 3.10+ interpreter, e.g.: "
+        f"python3.14 -m venv .venv && .venv/bin/pip install pytest pyyaml"
+    )
+
 # Add project root so we can import converter.flux_gauss
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
