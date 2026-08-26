@@ -27,4 +27,5 @@ packages = ["converter"]
 testpaths = ["tests"]
 markers = [
     "demo_migration: slow end-to-end demo yaml + mvn guard (~4 min, needs ogsql/Java/Maven)",
+    "parity: cross-engine Python/Rust parity guard (needs ogsql + target/release/fluxgauss)",
 ]

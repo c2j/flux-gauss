@@ -305,4 +305,6 @@ MULTI_FILE_FIXTURES = {
     "issue_70_fnc_b.sql",
     "issue_70_casefold_upper.sql",
     "issue_70_casefold_lower.sql",
+    "issue_71_parity_callee.sql",
+    "issue_71_parity_caller.sql",
 }
