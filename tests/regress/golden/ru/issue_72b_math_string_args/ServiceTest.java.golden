@@ -1,0 +1,34 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue72bMapper;
+import com.example.demo.service.Issue72bService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_72b_math_string_args.sql
+class Issue72bServiceTest {
+
+    @Mock
+    private Issue72bMapper issue72bMapper;
+
+    @InjectMocks
+    private Issue72bService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_prcMathWall_success() {
+        AtomicReference<String> pOSucceedRef = new AtomicReference<>(null);
+        service.prcMathWall(pOSucceedRef);
+    }
+}

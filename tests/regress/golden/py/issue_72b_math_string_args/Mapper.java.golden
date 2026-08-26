@@ -1,0 +1,9 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue72bMathStringArgsMapper {
+
+    // No direct DML operations for issue_72b_math_string_args
+}
