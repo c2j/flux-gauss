@@ -968,6 +968,8 @@ class ProcedureInfo:
     dml_statements: list = field(default_factory=list)
     service_calls: list = field(default_factory=list)
     java_logic_lines: list = field(default_factory=list)
+    _had_statement_error: bool = False
+    _dropped_decls: set = field(default_factory=set)
     imports: set = field(default_factory=set)
     local_vars: dict = field(default_factory=dict)
     local_var_defaults: dict = field(default_factory=dict)
@@ -2468,7 +2470,16 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
             # `try {` (or any unbalanced brace), producing uncompilable Java.
             # Roll the emitted lines back to the pre-statement checkpoint so
             # output stays brace-balanced, then emit one balanced marker.
+            _dropped = proc.java_logic_lines[pre_idx:]
             del proc.java_logic_lines[pre_idx:]
+            # Declarations emitted inline (not registered in local_vars) die with
+            # the rolled-back slice. Remember them so a later statement that still
+            # references one turns the method into a stub rather than emitting
+            # Java that fails with "cannot find symbol".
+            for _dl in _dropped:
+                _dm = re.match(r'\s*(?:final\s+)?[\w.<>\[\], ]+?\s+(\w+)\s*=', _dl)
+                if _dm:
+                    proc._dropped_decls.add(_dm.group(1))
             stmt_preview = str(stmt)[:120] if stmt else "<empty>"
             proc._had_statement_error = True
             proc.java_logic_lines.append(
@@ -13114,11 +13125,21 @@ def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureI
     for _l in body_lines:
         _s = re.sub(r'"(?:[^"\\]|\\.)*"', '""', _l)
         _s = re.sub(r"'(?:[^'\\]|\\.)*'", "''", _s)
+        _s = re.sub(r'/\*.*?\*/', '', _s)
         _s = re.sub(r'//.*$', '', _s)
         _stripped.append(_s)
     _delta = sum(l.count("{") - l.count("}") for l in _stripped)
     if _delta != 0:
         failed.append(f"brace imbalance delta={_delta}")
+
+    # A rolled-back statement (issue #75) may have taken an inline declaration
+    # with it. If anything still refers to one, the body would fail to compile
+    # with "cannot find symbol", which no other check here can see.
+    if proc is not None and getattr(proc, "_had_statement_error", False):
+        for _name in getattr(proc, "_dropped_decls", ()):
+            if re.search(r'\b' + re.escape(_name) + r'\b', " ".join(_stripped)):
+                failed.append(f"reference to '{_name}' whose declaration was rolled back")
+                break
 
     if re.search(r'\bv_cursorResult\b', all_text) and "vCursorResult" not in all_text and "v_cursorResult =" not in all_text:
         failed.append("cursor 结果变量 'v_cursorResult' 未正确初始化")
