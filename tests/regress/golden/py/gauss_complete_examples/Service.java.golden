@@ -83,11 +83,11 @@ public class GaussCompleteExamplesService {
             List<Map<String, Object>> vEmpList = gaussCompleteExamplesMapper.selectProcSyncEmployeeBonus();
             for (Map<String, Object> vEmp : vEmpList) {
                 try {
-                    vBonusRate = (java.math.BigDecimal) this.funcGetBonusRate(Integer.parseInt(String.valueOf(vEmp.get("department_id"))));
-                    vBonusAmt = (java.math.BigDecimal) (java.math.BigDecimal.valueOf(((Number) (vEmp.get("salary") != null ? vEmp.get("salary") : 0L)).longValue()).multiply(vBonusRate)).setScale((int)(2), java.math.RoundingMode.HALF_UP);
-                    vMaxBonus = (java.math.BigDecimal) java.math.BigDecimal.valueOf(((Number) (vEmp.get("salary") != null ? vEmp.get("salary") : 0L)).longValue()).multiply(java.math.BigDecimal.valueOf(12)).multiply(java.math.BigDecimal.valueOf(0.20d));
+                    vBonusRate = this.funcGetBonusRate(Integer.parseInt(String.valueOf(vEmp.get("department_id"))));
+                    vBonusAmt = (java.math.BigDecimal.valueOf(((Number) (vEmp.get("salary") != null ? vEmp.get("salary") : 0L)).longValue()).multiply(vBonusRate)).setScale((int)(2), java.math.RoundingMode.HALF_UP);
+                    vMaxBonus = java.math.BigDecimal.valueOf(((Number) (vEmp.get("salary") != null ? vEmp.get("salary") : 0L)).longValue()).multiply(java.math.BigDecimal.valueOf(12)).multiply(java.math.BigDecimal.valueOf(0.20d));
                     if (java.math.BigDecimal.valueOf(((Number) (vEmp.get("year_bonus_total") != null ? vEmp.get("year_bonus_total") : 0L)).longValue()).add(vBonusAmt).compareTo(vMaxBonus) > 0) {
-                        vBonusAmt = (java.math.BigDecimal) vMaxBonus.subtract(java.math.BigDecimal.valueOf(((Number) (vEmp.get("year_bonus_total") != null ? vEmp.get("year_bonus_total") : 0L)).longValue()));
+                        vBonusAmt = vMaxBonus.subtract(java.math.BigDecimal.valueOf(((Number) (vEmp.get("year_bonus_total") != null ? vEmp.get("year_bonus_total") : 0L)).longValue()));
                         _sqlRowCount = gaussCompleteExamplesMapper.insertBonusLimitLog(vEmp);
                     }
                     if (vBonusAmt.compareTo(java.math.BigDecimal.valueOf(0)) > 0) {
@@ -438,7 +438,7 @@ public class GaussCompleteExamplesService {
             }
         }
         // cursor p_cursor closed
-        pSummary.set("Total: " + vCount + ", Senior: " + vSeniorCount + ", Avg Salary: " + (vTotal.divide((java.util.Objects.equals(vCount, 0) ? null : java.math.BigDecimal.valueOf(vCount)))).setScale((int)(2), java.math.RoundingMode.HALF_UP));
+        pSummary.set(String.valueOf("Total: " + vCount + ", Senior: " + vSeniorCount + ", Avg Salary: " + (vTotal.divide((java.util.Objects.equals(vCount, 0) ? null : java.math.BigDecimal.valueOf(vCount)))).setScale((int)(2), java.math.RoundingMode.HALF_UP)));
     }
 
     // Source: pkg_cursor_lifecycle.proc_full_pipeline (PROCEDURE) — gauss_complete_examples.sql:785-794
