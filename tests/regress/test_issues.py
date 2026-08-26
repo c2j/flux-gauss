@@ -7,8 +7,11 @@ already works correctly and must not regress.
 
 To run: pytest tests/regress/test_issues.py -v
 """
+import json
 import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -59,6 +62,36 @@ def _run_pipeline(sql_file, cached_ast, tmp_path):
     return out_dir, pkg, class_name
 
 
+def _run_cli_pipeline(sql_files, tmp_path, full=True):
+    """Run the real Python CLI for regressions that span multiple SQL files."""
+    out_dir = Path(tmp_path) / "dest_cli"
+    source_paths = [str(Path(FIXTURES_DIR) / sql_file) for sql_file in sql_files]
+    command = [
+            sys.executable,
+            str(Path(fg.__file__).resolve()),
+            "-o",
+            str(out_dir),
+            "-s",
+            *source_paths,
+            "--skip-validate",
+        ]
+    if full:
+        command.append("--full")
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "OGSQL_BIN": fg.OGSQL_BIN},
+        timeout=120,
+    )
+    assert result.returncode == 0, (
+        f"Python CLI failed ({result.returncode})\n"
+        f"stdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}"
+    )
+    return str(out_dir)
+
+
 def _read_generated(output_dir, rel_path):
     fp = Path(output_dir) / rel_path
     if fp.exists():
@@ -80,6 +113,56 @@ def _test_path(output_dir, class_name):
 
 def _xml_path(output_dir, class_name):
     return f"src/main/resources/mapper/{class_name}Mapper.xml"
+
+
+# ── Issue #70: Same-schema standalone routines across files ─────
+
+class TestIssue70_MultiFileStandaloneRoutines:
+    def test_same_schema_routines_share_one_service(self, tmp_path):
+        out_dir = _run_cli_pipeline(
+            ["issue_70_fnc_a.sql", "issue_70_fnc_b.sql"], tmp_path
+        )
+        svc = _read_generated(out_dir, _service_path(out_dir, "Bigfund"))
+
+        assert "fncA(" in svc
+        assert "fncB(" in svc
+
+    def test_other_source_file_change_regenerates_merged_service(self, tmp_path):
+        source_dir = Path(tmp_path) / "sql"
+        source_dir.mkdir()
+        sources = []
+        for filename in ("issue_70_fnc_a.sql", "issue_70_fnc_b.sql"):
+            destination = source_dir / filename
+            destination.write_text(
+                (Path(FIXTURES_DIR) / filename).read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            sources.append(str(destination))
+
+        out_dir = Path(tmp_path) / "dest_incremental"
+        command = [
+            sys.executable, str(Path(fg.__file__).resolve()),
+            "-o", str(out_dir), "-s", *sources, "--skip-validate",
+        ]
+        env = {**os.environ, "OGSQL_BIN": fg.OGSQL_BIN}
+        first = subprocess.run(command + ["--full"], capture_output=True, text=True,
+                               env=env, timeout=120)
+        assert first.returncode == 0, first.stderr
+
+        second_source = Path(sources[1])
+        second_source.write_text(
+            second_source.read_text(encoding="utf-8").replace("'_B'", "'_B2'"),
+            encoding="utf-8",
+        )
+        second = subprocess.run(command, capture_output=True, text=True, env=env, timeout=120)
+        assert second.returncode == 0, second.stderr
+        svc = _read_generated(str(out_dir), _service_path(str(out_dir), "Bigfund"))
+        assert "fncA(" in svc
+        assert "fncB(" in svc
+        assert '"_B2"' in svc
+
+        manifest = json.loads((out_dir / ".fluxgauss" / "manifest.json").read_text())
+        assert manifest["files"][sources[1]]["packages"] == ["BIGFUND"]
 
 
 # ── Issue #34: Request/Response DTO + Entity generation ──────────

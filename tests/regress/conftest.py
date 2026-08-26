@@ -214,9 +214,10 @@ def _fixture_sql_files() -> list:
     """Return sorted list of .sql fixture filenames (excluding known-broken)."""
     if not os.path.isdir(FIXTURES_DIR):
         return []
+    _excluded = KNOWN_BROKEN_FIXTURES | MULTI_FILE_FIXTURES
     return sorted(
         f for f in os.listdir(FIXTURES_DIR)
-        if f.endswith(".sql") and f not in KNOWN_BROKEN_FIXTURES
+        if f.endswith(".sql") and f not in _excluded
     )
 
 
@@ -263,4 +264,14 @@ EXPECTED_BASELINES = {
 # complex_clearing_pkg.sql crashes ogsql v0.8.32's Python engine
 # (AttributeError in _expr_to_java with None procedure context).
 # Skip until upstream converter bug is fixed.
-KNOWN_BROKEN_FIXTURES = {"complex_clearing_pkg.sql"}
+KNOWN_BROKEN_FIXTURES = {
+    "complex_clearing_pkg.sql",
+}
+
+# Not broken: the single-file harness derives one package per filename, but #70
+# is about several files collapsing into ONE package. Covered instead by the
+# CLI-level multi-file regression in test_issues.py.
+MULTI_FILE_FIXTURES = {
+    "issue_70_fnc_a.sql",
+    "issue_70_fnc_b.sql",
+}

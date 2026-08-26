@@ -165,6 +165,82 @@ fn run_conversion(sql_file: &Path, out_dir: &Path) -> GeneratedFiles {
     }
 }
 
+fn run_multi_file_conversion(sql_files: &[PathBuf], out_dir: &Path) -> GeneratedFiles {
+    let config = AppConfig {
+        output_dir: Some(out_dir.to_string_lossy().into()),
+        base_package: Some(BASE_PACKAGE.to_string()),
+        sources: Some(
+            sql_files
+                .iter()
+                .map(|path| path.to_string_lossy().into())
+                .collect(),
+        ),
+        ..Default::default()
+    };
+
+    let mut inc = IncrementalState::new(out_dir.to_string_lossy().into_owned(), false);
+    inc.initialize().expect("Failed to initialize incremental state");
+    let result = run_pipeline(sql_files, &config, &mut inc, false);
+    let service = fs::read_to_string(service_path(out_dir, "Bigfund"))
+        .expect("BigfundService.java was not generated");
+    let mut files = HashMap::new();
+    files.insert("Service.java".to_string(), service);
+    GeneratedFiles {
+        files,
+        total_cross_calls: result.total_cross_calls,
+        unresolved_calls: result.unresolved_calls.len(),
+    }
+}
+
+#[test]
+fn issue_70_same_schema_routines_share_one_service() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURES_REL);
+    let sql_files = vec![
+        fixtures.join("issue_70_fnc_a.sql"),
+        fixtures.join("issue_70_fnc_b.sql"),
+    ];
+    let tmp = tempfile::tempdir().expect("Failed to create temp dir");
+    let generated = run_multi_file_conversion(&sql_files, &tmp.path().join("dest"));
+    let service = generated.files.get("Service.java").unwrap();
+
+    assert!(service.contains("fncA("), "fncA missing from BigfundService");
+    assert!(service.contains("fncB("), "fncB missing from BigfundService");
+}
+
+#[test]
+fn issue_70_other_source_change_preserves_merged_service_incrementally() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURES_REL);
+    let tmp = tempfile::tempdir().expect("Failed to create temp dir");
+    let source_dir = tmp.path().join("sql");
+    fs::create_dir_all(&source_dir).unwrap();
+    let sql_files: Vec<PathBuf> = ["issue_70_fnc_a.sql", "issue_70_fnc_b.sql"]
+        .iter()
+        .map(|name| {
+            let destination = source_dir.join(name);
+            fs::copy(fixtures.join(name), &destination).unwrap();
+            destination
+        })
+        .collect();
+    let out_dir = tmp.path().join("dest");
+
+    let first = run_multi_file_conversion(&sql_files, &out_dir);
+    assert!(first.files["Service.java"].contains("fncA("));
+    assert!(first.files["Service.java"].contains("fncB("));
+
+    let changed = fs::read_to_string(&sql_files[1]).unwrap().replace("'_B'", "'_B2'");
+    fs::write(&sql_files[1], changed).unwrap();
+    let second = run_multi_file_conversion(&sql_files, &out_dir);
+    let service = &second.files["Service.java"];
+    assert!(service.contains("fncA("));
+    assert!(service.contains("fncB("));
+    assert!(service.contains("\"_B2\""));
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(out_dir.join(".fluxgauss/manifest.json")).unwrap(),
+    ).unwrap();
+    assert_eq!(manifest["files"][sql_files[1].to_string_lossy().as_ref()]["packages"][0], "BIGFUND");
+}
+
 #[test]
 fn regress_golden_compare() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
