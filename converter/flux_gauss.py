@@ -5121,23 +5121,36 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
             java_expr = f"java.math.BigDecimal.valueOf({java_expr})"
         elif expr_type == "boolean" or re.match(r'^false\s*/\*', _top):
             java_expr = "java.math.BigDecimal.ZERO /* stub */"
+    # Scan for the OUTERMOST call over a literal-masked copy: an unbalanced paren
+    # inside a Java string (e.g. vRec.get("x)")) would otherwise desynchronise the
+    # depth count and misclassify the expression.
     _get_expr = java_expr.strip()
+    _get_masked = re.sub(r'"(?:[^"\\]|\\.)*"', lambda m: '"' + "_" * (len(m.group(0)) - 2) + '"', _get_expr)
+    _get_masked = re.sub(r"'(?:[^'\\]|\\.)*'", lambda m: "'" + "_" * (len(m.group(0)) - 2) + "'", _get_masked)
     _get_open = None
-    if _get_expr.endswith(")"):
+    if _get_masked.endswith(")"):
         _depth = 0
-        for _idx in range(len(_get_expr) - 1, -1, -1):
-            if _get_expr[_idx] == ")":
+        for _idx in range(len(_get_masked) - 1, -1, -1):
+            if _get_masked[_idx] == ")":
                 _depth += 1
-            elif _get_expr[_idx] == "(":
+            elif _get_masked[_idx] == "(":
                 _depth -= 1
                 if _depth == 0:
                     _get_open = _idx
                     break
-    _outer_call = re.search(r'([A-Za-z_$][\w$]*)\s*$', _get_expr[:_get_open]) if _get_open is not None else None
+    _outer_call = re.search(r'([A-Za-z_$][\w$]*)\s*$', _get_masked[:_get_open]) if _get_open is not None else None
     _is_direct_call = _outer_call is not None
     _is_direct_map_get = _is_direct_call and _outer_call.group(1) == "get"
     if target_type == "String" and expr_type not in ("String", None):
-        if expr_type != "Object" or (_is_direct_call and not _is_direct_map_get):
+        # Only scalars have a meaningful String rendering. String.valueOf() on a
+        # Map/List would silently produce "{k=v}" where the old behaviour at least
+        # failed loudly at compile time.
+        _scalar_src = expr_type in (
+            "Integer", "int", "Long", "long", "Double", "double", "Float", "float",
+            "Short", "short", "Byte", "byte", "Boolean", "boolean", "Character", "char",
+            "java.math.BigDecimal", "java.math.BigInteger", "Number",
+        )
+        if _scalar_src or (expr_type == "Object" and _is_direct_call and not _is_direct_map_get):
             java_expr = f"String.valueOf({java_expr})"
 
     # Cast Map.get() results when assigning to typed variables
