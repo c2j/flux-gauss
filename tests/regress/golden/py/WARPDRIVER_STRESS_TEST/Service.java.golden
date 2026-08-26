@@ -462,7 +462,7 @@ public class WarpdriverStressTestService {
         int _sqlRowCount = 0;
         try {
             pFinalBal.set(null);
-            vBalance = ((java.math.BigDecimal) warpdriverStressTestMapper.selectAccounts(pAccountId, pAmount));
+            vBalance = new java.math.BigDecimal(String.valueOf(warpdriverStressTestMapper.selectAccounts(pAccountId, pAmount)));
             if (vBalance == null) vBalance = java.math.BigDecimal.ZERO;
             vSp1 = "sp_pre_" + pAccountId;
             // SAVEPOINT vSp1 — use TransactionAspectSupport.currentTransactionStatus().createSavepoint() if needed

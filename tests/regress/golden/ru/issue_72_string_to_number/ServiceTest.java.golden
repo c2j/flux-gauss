@@ -32,4 +32,12 @@ class Issue72ServiceTest {
         AtomicReference<String> pOSucceedRef = new AtomicReference<>(null);
         service.prcTypeWall(pIDate, pOSucceedRef);
     }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_prcStrMethodWall_success() {
+        String pIn = "test_pIn";
+        AtomicReference<String> pOSucceedRef = new AtomicReference<>(null);
+        service.prcStrMethodWall(pIn, pOSucceedRef);
+    }
 }

@@ -83,11 +83,11 @@ public class GaussCompleteExamplesService {
             List<Map<String, Object>> vEmpList = gaussCompleteExamplesMapper.selectProcSyncEmployeeBonus();
             for (Map<String, Object> vEmp : vEmpList) {
                 try {
-                    vBonusRate = this.funcGetBonusRate(Integer.parseInt(String.valueOf(vEmp.get("department_id"))));
+                    vBonusRate = new java.math.BigDecimal(String.valueOf(this.funcGetBonusRate(Integer.parseInt(String.valueOf(vEmp.get("department_id")))) != null ? this.funcGetBonusRate(Integer.parseInt(String.valueOf(vEmp.get("department_id")))) : 0));
                     vBonusAmt = (java.math.BigDecimal.valueOf(((Number) (vEmp.get("salary") != null ? vEmp.get("salary") : 0L)).longValue()).multiply(vBonusRate)).setScale((int)(2), java.math.RoundingMode.HALF_UP);
                     vMaxBonus = java.math.BigDecimal.valueOf(((Number) (vEmp.get("salary") != null ? vEmp.get("salary") : 0L)).longValue()).multiply(java.math.BigDecimal.valueOf(12)).multiply(java.math.BigDecimal.valueOf(0.20d));
                     if (java.math.BigDecimal.valueOf(((Number) (vEmp.get("year_bonus_total") != null ? vEmp.get("year_bonus_total") : 0L)).longValue()).add(vBonusAmt).compareTo(vMaxBonus) > 0) {
-                        vBonusAmt = vMaxBonus.subtract(java.math.BigDecimal.valueOf(((Number) (vEmp.get("year_bonus_total") != null ? vEmp.get("year_bonus_total") : 0L)).longValue()));
+                        vBonusAmt = new java.math.BigDecimal(String.valueOf(vMaxBonus.subtract(java.math.BigDecimal.valueOf(((Number) (vEmp.get("year_bonus_total") != null ? vEmp.get("year_bonus_total") : 0L)).longValue())) != null ? vMaxBonus.subtract(java.math.BigDecimal.valueOf(((Number) (vEmp.get("year_bonus_total") != null ? vEmp.get("year_bonus_total") : 0L)).longValue())) : 0));
                         _sqlRowCount = gaussCompleteExamplesMapper.insertBonusLimitLog(vEmp);
                     }
                     if (vBonusAmt.compareTo(java.math.BigDecimal.valueOf(0)) > 0) {
@@ -241,7 +241,7 @@ public class GaussCompleteExamplesService {
                 vRowCount = vRowCount + 1;
                 vPkId = (vRec.get("id") != null ? (vRec.get("id") instanceof Number ? ((Number) vRec.get("id")).intValue() : Integer.parseInt(String.valueOf(vRec.get("id")))) : 0);
                 vStatus = (String) vRec.get("status");
-                vAmount = (java.math.BigDecimal) vRec.get("amount");
+                vAmount = new java.math.BigDecimal(String.valueOf(vRec.get("amount") != null ? vRec.get("amount") : 0));
                 vName = (String) vRec.get("name");
                 vCreateTime = (java.sql.Timestamp) vRec.get("create_time");
                 if (java.util.Objects.equals(pProcessType, "ARCHIVE")) {

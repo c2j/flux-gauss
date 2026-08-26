@@ -27,7 +27,7 @@ public class Issue41TypeSystemService {
         int _sqlRowCount = 0;
         pNewBalance.set(null);
         pStatus.set(null);
-        vFromBalance = ((java.math.BigDecimal) issue41TypeSystemMapper.selectTIssue41Account(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent));
+        vFromBalance = new java.math.BigDecimal(String.valueOf(issue41TypeSystemMapper.selectTIssue41Account(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent)));
         if (vFromBalance == null) vFromBalance = java.math.BigDecimal.ZERO;
         if (vFromBalance.compareTo(pAmount) < 0) {
             throw new BusinessException("RAISE None");
@@ -37,7 +37,7 @@ public class Issue41TypeSystemService {
         }
         vFromBalance = vFromBalance.subtract(pAmount);
         _sqlRowCount = issue41TypeSystemMapper.updateTIssue41Account(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent, vFromBalance);
-        vToBalance = ((java.math.BigDecimal) issue41TypeSystemMapper.selectTIssue41Account_1(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent));
+        vToBalance = new java.math.BigDecimal(String.valueOf(issue41TypeSystemMapper.selectTIssue41Account_1(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent)));
         if (vToBalance == null) vToBalance = java.math.BigDecimal.ZERO;
         vToBalance = vToBalance.add(pAmount);
         _sqlRowCount = issue41TypeSystemMapper.updateTIssue41Account_1(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent, vToBalance);
@@ -53,7 +53,7 @@ public class Issue41TypeSystemService {
         try {
             pNewBalance.set(null);
             pStatus.set(null);
-            vBalance = ((java.math.BigDecimal) issue41TypeSystemMapper.selectTIssue41Account_2(pAccountId, pAmount));
+            vBalance = new java.math.BigDecimal(String.valueOf(issue41TypeSystemMapper.selectTIssue41Account_2(pAccountId, pAmount)));
             if (vBalance == null) vBalance = java.math.BigDecimal.ZERO;
             if (pAmount.compareTo(java.math.BigDecimal.valueOf(0)) <= 0) {
                 throw new BusinessException("RAISE None");

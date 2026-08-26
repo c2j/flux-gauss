@@ -1,9 +1,8 @@
 package com.example.demo.service;
 
 import com.example.demo.exception.BusinessException;
-import com.example.demo.mapper.CursorLifecycleMapper;
-import com.example.demo.service.CursorLifecycleService;
-import java.util.concurrent.atomic.AtomicReference;
+import com.example.demo.mapper.DynamicForLoopMapper;
+import com.example.demo.service.DynamicForLoopService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -17,54 +16,32 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 // Source: {FIXTURES_ROOT}/gauss_complete_examples.sql
-class CursorLifecycleServiceTest {
+class DynamicForLoopServiceTest {
 
     @Mock
-    private CursorLifecycleMapper cursorLifecycleMapper;
+    private DynamicForLoopMapper dynamicForLoopMapper;
 
     @InjectMocks
-    private CursorLifecycleService service;
+    private DynamicForLoopService service;
 
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
-    void test_procGetRawCursor_success() {
-        Integer pDeptId = 1;
-        AtomicReference<Object> pCursorRef = new AtomicReference<>(null);
-        { var m = new java.util.HashMap<String,Object>(); m.put("employeeId", 1L); m.put("employeeName", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("departmentId", 1L); m.put("hireDate", java.sql.Date.valueOf("2024-01-01")); when(cursorLifecycleMapper.selectProcGetRawCursor(any())).thenReturn(java.util.List.of(m)); }
-        when(cursorLifecycleMapper.insertProcEnhanceCursor(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
-        service.procGetRawCursor(pDeptId, pCursorRef);
-    }
-
-    @org.junit.jupiter.api.Disabled("auto-generated mock cannot terminate while loop")
-    @Test
-    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
-    void test_procEnhanceCursor_success() {
-        Object pInCursor = new java.util.HashMap<String, Object>();
-        AtomicReference<Object> pOutCursorRef = new AtomicReference<>(null);
-        { var m = new java.util.HashMap<String,Object>(); m.put("employeeId", 1L); m.put("employeeName", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("departmentId", 1L); m.put("hireDate", java.sql.Date.valueOf("2024-01-01")); when(cursorLifecycleMapper.selectProcGetRawCursor(any())).thenReturn(java.util.List.of(m)); }
-        when(cursorLifecycleMapper.insertProcEnhanceCursor(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
-        service.procEnhanceCursor(pInCursor, pOutCursorRef);
-        verify(cursorLifecycleMapper, atLeast(0)).insertProcEnhanceCursor(any(), any(), any(), any(), any(), any(), any());
-    }
-
-    @org.junit.jupiter.api.Disabled("auto-generated mock cannot terminate while loop")
-    @Test
-    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
-    void test_procConsumeCursor_success() {
-        Object pCursor = new java.util.HashMap<String, Object>();
-        AtomicReference<Object> pMapRef = new AtomicReference<>(null);
-        AtomicReference<String> pSummaryRef = new AtomicReference<>(null);
-        { var m = new java.util.HashMap<String,Object>(); m.put("employeeId", 1L); m.put("employeeName", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("departmentId", 1L); m.put("hireDate", java.sql.Date.valueOf("2024-01-01")); when(cursorLifecycleMapper.selectProcGetRawCursor(any())).thenReturn(java.util.List.of(m)); }
-        when(cursorLifecycleMapper.insertProcEnhanceCursor(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
-        service.procConsumeCursor(pCursor, pMapRef, pSummaryRef);
-    }
-
-    @Test
-    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
-    void test_procFullPipeline_success() {
-        Integer pDeptId = 1;
-        { var m = new java.util.HashMap<String,Object>(); m.put("employeeId", 1L); m.put("employeeName", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("departmentId", 1L); m.put("hireDate", java.sql.Date.valueOf("2024-01-01")); when(cursorLifecycleMapper.selectProcGetRawCursor(any())).thenReturn(java.util.List.of(m)); }
-        when(cursorLifecycleMapper.insertProcEnhanceCursor(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
-        service.procFullPipeline(pDeptId);
+    void test_procDynamicForProcessing_success() {
+        String pTableName = "test_pTableName";
+        String pSelectColumns = "test_pSelectColumns";
+        String pWhereClause = "test_pWhereClause";
+        String pOrderBy = "test_pOrderBy";
+        String pProcessType = "test_pProcessType";
+        when(dynamicForLoopMapper.insertAuditLog(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("#{expr0}", 1L); when(dynamicForLoopMapper.selectProcDynamicForProcessing(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)); }
+        when(dynamicForLoopMapper.insertProcDynamicForProcessing(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(dynamicForLoopMapper.updateProcDynamicForProcessing(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(dynamicForLoopMapper.updateProcDynamicForProcessing_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(dynamicForLoopMapper.updateProcDynamicForProcessing_2(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(dynamicForLoopMapper.insertScanLog(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(dynamicForLoopMapper.insertPerformanceLog(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(dynamicForLoopMapper.insertErrorLog(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        service.procDynamicForProcessing(pTableName, pSelectColumns, pWhereClause, pOrderBy, pProcessType);
+        verify(dynamicForLoopMapper, atLeast(0)).insertAuditLog(any(), any(), any(), any(), any(), any());
     }
 }

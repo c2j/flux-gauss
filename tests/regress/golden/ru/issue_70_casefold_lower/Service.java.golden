@@ -1,0 +1,25 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.CasefoldMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_70_casefold_lower.sql
+public class CasefoldService {
+    private static final Logger log = LoggerFactory.getLogger(CasefoldService.class);
+
+    private final CasefoldMapper casefoldMapper;
+
+    public CasefoldService(CasefoldMapper casefoldMapper) {
+        this.casefoldMapper = casefoldMapper;
+    }
+
+    // Source: pkg_casefold.del_entry (PROCEDURE) — {FIXTURES_ROOT}/issue_70_casefold_lower.sql:7-10
+    public void delEntry(String pIId) {
+        // Auto-generated from stored procedure
+    }
+}

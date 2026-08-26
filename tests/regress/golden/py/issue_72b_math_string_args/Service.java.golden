@@ -24,8 +24,8 @@ public class Issue72bMathStringArgsService {
         Long vRnd = 0L;
         pOSucceed.set(null);
         vFlag = "-5";
-        vAbs = ((Number) (Math.abs(vFlag))).longValue();
-        vRnd = ((Number) (Math.round(vFlag))).longValue();
+        vAbs = (long) (Math.abs(vFlag));
+        vRnd = (long) (Math.round(vFlag));
         pOSucceed.set("0");
     }
 }

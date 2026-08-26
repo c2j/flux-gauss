@@ -212,7 +212,7 @@ public class WarpdriverStressTestService {
                 vLockKey = String.valueOf("LOCK_ORDER_").concat(String.valueOf(pOrderId));
                 vConnId = ((Number)(Thread.currentThread().getId())).longValue();
                 __ROWCOUNT__ = warpdriverStressTestMapper.insertDistributedLocks(pOrderId, vConnId, vLockKey);
-                { var _val = warpdriverStressTestMapper.selectOrders(pOrderId); if (_val != null) vTempAmt = (java.math.BigDecimal) _val; }
+                { Object _val = warpdriverStressTestMapper.selectOrders(pOrderId); if (_val != null) vTempAmt = (java.math.BigDecimal) _val; }
                 if (!found) {
                     pResult.set("ORDER_NOT_FOUND");
                     return;
@@ -279,7 +279,7 @@ public class WarpdriverStressTestService {
             }
         }
         if (java.util.Objects.equals(String.valueOf(pReportType).toUpperCase(), "SUMMARY")) {
-            { var _val = warpdriverStressTestMapper.selectSettlement(pReportType, pBizDate, vDate); if (_val != null) vDetail = (String) _val; }
+            vDetail = String.valueOf(warpdriverStressTestMapper.selectSettlement(pReportType, pBizDate, vDate));
         }
         pContent.set(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(vHeader).concat(String.valueOf(vDetail))).concat(String.valueOf(String.valueOf((char)(10))))).concat(String.valueOf("Generated at:"))).concat(String.valueOf(new java.sql.Timestamp(System.currentTimeMillis())))));
     }
@@ -308,7 +308,7 @@ public class WarpdriverStressTestService {
                 for (Map<String, Object> _riskRec : java.util.Collections.<Map<String, Object>>emptyList()) {
                     riskRec = _riskRec;
                     try {
-                        { var _val = warpdriverStressTestMapper.selectCustomerRisk(pBatchId, mainRec, riskRec); if (_val != null) vScore = (Integer) _val; }
+                        { Object _val = warpdriverStressTestMapper.selectCustomerRisk(pBatchId, mainRec, riskRec); if (_val != null) vScore = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }
                         if (vScore > java.util.Optional.ofNullable((Number) riskRec.get("threshold")).map(Number::longValue).orElse(0L)) {
                             vInvalid = vInvalid + 1;
                             warpdriverStressTestMapper.updateBulkOrders_1(pBatchId, mainRec, riskRec);
@@ -321,7 +321,7 @@ public class WarpdriverStressTestService {
                 }
                 for (Map<String, Object> _stockRec : java.util.Collections.<Map<String, Object>>emptyList()) {
                     stockRec = _stockRec;
-                    { var _val = warpdriverStressTestMapper.selectInventory(pBatchId, stockRec); if (_val != null) vStock = (Integer) _val; }
+                    { Object _val = warpdriverStressTestMapper.selectInventory(pBatchId, stockRec); if (_val != null) vStock = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }
                     if (vStock < java.util.Optional.ofNullable((Number) stockRec.getOrDefault("requiredQty", stockRec.get("required_qty"))).map(Number::longValue).orElse(0L)) {
                         vInvalid = vInvalid + 1;
                         warpdriverStressTestMapper.updateBulkOrders_2(pBatchId, mainRec, stockRec);
@@ -434,7 +434,7 @@ public class WarpdriverStressTestService {
                 currentState = SpGotoStateMachineState.StateDone;
                 break;
                 case StateCheck:
-                { var _val = warpdriverStressTestMapper.selectOrders(pOrderId, pEvent); if (_val != null) vDbState = (String) _val; }
+                vDbState = String.valueOf(warpdriverStressTestMapper.selectOrders(pOrderId, pEvent));
                 vState = String.valueOf(vDbState);
                 if (java.util.Objects.equals(vDbState, "PENDING")) {
                     currentState = SpGotoStateMachineState.StatePending;
@@ -518,9 +518,9 @@ public class WarpdriverStressTestService {
         for (vIdx = 0; vIdx <= this.jsonbArrayLength(vArr) - 1; vIdx++) {
             vItem = String.valueOf(this.jsonbGet(vArr, vIdx));
             vNewPrice = java.math.BigDecimal.valueOf(((Number) java.util.Objects.requireNonNullElse((this.jsonbGetText(vItem, "price")), 0L)).longValue()).multiply((java.math.BigDecimal.valueOf(1).subtract(pDiscount)));
-            vResult = String.valueOf(vResult).concat(String.valueOf(this.jsonbBuildObject(String.valueOf("product_id"), this.jsonbGetText(vItem, "product_id"), String.valueOf("original_price"), java.math.BigDecimal.valueOf(((Number) java.util.Objects.requireNonNullElse((this.jsonbGetText(vItem, "price")), 0L)).longValue()), String.valueOf("discount_rate"), pDiscount, String.valueOf("final_price"), vNewPrice.setScale((int)(2), java.math.RoundingMode.HALF_UP), String.valueOf("processed_at"), new java.sql.Timestamp(System.currentTimeMillis()))));
+            vResult = String.valueOf(String.valueOf(vResult).concat(String.valueOf(this.jsonbBuildObject(String.valueOf("product_id"), this.jsonbGetText(vItem, "product_id"), String.valueOf("original_price"), java.math.BigDecimal.valueOf(((Number) java.util.Objects.requireNonNullElse((this.jsonbGetText(vItem, "price")), 0L)).longValue()), String.valueOf("discount_rate"), pDiscount, String.valueOf("final_price"), vNewPrice.setScale((int)(2), java.math.RoundingMode.HALF_UP), String.valueOf("processed_at"), new java.sql.Timestamp(System.currentTimeMillis())))));
         }
-        return this.jsonbBuildObject(String.valueOf("items"), vResult, String.valueOf("total_count"), this.jsonbArrayLength(vArr), String.valueOf("summary_discount"), pDiscount);
+        return String.valueOf(this.jsonbBuildObject(String.valueOf("items"), vResult, String.valueOf("total_count"), this.jsonbArrayLength(vArr), String.valueOf("summary_discount"), pDiscount));
     }
 
     // Source: PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return (FUNCTION) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:769-796
@@ -539,8 +539,8 @@ public class WarpdriverStressTestService {
         pCurPaymentsResult = warpdriverStressTestMapper.selectFnMultiCursorReturn_1(pCustomerId);
         if (pCurPaymentsResult == null) pCurPaymentsResult = new java.util.ArrayList<>();
         pCurPaymentsIdx = 0;
-        { var _val = warpdriverStressTestMapper.selectOrders_2(pCustomerId); if (_val != null) vOrderCnt = (Integer) _val; }
-        { var _val = warpdriverStressTestMapper.selectPayments(pCustomerId); if (_val != null) vPayCnt = (Integer) _val; }
+        { Object _val = warpdriverStressTestMapper.selectOrders_2(pCustomerId); if (_val != null) vOrderCnt = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }
+        { Object _val = warpdriverStressTestMapper.selectPayments(pCustomerId); if (_val != null) vPayCnt = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }
         return vOrderCnt + vPayCnt;
     }
 
@@ -555,7 +555,7 @@ public class WarpdriverStressTestService {
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
         try {
-            { var _val = warpdriverStressTestMapper.selectAccounts(pAccountId, pAmount); if (_val != null) vBalance = (java.math.BigDecimal) _val; }
+            { Object _val = warpdriverStressTestMapper.selectAccounts(pAccountId, pAmount); if (_val != null) vBalance = (java.math.BigDecimal) _val; }
             vSp1 = String.valueOf("sp_pre_").concat(String.valueOf(pAccountId));
             // SQL: SAVEPOINT ${vSp1}
             warpdriverStressTestMapper.updateAccounts_1(pAccountId, pAmount);

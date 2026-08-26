@@ -25,7 +25,7 @@ public class Issue56ReturnHandlerService {
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
         try {
-            { var _val = issue56ReturnHandlerMapper.selectTIssue56Data(); if (_val != null) vData = (String) _val; }
+            vData = String.valueOf(issue56ReturnHandlerMapper.selectTIssue56Data());
             pResult.set(String.valueOf(vData));
         } catch (BusinessException __e1) { // no_data_found
             __SQLERRM__ = __e1.getMessage();
@@ -42,7 +42,7 @@ public class Issue56ReturnHandlerService {
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
         try {
-            { var _val = issue56ReturnHandlerMapper.selectTIssue56Data_1(); if (_val != null) vData = (String) _val; }
+            vData = String.valueOf(issue56ReturnHandlerMapper.selectTIssue56Data_1());
             if (vData == null) {
                 vData = "default";
             }
@@ -51,7 +51,7 @@ public class Issue56ReturnHandlerService {
             __SQLERRM__ = __e1.getMessage();
             __SQLCODE__ = -1;
             try {
-                { var _val = issue56ReturnHandlerMapper.selectTIssue56Data_2(); if (_val != null) vTmp = (String) _val; }
+                vTmp = String.valueOf(issue56ReturnHandlerMapper.selectTIssue56Data_2());
                 pResult.set(String.valueOf(vTmp));
             } catch (Exception __e2) {
                 __SQLERRM__ = __e2.getMessage();
@@ -68,7 +68,7 @@ public class Issue56ReturnHandlerService {
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
         try {
-            { var _val = issue56ReturnHandlerMapper.selectTIssue56Data_2(); if (_val != null) vData = (String) _val; }
+            vData = String.valueOf(issue56ReturnHandlerMapper.selectTIssue56Data_2());
             pResult.set(String.valueOf(vData));
         } catch (BusinessException __e1) { // no_data_found
             __SQLERRM__ = __e1.getMessage();

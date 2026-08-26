@@ -26,7 +26,7 @@ public class DynamicXmlService {
         vSql = String.valueOf(String.valueOf(vSql).concat(String.valueOf(" LIMIT "))).concat(String.valueOf(pLimit));
         // CALL DBE_OUTPUT.PRINT_LINE(String.valueOf(String.valueOf("Generated SQL: ").concat(String.valueOf(pTableName))).concat(String.valueOf(vSql)))
         dynamicXmlMapper.selectProcConditionalQuery(pTableName, pWhereClause, pOrderBy, pLimit);
-        { var _val = dynamicXmlMapper.selectAuditLog(pTableName, pWhereClause, pOrderBy, pLimit); if (_val != null) vCount = (Integer) _val; }
+        { Object _val = dynamicXmlMapper.selectAuditLog(pTableName, pWhereClause, pOrderBy, pLimit); if (_val != null) vCount = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }
     }
 
     // Source: pkg_dynamic_xml.proc_conditional_update (PROCEDURE) — {FIXTURES_ROOT}/pkg_dynamic_xml.sql:83-120

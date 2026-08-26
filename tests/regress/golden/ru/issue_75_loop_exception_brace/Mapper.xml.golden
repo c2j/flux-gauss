@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.Issue75Mapper">
+
+    <!-- Source: {FIXTURES_ROOT}/issue_75_loop_exception_brace.sql:14-27 — pkg_issue75.proc_nested_block_body_fails.selectProcNestedBlockBodyFails -->
+    <select id="selectProcNestedBlockBodyFails" resultType="java.util.LinkedHashMap">
+        SELECT data_value AS v FROM t_issue75_data
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_75_loop_exception_brace.sql:29-46 — pkg_issue75.proc_loop_exc_handler.selectProcLoopExcHandler -->
+    <select id="selectProcLoopExcHandler" resultType="java.util.LinkedHashMap">
+        SELECT data_value AS v FROM t_issue75_data
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_75_loop_exception_brace.sql:29-46 — pkg_issue75.proc_loop_exc_handler.selectProcLoopExcHandler_1 -->
+    <select id="selectProcLoopExcHandler_1" resultType="java.util.LinkedHashMap">
+        SELECT data_value AS v FROM t_issue75_data
+                LIMIT 1
+    </select>
+
+</mapper>

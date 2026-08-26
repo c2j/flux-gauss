@@ -24,8 +24,8 @@ public class Issue72StringToNumberService {
         String vFlag = null;
         pOSucceed.set(null);
         vFlag = "1";
-        vCount = Long.parseLong(vFlag);
-        vAmt = ((Number) (((vFlag != null ? Double.parseDouble(vFlag) : 0.0d) * ((Number) (0.5d)).doubleValue()))).longValue();
+        vCount = (long) (Long.parseLong(vFlag));
+        vAmt = (long) (((vFlag != null ? Double.parseDouble(String.valueOf(vFlag)) : 0.0d) * (0.5d)));
         if (vCount.compareTo(Long.valueOf(0)) > 0) {
             pOSucceed.set("0");
         }
@@ -38,8 +38,8 @@ public class Issue72StringToNumberService {
         Long vNext = 0L;
         pOSucceed.set(null);
         vStr = "abc";
-        vLen = ((Number) (String.valueOf(pIn).length())).longValue();
-        vNext = ((Number) (String.valueOf(vStr).length() + 1)).longValue();
+        vLen = (long) (String.valueOf(pIn).length());
+        vNext = (long) (String.valueOf(vStr).length() + 1);
         if (vLen.compareTo(Long.valueOf(0)) > 0 && vNext.compareTo(Long.valueOf(0)) > 0) {
             pOSucceed.set("0");
         }

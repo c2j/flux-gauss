@@ -31,14 +31,14 @@ public class Issue44NestedExcService {
         try {
             vFlag = "0";
             vMsg = "success";
-            { var _val = issue44NestedExcMapper.selectTIssue44Config(); if (_val != null) vCount = (Integer) _val; }
+            { Object _val = issue44NestedExcMapper.selectTIssue44Config(); if (_val != null) vCount = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }
             if (vCount > 0) {
                 try {
-                    { var _val = issue44NestedExcMapper.selectTIssue44Config_1(); if (_val != null) vConfig = (String) _val; }
+                    vConfig = String.valueOf(issue44NestedExcMapper.selectTIssue44Config_1());
                     if (java.util.Objects.equals(vFlag, "0")) {
                         vConfig = String.valueOf(vConfig).concat(String.valueOf(",extra"));
                         try {
-                            { var _val = issue44NestedExcMapper.selectTIssue44Config_2(vDate); if (_val != null) vFlag2 = (String) _val; }
+                            vFlag2 = String.valueOf(issue44NestedExcMapper.selectTIssue44Config_2(vDate));
                         } catch (Exception __e1) {
                             __SQLERRM__ = __e1.getMessage();
                             __SQLCODE__ = -1;

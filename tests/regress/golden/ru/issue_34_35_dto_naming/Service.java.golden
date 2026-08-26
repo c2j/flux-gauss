@@ -29,7 +29,7 @@ public class Issue34OrderService {
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
         try {
-            { var _val = issue34OrderMapper.selectTIssue34Order(pCustomerName, pProductCode, pQuantity, pUnitPrice, pCreatedBy); if (_val != null) vOrderId = (Long) _val; }
+            { Object _val = issue34OrderMapper.selectTIssue34Order(pCustomerName, pProductCode, pQuantity, pUnitPrice, pCreatedBy); if (_val != null) vOrderId = (_val instanceof Number ? ((Number)_val).longValue() : Long.parseLong(String.valueOf(_val))); }
             vAmount = java.math.BigDecimal.valueOf(pQuantity).multiply(pUnitPrice);
             issue34OrderMapper.insertTIssue34Order(pCustomerName, pProductCode, pQuantity, pUnitPrice, pCreatedBy, vAmount, vOrderId);
             issue34OrderMapper.insertTIssue34OrderLog(pCustomerName, pProductCode, pQuantity, pUnitPrice, pCreatedBy, vOrderId);
