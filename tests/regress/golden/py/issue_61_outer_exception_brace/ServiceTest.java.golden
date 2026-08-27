@@ -32,6 +32,7 @@ class Issue61OuterExceptionBraceServiceTest {
         AtomicReference<java.math.BigDecimal> pOMarketPrice = new AtomicReference<>(null);
         AtomicReference<String> pOPassFlag = new AtomicReference<>(null);
         AtomicReference<String> pOSucceed = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         when(issue61OuterExceptionBraceMapper.selectTIssue61Bond(any(), any())).thenReturn(null);
         when(issue61OuterExceptionBraceMapper.selectTIssue61Bond_1(any(), any())).thenReturn(null);
         when(issue61OuterExceptionBraceMapper.selectTIssue61Bond_2(any(), any())).thenReturn(null);

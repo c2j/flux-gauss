@@ -32,16 +32,16 @@ class DynamicForLoopServiceTest {
         String pWhereClause = "test_pWhereClause";
         String pOrderBy = "test_pOrderBy";
         String pProcessType = "test_pProcessType";
-        when(dynamicForLoopMapper.insertAuditLog(any(), any(), any(), any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("#{expr0}", 1L); when(dynamicForLoopMapper.selectProcDynamicForProcessing(any(), any(), any(), any(), any())).thenReturn(java.util.List.of(m)); }
-        when(dynamicForLoopMapper.insertProcDynamicForProcessing(any(), any(), any(), any(), any(), any())).thenReturn(1);
-        when(dynamicForLoopMapper.updateProcDynamicForProcessing(any(), any(), any(), any(), any(), any())).thenReturn(1);
-        when(dynamicForLoopMapper.updateProcDynamicForProcessing_1(any(), any(), any(), any(), any(), any())).thenReturn(1);
-        when(dynamicForLoopMapper.updateProcDynamicForProcessing_2(any(), any(), any(), any(), any(), any())).thenReturn(1);
-        when(dynamicForLoopMapper.insertScanLog(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
-        when(dynamicForLoopMapper.insertPerformanceLog(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
-        when(dynamicForLoopMapper.insertErrorLog(any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(dynamicForLoopMapper.insertAuditLog((String) any(), (String) any(), (String) any(), (String) any(), (String) any(), (String) any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("#{expr0}", 1L); when(dynamicForLoopMapper.selectProcDynamicForProcessing((String) any(), (String) any(), (String) any(), (String) any(), (String) any())).thenReturn(java.util.List.of(m)); }
+        when(dynamicForLoopMapper.insertProcDynamicForProcessing((String) any(), (String) any(), (String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(1);
+        when(dynamicForLoopMapper.updateProcDynamicForProcessing((String) any(), (String) any(), (String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(1);
+        when(dynamicForLoopMapper.updateProcDynamicForProcessing_1((String) any(), (String) any(), (String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(1);
+        when(dynamicForLoopMapper.updateProcDynamicForProcessing_2((String) any(), (String) any(), (String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(1);
+        when(dynamicForLoopMapper.insertScanLog((String) any(), (String) any(), (String) any(), (String) any(), (String) any(), (Integer) any(), (String) any())).thenReturn(1);
+        when(dynamicForLoopMapper.insertPerformanceLog((String) any(), (String) any(), (String) any(), (String) any(), (String) any(), (Integer) any(), (java.sql.Timestamp) any())).thenReturn(1);
+        when(dynamicForLoopMapper.insertErrorLog((String) any(), (String) any(), (String) any(), (String) any(), (String) any(), (String) any())).thenReturn(1);
         service.procDynamicForProcessing(pTableName, pSelectColumns, pWhereClause, pOrderBy, pProcessType);
-        verify(dynamicForLoopMapper, atLeast(0)).insertAuditLog(any(), any(), any(), any(), any(), any());
+        verify(dynamicForLoopMapper, atLeast(0)).insertAuditLog((String) any(), (String) any(), (String) any(), (String) any(), (String) any(), (String) any());
     }
 }

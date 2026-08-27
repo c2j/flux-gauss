@@ -30,6 +30,7 @@ class Issue45ExceptionHandlingServiceTest {
         String pSecurityCode = "test_pSecurityCode";
         AtomicReference<String> pOSucceed = new AtomicReference<>(null);
         AtomicReference<String> pOSecurityId = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         when(issue45ExceptionHandlingMapper.selectTIssue45Security(any())).thenReturn("1");
         when(issue45ExceptionHandlingMapper.selectTIssue45Security_1(any())).thenReturn("1");
         when(issue45ExceptionHandlingMapper.selectTIssue45Security_2(any())).thenReturn("1");
@@ -41,6 +42,7 @@ class Issue45ExceptionHandlingServiceTest {
     void test_procSimpleException_success() {
         String pSecurityCode = "test_pSecurityCode";
         AtomicReference<String> pResult = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         when(issue45ExceptionHandlingMapper.selectTIssue45Security(any())).thenReturn("1");
         when(issue45ExceptionHandlingMapper.selectTIssue45Security_1(any())).thenReturn("1");
         when(issue45ExceptionHandlingMapper.selectTIssue45Security_2(any())).thenReturn("1");
@@ -52,6 +54,7 @@ class Issue45ExceptionHandlingServiceTest {
     void test_procNestedException_success() {
         String pCode = "test_pCode";
         AtomicReference<String> pMsg = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         when(issue45ExceptionHandlingMapper.selectTIssue45Security(any())).thenReturn("1");
         when(issue45ExceptionHandlingMapper.selectTIssue45Security_1(any())).thenReturn("1");
         when(issue45ExceptionHandlingMapper.selectTIssue45Security_2(any())).thenReturn("1");

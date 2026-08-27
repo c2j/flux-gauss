@@ -29,10 +29,9 @@ class Issue54NestedExcServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procNestedBlockInHandler_success() {
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
-        when(issue54NestedExcMapper.selectTIssue54Data()).thenReturn("test_value");
-        when(issue54NestedExcMapper.selectTIssue54Data_1()).thenReturn("test_value");
-        when(issue54NestedExcMapper.selectTIssue54Data_1()).thenReturn("test_value");
-        when(issue54NestedExcMapper.selectTIssue54Data_2()).thenReturn("test_value");
+        when(issue54NestedExcMapper.selectTIssue54Data()).thenReturn("1");
+        when(issue54NestedExcMapper.selectTIssue54Data_1()).thenReturn("1");
+        when(issue54NestedExcMapper.selectTIssue54Data_2()).thenReturn("1");
         service.procNestedBlockInHandler(pResultRef);
     }
 
@@ -40,10 +39,9 @@ class Issue54NestedExcServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procThreeLevelNested_success() {
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
-        when(issue54NestedExcMapper.selectTIssue54Data()).thenReturn("test_value");
-        when(issue54NestedExcMapper.selectTIssue54Data_1()).thenReturn("test_value");
-        when(issue54NestedExcMapper.selectTIssue54Data_1()).thenReturn("test_value");
-        when(issue54NestedExcMapper.selectTIssue54Data_2()).thenReturn("test_value");
+        when(issue54NestedExcMapper.selectTIssue54Data()).thenReturn("1");
+        when(issue54NestedExcMapper.selectTIssue54Data_1()).thenReturn("1");
+        when(issue54NestedExcMapper.selectTIssue54Data_2()).thenReturn("1");
         service.procThreeLevelNested(pResultRef);
     }
 }

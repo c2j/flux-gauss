@@ -29,6 +29,7 @@ class Issue62SubstrHelperServiceTest {
     void test_procSubstrBasic_success() {
         String pId = "test_pId";
         AtomicReference<String> pResult = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.procSubstrBasic(pId, pResult);
     }
 }

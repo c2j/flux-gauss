@@ -41,7 +41,7 @@ public class StringHelperCoercionService {
         for (Map<String, Object> vRec : vRecList) {
             vIdx = vIdx + 1;
             vItem = "{}";
-            vItem = String.valueOf(this.jsonObject(Long.parseLong(String.valueOf(vRec.get("id"))), (String) vRec.get("name"), (String) vRec.get("status"), (vRec.get("amount") != null ? (vRec.get("amount") instanceof java.math.BigDecimal ? (java.math.BigDecimal) vRec.get("amount") : new java.math.BigDecimal(String.valueOf(vRec.get("amount")))) : java.math.BigDecimal.ZERO), vIdx));
+            vItem = String.valueOf(this.jsonObject(Long.parseLong(String.valueOf(vRec.get("id"))), String.valueOf(vRec.get("name")), String.valueOf(vRec.get("status")), (vRec.get("amount") != null ? (vRec.get("amount") instanceof java.math.BigDecimal ? (java.math.BigDecimal) vRec.get("amount") : new java.math.BigDecimal(String.valueOf(vRec.get("amount")))) : java.math.BigDecimal.ZERO), vIdx));
             vJson = String.valueOf(this.jsonAppend(vJson, vItem));
         }
         return vJson;

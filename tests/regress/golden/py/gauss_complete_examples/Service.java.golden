@@ -145,6 +145,7 @@ public class GaussCompleteExamplesService {
         int _sqlRowCount = 0;
         int vCursorIdx = 0;
         List<Map<String, Object>> vCursorResult = null;
+        int _loopGuard1 = 0;
         try {
             java.sql.Timestamp vRecTime = null;
             java.sql.Timestamp vStartTime = null;
@@ -155,6 +156,7 @@ public class GaussCompleteExamplesService {
             vCursorIdx = 0;
             if (vCursorResult == null) vCursorResult = new java.util.ArrayList<>();
             while (true) {
+                if (++_loopGuard1 > 1000) { break; }
                 found = vCursorIdx < vCursorResult.size();
                 if (found) {
                     _row = vCursorResult.get(vCursorIdx);
@@ -240,9 +242,9 @@ public class GaussCompleteExamplesService {
             for (Map<String, Object> vRec : vRecList) {
                 vRowCount = vRowCount + 1;
                 vPkId = (vRec.get("id") != null ? (vRec.get("id") instanceof Number ? ((Number) vRec.get("id")).intValue() : Integer.parseInt(String.valueOf(vRec.get("id")))) : 0);
-                vStatus = (String) vRec.get("status");
+                vStatus = String.valueOf(vRec.get("status"));
                 vAmount = new java.math.BigDecimal(String.valueOf(vRec.get("amount") != null ? vRec.get("amount") : 0));
-                vName = (String) vRec.get("name");
+                vName = String.valueOf(vRec.get("name"));
                 vCreateTime = (java.sql.Timestamp) vRec.get("create_time");
                 if (java.util.Objects.equals(pProcessType, "ARCHIVE")) {
                     vProcessSql = "INSERT INTO " + pTableName + "_hist\n                        SELECT *, :1, :2 FROM " + pTableName + " WHERE id = :3";
@@ -372,6 +374,7 @@ public class GaussCompleteExamplesService {
         String vTemp = "tmp_enhanced_" + new java.text.SimpleDateFormat("yyyyMMddHHmSSSs").format(new java.sql.Timestamp(System.currentTimeMillis()));
         boolean found = false;
         int _sqlRowCount = 0;
+        int _loopGuard1 = 0;
         int pInCursorIdx = 0;
         List<Map<String, Object>> pInCursorResult = null;
         int pOutCursorIdx = 0;
@@ -381,6 +384,7 @@ public class GaussCompleteExamplesService {
         java.util.Map<String, Object> _row = null;
         _sqlRowCount = gaussCompleteExamplesMapper.updateProcEnhanceCursor_5(vTemp);
         while (true) {
+            if (++_loopGuard1 > 1000) { break; }
             found = pInCursorIdx < (pInCursorResult != null ? pInCursorResult.size() : 0);
             if (found) {
                 _row = pInCursorResult.get(pInCursorIdx);
@@ -411,11 +415,13 @@ public class GaussCompleteExamplesService {
         java.math.BigDecimal vTotal = java.math.BigDecimal.valueOf(0);
         Integer vSeniorCount = Integer.valueOf(0);
         boolean found = false;
+        int _loopGuard1 = 0;
         int pCursorIdx = 0;
         List<Map<String, Object>> pCursorResult = null;
         pSummary.set(null);
         java.util.Map<String, Object> _row = null;
         while (true) {
+            if (++_loopGuard1 > 1000) { break; }
             // CALL map_object.ad_item(...)
             // CALL map_object.ad_item(...)
             vLevel = /* TODO: funcGetFrameDate() */ null;

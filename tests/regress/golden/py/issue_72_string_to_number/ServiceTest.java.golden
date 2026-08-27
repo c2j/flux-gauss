@@ -29,6 +29,7 @@ class Issue72StringToNumberServiceTest {
     void test_prcTypeWall_success() {
         String pIDate = "2024-01-01";
         AtomicReference<String> pOSucceed = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.prcTypeWall(pIDate, pOSucceed);
     }
 
@@ -37,6 +38,7 @@ class Issue72StringToNumberServiceTest {
     void test_prcStrMethodWall_success() {
         String pIn = "test_pIn";
         AtomicReference<String> pOSucceed = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.prcStrMethodWall(pIn, pOSucceed);
     }
 }

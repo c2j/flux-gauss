@@ -29,12 +29,14 @@ class Issue39ThreadSafetyServiceTest {
     void test_procSetSession_success() {
         String pUser = "test_pUser";
         String pSession = "test_pSession";
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.procSetSession(pUser, pSession);
     }
 
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procEnableDebug_success() {
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.procEnableDebug();
     }
 
@@ -43,6 +45,7 @@ class Issue39ThreadSafetyServiceTest {
     void test_procRunBatch_success() {
         String pBatchName = "test_pBatchName";
         AtomicReference<String> pStatus = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.procRunBatch(pBatchName, pStatus);
     }
 }

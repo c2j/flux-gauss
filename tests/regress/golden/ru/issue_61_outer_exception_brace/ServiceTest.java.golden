@@ -33,9 +33,9 @@ class Issue61ExcServiceTest {
         AtomicReference<java.math.BigDecimal> pOMarketPriceRef = new AtomicReference<>(java.math.BigDecimal.ZERO);
         AtomicReference<String> pOPassFlagRef = new AtomicReference<>(null);
         AtomicReference<String> pOSucceedRef = new AtomicReference<>(null);
-        when(issue61ExcMapper.selectTIssue61Bond(any(), any())).thenReturn(999);
-        when(issue61ExcMapper.selectTIssue61Bond_1(any(), any())).thenReturn(999);
-        when(issue61ExcMapper.selectTIssue61Bond_2(any(), any())).thenReturn(999);
+        when(issue61ExcMapper.selectTIssue61Bond((String) any(), (String) any())).thenReturn(999);
+        when(issue61ExcMapper.selectTIssue61Bond_1((String) any(), (String) any())).thenReturn(999);
+        when(issue61ExcMapper.selectTIssue61Bond_2((String) any(), (String) any())).thenReturn(999);
         service.prcGetZsPrice(pISecurityId, pIMarketType, pOMarketPriceRef, pOPassFlagRef, pOSucceedRef);
     }
 }

@@ -28,6 +28,7 @@ class Issue72bMathStringArgsServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_prcMathWall_success() {
         AtomicReference<String> pOSucceed = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.prcMathWall(pOSucceed);
     }
 }

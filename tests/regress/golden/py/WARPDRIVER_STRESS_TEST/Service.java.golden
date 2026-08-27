@@ -387,6 +387,7 @@ public class WarpdriverStressTestService {
         int _sqlRowCount = 0;
         int vCurIdx = 0;
         List<Map<String, Object>> vCurResult = null;
+        int _loopGuard1 = 0;
         java.util.Map<String, Object> _row = null;
         if (pDepth > 10) {
             return 0;
@@ -395,6 +396,7 @@ public class WarpdriverStressTestService {
         vCurIdx = 0;
         if (vCurResult == null) vCurResult = new java.util.ArrayList<>();
         while (true) {
+            if (++_loopGuard1 > 1000) { break; }
             found = vCurIdx < vCurResult.size();
             if (found) {
                 _row = vCurResult.get(vCurIdx);

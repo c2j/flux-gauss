@@ -29,6 +29,7 @@ class Issue46ChrAsciiSubstrServiceTest {
     void test_procConvertTradeCode_success() {
         String pZqdm = "test_pZqdm";
         AtomicReference<String> pResult = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.procConvertTradeCode(pZqdm, pResult);
     }
 
@@ -37,6 +38,7 @@ class Issue46ChrAsciiSubstrServiceTest {
     void test_procGetAscii_success() {
         String pInput = "test_pInput";
         AtomicReference<Integer> pCode = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.procGetAscii(pInput, pCode);
     }
 
@@ -45,6 +47,7 @@ class Issue46ChrAsciiSubstrServiceTest {
     void test_procGetChar_success() {
         Integer pAsciiCode = 1;
         AtomicReference<String> pChar = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.procGetChar(pAsciiCode, pChar);
     }
 
@@ -55,6 +58,7 @@ class Issue46ChrAsciiSubstrServiceTest {
         String pStart = "test_pStart";
         String pLen = "test_pLen";
         AtomicReference<String> pResult = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.procSubstrMixed(pText, pStart, pLen, pResult);
     }
 
@@ -63,6 +67,7 @@ class Issue46ChrAsciiSubstrServiceTest {
     void test_procRangeMapping_success() {
         String pInput = "test_pInput";
         AtomicReference<String> pResult = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.procRangeMapping(pInput, pResult);
     }
 }

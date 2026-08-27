@@ -27,6 +27,7 @@ class Issue71CrossPkgSchemaServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_instLog_success() {
         String pIMsg = "test_pIMsg";
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.instLog(pIMsg);
     }
 
@@ -34,6 +35,7 @@ class Issue71CrossPkgSchemaServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_doIt_success() {
         String pIMsg = "test_pIMsg";
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.doIt(pIMsg);
     }
 }

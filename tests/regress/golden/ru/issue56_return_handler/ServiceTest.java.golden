@@ -29,10 +29,9 @@ class Issue56ReturnHandlerServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procTwoHandlersFirstReturns_success() {
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
-        when(issue56ReturnHandlerMapper.selectTIssue56Data()).thenReturn("test_value");
-        when(issue56ReturnHandlerMapper.selectTIssue56Data_1()).thenReturn("test_value");
-        when(issue56ReturnHandlerMapper.selectTIssue56Data_2()).thenReturn("test_value");
-        when(issue56ReturnHandlerMapper.selectTIssue56Data_2()).thenReturn("test_value");
+        when(issue56ReturnHandlerMapper.selectTIssue56Data()).thenReturn("1");
+        when(issue56ReturnHandlerMapper.selectTIssue56Data_1()).thenReturn("1");
+        when(issue56ReturnHandlerMapper.selectTIssue56Data_2()).thenReturn("1");
         service.procTwoHandlersFirstReturns(pResultRef);
     }
 
@@ -40,10 +39,9 @@ class Issue56ReturnHandlerServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procNestedBlockThenReturn_success() {
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
-        when(issue56ReturnHandlerMapper.selectTIssue56Data()).thenReturn("test_value");
-        when(issue56ReturnHandlerMapper.selectTIssue56Data_1()).thenReturn("test_value");
-        when(issue56ReturnHandlerMapper.selectTIssue56Data_2()).thenReturn("test_value");
-        when(issue56ReturnHandlerMapper.selectTIssue56Data_2()).thenReturn("test_value");
+        when(issue56ReturnHandlerMapper.selectTIssue56Data()).thenReturn("1");
+        when(issue56ReturnHandlerMapper.selectTIssue56Data_1()).thenReturn("1");
+        when(issue56ReturnHandlerMapper.selectTIssue56Data_2()).thenReturn("1");
         service.procNestedBlockThenReturn(pResultRef);
     }
 
@@ -51,10 +49,9 @@ class Issue56ReturnHandlerServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procThreeHandlersReturns_success() {
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
-        when(issue56ReturnHandlerMapper.selectTIssue56Data()).thenReturn("test_value");
-        when(issue56ReturnHandlerMapper.selectTIssue56Data_1()).thenReturn("test_value");
-        when(issue56ReturnHandlerMapper.selectTIssue56Data_2()).thenReturn("test_value");
-        when(issue56ReturnHandlerMapper.selectTIssue56Data_2()).thenReturn("test_value");
+        when(issue56ReturnHandlerMapper.selectTIssue56Data()).thenReturn("1");
+        when(issue56ReturnHandlerMapper.selectTIssue56Data_1()).thenReturn("1");
+        when(issue56ReturnHandlerMapper.selectTIssue56Data_2()).thenReturn("1");
         service.procThreeHandlersReturns(pResultRef);
     }
 }

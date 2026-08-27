@@ -29,6 +29,7 @@ class Issue64BigdecimalEmptyInitServiceTest {
     void test_procEmptyStringDefaults_success() {
         String pId = "test_pId";
         AtomicReference<String> pResult = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.procEmptyStringDefaults(pId, pResult);
     }
 }

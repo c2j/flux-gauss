@@ -30,6 +30,7 @@ class Issue49Varchar2ConcatServiceTest {
         String pBaseIds = "1,2,3";
         String pExtraIds = "1,2,3";
         AtomicReference<String> pResult = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.procBuildIdList(pBaseIds, pExtraIds, pResult);
     }
 
@@ -38,6 +39,7 @@ class Issue49Varchar2ConcatServiceTest {
     void test_procAppendTradeIds_success() {
         String pNewId = "test_pNewId";
         AtomicReference<String> pResult = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.procAppendTradeIds(pNewId, pResult);
     }
 
@@ -47,6 +49,7 @@ class Issue49Varchar2ConcatServiceTest {
         String pPrefix = "test_pPrefix";
         String pSuffix = "test_pSuffix";
         AtomicReference<String> pResult = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.procConcatLabels(pPrefix, pSuffix, pResult);
     }
 }

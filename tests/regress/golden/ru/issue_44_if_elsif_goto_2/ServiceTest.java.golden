@@ -28,8 +28,8 @@ class Issue44NestedExcServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procNestedExceptionBlocks_success() {
         when(issue44NestedExcMapper.selectTIssue44Config()).thenReturn(999);
-        when(issue44NestedExcMapper.selectTIssue44Config_1()).thenReturn("test_value");
-        when(issue44NestedExcMapper.selectTIssue44Config_2(any())).thenReturn("test_value");
+        when(issue44NestedExcMapper.selectTIssue44Config_1()).thenReturn("1");
+        when(issue44NestedExcMapper.selectTIssue44Config_2((String) any())).thenReturn("1");
         service.procNestedExceptionBlocks();
     }
 }

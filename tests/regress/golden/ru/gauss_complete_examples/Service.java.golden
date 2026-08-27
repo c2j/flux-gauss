@@ -59,7 +59,9 @@ public class OpenCursorService {
             vCursorResult = openCursorMapper.selectProcProcessDynamicQuery(pTableName, pWhereClause, pOrderBy);
             if (vCursorResult == null) vCursorResult = new java.util.ArrayList<>();
             vCursorIdx = 0;
+            int _loopGuard1 = 0;
             while (true) {
+                if (++_loopGuard1 > 1000) { break; }
                 found = vCursorIdx < vCursorResult.size();
                 if (found) {
                     Map<String, Object> _row = vCursorResult.get(vCursorIdx);

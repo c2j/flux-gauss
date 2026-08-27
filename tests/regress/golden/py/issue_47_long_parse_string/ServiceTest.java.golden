@@ -30,6 +30,7 @@ class Issue47LongParseStringServiceTest {
         Integer pSeq = 1;
         Integer pSubSeq = 1;
         AtomicReference<String> pStepNo = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.procSetStepNo(pSeq, pSubSeq, pStepNo);
     }
 
@@ -38,6 +39,7 @@ class Issue47LongParseStringServiceTest {
     void test_procProcessId_success() {
         String pType = "test_pType";
         AtomicReference<String> pProId = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.procProcessId(pType, pProId);
     }
 
@@ -46,6 +48,7 @@ class Issue47LongParseStringServiceTest {
     void test_procCorrectVarchar_success() {
         String pLabel = "test_pLabel";
         AtomicReference<String> pValue = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.procCorrectVarchar(pLabel, pValue);
     }
 }
