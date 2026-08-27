@@ -2,12 +2,12 @@
 
 将 OpenGauss / PostgreSQL 存储过程（PL/pgSQL）自动转换为 Spring Boot + MyBatis Java 项目。
 
-[![Version](https://img.shields.io/badge/version-0.6.20-blue)](crates/fluxgauss/Cargo.toml)
+[![Version](https://img.shields.io/badge/version-0.6.27-blue)](crates/fluxgauss/Cargo.toml)
 
 ## 功能亮点
 
 - **AST 驱动的语义转换** — 基于 Rust SQL 解析器（ogsql-parser）生成完整抽象语法树，逐节点转换为 Java 代码
-- **双引擎** — Python 引擎（~15300 行，评级 A-）+ Rust 引擎（~16700 行，高性能），共享配置格式
+- **双引擎** — Python 引擎（~17300 行，评级 A-）+ Rust 引擎（~18800 行，高性能），共享配置格式
 - **增量构建** — SHA-256 内容缓存 + 传递依赖追踪，只重新生成变更部分
 - **跨包依赖自动解析** — 自动识别包间调用，生成正确的 Service 注入和 import
 - **自动化测试生成** — Mockito 单元测试 + Testcontainers 集成测试
@@ -25,7 +25,7 @@
 
 ### 前置条件
 
-- Python 3.9+（Python 引擎）
+- Python 3.10+（Python 引擎）
 - Rust 1.80+（Rust 引擎，可选）
 - Java 17+（用于编译验证生成结果）
 - Docker（可选，用于集成测试的 Testcontainers 模式）
@@ -104,7 +104,7 @@ ogsql-parser 同时提供 **MCP 服务器**（`ogsql-mcp`）和 **REST API 服�
 | 维度 | Python 引擎 | Rust 引擎 |
 |------|------------|-----------|
 | 入口 | `converter/flux_gauss.py` | `crates/fluxgauss/` |
-| 代码量 | ~15300 行 | ~16700 行 |
+| 代码量 | ~17300 行 | ~18800 行 |
 | 功能完整度 | 完整（评级 A-） | 持续对齐中（评级 B+） |
 | 适用场景 | 通用（100-1000 个 SP） | 大批量（1000-30000 个 SP） |
 | 增量构建 | ✅ | ✅ |
@@ -191,7 +191,6 @@ type_aliases:
 integration_test:
   enabled: true
   mode: testcontainers    # testcontainers | remote
-  image: opengauss/opengauss:latest
   # mode: remote
   # url: jdbc:postgresql://localhost:5432/testdb
   # username: test_user
@@ -264,7 +263,7 @@ dest/
       ├── ast/                                         # 缓存 AST JSON
       ├── reports/                                     # Markdown 转换报告
       ├── logs/                                        # 处理日志
-      └── gen-checkpoint.json                          # 断点续做检查点
+      └── generation-checkpoint.json                  # 断点续做检查点
 ```
 
 ## MCP 服务器模式（`--mcp`）
@@ -400,14 +399,14 @@ GET  /api/health    — 健康检查
 
 | 指标 | 数值 |
 |------|------|
-| 版本 | 0.6.16 |
-| SQL 演示文件 | 51 个（37 个含存储过程） |
+| 版本 | 0.6.27 |
+| SQL 演示文件 | 48 个（36 个含存储过程） |
 | 自动生成单元测试 | 357+ 个（全部通过） |
-| Python 测试套件 | 15 个测试文件 / ~3400 行 |
+| Python 测试套件 | 22 个测试文件 / ~6200 行 |
 | 支持的 PL/pgSQL 特性 | 28+ 种语句类型 |
 | 支持的内置函数映射 | 110+ 个（Python） / 60+ 个（Rust） |
 | 等价性对比轮次 | 6 轮（V1-V6） |
-| CI/CD 构建平台 | Linux x86_64 / ARM64, macOS x86_64 / ARM64, Windows x86_64 |
+| CI/CD 构建平台 | Linux x86_64 / ARM64, macOS ARM64, Windows x86_64 |
 
 ## 文档
 
