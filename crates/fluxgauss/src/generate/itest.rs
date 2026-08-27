@@ -332,10 +332,17 @@ pub fn write_abstract_integration_test(
     w.write_to_file(&itest_dir.join("AbstractIntegrationTest.java"), encoding)
 }
 
+fn is_system_object(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    matches!(lower.as_str(), "sys_dummy" | "dual" | "information_schema" | "pg_catalog" | "public" | "dw")
+        || lower.starts_with("pg_")
+}
+
 pub fn write_itest_schema_sql(
     base_path: &Path,
     all_packages: &[PackageInfo],
     precomputed_schema_map: &HashMap<String, HashMap<String, String>>,
+    mode: &str,
     encoding: &'static Encoding,
 ) -> std::io::Result<()> {
     let schema_map = precomputed_schema_map;
@@ -404,8 +411,11 @@ pub fn write_itest_schema_sql(
     ].iter().map(|&(k, v)| (k.to_string(), v)).collect();
 
     let mut lines: Vec<String> = Vec::new();
-    for seq in sorted(&sequences_needed) {
-        lines.push(format!("DROP SEQUENCE IF EXISTS {} CASCADE;", seq));
+    let is_remote = mode.trim().eq_ignore_ascii_case("remote");
+    if !is_remote {
+        for seq in sorted(&sequences_needed) {
+            lines.push(format!("DROP SEQUENCE IF EXISTS {} CASCADE;", seq));
+        }
     }
     for seq in sorted(&sequences_needed) {
         lines.push(format!("CREATE SEQUENCE IF NOT EXISTS {} START WITH 1 INCREMENT BY 1;", seq));
@@ -414,24 +424,20 @@ pub fn write_itest_schema_sql(
         lines.push(String::new());
     }
 
-    let system_objects: HashSet<String> = [
-        "sys_dummy", "dual", "pg_class", "pg_namespace", "pg_attribute", "pg_type",
-        "pg_proc", "pg_views", "pg_tables", "pg_sequences", "pg_database",
-        "information_schema", "pg_catalog",
-    ].iter().map(|s| s.to_string()).collect();
-
     for table in sorted_hashmap_keys(&schema_map) {
-        if system_objects.contains(&table.to_lowercase()) {
+        if is_system_object(&table) {
             continue;
         }
-        lines.push(format!("DROP TABLE IF EXISTS \"{}\" CASCADE;", table));
+        if !is_remote {
+            lines.push(format!("DROP TABLE IF EXISTS \"{}\" CASCADE;", table));
+        }
     }
     if !schema_map.is_empty() {
         lines.push(String::new());
     }
 
     for table in sorted_hashmap_keys(&schema_map) {
-        if system_objects.contains(&table.to_lowercase()) {
+        if is_system_object(&table) {
             continue;
         }
         let columns = schema_map.get(&table).unwrap();
@@ -477,7 +483,8 @@ pub fn write_itest_schema_sql(
         if col_defs.is_empty() {
             continue;
         }
-        lines.push(format!("CREATE TABLE \"{}\" (", table));
+        let create_prefix = if is_remote { "CREATE TABLE IF NOT EXISTS" } else { "CREATE TABLE" };
+        lines.push(format!("{} \"{}\" (", create_prefix, table));
         lines.push(col_defs.join(",\n"));
         let pk_col = pk_map.get(&table.to_lowercase());
         let needs_pk_for_table = needs_pk.contains(&table.to_lowercase());
@@ -491,7 +498,7 @@ pub fn write_itest_schema_sql(
      }
  
     if schema_map.contains_key("t_products") {
-        lines.push("INSERT INTO \"t_products\" (id, name, price, stock_qty, active) VALUES (1, 'Test Product', 10.00, 100, true);".to_string());
+        lines.push("INSERT INTO \"t_products\" (id, name, price, stock_qty, active) VALUES (1, 'Test Product', 10.00, 100, true) ON CONFLICT DO NOTHING;".to_string());
     }
 
      let content = lines.join("\n");
@@ -1007,11 +1014,6 @@ fn split_values(vals_str: &str) -> Vec<String> {
 }
 
 fn infer_test_data(proc: &ProcedureInfo, pkg: &PackageInfo, schema_map: &HashMap<String, HashMap<String, String>>, all_packages: &[PackageInfo]) -> HashMap<String, HashMap<String, String>> {
-    let system_objects: HashSet<&str> = [
-        "sys_dummy", "dual", "pg_class", "pg_namespace", "pg_attribute", "pg_type",
-        "pg_proc", "pg_views", "pg_tables", "pg_sequences", "pg_database",
-    ].iter().copied().collect();
-
     let mut needed: HashMap<String, HashMap<String, String>> = HashMap::new();
     let mut handled: HashSet<String> = HashSet::new();
     for dml in &proc.dml_statements {
@@ -1024,7 +1026,7 @@ fn infer_test_data(proc: &ProcedureInfo, pkg: &PackageInfo, schema_map: &HashMap
             }
             DmlType::Select => {
                 if let Some(tbl) = extract_table_from_select(sql) {
-                    if !handled.contains(&tbl) && !system_objects.contains(tbl.as_str()) {
+                    if !handled.contains(&tbl) && !is_system_object(&tbl) {
                         if let Some(cols) = schema_map.get(&tbl) {
                             needed.insert(tbl.clone(), cols.clone());
                         }
@@ -1033,7 +1035,7 @@ fn infer_test_data(proc: &ProcedureInfo, pkg: &PackageInfo, schema_map: &HashMap
             }
             DmlType::Update | DmlType::Delete => {
                 if let Some(tbl) = extract_table_from_update_delete(sql) {
-                    if !handled.contains(&tbl) && !system_objects.contains(tbl.as_str()) {
+                    if !handled.contains(&tbl) && !is_system_object(&tbl) {
                         if let Some(cols) = schema_map.get(&tbl) {
                             needed.insert(tbl.clone(), cols.clone());
                         }
@@ -1060,11 +1062,6 @@ fn add_transitive_tables(
     if depth > 2 {
         return;
     }
-    let system_objects: HashSet<&str> = [
-        "sys_dummy", "dual", "pg_class", "pg_namespace", "pg_attribute", "pg_type",
-        "pg_proc", "pg_views", "pg_tables", "pg_sequences", "pg_database",
-    ].iter().copied().collect();
-
     let self_call_re = regex::Regex::new(r"\bthis\.(\w+)\s*\(").unwrap();
     let mut visited: HashSet<String> = HashSet::new();
 
@@ -1079,7 +1076,7 @@ fn add_transitive_tables(
                 }
                 DmlType::Select => {
                     if let Some(tbl) = extract_table_from_select(sql) {
-                        if !handled.contains(&tbl) && !system_objects.contains(tbl.as_str()) {
+                        if !handled.contains(&tbl) && !is_system_object(&tbl) {
                             if let Some(cols) = schema_map.get(&tbl) {
                                 needed.insert(tbl.clone(), cols.clone());
                             }
@@ -1088,7 +1085,7 @@ fn add_transitive_tables(
                 }
                 DmlType::Update | DmlType::Delete => {
                     if let Some(tbl) = extract_table_from_update_delete(sql) {
-                        if !handled.contains(&tbl) && !system_objects.contains(tbl.as_str()) {
+                        if !handled.contains(&tbl) && !is_system_object(&tbl) {
                             if let Some(cols) = schema_map.get(&tbl) {
                                 needed.insert(tbl.clone(), cols.clone());
                             }
@@ -1637,13 +1634,54 @@ mod tests {
                 });
         let pkg = make_pkg("pkg_inventory", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_itest_schema_sql(dir.path(), &[pkg], &HashMap::new(), encoding_rs::UTF_8).unwrap();
+        write_itest_schema_sql(dir.path(), &[pkg], &HashMap::new(), "testcontainers", encoding_rs::UTF_8).unwrap();
         let schema_path = dir.path().join("src/test/resources/itest-schema.sql");
         assert!(schema_path.exists());
         let content = std::fs::read_to_string(&schema_path).unwrap();
         // schema_map is empty so no DDL is inferred from DML alone — 
         // the file should exist but may be empty or contain only DDL from schema_map
         assert!(content.is_empty() || content.contains("CREATE TABLE"));
+    }
+
+    #[test]
+    fn test_schema_sql_remote_mode_no_drop() {
+        let mut proc = make_proc("check_stock");
+        proc.dml_statements.push(DmlStatement {
+            sql_type: DmlType::Select,
+            method_id: "selectCheckStock".to_string(),
+            sql_text: "SELECT id, qty FROM inventory WHERE product_id = #{productId}".to_string(),
+            result_type: None,
+            ..Default::default()
+        });
+        let pkg = make_pkg("pkg_inventory", vec![proc]);
+
+        let mut schema_map: HashMap<String, HashMap<String, String>> = HashMap::new();
+        let mut inv = HashMap::new();
+        inv.insert("id".to_string(), "BIGINT".to_string());
+        inv.insert("qty".to_string(), "INTEGER".to_string());
+        schema_map.insert("inventory".to_string(), inv);
+        let mut pg_idx = HashMap::new();
+        pg_idx.insert("indexrelid".to_string(), "BIGINT".to_string());
+        schema_map.insert("pg_index".to_string(), pg_idx);
+        let mut pub_schema = HashMap::new();
+        pub_schema.insert("name".to_string(), "VARCHAR(255)".to_string());
+        schema_map.insert("public".to_string(), pub_schema);
+
+        let dir = tempfile::tempdir().unwrap();
+        write_itest_schema_sql(dir.path(), &[pkg.clone()], &schema_map, "remote", encoding_rs::UTF_8).unwrap();
+        let content = std::fs::read_to_string(dir.path().join("src/test/resources/itest-schema.sql")).unwrap();
+        assert!(content.contains("CREATE TABLE IF NOT EXISTS \"inventory\""));
+        assert!(!content.contains("DROP TABLE"));
+        assert!(!content.contains("pg_index"));
+        assert!(!content.contains("\"public\""));
+
+        let dir2 = tempfile::tempdir().unwrap();
+        write_itest_schema_sql(dir2.path(), &[pkg], &schema_map, "testcontainers", encoding_rs::UTF_8).unwrap();
+        let content2 = std::fs::read_to_string(dir2.path().join("src/test/resources/itest-schema.sql")).unwrap();
+        assert!(content2.contains("DROP TABLE IF EXISTS \"inventory\" CASCADE"));
+        assert!(content2.contains("CREATE TABLE \"inventory\""));
+        assert!(!content2.contains("pg_index"));
+        assert!(!content2.contains("\"public\""));
     }
 
     #[test]

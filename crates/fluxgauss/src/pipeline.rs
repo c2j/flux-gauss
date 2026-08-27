@@ -663,6 +663,11 @@ fn phase3_generate(
         }),
     }
 
+    let itest_mode = config.integration_test.as_ref()
+        .and_then(|it| it.mode.as_deref())
+        .unwrap_or("testcontainers")
+        .to_string();
+
     let schema_map = if config.integration_test.as_ref().and_then(|it| it.enabled).unwrap_or(false) {
         Some(crate::generate::itest::build_full_schema_map(&analyzed.packages, sql_files))
     } else {
@@ -677,7 +682,7 @@ fn phase3_generate(
             });
         }
 
-        if let Err(e) = crate::generate::itest::write_itest_schema_sql(output_dir, &analyzed.packages, schema_map.as_ref().unwrap(), encoding) {
+        if let Err(e) = crate::generate::itest::write_itest_schema_sql(output_dir, &analyzed.packages, schema_map.as_ref().unwrap(), &itest_mode, encoding) {
             errors.push(ConversionError::Io {
                 path: output_dir.to_string_lossy().into_owned(),
                 message: format!("write_itest_schema_sql: {}", e),
