@@ -1,3 +1,187 @@
+// ===== FILE: CursorAdvancedServiceTest.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.CursorAdvancedMapper;
+import com.example.demo.service.CursorAdvancedService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/gauss_complete_examples.sql
+class CursorAdvancedServiceTest {
+
+    @Mock
+    private CursorAdvancedMapper cursorAdvancedMapper;
+
+    @InjectMocks
+    private CursorAdvancedService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procCursorDynamicUsing_success() {
+        String pTableName = "test_pTableName";
+        String pStatusList = "1,2,3";
+        java.math.BigDecimal pMinAmount = new java.math.BigDecimal("99.99");
+        java.sql.Date pStartDate = java.sql.Date.valueOf("2024-01-01");
+        AtomicReference<Object> pResultRef = new AtomicReference<>(null);
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcCursorDynamicUsing((String) any(), (String) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (String) any(), (java.util.List) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcCursorDynamicUsing_1((String) any(), (String) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (String) any(), (java.util.List) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcCursorDynamicUsing_2((String) any(), (String) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (String) any(), (java.util.List) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcCursorDynamicUsing_3((String) any(), (String) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (String) any())).thenReturn(java.util.List.of(m)); }
+        when(cursorAdvancedMapper.insertAuditLog((String) any(), (String) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (String) any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectFuncGetOrderCursor((Integer) any(), (java.sql.Date) any(), (java.sql.Date) any(), (String) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("priority", 1L); m.put("rn", 1L); when(cursorAdvancedMapper.selectProcMultiCursorReturn((Integer) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("totalRows", 1L); m.put("earliest", 1L); m.put("latest", 1L); m.put("statusDistinctCount", java.math.BigDecimal.TEN); m.put("avgAmount", java.math.BigDecimal.TEN); m.put("queryParams", 1L); when(cursorAdvancedMapper.selectProcMultiCursorReturn_1((Integer) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcPaginateWithUsing((String) any(), (Integer) any(), (Integer) any(), (String) any(), (Integer) any(), (String) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcPaginateWithUsing_1((String) any(), (Integer) any(), (Integer) any(), (String) any())).thenReturn(java.util.List.of(m)); }
+        service.procCursorDynamicUsing(pTableName, pStatusList, pMinAmount, pStartDate, pResultRef);
+        verify(cursorAdvancedMapper, atLeast(0)).insertAuditLog((String) any(), (String) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (String) any());
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_funcGetOrderCursor_success() {
+        Integer pCustomerId = 1;
+        java.sql.Date pDateFrom = java.sql.Date.valueOf("2024-01-01");
+        java.sql.Date pDateTo = java.sql.Date.valueOf("2024-01-01");
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcCursorDynamicUsing((String) any(), (String) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (String) any(), (java.util.List) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcCursorDynamicUsing_1((String) any(), (String) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (String) any(), (java.util.List) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcCursorDynamicUsing_2((String) any(), (String) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (String) any(), (java.util.List) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcCursorDynamicUsing_3((String) any(), (String) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (String) any())).thenReturn(java.util.List.of(m)); }
+        when(cursorAdvancedMapper.insertAuditLog((String) any(), (String) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (String) any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectFuncGetOrderCursor((Integer) any(), (java.sql.Date) any(), (java.sql.Date) any(), (String) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("priority", 1L); m.put("rn", 1L); when(cursorAdvancedMapper.selectProcMultiCursorReturn((Integer) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("totalRows", 1L); m.put("earliest", 1L); m.put("latest", 1L); m.put("statusDistinctCount", java.math.BigDecimal.TEN); m.put("avgAmount", java.math.BigDecimal.TEN); m.put("queryParams", 1L); when(cursorAdvancedMapper.selectProcMultiCursorReturn_1((Integer) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcPaginateWithUsing((String) any(), (Integer) any(), (Integer) any(), (String) any(), (Integer) any(), (String) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcPaginateWithUsing_1((String) any(), (Integer) any(), (Integer) any(), (String) any())).thenReturn(java.util.List.of(m)); }
+        var result = service.funcGetOrderCursor(pCustomerId, pDateFrom, pDateTo);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procMultiCursorReturn_success() {
+        Integer pQueryId = 1;
+        AtomicReference<Object> pDataCursorRef = new AtomicReference<>(null);
+        AtomicReference<Object> pMetaCursorRef = new AtomicReference<>(null);
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcCursorDynamicUsing((String) any(), (String) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (String) any(), (java.util.List) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcCursorDynamicUsing_1((String) any(), (String) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (String) any(), (java.util.List) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcCursorDynamicUsing_2((String) any(), (String) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (String) any(), (java.util.List) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcCursorDynamicUsing_3((String) any(), (String) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (String) any())).thenReturn(java.util.List.of(m)); }
+        when(cursorAdvancedMapper.insertAuditLog((String) any(), (String) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (String) any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectFuncGetOrderCursor((Integer) any(), (java.sql.Date) any(), (java.sql.Date) any(), (String) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("priority", 1L); m.put("rn", 1L); when(cursorAdvancedMapper.selectProcMultiCursorReturn((Integer) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("totalRows", 1L); m.put("earliest", 1L); m.put("latest", 1L); m.put("statusDistinctCount", java.math.BigDecimal.TEN); m.put("avgAmount", java.math.BigDecimal.TEN); m.put("queryParams", 1L); when(cursorAdvancedMapper.selectProcMultiCursorReturn_1((Integer) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcPaginateWithUsing((String) any(), (Integer) any(), (Integer) any(), (String) any(), (Integer) any(), (String) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcPaginateWithUsing_1((String) any(), (Integer) any(), (Integer) any(), (String) any())).thenReturn(java.util.List.of(m)); }
+        service.procMultiCursorReturn(pQueryId, pDataCursorRef, pMetaCursorRef);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procPaginateWithUsing_success() {
+        String pBaseSql = "test_pBaseSql";
+        Integer pPageSize = 1;
+        Integer pPageNum = 1;
+        String pBindValues = "test_pBindValues";
+        AtomicReference<Object> pDataCursorRef = new AtomicReference<>(null);
+        AtomicReference<Object> pTotalCursorRef = new AtomicReference<>(null);
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcCursorDynamicUsing((String) any(), (String) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (String) any(), (java.util.List) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcCursorDynamicUsing_1((String) any(), (String) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (String) any(), (java.util.List) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcCursorDynamicUsing_2((String) any(), (String) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (String) any(), (java.util.List) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcCursorDynamicUsing_3((String) any(), (String) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (String) any())).thenReturn(java.util.List.of(m)); }
+        when(cursorAdvancedMapper.insertAuditLog((String) any(), (String) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (String) any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectFuncGetOrderCursor((Integer) any(), (java.sql.Date) any(), (java.sql.Date) any(), (String) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("priority", 1L); m.put("rn", 1L); when(cursorAdvancedMapper.selectProcMultiCursorReturn((Integer) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("totalRows", 1L); m.put("earliest", 1L); m.put("latest", 1L); m.put("statusDistinctCount", java.math.BigDecimal.TEN); m.put("avgAmount", java.math.BigDecimal.TEN); m.put("queryParams", 1L); when(cursorAdvancedMapper.selectProcMultiCursorReturn_1((Integer) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcPaginateWithUsing((String) any(), (Integer) any(), (Integer) any(), (String) any(), (Integer) any(), (String) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(cursorAdvancedMapper.selectProcPaginateWithUsing_1((String) any(), (Integer) any(), (Integer) any(), (String) any())).thenReturn(java.util.List.of(m)); }
+        service.procPaginateWithUsing(pBaseSql, pPageSize, pPageNum, pBindValues, pDataCursorRef, pTotalCursorRef);
+    }
+}
+
+// ===== FILE: CursorLifecycleServiceTest.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.CursorLifecycleMapper;
+import com.example.demo.service.CursorLifecycleService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/gauss_complete_examples.sql
+class CursorLifecycleServiceTest {
+
+    @Mock
+    private CursorLifecycleMapper cursorLifecycleMapper;
+
+    @InjectMocks
+    private CursorLifecycleService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procGetRawCursor_success() {
+        Integer pDeptId = 1;
+        AtomicReference<Object> pCursorRef = new AtomicReference<>(null);
+        { var m = new java.util.HashMap<String,Object>(); m.put("employeeId", 1L); m.put("employeeName", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("departmentId", 1L); m.put("hireDate", java.sql.Date.valueOf("2024-01-01")); when(cursorLifecycleMapper.selectProcGetRawCursor((Integer) any())).thenReturn(java.util.List.of(m)); }
+        when(cursorLifecycleMapper.insertProcEnhanceCursor((Object) any(), (Object) any(), (Integer) any(), (String) any(), (java.math.BigDecimal) any(), (Integer) any(), (java.sql.Date) any())).thenReturn(1);
+        service.procGetRawCursor(pDeptId, pCursorRef);
+    }
+
+    @org.junit.jupiter.api.Disabled("auto-generated mock cannot terminate while loop")
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procEnhanceCursor_success() {
+        Object pInCursor = new java.util.HashMap<String, Object>();
+        AtomicReference<Object> pOutCursorRef = new AtomicReference<>(null);
+        { var m = new java.util.HashMap<String,Object>(); m.put("employeeId", 1L); m.put("employeeName", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("departmentId", 1L); m.put("hireDate", java.sql.Date.valueOf("2024-01-01")); when(cursorLifecycleMapper.selectProcGetRawCursor((Integer) any())).thenReturn(java.util.List.of(m)); }
+        when(cursorLifecycleMapper.insertProcEnhanceCursor((Object) any(), (Object) any(), (Integer) any(), (String) any(), (java.math.BigDecimal) any(), (Integer) any(), (java.sql.Date) any())).thenReturn(1);
+        service.procEnhanceCursor(pInCursor, pOutCursorRef);
+        verify(cursorLifecycleMapper, atLeast(0)).insertProcEnhanceCursor((Object) any(), (Object) any(), (Integer) any(), (String) any(), (java.math.BigDecimal) any(), (Integer) any(), (java.sql.Date) any());
+    }
+
+    @org.junit.jupiter.api.Disabled("auto-generated mock cannot terminate while loop")
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procConsumeCursor_success() {
+        Object pCursor = new java.util.HashMap<String, Object>();
+        AtomicReference<Object> pMapRef = new AtomicReference<>(null);
+        AtomicReference<String> pSummaryRef = new AtomicReference<>(null);
+        { var m = new java.util.HashMap<String,Object>(); m.put("employeeId", 1L); m.put("employeeName", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("departmentId", 1L); m.put("hireDate", java.sql.Date.valueOf("2024-01-01")); when(cursorLifecycleMapper.selectProcGetRawCursor((Integer) any())).thenReturn(java.util.List.of(m)); }
+        when(cursorLifecycleMapper.insertProcEnhanceCursor((Object) any(), (Object) any(), (Integer) any(), (String) any(), (java.math.BigDecimal) any(), (Integer) any(), (java.sql.Date) any())).thenReturn(1);
+        service.procConsumeCursor(pCursor, pMapRef, pSummaryRef);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procFullPipeline_success() {
+        Integer pDeptId = 1;
+        { var m = new java.util.HashMap<String,Object>(); m.put("employeeId", 1L); m.put("employeeName", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("departmentId", 1L); m.put("hireDate", java.sql.Date.valueOf("2024-01-01")); when(cursorLifecycleMapper.selectProcGetRawCursor((Integer) any())).thenReturn(java.util.List.of(m)); }
+        when(cursorLifecycleMapper.insertProcEnhanceCursor((Object) any(), (Object) any(), (Integer) any(), (String) any(), (java.math.BigDecimal) any(), (Integer) any(), (java.sql.Date) any())).thenReturn(1);
+        service.procFullPipeline(pDeptId);
+    }
+}
+
+// ===== FILE: DynamicForLoopServiceTest.java =====
 package com.example.demo.service;
 
 import com.example.demo.exception.BusinessException;
@@ -43,5 +227,201 @@ class DynamicForLoopServiceTest {
         when(dynamicForLoopMapper.insertErrorLog((String) any(), (String) any(), (String) any(), (String) any(), (String) any(), (String) any())).thenReturn(1);
         service.procDynamicForProcessing(pTableName, pSelectColumns, pWhereClause, pOrderBy, pProcessType);
         verify(dynamicForLoopMapper, atLeast(0)).insertAuditLog((String) any(), (String) any(), (String) any(), (String) any(), (String) any(), (String) any());
+    }
+}
+
+// ===== FILE: ForInSelectServiceTest.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.ForInSelectMapper;
+import com.example.demo.service.ForInSelectService;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/gauss_complete_examples.sql
+class ForInSelectServiceTest {
+
+    @Mock
+    private ForInSelectMapper forInSelectMapper;
+
+    @InjectMocks
+    private ForInSelectService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_funcGetBonusRate_success() {
+        Integer pDeptId = 1;
+        when(forInSelectMapper.insertBatchLog((Integer) any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("employeeId", 1L); m.put("employeeName", "test"); m.put("departmentId", 1L); m.put("salary", java.math.BigDecimal.TEN); m.put("hireDate", java.sql.Date.valueOf("2024-01-01")); m.put("departmentName", "test"); when(forInSelectMapper.selectProcSyncEmployeeBonus()).thenReturn(java.util.List.of(m)); }
+        when(forInSelectMapper.insertBonusLimitLog((java.util.Map) any())).thenReturn(1);
+        when(forInSelectMapper.insertEmployeeBonus((java.math.BigDecimal) any(), (java.util.Map) any(), (Integer) any())).thenReturn(1);
+        when(forInSelectMapper.updateEmployeeBonus((java.math.BigDecimal) any(), (java.util.Map) any())).thenReturn(1);
+        when(forInSelectMapper.insertErrorLog((java.util.Map) any())).thenReturn(1);
+        when(forInSelectMapper.updateBatchLog((Integer) any(), (Integer) any(), (java.math.BigDecimal) any())).thenReturn(1);
+        when(forInSelectMapper.updateBatchLog_1((Integer) any())).thenReturn(1);
+        var result = service.funcGetBonusRate(pDeptId);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procSyncEmployeeBonus_success() {
+        when(forInSelectMapper.insertBatchLog((Integer) any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("employeeId", 1L); m.put("employeeName", "test"); m.put("departmentId", 1L); m.put("salary", java.math.BigDecimal.TEN); m.put("hireDate", java.sql.Date.valueOf("2024-01-01")); m.put("departmentName", "test"); when(forInSelectMapper.selectProcSyncEmployeeBonus()).thenReturn(java.util.List.of(m)); }
+        when(forInSelectMapper.insertBonusLimitLog((java.util.Map) any())).thenReturn(1);
+        when(forInSelectMapper.insertEmployeeBonus((java.math.BigDecimal) any(), (java.util.Map) any(), (Integer) any())).thenReturn(1);
+        when(forInSelectMapper.updateEmployeeBonus((java.math.BigDecimal) any(), (java.util.Map) any())).thenReturn(1);
+        when(forInSelectMapper.insertErrorLog((java.util.Map) any())).thenReturn(1);
+        when(forInSelectMapper.updateBatchLog((Integer) any(), (Integer) any(), (java.math.BigDecimal) any())).thenReturn(1);
+        when(forInSelectMapper.updateBatchLog_1((Integer) any())).thenReturn(1);
+        service.procSyncEmployeeBonus();
+        verify(forInSelectMapper, atLeast(0)).insertBatchLog((Integer) any());
+    }
+}
+
+// ===== FILE: GaussCompleteExamplesServiceTest.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.GaussCompleteExamplesMapper;
+import com.example.demo.service.GaussCompleteExamplesService;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/gauss_complete_examples.sql
+class GaussCompleteExamplesServiceTest {
+
+    @Mock
+    private GaussCompleteExamplesMapper gaussCompleteExamplesMapper;
+
+    @InjectMocks
+    private GaussCompleteExamplesService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_stringSplit_success() {
+        String pString = "test_pString";
+        String pDelimiter = "test_pDelimiter";
+        var result = service.stringSplit(pString, pDelimiter);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_arrayLength_success() {
+        Object pArray = java.util.Arrays.asList("1");
+        var result = service.arrayLength(pArray);
+    }
+}
+
+// ===== FILE: OpenCursorServiceTest.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.OpenCursorMapper;
+import com.example.demo.service.OpenCursorService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/gauss_complete_examples.sql
+class OpenCursorServiceTest {
+
+    @Mock
+    private OpenCursorMapper openCursorMapper;
+
+    @InjectMocks
+    private OpenCursorService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procGetEmployeeCursor_success() {
+        Integer pDeptId = 1;
+        java.math.BigDecimal pMinSalary = new java.math.BigDecimal("99.99");
+        AtomicReference<Object> pResultRef = new AtomicReference<>(null);
+        { var m = new java.util.HashMap<String,Object>(); m.put("employeeId", 1L); m.put("employeeName", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("email", 1L); m.put("departmentName", "test"); m.put("projectName", "test"); m.put("deptSalaryRank", 1L); m.put("salaryPercentile", 1L); when(openCursorMapper.selectProcGetEmployeeCursor((Integer) any(), (java.math.BigDecimal) any())).thenReturn(java.util.List.of(m)); }
+        when(openCursorMapper.insertAuditLog((String) any(), (String) any(), (String) any(), (String) any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createTime", java.sql.Date.valueOf("2024-01-01")); when(openCursorMapper.selectProcProcessDynamicQuery((String) any(), (String) any(), (String) any())).thenReturn(java.util.List.of(m)); }
+        when(openCursorMapper.updateProcProcessDynamicQuery((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(1);
+        when(openCursorMapper.updateProcProcessDynamicQuery_1((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(1);
+        when(openCursorMapper.insertArchiveTable((String) any(), (String) any(), (String) any(), (Integer) any(), (String) any(), (String) any(), (java.math.BigDecimal) any())).thenReturn(1);
+        when(openCursorMapper.deleteProcProcessDynamicQuery((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(1);
+        when(openCursorMapper.insertExceptionLog((String) any(), (String) any(), (String) any(), (Integer) any(), (String) any())).thenReturn(1);
+        when(openCursorMapper.insertErrorLog((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(1);
+        when(openCursorMapper.insertPerformanceLog((String) any(), (String) any(), (String) any(), (Integer) any(), (java.sql.Timestamp) any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("totalRows", 1L); when(openCursorMapper.selectProcPaginatedQuery((Integer) any(), (Integer) any(), (Integer) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("totalCount", java.math.BigDecimal.TEN); m.put("deptCount", java.math.BigDecimal.TEN); m.put("avgSalary", java.math.BigDecimal.TEN); m.put("minSalary", java.math.BigDecimal.TEN); m.put("maxSalary", java.math.BigDecimal.TEN); when(openCursorMapper.selectProcPaginatedQuery_1((Integer) any(), (Integer) any())).thenReturn(java.util.List.of(m)); }
+        service.procGetEmployeeCursor(pDeptId, pMinSalary, pResultRef);
+    }
+
+    @org.junit.jupiter.api.Disabled("auto-generated mock cannot terminate while loop")
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procProcessDynamicQuery_success() {
+        String pTableName = "test_pTableName";
+        String pWhereClause = "test_pWhereClause";
+        String pOrderBy = "test_pOrderBy";
+        { var m = new java.util.HashMap<String,Object>(); m.put("employeeId", 1L); m.put("employeeName", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("email", 1L); m.put("departmentName", "test"); m.put("projectName", "test"); m.put("deptSalaryRank", 1L); m.put("salaryPercentile", 1L); when(openCursorMapper.selectProcGetEmployeeCursor((Integer) any(), (java.math.BigDecimal) any())).thenReturn(java.util.List.of(m)); }
+        when(openCursorMapper.insertAuditLog((String) any(), (String) any(), (String) any(), (String) any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createTime", java.sql.Date.valueOf("2024-01-01")); when(openCursorMapper.selectProcProcessDynamicQuery((String) any(), (String) any(), (String) any())).thenReturn(java.util.List.of(m)); }
+        when(openCursorMapper.updateProcProcessDynamicQuery((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(1);
+        when(openCursorMapper.updateProcProcessDynamicQuery_1((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(1);
+        when(openCursorMapper.insertArchiveTable((String) any(), (String) any(), (String) any(), (Integer) any(), (String) any(), (String) any(), (java.math.BigDecimal) any())).thenReturn(1);
+        when(openCursorMapper.deleteProcProcessDynamicQuery((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(1);
+        when(openCursorMapper.insertExceptionLog((String) any(), (String) any(), (String) any(), (Integer) any(), (String) any())).thenReturn(1);
+        when(openCursorMapper.insertErrorLog((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(1);
+        when(openCursorMapper.insertPerformanceLog((String) any(), (String) any(), (String) any(), (Integer) any(), (java.sql.Timestamp) any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("totalRows", 1L); when(openCursorMapper.selectProcPaginatedQuery((Integer) any(), (Integer) any(), (Integer) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("totalCount", java.math.BigDecimal.TEN); m.put("deptCount", java.math.BigDecimal.TEN); m.put("avgSalary", java.math.BigDecimal.TEN); m.put("minSalary", java.math.BigDecimal.TEN); m.put("maxSalary", java.math.BigDecimal.TEN); when(openCursorMapper.selectProcPaginatedQuery_1((Integer) any(), (Integer) any())).thenReturn(java.util.List.of(m)); }
+        service.procProcessDynamicQuery(pTableName, pWhereClause, pOrderBy);
+        verify(openCursorMapper, atLeast(0)).insertAuditLog((String) any(), (String) any(), (String) any(), (String) any());
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_procPaginatedQuery_success() {
+        Integer pPageSize = 1;
+        Integer pPageNum = 1;
+        AtomicReference<Object> pDataCursorRef = new AtomicReference<>(null);
+        AtomicReference<Object> pCountCursorRef = new AtomicReference<>(null);
+        { var m = new java.util.HashMap<String,Object>(); m.put("employeeId", 1L); m.put("employeeName", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("email", 1L); m.put("departmentName", "test"); m.put("projectName", "test"); m.put("deptSalaryRank", 1L); m.put("salaryPercentile", 1L); when(openCursorMapper.selectProcGetEmployeeCursor((Integer) any(), (java.math.BigDecimal) any())).thenReturn(java.util.List.of(m)); }
+        when(openCursorMapper.insertAuditLog((String) any(), (String) any(), (String) any(), (String) any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createTime", java.sql.Date.valueOf("2024-01-01")); when(openCursorMapper.selectProcProcessDynamicQuery((String) any(), (String) any(), (String) any())).thenReturn(java.util.List.of(m)); }
+        when(openCursorMapper.updateProcProcessDynamicQuery((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(1);
+        when(openCursorMapper.updateProcProcessDynamicQuery_1((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(1);
+        when(openCursorMapper.insertArchiveTable((String) any(), (String) any(), (String) any(), (Integer) any(), (String) any(), (String) any(), (java.math.BigDecimal) any())).thenReturn(1);
+        when(openCursorMapper.deleteProcProcessDynamicQuery((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(1);
+        when(openCursorMapper.insertExceptionLog((String) any(), (String) any(), (String) any(), (Integer) any(), (String) any())).thenReturn(1);
+        when(openCursorMapper.insertErrorLog((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(1);
+        when(openCursorMapper.insertPerformanceLog((String) any(), (String) any(), (String) any(), (Integer) any(), (java.sql.Timestamp) any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("totalRows", 1L); when(openCursorMapper.selectProcPaginatedQuery((Integer) any(), (Integer) any(), (Integer) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("totalCount", java.math.BigDecimal.TEN); m.put("deptCount", java.math.BigDecimal.TEN); m.put("avgSalary", java.math.BigDecimal.TEN); m.put("minSalary", java.math.BigDecimal.TEN); m.put("maxSalary", java.math.BigDecimal.TEN); when(openCursorMapper.selectProcPaginatedQuery_1((Integer) any(), (Integer) any())).thenReturn(java.util.List.of(m)); }
+        service.procPaginatedQuery(pPageSize, pPageNum, pDataCursorRef, pCountCursorRef);
     }
 }

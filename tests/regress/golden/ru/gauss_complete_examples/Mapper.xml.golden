@@ -1,3 +1,141 @@
+// ===== FILE: CursorAdvancedMapper.xml =====
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.CursorAdvancedMapper">
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:543-597 — pkg_cursor_advanced.proc_cursor_dynamic_using.selectProcCursorDynamicUsing -->
+    <select id="selectProcCursorDynamicUsing" resultType="java.util.LinkedHashMap">
+        #{vSql, jdbcType=VARCHAR, javaType=String} using #{vStatusArray} [ 1 ] , #{pMinAmount, jdbcType=NUMERIC, javaType=java.math.BigDecimal} , #{pStartDate, jdbcType=DATE, javaType=java.sql.Date}
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:543-597 — pkg_cursor_advanced.proc_cursor_dynamic_using.selectProcCursorDynamicUsing_1 -->
+    <select id="selectProcCursorDynamicUsing_1" resultType="java.util.LinkedHashMap">
+        #{vSql, jdbcType=VARCHAR, javaType=String} using #{vStatusArray} [ 1 ] , #{vStatusArray} [ 2 ] , #{pMinAmount, jdbcType=NUMERIC, javaType=java.math.BigDecimal} , #{pStartDate, jdbcType=DATE, javaType=java.sql.Date}
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:543-597 — pkg_cursor_advanced.proc_cursor_dynamic_using.selectProcCursorDynamicUsing_2 -->
+    <select id="selectProcCursorDynamicUsing_2" resultType="java.util.LinkedHashMap">
+        #{vSql, jdbcType=VARCHAR, javaType=String} using #{vStatusArray} [ 1 ] , #{vStatusArray} [ 2 ] , #{vStatusArray} [ 3 ] , #{pMinAmount, jdbcType=NUMERIC, javaType=java.math.BigDecimal} , #{pStartDate, jdbcType=DATE, javaType=java.sql.Date}
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:543-597 — pkg_cursor_advanced.proc_cursor_dynamic_using.selectProcCursorDynamicUsing_3 -->
+    <select id="selectProcCursorDynamicUsing_3" resultType="java.util.LinkedHashMap">
+        #{vSql, jdbcType=VARCHAR, javaType=String} using #{pMinAmount, jdbcType=NUMERIC, javaType=java.math.BigDecimal} , #{pStartDate, jdbcType=DATE, javaType=java.sql.Date}
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:543-597 — pkg_cursor_advanced.proc_cursor_dynamic_using.insertAuditLog -->
+    <insert id="insertAuditLog">
+        INSERT INTO audit_log(log_time, operation, sql_text, bind_params) VALUES (CURRENT_TIMESTAMP, 'CURSOR_DYNAMIC_USING', #{vSql, jdbcType=VARCHAR, javaType=String}, 'status=' || #{pStatusList, jdbcType=VARCHAR, javaType=String} || ',min=' || #{pMinAmount, jdbcType=NUMERIC, javaType=java.math.BigDecimal} || ',date=' || #{pStartDate, jdbcType=DATE, javaType=java.sql.Date})
+    </insert>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:599-623 — pkg_cursor_advanced.func_get_order_cursor.selectFuncGetOrderCursor -->
+    <select id="selectFuncGetOrderCursor" resultType="java.util.LinkedHashMap">
+        #{vSql, jdbcType=VARCHAR, javaType=String} using #{pCustomerId, jdbcType=INTEGER, javaType=Integer} , #{pDateFrom, jdbcType=DATE, javaType=java.sql.Date} , #{pDateTo, jdbcType=DATE, javaType=java.sql.Date}
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:625-650 — pkg_cursor_advanced.proc_multi_cursor_return.selectProcMultiCursorReturn -->
+    <select id="selectProcMultiCursorReturn" parameterType="integer" resultType="java.util.LinkedHashMap">
+        select q . * , ROW_NUMBER ( ) over ( order by q . priority desc , q . create_time ) as rn from query_results q where q . query_id = #{pQueryId} order by q . priority desc
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:625-650 — pkg_cursor_advanced.proc_multi_cursor_return.selectProcMultiCursorReturn_1 -->
+    <select id="selectProcMultiCursorReturn_1" parameterType="integer" resultType="java.util.LinkedHashMap">
+        select COUNT ( * ) as total_rows , MIN ( create_time ) as earliest , MAX ( create_time ) as latest , COUNT ( distinct status ) as status_distinct_count , AVG ( case when amount is not null then amount end ) as avg_amount , query_params from query_results where query_id = #{pQueryId} group by query_params
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:652-671 — pkg_cursor_advanced.proc_paginate_with_using.selectProcPaginateWithUsing -->
+    <select id="selectProcPaginateWithUsing" resultType="java.util.LinkedHashMap">
+        #{vPageSql, jdbcType=VARCHAR, javaType=String} using #{pPageSize, jdbcType=INTEGER, javaType=Integer} , #{vOffset, jdbcType=INTEGER, javaType=Integer}
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:652-671 — pkg_cursor_advanced.proc_paginate_with_using.selectProcPaginateWithUsing_1 -->
+    <select id="selectProcPaginateWithUsing_1" resultType="java.util.LinkedHashMap">
+        SELECT COUNT(*) FROM (${pBaseSql}) t
+    </select>
+
+</mapper>
+
+// ===== FILE: CursorLifecycleMapper.xml =====
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.CursorLifecycleMapper">
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:704-715 — pkg_cursor_lifecycle.proc_get_raw_cursor.selectProcGetRawCursor -->
+    <select id="selectProcGetRawCursor" parameterType="integer" resultType="java.util.LinkedHashMap">
+        select employee_id , employee_name , salary , department_id , hire_date from employees where department_id = #{pDeptId} and status = 'ACTIVE' order by salary desc
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:717-749 — pkg_cursor_lifecycle.proc_enhance_cursor.insertProcEnhanceCursor -->
+    <insert id="insertProcEnhanceCursor">
+        INSERT INTO ${vTemp} VALUES ( #{vId}, #{vName}, #{vSalary}, #{vDeptId}, #{vHireDate}, EXTRACT(YEAR FROM CURRENT_DATE) - EXTRACT(YEAR FROM #{vHireDate}), CASE WHEN #{vSalary} &gt; 80000 THEN 'SENIOR' ELSE 'JUNIOR' END, CASE WHEN EXTRACT(YEAR FROM CURRENT_DATE) - EXTRACT(YEAR FROM #{vHireDate}) &gt;= 2 THEN 1 ELSE 0 END )
+    </insert>
+
+</mapper>
+
+// ===== FILE: DynamicForLoopMapper.xml =====
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.DynamicForLoopMapper">
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:403-490 — pkg_dynamic_for_loop.proc_dynamic_for_processing.insertAuditLog -->
+    <insert id="insertAuditLog">
+        INSERT INTO audit_log(log_time, operation, sql_text, params) VALUES (CURRENT_TIMESTAMP, 'DYNAMIC_FOR_LOOP', #{vSql, jdbcType=VARCHAR, javaType=String}, 'table=' || #{pTableName, jdbcType=VARCHAR, javaType=String} || ',type=' || #{pProcessType, jdbcType=VARCHAR, javaType=String})
+    </insert>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:403-490 — pkg_dynamic_for_loop.proc_dynamic_for_processing.selectProcDynamicForProcessing -->
+    <select id="selectProcDynamicForProcessing" resultType="java.util.LinkedHashMap">
+        SELECT #{expr_0} FROM ${pTableName}
+        <where>
+            <if test="pWhereClause != null">
+                AND ${pWhereClause}
+            </if>
+        </where>
+        <if test="pOrderBy != null">
+            ORDER BY ${pOrderBy}
+        </if>
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:403-490 — pkg_dynamic_for_loop.proc_dynamic_for_processing.insertProcDynamicForProcessing -->
+    <insert id="insertProcDynamicForProcessing">
+        INSERT INTO ${pTableName}_hist SELECT *, CURRENT_TIMESTAMP, #{arg2} FROM ${pTableName} WHERE id = #{vPkId}
+    </insert>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:403-490 — pkg_dynamic_for_loop.proc_dynamic_for_processing.updateProcDynamicForProcessing -->
+    <update id="updateProcDynamicForProcessing">
+        UPDATE ${pTableName} SET status = #{arg1}, archive_time = CURRENT_TIMESTAMP WHERE id = #{vPkId}
+    </update>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:403-490 — pkg_dynamic_for_loop.proc_dynamic_for_processing.updateProcDynamicForProcessing_1 -->
+    <update id="updateProcDynamicForProcessing_1">
+        UPDATE ${pTableName} SET status = #{arg1}, update_time = CURRENT_TIMESTAMP, update_count = coalesce(update_count,0)+1 WHERE id = #{vPkId}
+    </update>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:403-490 — pkg_dynamic_for_loop.proc_dynamic_for_processing.updateProcDynamicForProcessing_2 -->
+    <update id="updateProcDynamicForProcessing_2">
+        UPDATE ${pTableName} SET is_deleted = #{arg1}, delete_time = CURRENT_TIMESTAMP WHERE id = #{vPkId}
+    </update>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:403-490 — pkg_dynamic_for_loop.proc_dynamic_for_processing.insertScanLog -->
+    <insert id="insertScanLog">
+        INSERT INTO scan_log(scan_time, table_name, record_id, record_status) VALUES (CURRENT_TIMESTAMP, #{pTableName, jdbcType=VARCHAR, javaType=String}, #{vPkId, jdbcType=INTEGER, javaType=Integer}, #{vStatus, jdbcType=VARCHAR, javaType=String})
+    </insert>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:403-490 — pkg_dynamic_for_loop.proc_dynamic_for_processing.insertPerformanceLog -->
+    <insert id="insertPerformanceLog">
+        INSERT INTO performance_log(log_time, operation, rows_affected, elapsed_ms) VALUES (CURRENT_TIMESTAMP, 'dynamic_for_' || #{pProcessType, jdbcType=VARCHAR, javaType=String}, #{vRowCount, jdbcType=INTEGER, javaType=Integer}, EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - #{vStartTime, jdbcType=TIMESTAMP, javaType=java.sql.Timestamp})) * 1000)
+    </insert>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:403-490 — pkg_dynamic_for_loop.proc_dynamic_for_processing.insertErrorLog -->
+    <insert id="insertErrorLog">
+        INSERT INTO error_log(error_time, procedure_name, sql_text, error_message) VALUES (CURRENT_TIMESTAMP, 'proc_dynamic_for_processing', #{vSql, jdbcType=VARCHAR, javaType=String}, '')
+    </insert>
+
+</mapper>
+
+// ===== FILE: ForInSelectMapper.xml =====
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
@@ -42,5 +180,90 @@
     <update id="updateBatchLog_1">
         UPDATE batch_log SET status = 'FAILED', end_time = CURRENT_TIMESTAMP, message = '' WHERE batch_id = #{vLogId, jdbcType=INTEGER, javaType=Integer}
     </update>
+
+</mapper>
+
+// ===== FILE: GaussCompleteExamplesMapper.xml =====
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.GaussCompleteExamplesMapper">
+
+
+</mapper>
+
+// ===== FILE: OpenCursorMapper.xml =====
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.OpenCursorMapper">
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:221-245 — pkg_open_cursor.proc_get_employee_cursor.selectProcGetEmployeeCursor -->
+    <select id="selectProcGetEmployeeCursor" resultType="java.util.LinkedHashMap">
+        SELECT e.employee_id, e.employee_name, e.salary, e.email, d.department_name, p.project_name, RANK() OVER (PARTITION BY e.department_id ORDER BY e.salary DESC) AS dept_salary_rank, PERCENT_RANK() OVER (ORDER BY e.salary) AS salary_percentile FROM employees e LEFT JOIN departments d ON e.department_id = d.department_id LEFT JOIN projects p ON e.current_project_id = p.project_id WHERE e.department_id = #{pDeptId, jdbcType=INTEGER, javaType=Integer} AND e.salary &gt;= #{pMinSalary, jdbcType=NUMERIC, javaType=java.math.BigDecimal} AND e.status = 'ACTIVE' ORDER BY e.salary DESC
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:247-342 — pkg_open_cursor.proc_process_dynamic_query.insertAuditLog -->
+    <insert id="insertAuditLog">
+        INSERT INTO audit_log(log_time, operation, sql_text, user_name) VALUES (CURRENT_TIMESTAMP, 'DYNAMIC_QUERY', #{vSql, jdbcType=VARCHAR, javaType=String}, "USER")
+    </insert>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:247-342 — pkg_open_cursor.proc_process_dynamic_query.selectProcProcessDynamicQuery -->
+    <select id="selectProcProcessDynamicQuery" parameterType="string" resultType="java.util.LinkedHashMap">
+        SELECT id, name, amount, status, create_time FROM ${pTableName}
+        <where>
+            <if test="pWhereClause != null">
+                AND ${pWhereClause}
+            </if>
+        </where>
+        <if test="pOrderBy != null">
+            ORDER BY ${pOrderBy}
+        </if>
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:247-342 — pkg_open_cursor.proc_process_dynamic_query.updateProcProcessDynamicQuery -->
+    <update id="updateProcProcessDynamicQuery">
+        UPDATE ${pTableName} SET status = 'PROCESSING', process_time = CURRENT_TIMESTAMP WHERE id = #{vRecId}
+    </update>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:247-342 — pkg_open_cursor.proc_process_dynamic_query.updateProcProcessDynamicQuery_1 -->
+    <update id="updateProcProcessDynamicQuery_1">
+        UPDATE ${pTableName} SET status = 'TIMEOUT', retry_count = coalesce(retry_count,0)+1 WHERE id = #{vRecId}
+    </update>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:247-342 — pkg_open_cursor.proc_process_dynamic_query.insertArchiveTable -->
+    <insert id="insertArchiveTable">
+        INSERT INTO archive_table (id, name, amount, status, archived_time) VALUES (#{vRecId, jdbcType=INTEGER, javaType=Integer}, #{vRecName, jdbcType=VARCHAR, javaType=String}, #{vRecValue, jdbcType=NUMERIC, javaType=java.math.BigDecimal}, #{vRecStatus, jdbcType=VARCHAR, javaType=String}, CURRENT_TIMESTAMP)
+    </insert>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:247-342 — pkg_open_cursor.proc_process_dynamic_query.deleteProcProcessDynamicQuery -->
+    <delete id="deleteProcProcessDynamicQuery">
+        DELETE FROM ${pTableName} WHERE id = #{vRecId}
+    </delete>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:247-342 — pkg_open_cursor.proc_process_dynamic_query.insertExceptionLog -->
+    <insert id="insertExceptionLog">
+        INSERT INTO exception_log(exception_time, record_id, exception_type, detail) VALUES (CURRENT_TIMESTAMP, #{vRecId, jdbcType=INTEGER, javaType=Integer}, 'UNKNOWN_STATUS', #{vRecStatus, jdbcType=VARCHAR, javaType=String})
+    </insert>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:247-342 — pkg_open_cursor.proc_process_dynamic_query.insertErrorLog -->
+    <insert id="insertErrorLog">
+        INSERT INTO error_log(error_time, context, 0, '') VALUES (CURRENT_TIMESTAMP, 'Record ID=' || #{vRecId, jdbcType=INTEGER, javaType=Integer}, 0, '')
+    </insert>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:247-342 — pkg_open_cursor.proc_process_dynamic_query.insertPerformanceLog -->
+    <insert id="insertPerformanceLog">
+        INSERT INTO performance_log(log_time, procedure_name, rows_processed, elapsed_ms) VALUES (CURRENT_TIMESTAMP, 'proc_process_dynamic_query', #{vRowCount, jdbcType=INTEGER, javaType=Integer}, EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - #{vStartTime, jdbcType=TIMESTAMP, javaType=java.sql.Timestamp})) * 1000)
+    </insert>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:344-381 — pkg_open_cursor.proc_paginated_query.selectProcPaginatedQuery -->
+    <select id="selectProcPaginatedQuery" resultType="java.util.LinkedHashMap">
+        SELECT t.*, COUNT(*) OVER () AS total_rows FROM ( SELECT emp_id as employee_id , emp_name as employee_name , dept_id as department_id , base_salary as salary, hire_date, ROW_NUMBER() OVER (ORDER BY employee_id) AS rn FROM employees WHERE status = 'ACTIVE' ) t WHERE rn &gt; #{vOffset, jdbcType=INTEGER, javaType=Integer} AND rn &lt;= #{vOffset, jdbcType=INTEGER, javaType=Integer} + #{pPageSize, jdbcType=INTEGER, javaType=Integer} ORDER BY rn
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/gauss_complete_examples.sql:344-381 — pkg_open_cursor.proc_paginated_query.selectProcPaginatedQuery_1 -->
+    <select id="selectProcPaginatedQuery_1" parameterType="integer" resultType="java.util.LinkedHashMap">
+        SELECT COUNT(*) AS total_count, COUNT(DISTINCT department_id) AS dept_count, ROUND(AVG(salary), 2) AS avg_salary, MIN(salary) AS min_salary, MAX(salary) AS max_salary FROM employees WHERE status = 'ACTIVE'
+    </select>
 
 </mapper>
