@@ -1570,7 +1570,8 @@ mod tests {
             dir.path().join("src/test/java/com/example/demo/itest/OrderServiceIntegrationTest.java"),
         ).unwrap();
         assert!(content.contains("var result = orderService.getOrderCount(pUserId);"));
-        assert!(content.contains("assertNotNull(result);"));
+        assert!(content.contains("// Scalar function: null is valid when no fixture row matches the WHERE clause"));
+        assert!(!content.contains("assertNotNull(result);"));
     }
 
     #[test]
@@ -1596,7 +1597,7 @@ mod tests {
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/itest/DataServiceIntegrationTest.java"),
         ).unwrap();
-        assert!(content.contains("AtomicReference<String> pResult = new AtomicReference<>(null);"));
+        assert!(content.contains("AtomicReference<String> pResult = new AtomicReference<>(\"\");"));
         assert!(content.contains("dataService.getData(pId, pResult);"));
     }
 

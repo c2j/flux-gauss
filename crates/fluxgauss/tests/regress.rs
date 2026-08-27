@@ -144,16 +144,33 @@ fn run_conversion(sql_file: &Path, out_dir: &Path) -> GeneratedFiles {
         ("ServiceTest.java", base.join("src/test/java").join(&pkg_path).join("service")),
     ];
     for (ft, dir) in &scan_dirs {
+        // Collect ALL files of this type, sorted by filename, so the comparison
+        // is deterministic (fs::read_dir order is filesystem-dependent) and
+        // covers every generated file — a fixture with N packages produces N
+        // services/mappers/xmls/tests, and the golden must guard all of them.
         if let Ok(entries) = fs::read_dir(dir) {
-            for entry in entries.filter_map(|e| e.ok()) {
-                let path = entry.path();
-                let name = path.file_name().unwrap().to_string_lossy().to_string();
-                if name.ends_with(ft) {
-                    if let Ok(content) = fs::read_to_string(&path) {
-                        files.insert(ft.to_string(), content);
-                    }
-                    break;
-                }
+            let mut matched: Vec<(String, String)> = entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.file_name()
+                        .map_or(false, |n| n.to_string_lossy().ends_with(ft))
+                })
+                .filter_map(|p| {
+                    let name = p.file_name().unwrap().to_string_lossy().to_string();
+                    fs::read_to_string(&p).ok().map(|content| (name, content))
+                })
+                .collect();
+            matched.sort_by(|a, b| a.0.cmp(&b.0));
+            if matched.len() == 1 {
+                files.insert(ft.to_string(), matched.into_iter().next().unwrap().1);
+            } else if matched.len() > 1 {
+                let content = matched
+                    .into_iter()
+                    .map(|(name, c)| format!("// ===== FILE: {} =====\n{}", name, c))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                files.insert(ft.to_string(), content);
             }
         }
     }

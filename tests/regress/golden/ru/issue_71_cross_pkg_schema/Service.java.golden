@@ -1,3 +1,4 @@
+// ===== FILE: BizService.java =====
 package com.example.demo.service;
 
 import com.example.demo.exception.BusinessException;
@@ -30,5 +31,32 @@ public class BizService {
     // Source: PKG_BIZ.do_it (PROCEDURE) — {FIXTURES_ROOT}/issue_71_cross_pkg_schema.sql:25-28
     public void doIt(String pIMsg) {
         logService.instLog(pIMsg);
+    }
+}
+
+// ===== FILE: LogService.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.LogMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_71_cross_pkg_schema.sql
+public class LogService {
+    private static final Logger log = LoggerFactory.getLogger(LogService.class);
+
+    private final LogMapper logMapper;
+
+    public LogService(LogMapper logMapper) {
+        this.logMapper = logMapper;
+    }
+
+    // Source: PKG_LOG.inst_log (PROCEDURE) — {FIXTURES_ROOT}/issue_71_cross_pkg_schema.sql:7-10
+    public void instLog(String pIMsg) {
+        // Auto-generated from stored procedure
     }
 }

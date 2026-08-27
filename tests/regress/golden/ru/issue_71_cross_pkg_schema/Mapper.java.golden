@@ -1,3 +1,15 @@
+// ===== FILE: BizMapper.java =====
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface BizMapper {
+
+    // No direct DML operations for PKG_BIZ
+}
+
+// ===== FILE: LogMapper.java =====
 package com.example.demo.mapper;
 
 import org.apache.ibatis.annotations.*;

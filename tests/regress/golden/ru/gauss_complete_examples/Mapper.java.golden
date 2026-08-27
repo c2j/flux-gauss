@@ -1,3 +1,4 @@
+// ===== FILE: CursorAdvancedMapper.java =====
 package com.example.demo.mapper;
 
 import java.math.BigDecimal;
@@ -29,4 +30,131 @@ public interface CursorAdvancedMapper {
     List<Map<String, Object>> selectProcPaginateWithUsing(@Param("pBaseSql") String pBaseSql, @Param("pPageSize") Integer pPageSize, @Param("pPageNum") Integer pPageNum, @Param("pBindValues") String pBindValues, @Param("vOffset") Integer vOffset, @Param("vPageSql") String vPageSql);
     // {FIXTURES_ROOT}/gauss_complete_examples.sql:652 — pkg_cursor_advanced.proc_paginate_with_using
     List<Map<String, Object>> selectProcPaginateWithUsing_1(@Param("pBaseSql") String pBaseSql, @Param("pPageSize") Integer pPageSize, @Param("pPageNum") Integer pPageNum, @Param("pBindValues") String pBindValues);
+}
+
+// ===== FILE: CursorLifecycleMapper.java =====
+package com.example.demo.mapper;
+
+import java.math.BigDecimal;
+import java.sql.Date;
+import java.util.List;
+import java.util.Map;
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface CursorLifecycleMapper {
+
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:704 — pkg_cursor_lifecycle.proc_get_raw_cursor
+    List<Map<String, Object>> selectProcGetRawCursor(@Param("pDeptId") Integer pDeptId);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:717 — pkg_cursor_lifecycle.proc_enhance_cursor
+    int insertProcEnhanceCursor(@Param("pInCursor") Object pInCursor, @Param("vTemp") Object vTemp, @Param("vId") Integer vId, @Param("vName") String vName, @Param("vSalary") java.math.BigDecimal vSalary, @Param("vDeptId") Integer vDeptId, @Param("vHireDate") java.sql.Date vHireDate);
+}
+
+// ===== FILE: DynamicForLoopMapper.java =====
+package com.example.demo.mapper;
+
+import java.sql.Timestamp;
+import java.util.List;
+import java.util.Map;
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface DynamicForLoopMapper {
+
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:403 — pkg_dynamic_for_loop.proc_dynamic_for_processing
+    int insertAuditLog(@Param("pTableName") String pTableName, @Param("pSelectColumns") String pSelectColumns, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("pProcessType") String pProcessType, @Param("vSql") String vSql);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:403 — pkg_dynamic_for_loop.proc_dynamic_for_processing
+    List<Map<String, Object>> selectProcDynamicForProcessing(@Param("pTableName") String pTableName, @Param("pSelectColumns") String pSelectColumns, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("pProcessType") String pProcessType);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:403 — pkg_dynamic_for_loop.proc_dynamic_for_processing
+    int insertProcDynamicForProcessing(@Param("pTableName") String pTableName, @Param("pSelectColumns") String pSelectColumns, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("pProcessType") String pProcessType, @Param("vPkId") Integer vPkId);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:403 — pkg_dynamic_for_loop.proc_dynamic_for_processing
+    int updateProcDynamicForProcessing(@Param("pTableName") String pTableName, @Param("pSelectColumns") String pSelectColumns, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("pProcessType") String pProcessType, @Param("vPkId") Integer vPkId);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:403 — pkg_dynamic_for_loop.proc_dynamic_for_processing
+    int updateProcDynamicForProcessing_1(@Param("pTableName") String pTableName, @Param("pSelectColumns") String pSelectColumns, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("pProcessType") String pProcessType, @Param("vPkId") Integer vPkId);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:403 — pkg_dynamic_for_loop.proc_dynamic_for_processing
+    int updateProcDynamicForProcessing_2(@Param("pTableName") String pTableName, @Param("pSelectColumns") String pSelectColumns, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("pProcessType") String pProcessType, @Param("vPkId") Integer vPkId);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:403 — pkg_dynamic_for_loop.proc_dynamic_for_processing
+    int insertScanLog(@Param("pTableName") String pTableName, @Param("pSelectColumns") String pSelectColumns, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("pProcessType") String pProcessType, @Param("vPkId") Integer vPkId, @Param("vStatus") String vStatus);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:403 — pkg_dynamic_for_loop.proc_dynamic_for_processing
+    int insertPerformanceLog(@Param("pTableName") String pTableName, @Param("pSelectColumns") String pSelectColumns, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("pProcessType") String pProcessType, @Param("vRowCount") Integer vRowCount, @Param("vStartTime") java.sql.Timestamp vStartTime);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:403 — pkg_dynamic_for_loop.proc_dynamic_for_processing
+    int insertErrorLog(@Param("pTableName") String pTableName, @Param("pSelectColumns") String pSelectColumns, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("pProcessType") String pProcessType, @Param("vSql") String vSql);
+}
+
+// ===== FILE: ForInSelectMapper.java =====
+package com.example.demo.mapper;
+
+import java.math.BigDecimal;
+import java.util.List;
+import java.util.Map;
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface ForInSelectMapper {
+
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:75 — pkg_for_in_select.proc_sync_employee_bonus
+    int insertBatchLog(@Param("vLogId") Integer vLogId);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:75 — pkg_for_in_select.proc_sync_employee_bonus
+    List<Map<String, Object>> selectProcSyncEmployeeBonus();
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:75 — pkg_for_in_select.proc_sync_employee_bonus
+    int insertBonusLimitLog(@Param("vEmp") Map<String, Object> vEmp);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:75 — pkg_for_in_select.proc_sync_employee_bonus
+    int insertEmployeeBonus(@Param("vBonusAmt") java.math.BigDecimal vBonusAmt, @Param("vEmp") Map<String, Object> vEmp, @Param("vInsertId") Integer vInsertId);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:75 — pkg_for_in_select.proc_sync_employee_bonus
+    int updateEmployeeBonus(@Param("vBonusAmt") java.math.BigDecimal vBonusAmt, @Param("vEmp") Map<String, Object> vEmp);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:75 — pkg_for_in_select.proc_sync_employee_bonus
+    int insertErrorLog(@Param("vEmp") Map<String, Object> vEmp);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:75 — pkg_for_in_select.proc_sync_employee_bonus
+    int updateBatchLog(@Param("vLogId") Integer vLogId, @Param("vProcessed") Integer vProcessed, @Param("vTotalBonus") java.math.BigDecimal vTotalBonus);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:75 — pkg_for_in_select.proc_sync_employee_bonus
+    int updateBatchLog_1(@Param("vLogId") Integer vLogId);
+}
+
+// ===== FILE: GaussCompleteExamplesMapper.java =====
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface GaussCompleteExamplesMapper {
+
+    // No direct DML operations for gauss_complete_examples
+}
+
+// ===== FILE: OpenCursorMapper.java =====
+package com.example.demo.mapper;
+
+import java.math.BigDecimal;
+import java.sql.Timestamp;
+import java.util.List;
+import java.util.Map;
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface OpenCursorMapper {
+
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:221 — pkg_open_cursor.proc_get_employee_cursor
+    List<Map<String, Object>> selectProcGetEmployeeCursor(@Param("pDeptId") Integer pDeptId, @Param("pMinSalary") java.math.BigDecimal pMinSalary);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:247 — pkg_open_cursor.proc_process_dynamic_query
+    int insertAuditLog(@Param("pTableName") String pTableName, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("vSql") String vSql);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:247 — pkg_open_cursor.proc_process_dynamic_query
+    List<Map<String, Object>> selectProcProcessDynamicQuery(@Param("pTableName") String pTableName, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:247 — pkg_open_cursor.proc_process_dynamic_query
+    int updateProcProcessDynamicQuery(@Param("pTableName") String pTableName, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("vRecId") Integer vRecId);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:247 — pkg_open_cursor.proc_process_dynamic_query
+    int updateProcProcessDynamicQuery_1(@Param("pTableName") String pTableName, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("vRecId") Integer vRecId);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:247 — pkg_open_cursor.proc_process_dynamic_query
+    int insertArchiveTable(@Param("pTableName") String pTableName, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("vRecId") Integer vRecId, @Param("vRecName") String vRecName, @Param("vRecStatus") String vRecStatus, @Param("vRecValue") java.math.BigDecimal vRecValue);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:247 — pkg_open_cursor.proc_process_dynamic_query
+    int deleteProcProcessDynamicQuery(@Param("pTableName") String pTableName, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("vRecId") Integer vRecId);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:247 — pkg_open_cursor.proc_process_dynamic_query
+    int insertExceptionLog(@Param("pTableName") String pTableName, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("vRecId") Integer vRecId, @Param("vRecStatus") String vRecStatus);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:247 — pkg_open_cursor.proc_process_dynamic_query
+    int insertErrorLog(@Param("pTableName") String pTableName, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("vRecId") Integer vRecId);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:247 — pkg_open_cursor.proc_process_dynamic_query
+    int insertPerformanceLog(@Param("pTableName") String pTableName, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("vRowCount") Integer vRowCount, @Param("vStartTime") java.sql.Timestamp vStartTime);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:344 — pkg_open_cursor.proc_paginated_query
+    List<Map<String, Object>> selectProcPaginatedQuery(@Param("pPageSize") Integer pPageSize, @Param("pPageNum") Integer pPageNum, @Param("vOffset") Integer vOffset);
+    // {FIXTURES_ROOT}/gauss_complete_examples.sql:344 — pkg_open_cursor.proc_paginated_query
+    List<Map<String, Object>> selectProcPaginatedQuery_1(@Param("pPageSize") Integer pPageSize, @Param("pPageNum") Integer pPageNum);
 }
