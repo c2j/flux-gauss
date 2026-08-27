@@ -759,6 +759,9 @@ fn build_service_method(
         if logic_text.contains("__SQLCODE__") {
             body_lines.push("int __SQLCODE__ = 0;".to_string());
         }
+        if logic_text.contains("__SQLSTATE__") {
+            body_lines.push("String __SQLSTATE__ = \"\";".to_string());
+        }
         let needs_rowcount = logic_text.contains("__ROWCOUNT__");
         if needs_rowcount {
             body_lines.push("int __ROWCOUNT__ = 0;".to_string());
@@ -1158,6 +1161,19 @@ mod tests {
         ).unwrap();
          assert!(content.contains("@Transactional"));
      }
+
+    #[test]
+    fn test_sqlstate_variable_declared() {
+        let mut proc = make_proc("do_stuff");
+        proc.java_logic_lines.push("throw new BusinessException(String.valueOf(__SQLSTATE__));".to_string());
+        let mut pkg = make_pkg("pkg_order", vec![proc]);
+        let dir = tempfile::tempdir().unwrap();
+        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8, false).unwrap();
+        let content = std::fs::read_to_string(
+            dir.path().join("src/main/java/com/example/demo/service/OrderService.java"),
+        ).unwrap();
+        assert!(content.contains("String __SQLSTATE__ = \"\";"));
+    }
  }
 
 fn is_if_else_all_return(lines: &[String]) -> bool {
