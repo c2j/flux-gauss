@@ -257,6 +257,7 @@ impl FluxGaussMcpServer {
         let report = fluxgauss::report::build_report(
             &result.packages,
             result.skipped,
+            result.warnings,
             result.unresolved_calls.clone(),
             result.stub_count,
             "MCP",

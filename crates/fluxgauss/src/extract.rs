@@ -41,7 +41,7 @@ pub fn extract_from_parse_output(
 
         match &stmt_info.statement {
             Statement::CreatePackage(pkg_spec) => {
-                current_pkg_name = object_name_to_string(&pkg_spec.node.name);
+                current_pkg_name = package_registration_name(&pkg_spec.node.name);
                 // Extract package spec items (variables, types, etc.) — not just procedures
                 for item in &pkg_spec.node.items {
                     extract_package_item(
@@ -128,7 +128,7 @@ pub fn extract_from_parse_output(
                     }
                     procedures.clear();
                 }
-                current_pkg_name = object_name_to_string(&pkg_body.node.name);
+                current_pkg_name = package_registration_name(&pkg_body.node.name);
 
                 for item in &pkg_body.node.items {
                     extract_package_item(
@@ -702,6 +702,15 @@ fn object_name_to_string(name: &ogsql_parser::ast::ObjectName) -> String {
     name.join(".")
 }
 
+/// Package registration name: the last ObjectName segment, dropping any schema
+/// qualifier. Matches the Python engine (flux_gauss.py:1629) so cross-package
+/// call sites — which always yield an unqualified hint (statement.rs:1483) —
+/// resolve. NOTE: standalone routines deliberately use a different convention
+/// (the schema BECOMES the package); see extract.rs:145-152 and issue #70.
+fn package_registration_name(name: &ogsql_parser::ast::ObjectName) -> String {
+    name.last().map(ToString::to_string).unwrap_or_default()
+}
+
 fn build_procedure_info(
     name: String,
     package: String,
@@ -750,6 +759,7 @@ fn build_package_info(
         table_refs,
         package_vars,
         source_file: source_file.into(),
+        source_files: vec![source_file.into()],
         comments: Vec::new(),
         java_package,
         custom_types,
@@ -1008,6 +1018,41 @@ mod tests {
         assert_eq!(proc.parameters.len(), 2);
         assert_eq!(proc.parameters[0].name, "a");
         assert_eq!(proc.parameters[1].name, "b");
+    }
+
+    #[test]
+    fn issue_71_schema_qualified_spec_and_body_keep_package_state_in_lockstep() {
+        use ogsql_parser::{Parser, Tokenizer};
+        let sql = include_str!("../../../tests/regress/fixtures/issue_71_cross_pkg_schema.sql");
+        let tokens = Tokenizer::new(sql).tokenize().unwrap();
+        let stmts = Parser::new(tokens).parse();
+        let output = ogsql_parser::parser::ParseOutput {
+            statements: stmts.into_iter().map(|s| ogsql_parser::ast::StatementInfo {
+                sql_text: String::new(),
+                start_line: 0,
+                start_col: 0,
+                end_line: 0,
+                end_col: 0,
+                statement: s,
+            }).collect(),
+            errors: Vec::new(),
+            comments: Vec::new(),
+        };
+
+        let result = extract_from_parse_output(&output, "issue_71.sql", "com.example");
+        let biz_packages: Vec<_> = result.packages.iter()
+            .filter(|pkg| pkg.package_name == "PKG_BIZ")
+            .collect();
+        assert_eq!(biz_packages.len(), 1, "all PKG_BIZ procedures must land in one package");
+        let pkg = biz_packages[0];
+        assert!(
+            pkg.procedures.iter().all(|proc| proc.package == pkg.package_name),
+            "spec/body package derivation drifted: {:?}",
+            pkg.procedures.iter().map(|proc| (&proc.name, &proc.package)).collect::<Vec<_>>()
+        );
+        assert!(pkg.procedures.iter().all(|proc| proc.name.starts_with("PKG_BIZ.")));
+        assert!(pkg.package_vars.contains_key("g_prefix"));
+        assert!(pkg.custom_types.contains_key("t_result"));
     }
 
     #[test]

@@ -26,7 +26,7 @@ public class Issue54NestedExcService {
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
         try {
-            { var _val = issue54NestedExcMapper.selectTIssue54Data(); if (_val != null) vData = (String) _val; }
+            vData = String.valueOf(issue54NestedExcMapper.selectTIssue54Data());
             if (vData == null) {
                 vMsg = "no_config";
             }
@@ -34,7 +34,7 @@ public class Issue54NestedExcService {
             __SQLERRM__ = __e1.getMessage();
             __SQLCODE__ = -1;
             try {
-                { var _val = issue54NestedExcMapper.selectTIssue54Data_1(); if (_val != null) vData = (String) _val; }
+                vData = String.valueOf(issue54NestedExcMapper.selectTIssue54Data_1());
                 pResult.set("fallback_ok");
             } catch (Exception __e2) {
                 __SQLERRM__ = __e2.getMessage();
@@ -53,13 +53,13 @@ public class Issue54NestedExcService {
         try {
             vVal = "start";
             try {
-                { var _val = issue54NestedExcMapper.selectTIssue54Data_1(); if (_val != null) vTmp = (String) _val; }
+                vTmp = String.valueOf(issue54NestedExcMapper.selectTIssue54Data_1());
                 vVal = String.valueOf(vTmp);
             } catch (Exception __e1) {
                 __SQLERRM__ = __e1.getMessage();
                 __SQLCODE__ = -1;
                 try {
-                    { var _val = issue54NestedExcMapper.selectTIssue54Data_2(); if (_val != null) vTmp = (String) _val; }
+                    vTmp = String.valueOf(issue54NestedExcMapper.selectTIssue54Data_2());
                     vVal = String.valueOf(vTmp);
                 } catch (Exception __e2) {
                     __SQLERRM__ = __e2.getMessage();

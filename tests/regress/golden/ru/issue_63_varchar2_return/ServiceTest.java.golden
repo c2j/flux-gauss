@@ -27,18 +27,18 @@ class Issue63RetServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_fncGetOpenFundValue_success() {
-        String pIDate = "2024-01-01";
-        String pIPriceDate = "2024-01-01";
+        String pIDate = "20240101";
+        String pIPriceDate = "20240101";
         String pISecurityId = "test_pISecurityId";
-        { var m = new java.util.HashMap<String,Object>(); m.put("marketPrice", java.math.BigDecimal.TEN); m.put("bonusValue", 1L); m.put("v_bonus_value", 1L); m.put("v_market_price", java.math.BigDecimal.TEN); when(issue63RetMapper.selectTIssue63Fund(any(), any(), any())).thenReturn(m); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("marketPrice", java.math.BigDecimal.TEN); m.put("bonusValue", 1L); m.put("v_bonus_value", 1L); m.put("v_market_price", java.math.BigDecimal.TEN); when(issue63RetMapper.selectTIssue63Fund((String) any(), (String) any(), (String) any())).thenReturn(m); }
         var result = service.fncGetOpenFundValue(pIDate, pIPriceDate, pISecurityId);
     }
 
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_fncTrdGetUnitCash_success() {
-        String pIDate = "2024-01-01";
-        { var m = new java.util.HashMap<String,Object>(); m.put("marketPrice", java.math.BigDecimal.TEN); m.put("bonusValue", 1L); m.put("v_bonus_value", 1L); m.put("v_market_price", java.math.BigDecimal.TEN); when(issue63RetMapper.selectTIssue63Fund(any(), any(), any())).thenReturn(m); }
+        String pIDate = "20240101";
+        { var m = new java.util.HashMap<String,Object>(); m.put("marketPrice", java.math.BigDecimal.TEN); m.put("bonusValue", 1L); m.put("v_bonus_value", 1L); m.put("v_market_price", java.math.BigDecimal.TEN); when(issue63RetMapper.selectTIssue63Fund((String) any(), (String) any(), (String) any())).thenReturn(m); }
         var result = service.fncTrdGetUnitCash(pIDate);
     }
 
@@ -46,7 +46,7 @@ class Issue63RetServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_fncGetPriceNum_success() {
         String pIId = "test_pIId";
-        { var m = new java.util.HashMap<String,Object>(); m.put("marketPrice", java.math.BigDecimal.TEN); m.put("bonusValue", 1L); m.put("v_bonus_value", 1L); m.put("v_market_price", java.math.BigDecimal.TEN); when(issue63RetMapper.selectTIssue63Fund(any(), any(), any())).thenReturn(m); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("marketPrice", java.math.BigDecimal.TEN); m.put("bonusValue", 1L); m.put("v_bonus_value", 1L); m.put("v_market_price", java.math.BigDecimal.TEN); when(issue63RetMapper.selectTIssue63Fund((String) any(), (String) any(), (String) any())).thenReturn(m); }
         var result = service.fncGetPriceNum(pIId);
     }
 }

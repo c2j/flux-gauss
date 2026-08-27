@@ -26,6 +26,7 @@ class Issue44IfElsifGoto2ServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procNestedExceptionBlocks_success() {
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         when(issue44IfElsifGoto2Mapper.selectTIssue44ConfigCount1()).thenReturn(999);
         when(issue44IfElsifGoto2Mapper.selectTIssue44Config()).thenReturn("1");
         when(issue44IfElsifGoto2Mapper.selectTIssue44Config_1(any())).thenReturn("1");

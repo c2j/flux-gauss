@@ -1,0 +1,30 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.StringHelperCoercionMapper;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/pkg_string_helper_coercion.sql
+public class StringHelperCoercionService {
+    private static final Logger log = LoggerFactory.getLogger(StringHelperCoercionService.class);
+
+    private final StringHelperCoercionMapper stringHelperCoercionMapper;
+
+    public StringHelperCoercionService(StringHelperCoercionMapper stringHelperCoercionMapper) {
+        this.stringHelperCoercionMapper = stringHelperCoercionMapper;
+    }
+
+    // Source: string_helper_coercion.func_for_dynamic_to_json (FUNCTION) — {FIXTURES_ROOT}/pkg_string_helper_coercion.sql:12-41
+    public String funcForDynamicToJson(String pTableName, String pWhereClause) {
+        // TODO: Auto-generated stub — complex PL/pgSQL pattern requires manual implementation
+        return null;
+    }
+}

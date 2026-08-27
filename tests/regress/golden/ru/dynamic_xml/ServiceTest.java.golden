@@ -31,13 +31,13 @@ class DynamicXmlServiceTest {
         String pWhereClause = "test_pWhereClause";
         String pOrderBy = "test_pOrderBy";
         Integer pLimit = 5;
-        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createdAt", 1L); when(dynamicXmlMapper.selectProcConditionalQuery(any(), any(), any(), any())).thenReturn(m); }
-        when(dynamicXmlMapper.selectAuditLog(any(), any(), any(), any())).thenReturn(999);
-        when(dynamicXmlMapper.updateProcConditionalUpdate(any(), any(), any(), any(), any())).thenReturn(1);
-        when(dynamicXmlMapper.insertProcMixedLogic(any(), any())).thenReturn(1);
-        when(dynamicXmlMapper.insertAuditLog(any(), any(), any())).thenReturn(1);
-        when(dynamicXmlMapper.deleteProcMixedLogic(any(), any())).thenReturn(1);
-        when(dynamicXmlMapper.insertAuditLog_1(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createdAt", 1L); when(dynamicXmlMapper.selectProcConditionalQuery((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(m); }
+        when(dynamicXmlMapper.selectAuditLog((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(999);
+        when(dynamicXmlMapper.updateProcConditionalUpdate((String) any(), (Integer) any(), (String) any(), (Long) any(), (String) any())).thenReturn(1);
+        when(dynamicXmlMapper.insertProcMixedLogic((String) any(), (String) any())).thenReturn(1);
+        when(dynamicXmlMapper.insertAuditLog((String) any(), (String) any(), (String) any())).thenReturn(1);
+        when(dynamicXmlMapper.deleteProcMixedLogic((String) any(), (String) any())).thenReturn(1);
+        when(dynamicXmlMapper.insertAuditLog_1((String) any(), (String) any(), (String) any())).thenReturn(1);
         service.procConditionalQuery(pTableName, pWhereClause, pOrderBy, pLimit);
     }
 
@@ -49,15 +49,15 @@ class DynamicXmlServiceTest {
         String pStatus = "test_pStatus";
         Long pAmount = 100L;
         String pRemark = "test_pRemark";
-        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createdAt", 1L); when(dynamicXmlMapper.selectProcConditionalQuery(any(), any(), any(), any())).thenReturn(m); }
-        when(dynamicXmlMapper.selectAuditLog(any(), any(), any(), any())).thenReturn(999);
-        when(dynamicXmlMapper.updateProcConditionalUpdate(any(), any(), any(), any(), any())).thenReturn(1);
-        when(dynamicXmlMapper.insertProcMixedLogic(any(), any())).thenReturn(1);
-        when(dynamicXmlMapper.insertAuditLog(any(), any(), any())).thenReturn(1);
-        when(dynamicXmlMapper.deleteProcMixedLogic(any(), any())).thenReturn(1);
-        when(dynamicXmlMapper.insertAuditLog_1(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createdAt", 1L); when(dynamicXmlMapper.selectProcConditionalQuery((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(m); }
+        when(dynamicXmlMapper.selectAuditLog((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(999);
+        when(dynamicXmlMapper.updateProcConditionalUpdate((String) any(), (Integer) any(), (String) any(), (Long) any(), (String) any())).thenReturn(1);
+        when(dynamicXmlMapper.insertProcMixedLogic((String) any(), (String) any())).thenReturn(1);
+        when(dynamicXmlMapper.insertAuditLog((String) any(), (String) any(), (String) any())).thenReturn(1);
+        when(dynamicXmlMapper.deleteProcMixedLogic((String) any(), (String) any())).thenReturn(1);
+        when(dynamicXmlMapper.insertAuditLog_1((String) any(), (String) any(), (String) any())).thenReturn(1);
         service.procConditionalUpdate(pTableName, pId, pStatus, pAmount, pRemark);
-        verify(dynamicXmlMapper, atLeast(0)).updateProcConditionalUpdate(any(), any(), any(), any(), any());
+        verify(dynamicXmlMapper, atLeast(0)).updateProcConditionalUpdate((String) any(), (Integer) any(), (String) any(), (Long) any(), (String) any());
     }
 
     @Test
@@ -65,14 +65,14 @@ class DynamicXmlServiceTest {
     void test_procMixedLogic_success() {
         String pTableName = "test_pTableName";
         String pMode = "test_pMode";
-        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createdAt", 1L); when(dynamicXmlMapper.selectProcConditionalQuery(any(), any(), any(), any())).thenReturn(m); }
-        when(dynamicXmlMapper.selectAuditLog(any(), any(), any(), any())).thenReturn(999);
-        when(dynamicXmlMapper.updateProcConditionalUpdate(any(), any(), any(), any(), any())).thenReturn(1);
-        when(dynamicXmlMapper.insertProcMixedLogic(any(), any())).thenReturn(1);
-        when(dynamicXmlMapper.insertAuditLog(any(), any(), any())).thenReturn(1);
-        when(dynamicXmlMapper.deleteProcMixedLogic(any(), any())).thenReturn(1);
-        when(dynamicXmlMapper.insertAuditLog_1(any(), any(), any())).thenReturn(1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createdAt", 1L); when(dynamicXmlMapper.selectProcConditionalQuery((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(m); }
+        when(dynamicXmlMapper.selectAuditLog((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(999);
+        when(dynamicXmlMapper.updateProcConditionalUpdate((String) any(), (Integer) any(), (String) any(), (Long) any(), (String) any())).thenReturn(1);
+        when(dynamicXmlMapper.insertProcMixedLogic((String) any(), (String) any())).thenReturn(1);
+        when(dynamicXmlMapper.insertAuditLog((String) any(), (String) any(), (String) any())).thenReturn(1);
+        when(dynamicXmlMapper.deleteProcMixedLogic((String) any(), (String) any())).thenReturn(1);
+        when(dynamicXmlMapper.insertAuditLog_1((String) any(), (String) any(), (String) any())).thenReturn(1);
         service.procMixedLogic(pTableName, pMode);
-        verify(dynamicXmlMapper, atLeast(0)).insertProcMixedLogic(any(), any());
+        verify(dynamicXmlMapper, atLeast(0)).insertProcMixedLogic((String) any(), (String) any());
     }
 }

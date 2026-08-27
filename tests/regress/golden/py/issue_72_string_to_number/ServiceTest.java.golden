@@ -1,0 +1,44 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue72StringToNumberMapper;
+import com.example.demo.service.Issue72StringToNumberService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class Issue72StringToNumberServiceTest {
+
+    @Mock
+    private Issue72StringToNumberMapper issue72StringToNumberMapper;
+
+    @InjectMocks
+    private Issue72StringToNumberService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_prcTypeWall_success() {
+        String pIDate = "2024-01-01";
+        AtomicReference<String> pOSucceed = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
+        service.prcTypeWall(pIDate, pOSucceed);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_prcStrMethodWall_success() {
+        String pIn = "test_pIn";
+        AtomicReference<String> pOSucceed = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
+        service.prcStrMethodWall(pIn, pOSucceed);
+    }
+}

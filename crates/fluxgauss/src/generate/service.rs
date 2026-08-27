@@ -363,8 +363,50 @@ fn default_for_type(t: &str) -> &'static str {
     "null"
 }
 
-fn coerce_default_value(java_type: &str, default_val: &str) -> String {
-    let trimmed = default_val.trim();
+/// JLS unreachable-statement guard: statements after an unconditional
+/// `return`/`throw` in the same block are compile errors. PL/pgSQL GOTO
+/// emulation keeps such trailing code, so wrap the jump in `if (true) {}`
+/// which per JLS 14.21 does NOT propagate unreachability.
+fn dead_code_guard(lines: &mut Vec<String>) {
+    let mut depth: i64 = 0;
+    let mut depths: Vec<i64> = Vec::with_capacity(lines.len());
+    for l in lines.iter() {
+        depths.push(depth);
+        depth += l.matches('{').count() as i64 - l.matches('}').count() as i64;
+    }
+    for i in 0..lines.len() {
+        let t = lines[i].trim();
+        if !((t.starts_with("return") && t.ends_with(';')) || t.starts_with("throw ")) {
+            continue;
+        }
+        let d = depths[i];
+        let mut has_follow = false;
+        let mut j = i + 1;
+        while j < lines.len() {
+            if depths[j] < d {
+                break;
+            }
+            let tj = lines[j].trim();
+            if depths[j] == d {
+                if tj.starts_with('}') {
+                    break;
+                }
+                if !tj.is_empty() && !tj.starts_with("//") {
+                    has_follow = true;
+                    break;
+                }
+            }
+            j += 1;
+        }
+        if has_follow {
+            let indent = lines[i].len() - lines[i].trim_start().len();
+            let pad = " ".repeat(indent);
+            lines[i] = format!("{}if (true) {{ {} }}", pad, t);
+        }
+    }
+}
+
+fn coerce_default_value(java_type: &str, default_val: &str) -> String {    let trimmed = default_val.trim();
     let tl = java_type.to_lowercase();
     if tl.contains("list") || tl.contains("array") {
         if trimmed.starts_with('"') {
@@ -396,9 +438,35 @@ fn coerce_default_value(java_type: &str, default_val: &str) -> String {
         }
         return default_val.to_string();
     }
+    if tl.contains("string") {
+        if trimmed.parse::<i64>().is_ok() {
+            return format!("\"{}\"", trimmed);
+        }
+    }
+    if tl.contains("timestamp") {
+        if trimmed == "\"\"" || trimmed == "''" || trimmed.is_empty() {
+            return "null".to_string();
+        }
+        if let Some(s) = crate::expr::simplify_ts_expr(trimmed) {
+            return s;
+        }
+    }
+    if tl.contains("java.sql.date") || tl.ends_with("date") {
+        if trimmed == "\"\"" || trimmed == "''" || trimmed.is_empty() {
+            return "null".to_string();
+        }
+    }
     if tl.contains("long") {
+        if trimmed == "\"\"" || trimmed == "''" || trimmed.is_empty() {
+            return "0L".to_string();
+        }
         if trimmed.parse::<i64>().is_ok() && !trimmed.ends_with('l') && !trimmed.ends_with('L') {
             return format!("{}L", trimmed);
+        }
+    }
+    if tl.contains("integer") || tl == "int" {
+        if trimmed == "\"\"" || trimmed == "''" || trimmed.is_empty() {
+            return "0".to_string();
         }
     }
     if tl.contains("double") {
@@ -568,7 +636,8 @@ fn build_service_method(
             let var_java = snake_to_camel(var_name);
             if !out_java_names.contains(&var_java) {
                 let is_loop_iter = proc.java_logic_lines.iter().any(|l| {
-                    l.contains(&format!("for ({} ", var_type)) && l.contains(&format!(" : {}List)", var_java))
+                    let t = l.trim_start();
+                    t.starts_with("for (Map<String, Object>") && l.contains(&format!(" {} : ", var_java))
                 });
                 if is_loop_iter {
                     continue;
@@ -798,6 +867,7 @@ fn build_service_method(
             body_lines.insert(0, formatted);
         }
     }
+    dead_code_guard(&mut body_lines);
     for line in indent_java_body(&body_lines, "        ") {
         result.push(line);
     }
@@ -982,6 +1052,7 @@ mod tests {
                     table_refs: Default::default(),
                     package_vars: Default::default(),
                     source_file: String::new(),
+                    source_files: Vec::new(),
                     comments: Vec::new(),
                     java_package: String::new(),
                     custom_types: Default::default(),

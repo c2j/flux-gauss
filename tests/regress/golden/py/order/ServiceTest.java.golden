@@ -29,10 +29,11 @@ class OrderServiceTest {
         Long pUserId = 1L;
         Long pProductId = 1L;
         Integer pQty = 5;
+        var _rowTmpl = new java.util.HashMap<String,Object>(); _rowTmpl.put("product_id", 1); _rowTmpl.put("qty", 5);
         when(orderMapper.insertTOrders(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("qty", 5); when(orderMapper.selectTOrders(any())).thenReturn(m).thenReturn(null); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("qty", 5); m.putAll(_rowTmpl); when(orderMapper.selectTOrders(any())).thenReturn(m).thenReturn(null); }
         when(orderMapper.updateTOrders(any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("product_name", "test"); when(orderMapper.selectGetOrderDetail(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("product_name", "test"); m.putAll(_rowTmpl); when(orderMapper.selectGetOrderDetail(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(orderMapper.updateTOrders_1(any())).thenReturn(1);
         service.createOrder(pUserId, pProductId, pQty);
         verify(orderMapper, atLeast(0)).insertTOrders(any(), any(), any());
@@ -42,10 +43,11 @@ class OrderServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_cancelOrder_success() {
         Long pOrderId = 1L;
+        var _rowTmpl = new java.util.HashMap<String,Object>(); _rowTmpl.put("product_id", 1); _rowTmpl.put("qty", 5);
         when(orderMapper.insertTOrders(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("qty", 5); when(orderMapper.selectTOrders(any())).thenReturn(m).thenReturn(null); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("qty", 5); m.putAll(_rowTmpl); when(orderMapper.selectTOrders(any())).thenReturn(m).thenReturn(null); }
         when(orderMapper.updateTOrders(any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("product_name", "test"); when(orderMapper.selectGetOrderDetail(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("product_name", "test"); m.putAll(_rowTmpl); when(orderMapper.selectGetOrderDetail(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(orderMapper.updateTOrders_1(any())).thenReturn(1);
         service.cancelOrder(pOrderId);
         verify(orderMapper, atLeast(0)).updateTOrders(any());
@@ -55,10 +57,11 @@ class OrderServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_getOrderDetail_success() {
         Long pOrderId = 1L;
+        var _rowTmpl = new java.util.HashMap<String,Object>(); _rowTmpl.put("product_id", 1); _rowTmpl.put("qty", 5);
         when(orderMapper.insertTOrders(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("qty", 5); when(orderMapper.selectTOrders(any())).thenReturn(m).thenReturn(null); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("qty", 5); m.putAll(_rowTmpl); when(orderMapper.selectTOrders(any())).thenReturn(m).thenReturn(null); }
         when(orderMapper.updateTOrders(any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("product_name", "test"); when(orderMapper.selectGetOrderDetail(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("product_name", "test"); m.putAll(_rowTmpl); when(orderMapper.selectGetOrderDetail(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(orderMapper.updateTOrders_1(any())).thenReturn(1);
         service.getOrderDetail(pOrderId);
     }
@@ -68,10 +71,11 @@ class OrderServiceTest {
     void test_batchCreateOrders_success() {
         Long pUserId = 1L;
         String pItems = "test_pItems";
+        var _rowTmpl = new java.util.HashMap<String,Object>(); _rowTmpl.put("product_id", 1); _rowTmpl.put("qty", 5);
         when(orderMapper.insertTOrders(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("qty", 5); when(orderMapper.selectTOrders(any())).thenReturn(m).thenReturn(null); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("qty", 5); m.putAll(_rowTmpl); when(orderMapper.selectTOrders(any())).thenReturn(m).thenReturn(null); }
         when(orderMapper.updateTOrders(any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("product_name", "test"); when(orderMapper.selectGetOrderDetail(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("product_name", "test"); m.putAll(_rowTmpl); when(orderMapper.selectGetOrderDetail(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(orderMapper.updateTOrders_1(any())).thenReturn(1);
         service.batchCreateOrders(pUserId, pItems);
     }
@@ -80,10 +84,11 @@ class OrderServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_completeOrder_success() {
         Long pOrderId = 1L;
+        var _rowTmpl = new java.util.HashMap<String,Object>(); _rowTmpl.put("product_id", 1); _rowTmpl.put("qty", 5);
         when(orderMapper.insertTOrders(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("qty", 5); when(orderMapper.selectTOrders(any())).thenReturn(m).thenReturn(null); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("product_id", 1); m.put("qty", 5); m.putAll(_rowTmpl); when(orderMapper.selectTOrders(any())).thenReturn(m).thenReturn(null); }
         when(orderMapper.updateTOrders(any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("product_name", "test"); when(orderMapper.selectGetOrderDetail(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("product_name", "test"); m.putAll(_rowTmpl); when(orderMapper.selectGetOrderDetail(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(orderMapper.updateTOrders_1(any())).thenReturn(1);
         service.completeOrder(pOrderId);
         verify(orderMapper, atLeast(0)).updateTOrders_1(any());

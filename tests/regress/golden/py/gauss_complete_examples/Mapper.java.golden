@@ -54,6 +54,16 @@ import java.util.Map;
         // gauss_complete_examples.sql:403 — pkg_dynamic_for_loop.proc_dynamic_for_processing
         List<Map<String, Object>> selectProcDynamicForProcessing_5(@Param("pTableName") String pTableName, @Param("pSelectColumns") String pSelectColumns, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("pProcessType") String pProcessType);
         // gauss_complete_examples.sql:403 — pkg_dynamic_for_loop.proc_dynamic_for_processing
+        int insertProcDynamicForProcessing(@Param("pTableName") String pTableName, @Param("vPkId") Integer vPkId);
+        // gauss_complete_examples.sql:403 — pkg_dynamic_for_loop.proc_dynamic_for_processing
+        int updateProcDynamicForProcessing_2(@Param("pTableName") String pTableName, @Param("vPkId") Integer vPkId);
+        // gauss_complete_examples.sql:403 — pkg_dynamic_for_loop.proc_dynamic_for_processing
+        int updateProcDynamicForProcessing_3(@Param("pTableName") String pTableName, @Param("vPkId") Integer vPkId);
+        // gauss_complete_examples.sql:403 — pkg_dynamic_for_loop.proc_dynamic_for_processing
+        int updateProcDynamicForProcessing_4(@Param("pTableName") String pTableName, @Param("vPkId") Integer vPkId);
+        // gauss_complete_examples.sql:403 — pkg_dynamic_for_loop.proc_dynamic_for_processing
+        int insertScanLog(@Param("pTableName") String pTableName, @Param("pSelectColumns") String pSelectColumns, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("pProcessType") String pProcessType, @Param("vPkId") Integer vPkId, @Param("vStatus") String vStatus);
+        // gauss_complete_examples.sql:403 — pkg_dynamic_for_loop.proc_dynamic_for_processing
         int insertPerformanceLog_1(@Param("pTableName") String pTableName, @Param("pSelectColumns") String pSelectColumns, @Param("pWhereClause") String pWhereClause, @Param("pOrderBy") String pOrderBy, @Param("pProcessType") String pProcessType, @Param("vRowCount") Integer vRowCount, @Param("vStartTime") java.sql.Timestamp vStartTime);
         // gauss_complete_examples.sql:543 — pkg_cursor_advanced.proc_cursor_dynamic_using
         List<Map<String, Object>> selectProcCursorDynamicUsing_6(@Param("pTableName") String pTableName, @Param("pStatusList") String pStatusList, @Param("pMinAmount") java.math.BigDecimal pMinAmount, @Param("pStartDate") java.sql.Date pStartDate, @Param("vInClause") String vInClause);
@@ -78,9 +88,9 @@ import java.util.Map;
         // gauss_complete_examples.sql:704 — pkg_cursor_lifecycle.proc_get_raw_cursor
         List<Map<String, Object>> selectProcGetRawCursor_15(@Param("pDeptId") Integer pDeptId);
         // gauss_complete_examples.sql:717 — pkg_cursor_lifecycle.proc_enhance_cursor
-        int updateProcEnhanceCursor_2(@Param("vTemp") String vTemp);
+        int updateProcEnhanceCursor_5(@Param("vTemp") String vTemp);
         // gauss_complete_examples.sql:717 — pkg_cursor_lifecycle.proc_enhance_cursor
-        int insertProcEnhanceCursor(@Param("vId") Integer vId, @Param("vName") String vName, @Param("vSalary") java.math.BigDecimal vSalary, @Param("vDeptId") Integer vDeptId, @Param("vHireDate") java.sql.Date vHireDate, @Param("vTemp") String vTemp);
+        int insertProcEnhanceCursor_1(@Param("vId") Integer vId, @Param("vName") String vName, @Param("vSalary") java.math.BigDecimal vSalary, @Param("vDeptId") Integer vDeptId, @Param("vHireDate") java.sql.Date vHireDate, @Param("vTemp") String vTemp);
         // gauss_complete_examples.sql:717 — pkg_cursor_lifecycle.proc_enhance_cursor
         List<Map<String, Object>> selectProcEnhanceCursor_16(@Param("pInCursor") List<Map<String, Object>> pInCursor, @Param("vTemp") String vTemp);
         }

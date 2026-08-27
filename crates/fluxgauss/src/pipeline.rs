@@ -1,11 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 
 use crate::config::AppConfig;
 use crate::context::AnalysisContext;
 use crate::incremental::IncrementalState;
 use crate::types::{
-    AnalyzedPackages, ConversionError, PackageSummary, ParsedPackages, UnresolvedCall,
+    AnalyzedPackages, ConversionError, PackageInfo, PackageSummary, ParsedPackages, SkippedItem,
+    UnresolvedCall,
 };
 
 pub struct FileValidateResult {
@@ -298,7 +299,7 @@ pub fn run_pipeline(
         packages,
         generated_files: generated,
         errors,
-        warnings: Vec::new(),
+        warnings: analyzed.warnings,
         skipped,
         unresolved_calls: ctx.unresolved_calls.clone(),
         stub_count: ctx.stub_procedures.len(),
@@ -318,9 +319,9 @@ fn phase1_parse(
     let base_package = config.base_package_or_default();
 
     let mut packages = Vec::new();
-    let mut summaries = Vec::new();
     let mut skipped = Vec::new();
     let mut errors = Vec::new();
+    let mut package_origins: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let total = sql_files.len();
 
     for (idx, sql_file) in sql_files.iter().enumerate() {
@@ -333,11 +334,19 @@ fn phase1_parse(
                 if let Ok(parse_output) =
                     serde_json::from_str::<ogsql_parser::parser::ParseOutput>(&ast_json)
                 {
+                    track_package_origins(&parse_output, &mut package_origins);
                     let result = crate::extract::extract_from_parse_output(
                         &parse_output,
                         &sql_file.to_string_lossy(),
                         &base_package,
                     );
+                    let package_names: Vec<String> = result.packages.iter()
+                        .map(|pkg| pkg.package_name.clone())
+                        .collect();
+                    let java_package = result.packages.first()
+                        .map(|pkg| pkg.java_package.as_str())
+                        .unwrap_or("");
+                    let _ = incremental.update_file_packages(sql_file, &package_names, java_package);
                     packages.extend(result.packages);
                     skipped.extend(result.skipped);
                     errors.extend(result.errors);
@@ -386,6 +395,7 @@ fn phase1_parse(
             errors: Vec::new(),
             comments: Vec::new(),
         };
+        track_package_origins(&parse_output, &mut package_origins);
 
         if let Ok(json) = serde_json::to_string(&parse_output) {
             let _ = incremental.save_cached_ast(sql_file, &json);
@@ -396,10 +406,13 @@ fn phase1_parse(
             &sql_file.to_string_lossy(),
             &base_package,
         );
-
-        for pkg in &result.packages {
-            summaries.push(crate::types::PackageSummary::from_package(pkg));
-        }
+        let package_names: Vec<String> = result.packages.iter()
+            .map(|pkg| pkg.package_name.clone())
+            .collect();
+        let java_package = result.packages.first()
+            .map(|pkg| pkg.java_package.as_str())
+            .unwrap_or("");
+        let _ = incremental.update_file_packages(sql_file, &package_names, java_package);
 
         packages.extend(result.packages);
         skipped.extend(result.skipped);
@@ -408,11 +421,136 @@ fn phase1_parse(
 
     crate::progress::progress_done("Parse", total);
 
+    // Key on the emitted Service class, not the raw package name: that is the
+    // real invariant (one PackageInfo per generated file). Raw names differing
+    // only in case — app.PKG_LOG vs other.pkg_log — collapse to the same
+    // LogService.java, so keying on them would still let one silently
+    // overwrite the other.
+    let mut packages_by_name: BTreeMap<String, PackageInfo> = BTreeMap::new();
+    for package in packages {
+        let key = crate::naming::package_to_classname(&package.package_name);
+        if let Some(existing) = packages_by_name.get_mut(&key) {
+            merge_package_info(existing, package, &mut skipped);
+        } else {
+            packages_by_name.insert(key, package);
+        }
+    }
+    let packages: Vec<PackageInfo> = packages_by_name.into_values().collect();
+    let summaries = packages.iter().map(PackageSummary::from_package).collect();
+    let _ = incremental.save_manifest();
+
+    let warnings = package_origins
+        .into_iter()
+        .filter_map(|(registration_name, qualified_names)| {
+            (qualified_names.len() > 1).then(|| format!(
+                "Package registration collision: {} fold into '{}'; schemas are merged for Python parity",
+                qualified_names.into_iter().collect::<Vec<_>>().join(", "),
+                registration_name,
+            ))
+        })
+        .collect();
+
     ParsedPackages {
         packages,
         summaries,
+        warnings,
         skipped,
         errors,
+    }
+}
+
+fn merge_package_info(existing: &mut PackageInfo, incoming: PackageInfo, skipped: &mut Vec<SkippedItem>) {
+    if existing.source_files.is_empty() && !existing.source_file.is_empty() {
+        existing.source_files.push(existing.source_file.clone());
+    }
+    for source_file in incoming.source_files.iter().chain(std::iter::once(&incoming.source_file)) {
+        if !source_file.is_empty() && !existing.source_files.contains(source_file) {
+            existing.source_files.push(source_file.clone());
+        }
+    }
+
+    let mut seen: BTreeSet<(String, usize)> = existing.procedures.iter()
+        .map(|proc| (proc.proc_name.clone(), proc.parameters.len()))
+        .collect();
+    for proc in incoming.procedures {
+        let key = (proc.proc_name.clone(), proc.parameters.len());
+        if !seen.insert(key) {
+            skipped.push(SkippedItem {
+                item_type: "ROUTINE".into(),
+                name: proc.name.clone(),
+                source_file: proc.source_file.clone(),
+                line_number: proc.source_start_line,
+                reason: format!(
+                    "Duplicate routine while merging package {}; kept first definition",
+                    existing.package_name
+                ),
+            });
+        } else {
+            existing.procedures.push(proc);
+        }
+    }
+
+    for (name, value) in incoming.package_vars {
+        if existing.package_vars.contains_key(&name) {
+            skipped.push(SkippedItem {
+                item_type: "PACKAGE_VARS".into(),
+                name,
+                source_file: incoming.source_file.clone(),
+                line_number: 0,
+                reason: format!("Conflicting package variable while merging {}; kept first definition", existing.package_name),
+            });
+        } else {
+            existing.package_vars.insert(name, value);
+        }
+    }
+    for (name, value) in incoming.custom_types {
+        if existing.custom_types.contains_key(&name) {
+            skipped.push(SkippedItem {
+                item_type: "CUSTOM_TYPES".into(),
+                name,
+                source_file: incoming.source_file.clone(),
+                line_number: 0,
+                reason: format!("Conflicting custom type while merging {}; kept first definition", existing.package_name),
+            });
+        } else {
+            existing.custom_types.insert(name, value);
+        }
+    }
+    existing.comments.extend(incoming.comments);
+    existing.table_refs.extend(incoming.table_refs);
+    if !incoming.java_package.is_empty() {
+        if existing.java_package.is_empty() {
+            existing.java_package = incoming.java_package;
+        } else if existing.java_package != incoming.java_package {
+            skipped.push(SkippedItem {
+                item_type: "JAVA_PACKAGE".into(),
+                name: existing.package_name.clone(),
+                source_file: incoming.source_file,
+                line_number: 0,
+                reason: format!("Conflicting Java package while merging {}; kept first definition", existing.package_name),
+            });
+        }
+    }
+}
+
+fn track_package_origins(
+    parse_output: &ogsql_parser::parser::ParseOutput,
+    origins: &mut BTreeMap<String, BTreeSet<String>>,
+) {
+    use ogsql_parser::ast::Statement;
+
+    for statement in &parse_output.statements {
+        let name = match &statement.statement {
+            Statement::CreatePackage(pkg) => Some(&pkg.node.name),
+            Statement::CreatePackageBody(pkg) => Some(&pkg.node.name),
+            _ => None,
+        };
+        let Some(name) = name else { continue };
+        let Some(registration_name) = name.last() else { continue };
+        origins
+            .entry(crate::naming::package_to_classname(registration_name))
+            .or_default()
+            .insert(name.join("."));
     }
 }
 
@@ -492,6 +630,7 @@ fn phase2_analyze(
     AnalyzedPackages {
         packages,
         summaries: parsed.summaries,
+        warnings: parsed.warnings,
         skipped: parsed.skipped,
         errors,
     }

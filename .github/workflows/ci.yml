@@ -109,7 +109,7 @@ jobs:
         run: python3 -m pytest tests/ -v --tb=short --ignore=tests/regress
 
       - name: Run Python regression tests (golden + pipeline + issues)
-        run: python3 -m pytest tests/regress/ -v --tb=short -m "not demo_migration"
+        run: python3 -m pytest tests/regress/ -v --tb=short -m "not demo_migration and not parity"
 
       - name: Run Python converter
         run: python3 converter/flux_gauss.py -c demo-project/fluxgauss_py.yaml
@@ -132,6 +132,14 @@ jobs:
 
       - name: Build fluxgauss release binary
         run: cargo build --release --bin fluxgauss
+
+      # Runs BOTH engines over the same fixtures and compares derived facts.
+      # Per-engine goldens cannot see divergence — they lock in whatever each
+      # engine already does — which is how issue #71 (Rust 0 cross-calls vs
+      # Python 171) stayed green. Must run AFTER the release binary exists, or
+      # the parity tests skip themselves.
+      - name: Run cross-engine parity guard
+        run: python3 -m pytest tests/regress/test_parity.py -v --tb=short -m parity
 
       - name: Run demo migration guard (L0)
         run: python3 -m pytest tests/regress/test_demo_migration.py -v --tb=short -m demo_migration

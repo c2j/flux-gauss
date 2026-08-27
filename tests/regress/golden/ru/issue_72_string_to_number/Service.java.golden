@@ -1,0 +1,47 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue72Mapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_72_string_to_number.sql
+public class Issue72Service {
+    private static final Logger log = LoggerFactory.getLogger(Issue72Service.class);
+
+    private final Issue72Mapper issue72Mapper;
+
+    public Issue72Service(Issue72Mapper issue72Mapper) {
+        this.issue72Mapper = issue72Mapper;
+    }
+
+    // Source: pkg_issue72.prc_type_wall (PROCEDURE) — {FIXTURES_ROOT}/issue_72_string_to_number.sql:8-19
+    public void prcTypeWall(String pIDate, AtomicReference<String> pOSucceed) {
+        Long vAmt = 0L;
+        Long vCount = 0L;
+        String vFlag = null;
+        vFlag = "1";
+        vCount = Long.parseLong(String.valueOf(vFlag));
+        vAmt = ((Number)(Double.parseDouble(String.valueOf(vFlag)) * 0.5)).longValue();
+        if (vCount > 0) {
+            pOSucceed.set("0");
+        }
+    }
+
+    // Source: pkg_issue72.prc_str_method_wall (PROCEDURE) — {FIXTURES_ROOT}/issue_72_string_to_number.sql:21-32
+    public void prcStrMethodWall(String pIn, AtomicReference<String> pOSucceed) {
+        Long vLen = 0L;
+        Long vNext = 0L;
+        String vStr = null;
+        vStr = "abc";
+        vLen = ((Number)(pIn.length())).longValue();
+        vNext = ((Number)(vStr.length() + 1)).longValue();
+        if ((vLen > 0 && vNext > 0)) {
+            pOSucceed.set("0");
+        }
+    }
+}

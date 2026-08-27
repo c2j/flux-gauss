@@ -28,6 +28,7 @@ class Issue56ReturnHandlerServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procTwoHandlersFirstReturns_success() {
         AtomicReference<String> pResult = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         when(issue56ReturnHandlerMapper.selectTIssue56Data()).thenReturn("1");
         when(issue56ReturnHandlerMapper.selectTIssue56Data_1()).thenReturn("1");
         when(issue56ReturnHandlerMapper.selectTIssue56Data_2()).thenReturn("1");
@@ -38,6 +39,7 @@ class Issue56ReturnHandlerServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procNestedBlockThenReturn_success() {
         AtomicReference<String> pResult = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         when(issue56ReturnHandlerMapper.selectTIssue56Data()).thenReturn("1");
         when(issue56ReturnHandlerMapper.selectTIssue56Data_1()).thenReturn("1");
         when(issue56ReturnHandlerMapper.selectTIssue56Data_2()).thenReturn("1");
@@ -48,6 +50,7 @@ class Issue56ReturnHandlerServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procThreeHandlersReturns_success() {
         AtomicReference<String> pResult = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         when(issue56ReturnHandlerMapper.selectTIssue56Data()).thenReturn("1");
         when(issue56ReturnHandlerMapper.selectTIssue56Data_1()).thenReturn("1");
         when(issue56ReturnHandlerMapper.selectTIssue56Data_2()).thenReturn("1");

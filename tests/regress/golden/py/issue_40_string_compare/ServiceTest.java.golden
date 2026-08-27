@@ -29,6 +29,7 @@ class Issue40StringCompareServiceTest {
     void test_procCheckStatus_success() {
         String pStatus = "test_pStatus";
         AtomicReference<String> pResult = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.procCheckStatus(pStatus, pResult);
     }
 
@@ -38,6 +39,7 @@ class Issue40StringCompareServiceTest {
         String pLevel = "test_pLevel";
         String pMinLevel = "test_pMinLevel";
         AtomicReference<Boolean> pIsValid = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.procValidateLevel(pLevel, pMinLevel, pIsValid);
     }
 
@@ -47,6 +49,7 @@ class Issue40StringCompareServiceTest {
         String pVersion = "test_pVersion";
         String pMinVer = "test_pMinVer";
         AtomicReference<Boolean> pOk = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.procCompareVersions(pVersion, pMinVer, pOk);
     }
 }

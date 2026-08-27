@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.Issue75LoopExceptionBraceMapper">
+
+    <!-- Source: issue_75_loop_exception_brace.sql:19-19 — pkg_issue75.proc_nested_block_body_fails.selectProcNestedBlockBodyFails -->
+    <select id="selectProcNestedBlockBodyFails" resultType="java.util.LinkedHashMap">
+        select data_value AS v
+        from t_issue75_data
+    </select>
+
+    <!-- Source: issue_75_loop_exception_brace.sql:34-34 — pkg_issue75.proc_loop_exc_handler.selectProcLoopExcHandler_1 -->
+    <select id="selectProcLoopExcHandler_1" resultType="java.util.LinkedHashMap">
+        select data_value AS v
+        from t_issue75_data
+    </select>
+
+    <!-- Source: issue_75_loop_exception_brace.sql:39-39 — pkg_issue75.proc_loop_exc_handler.selectProcLoopExcHandler_2 -->
+    <select id="selectProcLoopExcHandler_2" resultType="java.util.LinkedHashMap">
+        select data_value AS v
+        from t_issue75_data
+    </select>
+
+</mapper>

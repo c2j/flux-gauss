@@ -1,0 +1,15 @@
+package com.example.demo.mapper;
+
+import java.util.Map;
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue75Mapper {
+
+    // {FIXTURES_ROOT}/issue_75_loop_exception_brace.sql:14 — pkg_issue75.proc_nested_block_body_fails
+    Map<String, Object> selectProcNestedBlockBodyFails();
+    // {FIXTURES_ROOT}/issue_75_loop_exception_brace.sql:29 — pkg_issue75.proc_loop_exc_handler
+    Map<String, Object> selectProcLoopExcHandler();
+    // {FIXTURES_ROOT}/issue_75_loop_exception_brace.sql:29 — pkg_issue75.proc_loop_exc_handler
+    Map<String, Object> selectProcLoopExcHandler_1();
+}

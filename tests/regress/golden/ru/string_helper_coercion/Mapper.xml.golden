@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.StringHelperCoercionMapper">
+
+    <!-- Source: {FIXTURES_ROOT}/pkg_string_helper_coercion.sql:12-41 — string_helper_coercion.func_for_dynamic_to_json.selectFuncForDynamicToJson -->
+    <select id="selectFuncForDynamicToJson" resultType="java.util.LinkedHashMap">
+        SELECT * FROM ${pTableName}
+        <where>
+            <if test="pWhereClause != null">
+                AND ${pWhereClause}
+            </if>
+        </where>
+    </select>
+
+</mapper>

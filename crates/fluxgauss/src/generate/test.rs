@@ -296,25 +296,14 @@ fn build_success_test(
     let first_dml = proc.dml_statements.iter()
         .find(|d| matches!(d.sql_type, DmlType::Insert | DmlType::Update | DmlType::Delete));
     if let Some(dml) = first_dml {
-        let any_count = count_mapper_params_for_dml(proc, dml, pkg);
-        let mut typed_args = Vec::new();
-        for p in proc.parameters.iter().filter(|pp| !pp.is_out()) {
-            typed_args.push(format!("({}) any()", any_matcher_type(&p.java_type)));
-        }
-        for (_, jt) in &dml.extra_params {
-            typed_args.push(format!("({}) any()", any_matcher_type(jt)));
-        }
-        let verify_is_overloaded = pkg.procedures.iter()
-            .flat_map(|pp| pp.dml_statements.iter())
-            .filter(|dd| dd.method_id == dml.method_id)
-            .count() > 1;
-        let verify_args = if verify_is_overloaded && !typed_args.is_empty() {
-            while typed_args.len() < any_count { typed_args.push("any()".to_string()); }
-            typed_args.join(", ")
-        } else if any_count > 0 {
-            vec!["any()"; any_count].join(", ")
-        } else {
+        let pts = crate::generate::mapper::mapper_param_types(proc, dml, &pkg.package_vars);
+        let verify_args = if pts.is_empty() {
             String::new()
+        } else {
+            pts.iter()
+                .map(|t| format!("({}) any()", any_matcher_type(t)))
+                .collect::<Vec<_>>()
+                .join(", ")
         };
         lines.push(format!("        verify({}, atLeast(0)).{}({});", mapper_name, dml.method_id, verify_args));
     }
@@ -558,56 +547,25 @@ fn extract_map_access_keys(pkg: &PackageInfo) -> Vec<String> {
        let mut all_dmls: Vec<(String, DmlType, usize, bool, Option<String>, String, Vec<String>)> = Vec::new();
        for proc in &pkg.procedures {
            for dml in &proc.dml_statements {
-               let mut param_types: Vec<String> = proc.parameters.iter()
-                   .filter(|p| !p.is_out())
-                   .map(|p| p.java_type.clone())
-                   .collect();
-               for (_, jt) in &dml.extra_params {
-                   param_types.push(jt.clone());
-               }
-               let in_param_count = proc.parameters.iter().filter(|p| !p.is_out()).count();
-               let mut all_names: std::collections::HashSet<String> = proc
-                   .parameters.iter()
-                   .filter(|p| !p.is_out())
-                   .map(|p| crate::naming::snake_to_camel(&p.name).to_lowercase())
-                   .collect();
-
-               for (jn, _) in &dml.extra_params { all_names.insert(jn.to_lowercase()); }
-
-               let re = IDENTIFIER_RE.get_or_init(|| regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap());
-               let proc_param_names: std::collections::HashSet<String> = proc
-                   .parameters.iter().filter(|p| !p.is_out()).map(|p| p.name.to_lowercase()).collect();
-               for caps in re.captures_iter(&dml.sql_text) {
-                   let word = caps.get(1).unwrap().as_str();
-                   if proc.local_vars.contains_key(&word.to_lowercase()) && !proc_param_names.contains(&word.to_lowercase()) {
-                       all_names.insert(crate::naming::snake_to_camel(word).to_lowercase());
-                   }
-               }
-                let local_var_names: std::collections::HashSet<String> = proc.local_vars.keys().map(|k| k.to_lowercase()).collect();
-                for caps in re.captures_iter(&dml.sql_text) {
-                    let word = caps.get(1).unwrap().as_str();
-                    if pkg.package_vars.contains_key(word) && !local_var_names.contains(&word.to_lowercase()) && !proc_param_names.contains(&word.to_lowercase()) {
-                       all_names.insert(crate::naming::snake_to_camel(word).to_lowercase());
-                   }
-               }
-               for p in &proc.parameters {
-                   if p.is_out() && case_insensitive_word_match(&dml.sql_text, &p.name) {
-                       all_names.insert(crate::naming::snake_to_camel(&p.name).to_lowercase());
-                   }
-               }
-
-              let total_params = all_names.len();
-              all_dmls.push((dml.method_id.clone(), dml.sql_type, total_params, dml.returns_list, dml.result_type.clone(), dml.sql_text.clone(), param_types));
+               let param_types = crate::generate::mapper::mapper_param_types(proc, dml, &pkg.package_vars);
+               let mut dummy_imports: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+               let ret_type = crate::generate::mapper::return_type_for_dml(dml, &mut dummy_imports);
+               let total_params = param_types.len();
+              all_dmls.push((dml.method_id.clone(), dml.sql_type, total_params, dml.returns_list, Some(ret_type), dml.sql_text.clone(), param_types));
           }
       }
 
     let mut lines = Vec::new();
+    let mut seen_sigs: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let all_dmls: Vec<_> = all_dmls.into_iter()
+        .filter(|(id, _, _, _, _, _, pts)| seen_sigs.insert(format!("{}|{}", id, pts.join(","))))
+        .collect();
     for (method_id, sql_type, param_count, returns_list, result_type, sql_text, param_types) in &all_dmls {
         let is_overloaded = all_dmls.iter()
             .filter(|(id, _, _, _, _, _, pts)| id == method_id && pts != param_types)
             .count() > 0;
         let any_args = if *param_count > 0 {
-            if is_overloaded && !param_types.is_empty() {
+            if !param_types.is_empty() {
                 let mut args: Vec<String> = param_types.iter()
                     .map(|t| format!("({}) any()", any_matcher_type(t)))
                     .collect();
@@ -623,10 +581,9 @@ fn extract_map_access_keys(pkg: &PackageInfo) -> Vec<String> {
         };
         match sql_type {
             DmlType::Select => {
-                let is_scalar = result_type.as_ref().map_or(false, |rt| {
-                    !rt.contains("Map<") && !rt.contains("List<")
-                });
-                if *returns_list {
+                let rt = result_type.as_deref().unwrap_or("Map<String, Object>");
+                let is_scalar = !rt.contains("Map<") && !rt.contains("List<");
+                if rt.starts_with("List<") {
                     let cols = extract_select_columns(sql_text);
                     if cols.is_empty() {
                         let mut mock = build_map_mock(&extra_keys);
@@ -639,7 +596,6 @@ fn extract_map_access_keys(pkg: &PackageInfo) -> Vec<String> {
                         lines.push(format!("        {}", mock));
                     }
                 } else if is_scalar {
-                    let rt = result_type.as_ref().unwrap();
                     let scalar_val = if rt == "Object" {
                         "999".to_string()
                     } else {
@@ -701,13 +657,13 @@ fn default_test_value(java_type: &str, param_name: &str) -> String {
         if nl.contains("spectrum") {
             return "java.util.Arrays.asList(1.0, 2.0, 3.0, 2.5, 1.5, 0.5, 1.0, 2.0, 3.0, 1.0)".to_string();
         }
-        if nl.contains("array") || nl.contains("list") || nl.ends_with("arr") || nl.contains("_arr") {
-            return "java.util.Arrays.asList(1.0, 2.0, 3.0)".to_string();
+        if nl.contains("array") || nl.contains("list") || nl.contains("funds") || nl.contains("tab") || nl.ends_with("arr") || nl.contains("_arr") {
+            return "java.util.Arrays.asList(\"1\")".to_string();
         }
         return "new java.util.HashMap<String, Object>()".to_string();
     }
     if tl.contains("string") {
-        if nl.contains("date") { return "\"2024-01-01\"".to_string(); }
+        if nl.contains("date") || nl.contains("day") { return "\"20240101\"".to_string(); }
         if nl.contains("ids") || nl.contains("list") { return "\"1,2,3\"".to_string(); }
         if ["flag", "amount", "seqno", "seq", "interfaceseq", "operflag", "stepno", "count", "quantity", "qty", "price", "total"].iter().any(|kw| nl.contains(kw)) {
             return "\"1\"".to_string();
@@ -724,7 +680,7 @@ fn scalar_mock_value(java_type: &str) -> String {
     if tl.contains("double") { return "999.0d".to_string(); }
     if tl.contains("float") { return "999.0f".to_string(); }
     if tl.contains("boolean") { return "true".to_string(); }
-    if tl.contains("string") { return "\"test_value\"".to_string(); }
+    if tl.contains("string") { return "\"1\"".to_string(); }
     if tl.contains("timestamp") { return "java.sql.Timestamp.valueOf(\"2024-01-01 00:00:00\")".to_string(); }
     if tl.contains("date") { return "java.sql.Date.valueOf(\"2024-01-01\")".to_string(); }
     "null".to_string()
@@ -748,6 +704,9 @@ fn any_matcher_type(java_type: &str) -> &str {
         "Date" | "java.sql.Date" => "java.sql.Date",
         "Timestamp" | "java.sql.Timestamp" => "java.sql.Timestamp",
         "Map<String, Object>" | "java.util.Map" => "java.util.Map",
+        t if t.starts_with("List<") || t.starts_with("java.util.List") => "java.util.List",
+        t if t.starts_with("Map<") => "java.util.Map",
+        t if t.starts_with("AtomicReference") => "java.util.concurrent.atomic.AtomicReference",
         _ => "Object",
     }
 }
@@ -764,6 +723,7 @@ mod tests {
                     table_refs: Default::default(),
                     package_vars: Default::default(),
                     source_file: String::new(),
+                    source_files: Vec::new(),
                     comments: Vec::new(),
                     java_package: String::new(),
                     custom_types: Default::default(),

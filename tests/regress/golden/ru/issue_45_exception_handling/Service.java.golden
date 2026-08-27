@@ -25,14 +25,14 @@ public class Issue45ExceptionService {
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
         try {
-            { var _val = issue45ExceptionMapper.selectTIssue45Security(pSecurityCode); if (_val != null) vSecurityId = (String) _val; }
+            vSecurityId = String.valueOf(issue45ExceptionMapper.selectTIssue45Security(pSecurityCode));
             pOSucceed.set("FOUND_MAIN");
             pOSecurityId.set(String.valueOf(vSecurityId));
         } catch (BusinessException __e1) { // no_data_found
             __SQLERRM__ = __e1.getMessage();
             __SQLCODE__ = -1;
             try {
-                { var _val = issue45ExceptionMapper.selectTIssue45SecurityBak(pSecurityCode); if (_val != null) vSecurityId = (String) _val; }
+                vSecurityId = String.valueOf(issue45ExceptionMapper.selectTIssue45SecurityBak(pSecurityCode));
                 pOSucceed.set("FOUND_BAK");
                 pOSecurityId.set(String.valueOf(vSecurityId));
             } catch (Exception __e2) {
@@ -55,7 +55,7 @@ public class Issue45ExceptionService {
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
         try {
-            { var _val = issue45ExceptionMapper.selectTIssue45Security_1(pSecurityCode); if (_val != null) vId = (String) _val; }
+            vId = String.valueOf(issue45ExceptionMapper.selectTIssue45Security_1(pSecurityCode));
             pResult.set(String.valueOf(String.valueOf("OK: ").concat(String.valueOf(vId))));
         } catch (Exception __e1) {
             __SQLERRM__ = __e1.getMessage();
@@ -71,7 +71,7 @@ public class Issue45ExceptionService {
         int __SQLCODE__ = 0;
         try {
             try {
-                { var _val = issue45ExceptionMapper.selectTIssue45Security_2(pCode); if (_val != null) vValue = (String) _val; }
+                vValue = String.valueOf(issue45ExceptionMapper.selectTIssue45Security_2(pCode));
                 pMsg.set(String.valueOf(String.valueOf("VALUE: ").concat(String.valueOf(vValue))));
             } catch (BusinessException __e1) { // no_data_found
                 __SQLERRM__ = __e1.getMessage();

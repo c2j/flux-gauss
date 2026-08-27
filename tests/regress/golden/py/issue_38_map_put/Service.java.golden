@@ -31,7 +31,7 @@ public class Issue38MapPutService {
             pStatus.set("FAILED");
         } else {
             pkgIssue38Shared.put("out_status", "SUCCESS");
-            pkgIssue38Shared.put("global_counter", (((Number) (((Number) (pkgIssue38Shared.get("global_counter") != null ? pkgIssue38Shared.get("global_counter") : 0)).intValue())).doubleValue() + ((Number) (1)).doubleValue()));
+            pkgIssue38Shared.put("global_counter", ((((Number) (pkgIssue38Shared.get("global_counter") != null ? pkgIssue38Shared.get("global_counter") : 0)).intValue()) + (1)));
             pStatus.set("SUCCESS");
         }
     }
@@ -44,7 +44,7 @@ public class Issue38MapPutService {
 
     // Source: pkg_issue38_main.proc_increment_counter (PROCEDURE) — issue_38_map_put.sql:75-82
     public void procIncrementCounter() {
-        pkgIssue38Shared.put("global_counter", (((Number) (((Number) (pkgIssue38Shared.get("global_counter") != null ? pkgIssue38Shared.get("global_counter") : 0)).intValue())).doubleValue() + ((Number) (1)).doubleValue()));
+        pkgIssue38Shared.put("global_counter", ((((Number) (pkgIssue38Shared.get("global_counter") != null ? pkgIssue38Shared.get("global_counter") : 0)).intValue()) + (1)));
         if (((Number) (pkgIssue38Shared.get("global_counter") != null ? pkgIssue38Shared.get("global_counter") : 0)).intValue() > 1000) {
             pkgIssue38Shared.put("out_status", "OVERFLOW");
         }

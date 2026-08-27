@@ -1,0 +1,28 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue71CrossPkgSchemaMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue71CrossPkgSchemaService {
+    private static final Logger log = LoggerFactory.getLogger(Issue71CrossPkgSchemaService.class);
+
+    private final Issue71CrossPkgSchemaMapper issue71CrossPkgSchemaMapper;
+
+    public Issue71CrossPkgSchemaService(Issue71CrossPkgSchemaMapper issue71CrossPkgSchemaMapper) {
+        this.issue71CrossPkgSchemaMapper = issue71CrossPkgSchemaMapper;
+    }
+    // Source: PKG_LOG.inst_log (PROCEDURE) — issue_71_cross_pkg_schema.sql:7-10
+    public void instLog(String pIMsg) {
+        // Auto-generated from stored procedure
+    }
+
+    // Source: PKG_BIZ.do_it (PROCEDURE) — issue_71_cross_pkg_schema.sql:25-28
+    public void doIt(String pIMsg) {
+        // CALL PKG_LOG.inst_log(...)
+    }
+}

@@ -7,15 +7,24 @@ use sha2::{Digest, Sha256};
 
 use crate::types::{PackageInfo, ServiceCall};
 
+/// Bumped whenever a converter or parser change makes previously cached ASTs
+/// unsafe to reuse. A mismatch discards the whole manifest, forcing a reparse.
+/// Also folds in the ogsql-parser version, since the two engines are pinned
+/// separately (see AGENTS.md) and a parser bump silently changes AST shape.
+const CACHE_SCHEMA_VERSION: &str = concat!("2:ogsql-", env!("CARGO_PKG_VERSION"));
+
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct Manifest {
+    #[serde(default)]
+    schema_version: String,
     files: HashMap<String, FileEntry>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct FileEntry {
     hash: String,
-    package: String,
+    #[serde(default)]
+    packages: Vec<String>,
     java_package: String,
 }
 
@@ -84,13 +93,27 @@ impl IncrementalState {
         }
     }
 
+    pub fn cached_ast_path_for_test(&self, sql_file: &Path) -> PathBuf {
+        self.cached_ast_path(sql_file)
+    }
+
     fn cached_ast_path(&self, sql_file: &Path) -> PathBuf {
-        let safe: String = sql_file
-            .to_string_lossy()
+        // The readable part is lossy: every non-alphanumeric collapses to '_',
+        // so "x/a.sql" and "x_a.sql" produce the same stem. The manifest keys by
+        // FULL path, so without a disambiguator is_cached() could report a hit
+        // while the stored AST belongs to the other file — silently generating
+        // the wrong Service. A digest of the full path makes the name unique.
+        let full = sql_file.to_string_lossy();
+        let safe: String = full
             .chars()
             .map(|c| if c.is_alphanumeric() || c == '.' { c } else { '_' })
             .collect();
-        self.cache_dir.join("ast").join(format!("{}.json", safe))
+        let mut hasher = Sha256::new();
+        hasher.update(full.as_bytes());
+        let digest = format!("{:x}", hasher.finalize());
+        self.cache_dir
+            .join("ast")
+            .join(format!("{}.{}.json", safe, &digest[..12]))
     }
 
     pub fn save_cached_ast(&self, sql_file: &Path, json: &str) -> std::io::Result<()> {
@@ -108,13 +131,20 @@ impl IncrementalState {
     pub fn load_manifest_inner(&self) -> std::io::Result<Manifest> {
         let path = self.cache_dir.join("manifest.json");
         let content = std::fs::read_to_string(path)?;
-        Ok(serde_json::from_str(&content).unwrap_or_default())
+        let manifest: Manifest = serde_json::from_str(&content).unwrap_or_default();
+        if manifest.schema_version != CACHE_SCHEMA_VERSION {
+            return Ok(Manifest::default());
+        }
+        Ok(manifest)
     }
 
     pub fn save_manifest(&self) -> std::io::Result<()> {
         let path = self.cache_dir.join("manifest.json");
         if let Some(manifest) = &self.manifest {
-            let json = serde_json::to_string_pretty(manifest)?;
+            let json = serde_json::to_string_pretty(&Manifest {
+                schema_version: CACHE_SCHEMA_VERSION.to_string(),
+                files: manifest.files.clone(),
+            })?;
             std::fs::write(path, json)?;
         }
         Ok(())
@@ -126,13 +156,22 @@ impl IncrementalState {
         package: &str,
         java_package: &str,
     ) -> std::io::Result<()> {
+        self.update_file_packages(sql_file, &[package.to_string()], java_package)
+    }
+
+    pub fn update_file_packages(
+        &mut self,
+        sql_file: &Path,
+        packages: &[String],
+        java_package: &str,
+    ) -> std::io::Result<()> {
         let hash = Self::compute_hash(sql_file)?;
         let manifest = self.manifest.get_or_insert_with(Manifest::default);
         manifest.files.insert(
             sql_file.to_string_lossy().into_owned(),
             FileEntry {
                 hash,
-                package: package.to_string(),
+                packages: packages.to_vec(),
                 java_package: java_package.to_string(),
             },
         );
@@ -357,7 +396,7 @@ mod tests {
             .files
             .get(&sql_path.to_string_lossy().into_owned())
             .unwrap();
-        assert_eq!(entry.package, "pkg_a");
+        assert_eq!(entry.packages, vec!["pkg_a"]);
 
         std::fs::write(&sql_path, "v2").unwrap();
         state
@@ -370,7 +409,7 @@ mod tests {
             .files
             .get(&sql_path.to_string_lossy().into_owned())
             .unwrap();
-        assert_eq!(entry.package, "pkg_b");
+        assert_eq!(entry.packages, vec!["pkg_b"]);
     }
 
     #[test]
@@ -432,6 +471,7 @@ mod tests {
                 table_refs: HashSet::new(),
                 package_vars: HashMap::new(),
                 source_file: "a.sql".into(),
+                source_files: Vec::new(),
                 comments: vec![],
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),
@@ -453,6 +493,7 @@ mod tests {
                 table_refs: HashSet::new(),
                 package_vars: HashMap::new(),
                 source_file: "b.sql".into(),
+                source_files: Vec::new(),
                 comments: vec![],
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),
@@ -468,6 +509,7 @@ mod tests {
                 table_refs: HashSet::new(),
                 package_vars: HashMap::new(),
                 source_file: "c.sql".into(),
+                source_files: Vec::new(),
                 comments: vec![],
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),
@@ -496,6 +538,7 @@ mod tests {
             table_refs: HashSet::new(),
             package_vars: HashMap::new(),
             source_file: "iso.sql".into(),
+            source_files: Vec::new(),
             comments: vec![],
             java_package: "com.example".into(),
             custom_types: HashMap::new(),
@@ -526,6 +569,7 @@ mod tests {
                 table_refs: HashSet::new(),
                 package_vars: HashMap::new(),
                 source_file: "a.sql".into(),
+                source_files: Vec::new(),
                 comments: vec![],
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),
@@ -547,6 +591,7 @@ mod tests {
                 table_refs: HashSet::new(),
                 package_vars: HashMap::new(),
                 source_file: "b.sql".into(),
+                source_files: Vec::new(),
                 comments: vec![],
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),
@@ -562,6 +607,7 @@ mod tests {
                 table_refs: HashSet::new(),
                 package_vars: HashMap::new(),
                 source_file: "c.sql".into(),
+                source_files: Vec::new(),
                 comments: vec![],
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),

@@ -29,6 +29,7 @@ class Issue60InstrCaseWhenServiceTest {
     void test_procCaseInstrWhenZero_success() {
         String pFileName = "test_pFileName";
         AtomicReference<String> pResult = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.procCaseInstrWhenZero(pFileName, pResult);
     }
 
@@ -37,6 +38,7 @@ class Issue60InstrCaseWhenServiceTest {
     void test_procInstrEqZero_success() {
         String pSrc = "test_pSrc";
         AtomicReference<String> pFound = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         service.procInstrEqZero(pSrc, pFound);
     }
 }

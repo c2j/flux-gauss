@@ -1,0 +1,49 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.StringHelperCoercionMapper;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class StringHelperCoercionService {
+    private static final Logger log = LoggerFactory.getLogger(StringHelperCoercionService.class);
+
+    private final StringHelperCoercionMapper stringHelperCoercionMapper;
+
+    public StringHelperCoercionService(StringHelperCoercionMapper stringHelperCoercionMapper) {
+        this.stringHelperCoercionMapper = stringHelperCoercionMapper;
+    }
+
+    // TODO: Auto-generated stub — parser missed this overload
+    public java.math.BigDecimal jsonObject(Long pa, String pb, String pc, java.math.BigDecimal pd, Integer pe) {
+        // TODO: implement jsonObject(Long pa, String pb, String pc, java.math.BigDecimal pd, Integer pe)
+        return java.math.BigDecimal.ZERO;
+    }
+
+    // TODO: Auto-generated stub — parser missed this overload
+    public Object jsonAppend(String pa, String pb) {
+        // TODO: implement jsonAppend(String pa, String pb)
+        return null;
+    }
+    // Source: string_helper_coercion.func_for_dynamic_to_json (FUNCTION) — pkg_string_helper_coercion.sql:12-41
+    public String funcForDynamicToJson(String pTableName, String pWhereClause) {
+        String vSql = null;
+        String vJson = "[]";
+        String vItem = null;
+        Integer vIdx = Integer.valueOf(0);
+        List<Map<String, Object>> vRecList = stringHelperCoercionMapper.selectFuncForDynamicToJson(pTableName, pWhereClause);
+        for (Map<String, Object> vRec : vRecList) {
+            vIdx = vIdx + 1;
+            vItem = "{}";
+            vItem = String.valueOf(this.jsonObject(Long.parseLong(String.valueOf(vRec.get("id"))), String.valueOf(vRec.get("name")), String.valueOf(vRec.get("status")), (vRec.get("amount") != null ? (vRec.get("amount") instanceof java.math.BigDecimal ? (java.math.BigDecimal) vRec.get("amount") : new java.math.BigDecimal(String.valueOf(vRec.get("amount")))) : java.math.BigDecimal.ZERO), vIdx));
+            vJson = String.valueOf(this.jsonAppend(vJson, vItem));
+        }
+        return vJson;
+    }
+}

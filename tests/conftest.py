@@ -4,7 +4,17 @@ Shared fixtures for flux_gauss unit tests.
 Key concern: flux_gauss.py has extensive module-level mutable state
 (UNRESOLVED_CALLS, STUB_PROCEDURES, etc.) that MUST be reset between tests.
 """
+import sys
+
 import pytest
+
+if sys.version_info < (3, 10):
+    raise RuntimeError(
+        f"flux-gauss requires Python >= 3.10 (converter/flux_gauss.py uses PEP 604 "
+        f"`int | None` syntax, which raises TypeError on 3.9). Detected {sys.version.split()[0]}. "
+        f"Create a venv with a 3.10+ interpreter, e.g.: "
+        f"python3.14 -m venv .venv && .venv/bin/pip install pytest pyyaml"
+    )
 
 import converter.flux_gauss as fg
 

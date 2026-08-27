@@ -246,6 +246,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let report = fluxgauss::report::build_report(
         &result.packages,
         result.skipped,
+        result.warnings,
         result.unresolved_calls,
         result.stub_count,
         &config_path_str,

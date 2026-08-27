@@ -100,9 +100,9 @@ public class ComplexClearingPkgService {
         if (pDepth > 10) {
             log.info("e_trigger_recursion");
         }
-        { var _val = complexClearingPkgMapper.selectTradeRecord(pTradeId, pDepth); if (_val != null) vParentId = (Long) _val; }
+        { Object _val = complexClearingPkgMapper.selectTradeRecord(pTradeId, pDepth); if (_val != null) vParentId = (_val instanceof Number ? ((Number)_val).longValue() : Long.parseLong(String.valueOf(_val))); }
         if (vParentId != null) {
-            vResult = this.recursiveValidate(Long.parseLong(String.valueOf(vParentId)), pDepth + 1);
+            vResult = String.valueOf(this.recursiveValidate(Long.parseLong(String.valueOf(vParentId)), pDepth + 1));
             vChain = String.valueOf(String.valueOf(pTradeId).concat(String.valueOf("->"))).concat(String.valueOf(vResult));
         } else {
             vChain = String.valueOf(pTradeId).concat(String.valueOf("(root)"));
@@ -124,8 +124,8 @@ public class ComplexClearingPkgService {
             return true;
         }
         gMutatingTableGuard = true;
-        { var _val = complexClearingPkgMapper.selectAccount(pAccountId, pCheckMode); if (_val != null) vBalance = (java.math.BigDecimal) _val; }
-        { var _val = complexClearingPkgMapper.selectTradeRecord_1(pAccountId, pCheckMode); if (_val != null) vTradeSum = (java.math.BigDecimal) _val; }
+        { Object _val = complexClearingPkgMapper.selectAccount(pAccountId, pCheckMode); if (_val != null) vBalance = (java.math.BigDecimal) _val; }
+        { Object _val = complexClearingPkgMapper.selectTradeRecord_1(pAccountId, pCheckMode); if (_val != null) vTradeSum = (java.math.BigDecimal) _val; }
         vDiff = vBalance.subtract(vTradeSum).abs();
         vThreshold = (pCheckMode == 1 ? cEpsilon : pCheckMode == 2 ? java.math.BigDecimal.valueOf(1.0) : java.math.BigDecimal.valueOf(999999999));
         if (vDiff.compareTo(vThreshold) > 0) {
@@ -156,10 +156,10 @@ public class ComplexClearingPkgService {
             return;
         }
         if ((java.util.Objects.equals(pOp, "UPDATE") && pNewRec.getOrDefault("accountId", pNewRec.get("account_id")) != null)) {
-            { var _val = complexClearingPkgMapper.selectTradeRecord_2(pOp, pOldRec, pNewRec, pCascade); if (_val != null) vDelta = (java.math.BigDecimal) _val; }
+            { Object _val = complexClearingPkgMapper.selectTradeRecord_2(pOp, pOldRec, pNewRec, pCascade); if (_val != null) vDelta = (java.math.BigDecimal) _val; }
             if (vDelta.subtract(java.math.BigDecimal.valueOf(((Number) pNewRec.get("balance")).doubleValue())).abs().compareTo(java.math.BigDecimal.valueOf(1.0)) > 0) {
                 complexClearingPkgMapper.updateAccount(pOp, pOldRec, pNewRec, pCascade);
-                { var _val = complexClearingPkgMapper.selectTradeRecord_3(pOp, pOldRec, pNewRec, pCascade); if (_val != null) vRelatedCount = (Integer) _val; }
+                { Object _val = complexClearingPkgMapper.selectTradeRecord_3(pOp, pOldRec, pNewRec, pCascade); if (_val != null) vRelatedCount = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }
                 if (vRelatedCount > 0) {
                     this.logAuditAutonomous(String.valueOf(String.valueOf(String.valueOf(String.valueOf("Account ").concat(String.valueOf(pNewRec.getOrDefault("accountId", pNewRec.get("account_id"))))).concat(String.valueOf(" has "))).concat(String.valueOf(vRelatedCount))).concat(String.valueOf(" disputed trades")), "WARN");
                 }

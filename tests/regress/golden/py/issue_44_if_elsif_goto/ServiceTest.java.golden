@@ -30,6 +30,7 @@ class Issue44IfElsifGotoServiceTest {
         String pStatus = "test_pStatus";
         String pDate = "2024-01-01";
         AtomicReference<String> pResult = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount(any(), any())).thenReturn(999);
         when(issue44IfElsifGotoMapper.selectTIssue44Orders(any(), any())).thenReturn("1");
         when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount_1(any(), any())).thenReturn("1");
@@ -45,6 +46,7 @@ class Issue44IfElsifGotoServiceTest {
         String pFilter = "test_pFilter";
         Integer pMode = 1;
         AtomicReference<String> pResult = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount(any(), any())).thenReturn(999);
         when(issue44IfElsifGotoMapper.selectTIssue44Orders(any(), any())).thenReturn("1");
         when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount_1(any(), any())).thenReturn("1");
@@ -60,6 +62,7 @@ class Issue44IfElsifGotoServiceTest {
         String pType = "test_pType";
         String pSubType = "test_pSubType";
         AtomicReference<String> pResult = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount(any(), any())).thenReturn(999);
         when(issue44IfElsifGotoMapper.selectTIssue44Orders(any(), any())).thenReturn("1");
         when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount_1(any(), any())).thenReturn("1");
@@ -74,6 +77,7 @@ class Issue44IfElsifGotoServiceTest {
     void test_procNonDynamicIfElse_success() {
         String pFlag = "1";
         AtomicReference<String> pResult = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount(any(), any())).thenReturn(999);
         when(issue44IfElsifGotoMapper.selectTIssue44Orders(any(), any())).thenReturn("1");
         when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount_1(any(), any())).thenReturn("1");
@@ -88,6 +92,7 @@ class Issue44IfElsifGotoServiceTest {
     void test_procChainedIfWithConcat_success() {
         String pCode = "test_pCode";
         AtomicReference<String> pResult = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
         when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount(any(), any())).thenReturn(999);
         when(issue44IfElsifGotoMapper.selectTIssue44Orders(any(), any())).thenReturn("1");
         when(issue44IfElsifGotoMapper.selectTIssue44OrdersCount_1(any(), any())).thenReturn("1");

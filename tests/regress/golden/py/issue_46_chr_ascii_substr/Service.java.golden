@@ -39,7 +39,7 @@ public class Issue46ChrAsciiSubstrService {
         pResult.set(null);
         vChar1 = String.valueOf(_substr(String.valueOf(pZqdm), (5), (1))).charAt(0);
         vChar2 = String.valueOf(_substr(String.valueOf(pZqdm), (6), (1))).charAt(0);
-        vChr = String.valueOf((char)(vChar1 + 48)) + _substr(String.valueOf(pZqdm), (7), (1));
+        vChr = String.valueOf(String.valueOf((char)(vChar1 + 48)) + _substr(String.valueOf(pZqdm), (7), (1)));
         pResult.set(String.valueOf(vChr));
     }
 

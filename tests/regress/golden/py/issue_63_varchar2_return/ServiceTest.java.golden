@@ -29,7 +29,8 @@ class Issue63Varchar2ReturnServiceTest {
         String pIDate = "2024-01-01";
         String pIPriceDate = "2024-01-01";
         String pISecurityId = "test_pISecurityId";
-        { var m = new java.util.HashMap<String,Object>(); m.put("market_price", java.math.BigDecimal.TEN); m.put("bonus_value", 1); when(issue63Varchar2ReturnMapper.selectTIssue63Fund(any(), any(), any())).thenReturn(m).thenReturn(null); }
+        var _rowTmpl = new java.util.HashMap<String,Object>(); _rowTmpl.put("market_price", java.math.BigDecimal.TEN); _rowTmpl.put("bonus_value", 1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("market_price", java.math.BigDecimal.TEN); m.put("bonus_value", 1); m.putAll(_rowTmpl); when(issue63Varchar2ReturnMapper.selectTIssue63Fund(any(), any(), any())).thenReturn(m).thenReturn(null); }
         var result = service.fncGetOpenFundValue(pIDate, pIPriceDate, pISecurityId);
         assertNotNull(result);
     }
@@ -38,7 +39,8 @@ class Issue63Varchar2ReturnServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_fncTrdGetUnitCash_success() {
         String pIDate = "2024-01-01";
-        { var m = new java.util.HashMap<String,Object>(); m.put("market_price", java.math.BigDecimal.TEN); m.put("bonus_value", 1); when(issue63Varchar2ReturnMapper.selectTIssue63Fund(any(), any(), any())).thenReturn(m).thenReturn(null); }
+        var _rowTmpl = new java.util.HashMap<String,Object>(); _rowTmpl.put("market_price", java.math.BigDecimal.TEN); _rowTmpl.put("bonus_value", 1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("market_price", java.math.BigDecimal.TEN); m.put("bonus_value", 1); m.putAll(_rowTmpl); when(issue63Varchar2ReturnMapper.selectTIssue63Fund(any(), any(), any())).thenReturn(m).thenReturn(null); }
         var result = service.fncTrdGetUnitCash(pIDate);
         assertNotNull(result);
     }
@@ -47,7 +49,8 @@ class Issue63Varchar2ReturnServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_fncGetPriceNum_success() {
         String pIId = "test_pIId";
-        { var m = new java.util.HashMap<String,Object>(); m.put("market_price", java.math.BigDecimal.TEN); m.put("bonus_value", 1); when(issue63Varchar2ReturnMapper.selectTIssue63Fund(any(), any(), any())).thenReturn(m).thenReturn(null); }
+        var _rowTmpl = new java.util.HashMap<String,Object>(); _rowTmpl.put("market_price", java.math.BigDecimal.TEN); _rowTmpl.put("bonus_value", 1);
+        { var m = new java.util.HashMap<String,Object>(); m.put("market_price", java.math.BigDecimal.TEN); m.put("bonus_value", 1); m.putAll(_rowTmpl); when(issue63Varchar2ReturnMapper.selectTIssue63Fund(any(), any(), any())).thenReturn(m).thenReturn(null); }
         var result = service.fncGetPriceNum(pIId);
         assertNotNull(result);
     }

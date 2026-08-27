@@ -28,7 +28,7 @@ public class Issue63RetService {
         vMarketPrice = "";
         vBonusValue = "0";
         try {
-            Map<String, Object> _row = issue63RetMapper.selectTIssue63Fund(pIDate, pIPriceDate, pISecurityId);
+            Object _row_obj = issue63RetMapper.selectTIssue63Fund(pIDate, pIPriceDate, pISecurityId); Map<String, Object> _row = (_row_obj instanceof java.util.Map) ? (java.util.Map<String, Object>) _row_obj : null;
             if (_row != null) {
                 vMarketPrice = (_row.get("v_market_price") instanceof String ? (String) _row.get("v_market_price") : _row.get("v_market_price") != null ? String.valueOf(_row.get("v_market_price")) : null);
                 vBonusValue = (_row.get("v_bonus_value") instanceof String ? (String) _row.get("v_bonus_value") : _row.get("v_bonus_value") != null ? String.valueOf(_row.get("v_bonus_value")) : null);

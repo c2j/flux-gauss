@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 use regex::Regex;
 use crate::context::StatementContext;
+use crate::expr::is_nullish_java_expr;
 use crate::types::{ConversionError, DmlType, DmlStatement, Parameter, ProcedureInfo, ServiceCall, UnresolvedCall};
 
 fn ident_string(id: &ogsql_parser::Ident) -> String {
@@ -1291,21 +1292,27 @@ fn process_sql_statement(
                              .cloned()
                              .unwrap_or_else(|| "Object".to_string());
                          let rt = infer_select_result_type(&declared_type, &clean_sql);
-                         let line = if rt.contains("Map") {
-                             format!("{{ var _row = mapper.{}({}); if (_row != null) {{ {} = _row; }} }}", method_id, args, var_java)
-                         } else if rt != declared_type {
-                             format!("String _{} = mapper.{}({});", var_name, method_id, args)
-                         } else if declared_type != "Object" {
-                             format!("{{ var _val = mapper.{}({}); if (_val != null) {} = ({}) _val; }}", method_id, args, var_java, declared_type)
-                         } else {
-                             format!("{{ var _val = mapper.{}({}); if (_val != null) {} = _val; }}", method_id, args, var_java)
-                         };
+                          let line = if declared_type.contains("Map") {
+                              format!("{{ Object _tmp = mapper.{}({}); {} = (_tmp instanceof java.util.Map) ? (java.util.Map<String, Object>) _tmp : null; }}", method_id, args, var_java)
+                          } else if rt != declared_type && matches!(declared_type.as_str(), "Long" | "long" | "Integer" | "int" | "Double" | "double" | "Float" | "float" | "BigDecimal") {
+                              format!("{{ Object _strResult = mapper.{}({}); if (_strResult != null) {{ /* concatenated string assigned to {} var */ }} }}", method_id, args, declared_type)
+                          } else if declared_type == "Long" || declared_type == "long" {
+                              format!("{{ Object _val = mapper.{}({}); if (_val != null) {} = (_val instanceof Number ? ((Number)_val).longValue() : Long.parseLong(String.valueOf(_val))); }}", method_id, args, var_java)
+                          } else if declared_type == "Integer" || declared_type == "int" {
+                              format!("{{ Object _val = mapper.{}({}); if (_val != null) {} = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }}", method_id, args, var_java)
+                          } else if declared_type == "String" {
+                              format!("{} = String.valueOf(mapper.{}({}));", var_java, method_id, args)
+                          } else if declared_type != "Object" {
+                              format!("{{ Object _val = mapper.{}({}); if (_val != null) {} = ({}) _val; }}", method_id, args, var_java, declared_type)
+                          } else {
+                              format!("{{ Object _val = mapper.{}({}); if (_val != null) {} = _val; }}", method_id, args, var_java)
+                          };
                         (rt, line, String::new())
                     }
                 } else {
                     // Multiple INTO targets or qualified names — use Map
                     let row_var = next_select_var_name(proc);
-                    let line = format!("Map<String, Object> {} = mapper.{}({});", row_var, method_id, args);
+                    let line = format!("Object {}_obj = mapper.{}({}); Map<String, Object> {} = ({}_obj instanceof java.util.Map) ? (java.util.Map<String, Object>) {}_obj : null;", row_var, method_id, args, row_var, row_var, row_var);
                     proc.imports.insert("import java.util.Map;".to_string());
                     ("Map<String, Object>".to_string(), line, row_var)
                 };
@@ -1579,11 +1586,11 @@ fn process_procedure_call(
                         let target_is_int = target_type == "int" || target_type == "Integer";
                         let target_is_string = target_type == "String";
                         let arg_has_get = arg.contains(".get(");
-                        if target_is_string && arg_type_inferred == "long" {
+                        if target_is_string && arg_type_inferred == "long" && !is_nullish_java_expr(&arg) {
                             arg = format!("String.valueOf({})", arg);
-                        } else if target_is_string && (arg_type_inferred == "Object" || arg_type_inferred == "BigDecimal") {
+                        } else if target_is_string && (arg_type_inferred == "Object" || arg_type_inferred == "BigDecimal") && !is_nullish_java_expr(&arg) {
                             arg = format!("String.valueOf({})", arg);
-                        } else if target_is_long && arg_type_inferred == "String" {
+                        } else if target_is_long && arg_type_inferred == "String" && !is_nullish_java_expr(&arg) {
                             arg = format!("Long.parseLong(String.valueOf({}))", arg);
                         } else if target_is_long && arg_type_inferred == "BigDecimal" {
                             arg = format!("({}).longValue()", arg);
@@ -2375,11 +2382,15 @@ pub fn process_statement(
             Ok(())
         }
         PlStatement::Loop(loop_stmt) => {
+            proc.plain_loop_counter += 1;
+            let guard_var = format!("_loopGuard{}", proc.plain_loop_counter);
+            push_logic_line(proc, format!("int {} = 0;", guard_var));
             if let Some(label) = &loop_stmt.node.label {
                 push_logic_line(proc, format!("{}: while (true) {{", label));
             } else {
                 push_logic_line(proc, "while (true) {".into());
             }
+            push_logic_line(proc, format!("if (++{} > 1000) {{ break; }}", guard_var));
             for s in &loop_stmt.node.body {
                 process_statement(s, proc, ctx)?;
                 if let Some(last) = proc.java_logic_lines.last() {

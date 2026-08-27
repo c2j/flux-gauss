@@ -7,8 +7,11 @@ already works correctly and must not regress.
 
 To run: pytest tests/regress/test_issues.py -v
 """
+import json
 import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -59,6 +62,36 @@ def _run_pipeline(sql_file, cached_ast, tmp_path):
     return out_dir, pkg, class_name
 
 
+def _run_cli_pipeline(sql_files, tmp_path, full=True):
+    """Run the real Python CLI for regressions that span multiple SQL files."""
+    out_dir = Path(tmp_path) / "dest_cli"
+    source_paths = [str(Path(FIXTURES_DIR) / sql_file) for sql_file in sql_files]
+    command = [
+            sys.executable,
+            str(Path(fg.__file__).resolve()),
+            "-o",
+            str(out_dir),
+            "-s",
+            *source_paths,
+            "--skip-validate",
+        ]
+    if full:
+        command.append("--full")
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "OGSQL_BIN": fg.OGSQL_BIN},
+        timeout=120,
+    )
+    assert result.returncode == 0, (
+        f"Python CLI failed ({result.returncode})\n"
+        f"stdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}"
+    )
+    return str(out_dir)
+
+
 def _read_generated(output_dir, rel_path):
     fp = Path(output_dir) / rel_path
     if fp.exists():
@@ -80,6 +113,68 @@ def _test_path(output_dir, class_name):
 
 def _xml_path(output_dir, class_name):
     return f"src/main/resources/mapper/{class_name}Mapper.xml"
+
+
+# ── Issue #70: Same-schema standalone routines across files ─────
+
+class TestIssue70_MultiFileStandaloneRoutines:
+    def test_same_schema_routines_share_one_service(self, tmp_path):
+        out_dir = _run_cli_pipeline(
+            ["issue_70_fnc_a.sql", "issue_70_fnc_b.sql"], tmp_path
+        )
+        svc = _read_generated(out_dir, _service_path(out_dir, "Bigfund"))
+
+        assert "fncA(" in svc
+        assert "fncB(" in svc
+
+    def test_case_variant_package_names_merge_into_one_service(self, tmp_path):
+        """app.PKG_CASEFOLD and other.pkg_casefold both emit CasefoldService.java,
+        so they must merge rather than one silently overwriting the other."""
+        out_dir = _run_cli_pipeline(
+            ["issue_70_casefold_upper.sql", "issue_70_casefold_lower.sql"], tmp_path
+        )
+        svc = _read_generated(out_dir, _service_path(out_dir, "Casefold"))
+
+        assert svc, "CasefoldService not generated"
+        assert "instEntry(" in svc, f"method from the UPPER-case package lost:\n{svc}"
+        assert "delEntry(" in svc, f"method from the lower-case package lost:\n{svc}"
+
+    def test_other_source_file_change_regenerates_merged_service(self, tmp_path):
+        source_dir = Path(tmp_path) / "sql"
+        source_dir.mkdir()
+        sources = []
+        for filename in ("issue_70_fnc_a.sql", "issue_70_fnc_b.sql"):
+            destination = source_dir / filename
+            destination.write_text(
+                (Path(FIXTURES_DIR) / filename).read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            sources.append(str(destination))
+
+        out_dir = Path(tmp_path) / "dest_incremental"
+        command = [
+            sys.executable, str(Path(fg.__file__).resolve()),
+            "-o", str(out_dir), "-s", *sources, "--skip-validate",
+        ]
+        env = {**os.environ, "OGSQL_BIN": fg.OGSQL_BIN}
+        first = subprocess.run(command + ["--full"], capture_output=True, text=True,
+                               env=env, timeout=120)
+        assert first.returncode == 0, first.stderr
+
+        second_source = Path(sources[1])
+        second_source.write_text(
+            second_source.read_text(encoding="utf-8").replace("'_B'", "'_B2'"),
+            encoding="utf-8",
+        )
+        second = subprocess.run(command, capture_output=True, text=True, env=env, timeout=120)
+        assert second.returncode == 0, second.stderr
+        svc = _read_generated(str(out_dir), _service_path(str(out_dir), "Bigfund"))
+        assert "fncA(" in svc
+        assert "fncB(" in svc
+        assert '"_B2"' in svc
+
+        manifest = json.loads((out_dir / ".fluxgauss" / "manifest.json").read_text())
+        assert manifest["files"][sources[1]]["packages"] == ["BIGFUND"]
 
 
 # ── Issue #34: Request/Response DTO + Entity generation ──────────
@@ -1137,6 +1232,60 @@ class TestIssue64_BigDecimalEmptyInit:
         assert bad == [], f"Issue #64: numeric empty-string inits still present: {bad}"
 
 
+# ── Issue #75: orphaned try after statement failure ──────────────
+
+class TestIssue75_LoopExceptionBrace:
+    """Issue #75: try without catch when statement processing fails inside a
+    Block's exception handler. Guards brace balance, not one syntactic shape."""
+
+    def test_service_braces_balanced(self, cached_ast, tmp_path):
+        sql_file = "issue_75_loop_exception_brace.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+        delta = svc.count("{") - svc.count("}")
+        assert delta == 0, f"Issue #75: brace imbalance delta={delta}"
+
+    def test_no_orphaned_try(self, cached_ast, tmp_path):
+        sql_file = "issue_75_loop_exception_brace.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        # every `try {` must be followed by a `} catch` or `} finally`
+        n_try = len(re.findall(r'\btry\s*\{', svc))
+        n_handler = len(re.findall(r'\}\s*(catch|finally)\b', svc))
+        assert n_try <= n_handler, (
+            f"Issue #75: {n_try} try blocks but only {n_handler} catch/finally handlers"
+        )
+
+    def test_no_statement_processing_error(self, cached_ast, tmp_path):
+        sql_file = "issue_75_loop_exception_brace.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert "list_var" not in svc, "Issue #75: list_var leaked into output"
+        assert "处理语句失败" not in svc, "Issue #75: statement processing failed"
+
+
+# ── String-target coercion of same-class helper calls ───────────
+
+class TestStringTargetHelperCoercion:
+    """Known non-String and Object helper returns must convert safely to String."""
+
+    def test_helper_results_use_safe_string_conversion(self, cached_ast, tmp_path):
+        sql_file = "pkg_string_helper_coercion.sql"
+        out_dir, pkg, cls = _run_pipeline(sql_file, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert svc, "Service file not generated"
+
+        assert "public java.math.BigDecimal jsonObject(" in svc
+        assert "public Object jsonAppend(" in svc
+        assert re.search(r'\(String\)\s+this\.', svc) is None, (
+            "String target must not cast a same-class non-String helper result"
+        )
+        assert re.search(r'vItem\s*=\s*String\.valueOf\(this\.jsonObject\(', svc)
+        assert re.search(r'vJson\s*=\s*String\.valueOf\(this\.jsonAppend\(', svc)
+        assert re.search(r'vRec\.get\("amount"\)\s*!=\s*null', svc)
+
+
 # ── Meta: Verify all issue fixtures parse correctly ──────────────
 
 class TestIssueFixturesParse:
@@ -1161,6 +1310,7 @@ class TestIssueFixturesParse:
         "issue_62_substr_helper.sql",
         "issue_63_varchar2_return.sql",
         "issue_64_bigdecimal_empty_init.sql",
+        "pkg_string_helper_coercion.sql",
     ]
 
     @pytest.mark.parametrize("sql_file", ISSUE_FIXTURES)

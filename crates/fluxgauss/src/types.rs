@@ -220,6 +220,7 @@ pub struct ProcedureInfo {
 
     pub select_counter: usize,
     pub for_loop_counter: usize,
+    pub plain_loop_counter: usize,
     pub catch_counter: usize,
 
     pub source_file: String,
@@ -275,6 +276,7 @@ impl ProcedureInfo {
             all_proc_params: HashMap::new(),
         select_counter: 0,
         for_loop_counter: 0,
+        plain_loop_counter: 0,
         catch_counter: 0,
             source_file: String::new(),
             source_path: String::new(),
@@ -303,6 +305,7 @@ pub struct PackageInfo {
     pub table_refs: HashSet<String>,
     pub package_vars: HashMap<String, VarInfo>,
     pub source_file: String,
+    pub source_files: Vec<String>,
     pub comments: Vec<CommentBlock>,
     pub java_package: String,
     pub custom_types: HashMap<String, CustomTypeInfo>,
@@ -359,7 +362,7 @@ impl PackageSummary {
     }
 
     pub fn find_procedure(&self, proc_name: &str) -> Option<&ProcedureSummary> {
-        self.procedures.iter().find(|p| p.proc_name == proc_name)
+        self.procedures.iter().find(|p| p.proc_name.eq_ignore_ascii_case(proc_name))
     }
 }
 
@@ -433,6 +436,7 @@ pub struct ProcedureMapping {
 pub struct ParsedPackages {
     pub packages: Vec<PackageInfo>,
     pub summaries: Vec<PackageSummary>,
+    pub warnings: Vec<String>,
     pub skipped: Vec<SkippedItem>,
     pub errors: Vec<ConversionError>,
 }
@@ -440,6 +444,7 @@ pub struct ParsedPackages {
 pub struct AnalyzedPackages {
     pub packages: Vec<PackageInfo>,
     pub summaries: Vec<PackageSummary>,
+    pub warnings: Vec<String>,
     pub skipped: Vec<SkippedItem>,
     pub errors: Vec<ConversionError>,
 }
@@ -583,6 +588,7 @@ mod tests {
                     table_refs: HashSet::new(),
                     package_vars: HashMap::new(),
                     source_file: "pkg_order.sql".into(),
+                    source_files: vec!["pkg_order.sql".into()],
                     comments: Vec::new(),
                     java_package: "com.example".into(),
                     custom_types: HashMap::new(),

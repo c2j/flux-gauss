@@ -31,10 +31,10 @@ class Issue45ExceptionServiceTest {
         String pSecurityCode = "test_pSecurityCode";
         AtomicReference<String> pOSucceedRef = new AtomicReference<>(null);
         AtomicReference<String> pOSecurityIdRef = new AtomicReference<>(null);
-        when(issue45ExceptionMapper.selectTIssue45Security(any())).thenReturn("test_value");
-        when(issue45ExceptionMapper.selectTIssue45SecurityBak(any())).thenReturn("test_value");
-        when(issue45ExceptionMapper.selectTIssue45Security_1(any())).thenReturn("test_value");
-        when(issue45ExceptionMapper.selectTIssue45Security_2(any())).thenReturn("test_value");
+        when(issue45ExceptionMapper.selectTIssue45Security((String) any())).thenReturn("1");
+        when(issue45ExceptionMapper.selectTIssue45SecurityBak((String) any())).thenReturn("1");
+        when(issue45ExceptionMapper.selectTIssue45Security_1((String) any())).thenReturn("1");
+        when(issue45ExceptionMapper.selectTIssue45Security_2((String) any())).thenReturn("1");
         service.procLinkEtfRepay(pSecurityCode, pOSucceedRef, pOSecurityIdRef);
     }
 
@@ -43,10 +43,10 @@ class Issue45ExceptionServiceTest {
     void test_procSimpleException_success() {
         String pSecurityCode = "test_pSecurityCode";
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
-        when(issue45ExceptionMapper.selectTIssue45Security(any())).thenReturn("test_value");
-        when(issue45ExceptionMapper.selectTIssue45SecurityBak(any())).thenReturn("test_value");
-        when(issue45ExceptionMapper.selectTIssue45Security_1(any())).thenReturn("test_value");
-        when(issue45ExceptionMapper.selectTIssue45Security_2(any())).thenReturn("test_value");
+        when(issue45ExceptionMapper.selectTIssue45Security((String) any())).thenReturn("1");
+        when(issue45ExceptionMapper.selectTIssue45SecurityBak((String) any())).thenReturn("1");
+        when(issue45ExceptionMapper.selectTIssue45Security_1((String) any())).thenReturn("1");
+        when(issue45ExceptionMapper.selectTIssue45Security_2((String) any())).thenReturn("1");
         service.procSimpleException(pSecurityCode, pResultRef);
     }
 
@@ -55,10 +55,10 @@ class Issue45ExceptionServiceTest {
     void test_procNestedException_success() {
         String pCode = "test_pCode";
         AtomicReference<String> pMsgRef = new AtomicReference<>(null);
-        when(issue45ExceptionMapper.selectTIssue45Security(any())).thenReturn("test_value");
-        when(issue45ExceptionMapper.selectTIssue45SecurityBak(any())).thenReturn("test_value");
-        when(issue45ExceptionMapper.selectTIssue45Security_1(any())).thenReturn("test_value");
-        when(issue45ExceptionMapper.selectTIssue45Security_2(any())).thenReturn("test_value");
+        when(issue45ExceptionMapper.selectTIssue45Security((String) any())).thenReturn("1");
+        when(issue45ExceptionMapper.selectTIssue45SecurityBak((String) any())).thenReturn("1");
+        when(issue45ExceptionMapper.selectTIssue45Security_1((String) any())).thenReturn("1");
+        when(issue45ExceptionMapper.selectTIssue45Security_2((String) any())).thenReturn("1");
         service.procNestedException(pCode, pMsgRef);
     }
 }

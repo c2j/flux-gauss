@@ -26,9 +26,9 @@ public class Issue44BugsService {
         String vName = null;
         String vSql = null;
         vSql = "SELECT order_id, order_name FROM t_issue44_orders WHERE 1=1";
-        { var _val = issue44BugsMapper.selectTIssue44Orders(pStatus, pDate); if (_val != null) vCount = (Integer) _val; }
+        { Object _val = issue44BugsMapper.selectTIssue44Orders(pStatus, pDate); if (_val != null) vCount = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }
         if (vCount > 0) {
-            { var _val = issue44BugsMapper.selectTIssue44Orders_1(pStatus, pDate); if (_val != null) vName = (String) _val; }
+            vName = String.valueOf(issue44BugsMapper.selectTIssue44Orders_1(pStatus, pDate));
             pResult.set(String.valueOf(vName));
         } else {
             if (java.util.Objects.equals(pStatus, "ACTIVE")) {
@@ -56,7 +56,7 @@ public class Issue44BugsService {
             vSql = String.valueOf(vSql).concat(String.valueOf(" AND status = 'CLOSED'"));
         }
         if (pFilter != null) {
-            String _v_count = issue44BugsMapper.selectTIssue44Orders_2(pFilter, pMode);
+            { Object _strResult = issue44BugsMapper.selectTIssue44Orders_2(pFilter, pMode); if (_strResult != null) { /* concatenated string assigned to Integer var */ } }
             pResult.set(String.valueOf(String.valueOf("FILTERED: ").concat(String.valueOf(String.valueOf(vCount)))));
         } else {
             pResult.set("ALL_MODE");
@@ -72,7 +72,7 @@ public class Issue44BugsService {
             vSql = String.valueOf(vSql).concat(String.valueOf(" GROUP BY status"));
         } else {
         }
-        { var _val = issue44BugsMapper.selectTIssue44Orders_3(pType, pSubType); if (_val != null) vAmount = (java.math.BigDecimal) _val; }
+        { Object _val = issue44BugsMapper.selectTIssue44Orders_3(pType, pSubType); if (_val != null) vAmount = (java.math.BigDecimal) _val; }
         if (vAmount.compareTo(java.math.BigDecimal.valueOf(0)) > 0) {
             pResult.set(String.valueOf(String.valueOf("AMOUNT: ").concat(String.valueOf(String.valueOf(vAmount)))));
         } else if (java.util.Objects.equals(pType, "SUMMARY")) {
@@ -86,7 +86,7 @@ public class Issue44BugsService {
     public void procNonDynamicIfElse(String pFlag, AtomicReference<String> pResult) {
         String vName = null;
         if (java.util.Objects.equals(pFlag, "1")) {
-            { var _val = issue44BugsMapper.selectTIssue44Orders_4(pFlag); if (_val != null) vName = (String) _val; }
+            vName = String.valueOf(issue44BugsMapper.selectTIssue44Orders_4(pFlag));
             pResult.set(String.valueOf(vName));
         } else if (java.util.Objects.equals(pFlag, "2")) {
             if (vName == null) {
@@ -105,7 +105,7 @@ public class Issue44BugsService {
         String vSql = null;
         vSql = "SELECT COUNT(*) FROM t_issue44_orders WHERE 1=1";
         if (pCode != null) {
-            String _v_count = issue44BugsMapper.selectTIssue44Orders_5(pCode);
+            { Object _strResult = issue44BugsMapper.selectTIssue44Orders_5(pCode); if (_strResult != null) { /* concatenated string assigned to Integer var */ } }
             if (vCount > 10) {
                 pResult.set(String.valueOf(String.valueOf("MANY: ").concat(String.valueOf(String.valueOf(vCount)))));
             } else {

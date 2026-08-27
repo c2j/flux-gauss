@@ -44,9 +44,18 @@ cd dest && mvn test      # run generated unit tests
 
 ### Requirements
 
-- Python 3.9+
+- Python 3.10+ — `converter/flux_gauss.py` uses PEP 604 (`int | None`) at module level, so Python 3.9 fails at import with `TypeError: unsupported operand type(s) for |`. `tests/regress/conftest.py` enforces this. (The README's "Python 3.9+" claim is stale.)
 - Java 17+ (for `mvn compile` verification)
 - `ogsql` binary — resolved via `OGSQL_BIN` env var, `PATH`, or local fallback paths. Build from source: `git clone https://github.com/c2j/ogsql-parser.git && cd ogsql-parser && cargo build --release --features full`
+
+### ogsql version skew (known hazard)
+
+The two engines currently parse with **different** parser versions:
+
+- Rust engine pins `ogsql-parser` at tag `v0.8.32` (`Cargo.toml`, `Cargo.lock`).
+- CI builds the `ogsql` binary used by the **Python** engine from `ref: main` (`.github/workflows/ci.yml`) — a moving target.
+
+This is a latent Python/Rust parity hazard: a parser change can shift one engine's output without touching the other. The binary at repo root is 0.8.32.
 
 ## Architecture
 

@@ -1,0 +1,31 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue72bMathStringArgsMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue72bMathStringArgsService {
+    private static final Logger log = LoggerFactory.getLogger(Issue72bMathStringArgsService.class);
+
+    private final Issue72bMathStringArgsMapper issue72bMathStringArgsMapper;
+
+    public Issue72bMathStringArgsService(Issue72bMathStringArgsMapper issue72bMathStringArgsMapper) {
+        this.issue72bMathStringArgsMapper = issue72bMathStringArgsMapper;
+    }
+    // Source: pkg_issue72b.prc_math_wall (PROCEDURE) — issue_72b_math_string_args.sql:7-16
+    public void prcMathWall(AtomicReference<String> pOSucceed) {
+        String vFlag = null;
+        Long vAbs = 0L;
+        Long vRnd = 0L;
+        pOSucceed.set(null);
+        vFlag = "-5";
+        vAbs = (long) (Math.abs(vFlag));
+        vRnd = (long) (Math.round(vFlag));
+        pOSucceed.set("0");
+    }
+}

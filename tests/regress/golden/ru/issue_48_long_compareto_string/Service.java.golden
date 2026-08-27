@@ -32,7 +32,7 @@ public class Issue48CompareService {
         } else {
             pResult.set("NO_MATCH");
         }
-        { var _val = issue48CompareMapper.selectDual(pProId); if (_val != null) vCount = (Integer) _val; }
+        { Object _val = issue48CompareMapper.selectDual(pProId); if (_val != null) vCount = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }
     }
 
     // Source: pkg_issue48_compare.proc_check_count (PROCEDURE) — {FIXTURES_ROOT}/issue_48_long_compareto_string.sql:80-95

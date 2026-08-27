@@ -174,6 +174,39 @@
         <if test="pOrderBy != null">ORDER BY ${pOrderBy}</if>
     </select>
 
+    <!-- Source: gauss_complete_examples.sql:448-448 — pkg_dynamic_for_loop.proc_dynamic_for_processing.insertProcDynamicForProcessing -->
+    <insert id="insertProcDynamicForProcessing">
+        insert into ${pTableName}_hist select *, #{CURRENT_TIMESTAMP}, 'ARCHIVED' from ${pTableName} where id = #{vPkId, jdbcType=INTEGER, javaType=Integer}
+    </insert>
+
+    <!-- Source: gauss_complete_examples.sql:449-449 — pkg_dynamic_for_loop.proc_dynamic_for_processing.updateProcDynamicForProcessing_2 -->
+    <update id="updateProcDynamicForProcessing_2">
+        update ${pTableName} set status = 'ARCHIVED', archive_time = current_timestamp where id = #{vPkId, jdbcType=INTEGER, javaType=Integer}
+    </update>
+
+    <!-- Source: gauss_complete_examples.sql:454-454 — pkg_dynamic_for_loop.proc_dynamic_for_processing.updateProcDynamicForProcessing_3 -->
+    <update id="updateProcDynamicForProcessing_3">
+        UPDATE ${pTableName}
+          SET
+            status =(java.util.Objects.equals(vStatus,
+                PENDING) ? PROCESSING :(java.util.Objects.equals(vStatus,
+                  PROCESSING) ? COMPLETED : vStatus)),
+            update_time = CURRENT_TIMESTAMP,
+            update_count = NVL(update_count,
+              0) + 1
+        WHERE id = #{vPkId, jdbcType=INTEGER, javaType=Integer}
+    </update>
+
+    <!-- Source: gauss_complete_examples.sql:464-464 — pkg_dynamic_for_loop.proc_dynamic_for_processing.updateProcDynamicForProcessing_4 -->
+    <update id="updateProcDynamicForProcessing_4">
+        update ${pTableName} set is_deleted = 1, delete_time = current_timestamp where id = #{vPkId, jdbcType=INTEGER, javaType=Integer}
+    </update>
+
+    <!-- Source: gauss_complete_examples.sql:469-469 — pkg_dynamic_for_loop.proc_dynamic_for_processing.insertScanLog -->
+    <insert id="insertScanLog">
+        insert into scan_log (scan_time, table_name, record_id, record_status) values (current_timestamp, #{pTableName, jdbcType=VARCHAR, javaType=String}, #{vPkId, jdbcType=INTEGER, javaType=Integer}, #{vStatus, jdbcType=VARCHAR, javaType=String})
+    </insert>
+
     <!-- Source: gauss_complete_examples.sql:480-480 — pkg_dynamic_for_loop.proc_dynamic_for_processing.insertPerformanceLog_1 -->
     <insert id="insertPerformanceLog_1">
         insert into performance_log (log_time, operation, rows_affected, elapsed_ms) values (current_timestamp, 'dynamic_for_' || #{pProcessType, jdbcType=VARCHAR, javaType=String}, #{vRowCount, jdbcType=INTEGER, javaType=Integer}, extract(EPOCH from (current_timestamp - #{vStartTime, jdbcType=TIMESTAMP, javaType=java.sql.Timestamp})) * 1000)
@@ -339,13 +372,13 @@
         order by salary desc
     </select>
 
-    <!-- Source: gauss_complete_examples.sql:728-728 — pkg_cursor_lifecycle.proc_enhance_cursor.updateProcEnhanceCursor_2 -->
-    <update id="updateProcEnhanceCursor_2">
+    <!-- Source: gauss_complete_examples.sql:728-728 — pkg_cursor_lifecycle.proc_enhance_cursor.updateProcEnhanceCursor_5 -->
+    <update id="updateProcEnhanceCursor_5">
         create table ${vTemp} (employee_id INTEGER, employee_name varchar2(100), salary NUMERIC(18, 2), department_id INTEGER, hire_date DATE, years_of_service NUMERIC(5, 2), salary_level varchar2(20), bonus_eligible INTEGER)
     </update>
 
-    <!-- Source: gauss_complete_examples.sql:738-738 — pkg_cursor_lifecycle.proc_enhance_cursor.insertProcEnhanceCursor -->
-    <insert id="insertProcEnhanceCursor">
+    <!-- Source: gauss_complete_examples.sql:738-738 — pkg_cursor_lifecycle.proc_enhance_cursor.insertProcEnhanceCursor_1 -->
+    <insert id="insertProcEnhanceCursor_1">
         insert into ${vTemp} values (#{vId, jdbcType=INTEGER, javaType=Integer}, #{vName, jdbcType=VARCHAR, javaType=String}, #{vSalary, jdbcType=NUMERIC, javaType=java.math.BigDecimal}, #{vDeptId, jdbcType=INTEGER, javaType=Integer}, #{vHireDate, jdbcType=DATE, javaType=java.sql.Date}, extract(year from current_date) - extract(year from #{vHireDate, jdbcType=DATE, javaType=java.sql.Date}), case when #{vSalary, jdbcType=NUMERIC, javaType=java.math.BigDecimal} &gt; 80000 then 'SENIOR' else 'JUNIOR' end, case when extract(year from current_date) - extract(year from #{vHireDate, jdbcType=DATE, javaType=java.sql.Date}) &gt;= 2 then 1 else 0 end)
     </insert>
 

@@ -32,7 +32,7 @@ public class Issue41TypesService {
     public void procTransfer(long pFromAccount, long pToAccount, java.math.BigDecimal pAmount, java.sql.Date pTransferDate, boolean pIsUrgent, AtomicReference<java.math.BigDecimal> pNewBalance, AtomicReference<String> pStatus) {
         java.math.BigDecimal vFromBalance = java.math.BigDecimal.ZERO;
         java.math.BigDecimal vToBalance = java.math.BigDecimal.ZERO;
-        { var _val = issue41TypesMapper.selectTIssue41Account(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent); if (_val != null) vFromBalance = (java.math.BigDecimal) _val; }
+        { Object _val = issue41TypesMapper.selectTIssue41Account(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent); if (_val != null) vFromBalance = (java.math.BigDecimal) _val; }
         if (vFromBalance.compareTo(pAmount) < 0) {
             log.info("");
         }
@@ -41,7 +41,7 @@ public class Issue41TypesService {
         }
         vFromBalance = vFromBalance.subtract(pAmount);
         issue41TypesMapper.updateTIssue41Account(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent, vFromBalance);
-        { var _val = issue41TypesMapper.selectTIssue41Account_1(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent); if (_val != null) vToBalance = (java.math.BigDecimal) _val; }
+        { Object _val = issue41TypesMapper.selectTIssue41Account_1(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent); if (_val != null) vToBalance = (java.math.BigDecimal) _val; }
         vToBalance = vToBalance.add(pAmount);
         issue41TypesMapper.updateTIssue41Account_1(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent, vToBalance);
         pNewBalance.set(vFromBalance);
@@ -55,7 +55,7 @@ public class Issue41TypesService {
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
         try {
-            { var _val = issue41TypesMapper.selectTIssue41Account_2(pAccountId, pAmount); if (_val != null) vBalance = (java.math.BigDecimal) _val; }
+            { Object _val = issue41TypesMapper.selectTIssue41Account_2(pAccountId, pAmount); if (_val != null) vBalance = (java.math.BigDecimal) _val; }
             if (pAmount.compareTo(java.math.BigDecimal.valueOf(0)) <= 0) {
                 log.info("");
             }
@@ -92,7 +92,7 @@ public class Issue41TypesService {
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
         try {
-            Map<String, Object> _row = issue41TypesMapper.selectTIssue41Account_3(pAccountId);
+            Object _row_obj = issue41TypesMapper.selectTIssue41Account_3(pAccountId); Map<String, Object> _row = (_row_obj instanceof java.util.Map) ? (java.util.Map<String, Object>) _row_obj : null;
             if (_row != null) {
                 vBalance = (_row.get("v_balance") instanceof java.math.BigDecimal ? (java.math.BigDecimal) _row.get("v_balance") : java.math.BigDecimal.ZERO);
                 vActive = _row.get("v_active");

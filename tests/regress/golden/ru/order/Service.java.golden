@@ -33,7 +33,7 @@ public class OrderService {
     public void cancelOrder(long pOrderId) {
         Long vProductId = 0L;
         Integer vQty = 0;
-        Map<String, Object> _row = orderMapper.selectTOrders(pOrderId, vProductId, vQty);
+        Object _row_obj = orderMapper.selectTOrders(pOrderId, vProductId, vQty); Map<String, Object> _row = (_row_obj instanceof java.util.Map) ? (java.util.Map<String, Object>) _row_obj : null;
         if (_row != null) {
             vProductId = (_row.get("v_product_id") instanceof Number ? ((Number) _row.get("v_product_id")).longValue() : 0L);
             vQty = (_row.get("v_qty") instanceof Number ? ((Number) _row.get("v_qty")).intValue() : 0);

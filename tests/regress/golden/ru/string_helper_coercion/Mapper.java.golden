@@ -1,0 +1,12 @@
+package com.example.demo.mapper;
+
+import java.util.List;
+import java.util.Map;
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface StringHelperCoercionMapper {
+
+    // {FIXTURES_ROOT}/pkg_string_helper_coercion.sql:12 — string_helper_coercion.func_for_dynamic_to_json
+    List<Map<String, Object>> selectFuncForDynamicToJson(@Param("pTableName") String pTableName, @Param("pWhereClause") String pWhereClause);
+}

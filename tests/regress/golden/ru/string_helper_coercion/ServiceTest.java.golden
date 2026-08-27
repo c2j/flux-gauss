@@ -1,0 +1,35 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.StringHelperCoercionMapper;
+import com.example.demo.service.StringHelperCoercionService;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/pkg_string_helper_coercion.sql
+class StringHelperCoercionServiceTest {
+
+    @Mock
+    private StringHelperCoercionMapper stringHelperCoercionMapper;
+
+    @InjectMocks
+    private StringHelperCoercionService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_funcForDynamicToJson_success() {
+        String pTableName = "test_pTableName";
+        String pWhereClause = "test_pWhereClause";
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(stringHelperCoercionMapper.selectFuncForDynamicToJson((String) any(), (String) any())).thenReturn(java.util.List.of(m)); }
+        var result = service.funcForDynamicToJson(pTableName, pWhereClause);
+    }
+}

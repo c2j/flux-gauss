@@ -86,7 +86,7 @@ public class Issue44IfElsifGotoService {
                 vSql = vSql + " AND order_name LIKE '%" + pSubType + "%'";
             }
         }
-        vAmount = ((java.math.BigDecimal) issue44IfElsifGotoMapper.selectTIssue44OrdersSumAmount(pType, pSubType));
+        vAmount = new java.math.BigDecimal(String.valueOf(issue44IfElsifGotoMapper.selectTIssue44OrdersSumAmount(pType, pSubType)));
         if (vAmount == null) vAmount = java.math.BigDecimal.ZERO;
         if (vAmount.compareTo(java.math.BigDecimal.valueOf(0)) > 0) {
             pResult.set("AMOUNT: " + vAmount);

@@ -366,7 +366,7 @@ public class WarpdriverStressTestService {
             vTasks = this.stringToArray(pTaskList, ",");
             for (int i = 1; i <= (vTasks).size(); i++) {
                 vTaskId = Long.valueOf(String.valueOf(((java.util.List)(vTasks)).get((int)(i) - 1)));
-                vJobName = pJobPrefix + vTaskId + "_" + new java.text.SimpleDateFormat("HHmSSSs").format(new java.sql.Timestamp(System.currentTimeMillis()));
+                vJobName = String.valueOf(pJobPrefix + vTaskId + "_" + new java.text.SimpleDateFormat("HHmSSSs").format(new java.sql.Timestamp(System.currentTimeMillis())));
                 // Originally: DBE_SCHEDULER job for spGotoCleanupMaster
                 this.spGotoCleanupMaster(vTaskId, new java.util.concurrent.atomic.AtomicReference<>());
                 _sqlRowCount = warpdriverStressTestMapper.insertJobDispatchLog(pTaskList, pJobPrefix, vTaskId, vJobName);
@@ -387,6 +387,7 @@ public class WarpdriverStressTestService {
         int _sqlRowCount = 0;
         int vCurIdx = 0;
         List<Map<String, Object>> vCurResult = null;
+        int _loopGuard1 = 0;
         java.util.Map<String, Object> _row = null;
         if (pDepth > 10) {
             return 0;
@@ -395,6 +396,7 @@ public class WarpdriverStressTestService {
         vCurIdx = 0;
         if (vCurResult == null) vCurResult = new java.util.ArrayList<>();
         while (true) {
+            if (++_loopGuard1 > 1000) { break; }
             found = vCurIdx < vCurResult.size();
             if (found) {
                 _row = vCurResult.get(vCurIdx);
@@ -423,7 +425,7 @@ public class WarpdriverStressTestService {
         for (int vIdx = 0; vIdx <= this.jsonbArrayLength(vArr) - 1; vIdx++) {
             vItem = vArr;
             vNewPrice = java.math.BigDecimal.valueOf((0)).multiply((java.math.BigDecimal.valueOf(1).subtract(pDiscount)));
-            vResult = vResult + this.jsonbBuildObject("product_id", String.valueOf(0), "original_price", String.valueOf((0)), "discount_rate", String.valueOf(pDiscount), "final_price", String.valueOf((vNewPrice).setScale((int)(2), java.math.RoundingMode.HALF_UP)), "processed_at", String.valueOf(new java.sql.Timestamp(System.currentTimeMillis())));
+            vResult = String.valueOf(vResult + this.jsonbBuildObject("product_id", String.valueOf(0), "original_price", String.valueOf((0)), "discount_rate", String.valueOf(pDiscount), "final_price", String.valueOf((vNewPrice).setScale((int)(2), java.math.RoundingMode.HALF_UP)), "processed_at", String.valueOf(new java.sql.Timestamp(System.currentTimeMillis()))));
         }
         return this.jsonbBuildObject("items", String.valueOf(vResult), "total_count", String.valueOf(this.jsonbArrayLength(vArr)), "summary_discount", String.valueOf(pDiscount));
     }
@@ -462,7 +464,7 @@ public class WarpdriverStressTestService {
         int _sqlRowCount = 0;
         try {
             pFinalBal.set(null);
-            vBalance = ((java.math.BigDecimal) warpdriverStressTestMapper.selectAccounts(pAccountId, pAmount));
+            vBalance = new java.math.BigDecimal(String.valueOf(warpdriverStressTestMapper.selectAccounts(pAccountId, pAmount)));
             if (vBalance == null) vBalance = java.math.BigDecimal.ZERO;
             vSp1 = "sp_pre_" + pAccountId;
             // SAVEPOINT vSp1 — use TransactionAspectSupport.currentTransactionStatus().createSavepoint() if needed

@@ -29,14 +29,14 @@ class Issue44BugsServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procDynamicSqlIfElse_success() {
         String pStatus = "test_pStatus";
-        String pDate = "2024-01-01";
+        String pDate = "20240101";
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
-        when(issue44BugsMapper.selectTIssue44Orders(any(), any())).thenReturn(999);
-        when(issue44BugsMapper.selectTIssue44Orders_1(any(), any())).thenReturn("test_value");
-        when(issue44BugsMapper.selectTIssue44Orders_2(any(), any())).thenReturn("test_value");
-        when(issue44BugsMapper.selectTIssue44Orders_3(any(), any())).thenReturn(new java.math.BigDecimal("999.99"));
-        when(issue44BugsMapper.selectTIssue44Orders_4(any())).thenReturn("test_value");
-        when(issue44BugsMapper.selectTIssue44Orders_5(any())).thenReturn("test_value");
+        when(issue44BugsMapper.selectTIssue44Orders((String) any(), (String) any())).thenReturn(999);
+        when(issue44BugsMapper.selectTIssue44Orders_1((String) any(), (String) any())).thenReturn("1");
+        when(issue44BugsMapper.selectTIssue44Orders_2((String) any(), (Integer) any())).thenReturn("1");
+        when(issue44BugsMapper.selectTIssue44Orders_3((String) any(), (String) any())).thenReturn(new java.math.BigDecimal("999.99"));
+        when(issue44BugsMapper.selectTIssue44Orders_4((String) any())).thenReturn("1");
+        when(issue44BugsMapper.selectTIssue44Orders_5((String) any())).thenReturn("1");
         service.procDynamicSqlIfElse(pStatus, pDate, pResultRef);
     }
 
@@ -46,12 +46,12 @@ class Issue44BugsServiceTest {
         String pFilter = "test_pFilter";
         Integer pMode = 1;
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
-        when(issue44BugsMapper.selectTIssue44Orders(any(), any())).thenReturn(999);
-        when(issue44BugsMapper.selectTIssue44Orders_1(any(), any())).thenReturn("test_value");
-        when(issue44BugsMapper.selectTIssue44Orders_2(any(), any())).thenReturn("test_value");
-        when(issue44BugsMapper.selectTIssue44Orders_3(any(), any())).thenReturn(new java.math.BigDecimal("999.99"));
-        when(issue44BugsMapper.selectTIssue44Orders_4(any())).thenReturn("test_value");
-        when(issue44BugsMapper.selectTIssue44Orders_5(any())).thenReturn("test_value");
+        when(issue44BugsMapper.selectTIssue44Orders((String) any(), (String) any())).thenReturn(999);
+        when(issue44BugsMapper.selectTIssue44Orders_1((String) any(), (String) any())).thenReturn("1");
+        when(issue44BugsMapper.selectTIssue44Orders_2((String) any(), (Integer) any())).thenReturn("1");
+        when(issue44BugsMapper.selectTIssue44Orders_3((String) any(), (String) any())).thenReturn(new java.math.BigDecimal("999.99"));
+        when(issue44BugsMapper.selectTIssue44Orders_4((String) any())).thenReturn("1");
+        when(issue44BugsMapper.selectTIssue44Orders_5((String) any())).thenReturn("1");
         service.procDynamicSqlIfElsif(pFilter, pMode, pResultRef);
     }
 
@@ -61,12 +61,12 @@ class Issue44BugsServiceTest {
         String pType = "test_pType";
         String pSubType = "test_pSubType";
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
-        when(issue44BugsMapper.selectTIssue44Orders(any(), any())).thenReturn(999);
-        when(issue44BugsMapper.selectTIssue44Orders_1(any(), any())).thenReturn("test_value");
-        when(issue44BugsMapper.selectTIssue44Orders_2(any(), any())).thenReturn("test_value");
-        when(issue44BugsMapper.selectTIssue44Orders_3(any(), any())).thenReturn(new java.math.BigDecimal("999.99"));
-        when(issue44BugsMapper.selectTIssue44Orders_4(any())).thenReturn("test_value");
-        when(issue44BugsMapper.selectTIssue44Orders_5(any())).thenReturn("test_value");
+        when(issue44BugsMapper.selectTIssue44Orders((String) any(), (String) any())).thenReturn(999);
+        when(issue44BugsMapper.selectTIssue44Orders_1((String) any(), (String) any())).thenReturn("1");
+        when(issue44BugsMapper.selectTIssue44Orders_2((String) any(), (Integer) any())).thenReturn("1");
+        when(issue44BugsMapper.selectTIssue44Orders_3((String) any(), (String) any())).thenReturn(new java.math.BigDecimal("999.99"));
+        when(issue44BugsMapper.selectTIssue44Orders_4((String) any())).thenReturn("1");
+        when(issue44BugsMapper.selectTIssue44Orders_5((String) any())).thenReturn("1");
         service.procNestedDynamicIf(pType, pSubType, pResultRef);
     }
 
@@ -75,12 +75,12 @@ class Issue44BugsServiceTest {
     void test_procNonDynamicIfElse_success() {
         String pFlag = "1";
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
-        when(issue44BugsMapper.selectTIssue44Orders(any(), any())).thenReturn(999);
-        when(issue44BugsMapper.selectTIssue44Orders_1(any(), any())).thenReturn("test_value");
-        when(issue44BugsMapper.selectTIssue44Orders_2(any(), any())).thenReturn("test_value");
-        when(issue44BugsMapper.selectTIssue44Orders_3(any(), any())).thenReturn(new java.math.BigDecimal("999.99"));
-        when(issue44BugsMapper.selectTIssue44Orders_4(any())).thenReturn("test_value");
-        when(issue44BugsMapper.selectTIssue44Orders_5(any())).thenReturn("test_value");
+        when(issue44BugsMapper.selectTIssue44Orders((String) any(), (String) any())).thenReturn(999);
+        when(issue44BugsMapper.selectTIssue44Orders_1((String) any(), (String) any())).thenReturn("1");
+        when(issue44BugsMapper.selectTIssue44Orders_2((String) any(), (Integer) any())).thenReturn("1");
+        when(issue44BugsMapper.selectTIssue44Orders_3((String) any(), (String) any())).thenReturn(new java.math.BigDecimal("999.99"));
+        when(issue44BugsMapper.selectTIssue44Orders_4((String) any())).thenReturn("1");
+        when(issue44BugsMapper.selectTIssue44Orders_5((String) any())).thenReturn("1");
         service.procNonDynamicIfElse(pFlag, pResultRef);
     }
 
@@ -89,12 +89,12 @@ class Issue44BugsServiceTest {
     void test_procChainedIfWithConcat_success() {
         String pCode = "test_pCode";
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
-        when(issue44BugsMapper.selectTIssue44Orders(any(), any())).thenReturn(999);
-        when(issue44BugsMapper.selectTIssue44Orders_1(any(), any())).thenReturn("test_value");
-        when(issue44BugsMapper.selectTIssue44Orders_2(any(), any())).thenReturn("test_value");
-        when(issue44BugsMapper.selectTIssue44Orders_3(any(), any())).thenReturn(new java.math.BigDecimal("999.99"));
-        when(issue44BugsMapper.selectTIssue44Orders_4(any())).thenReturn("test_value");
-        when(issue44BugsMapper.selectTIssue44Orders_5(any())).thenReturn("test_value");
+        when(issue44BugsMapper.selectTIssue44Orders((String) any(), (String) any())).thenReturn(999);
+        when(issue44BugsMapper.selectTIssue44Orders_1((String) any(), (String) any())).thenReturn("1");
+        when(issue44BugsMapper.selectTIssue44Orders_2((String) any(), (Integer) any())).thenReturn("1");
+        when(issue44BugsMapper.selectTIssue44Orders_3((String) any(), (String) any())).thenReturn(new java.math.BigDecimal("999.99"));
+        when(issue44BugsMapper.selectTIssue44Orders_4((String) any())).thenReturn("1");
+        when(issue44BugsMapper.selectTIssue44Orders_5((String) any())).thenReturn("1");
         service.procChainedIfWithConcat(pCode, pResultRef);
     }
 }
