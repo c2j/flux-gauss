@@ -220,6 +220,7 @@ pub struct ProcedureInfo {
 
     pub select_counter: usize,
     pub for_loop_counter: usize,
+    pub plain_loop_counter: usize,
     pub catch_counter: usize,
 
     pub source_file: String,
@@ -275,6 +276,7 @@ impl ProcedureInfo {
             all_proc_params: HashMap::new(),
         select_counter: 0,
         for_loop_counter: 0,
+        plain_loop_counter: 0,
         catch_counter: 0,
             source_file: String::new(),
             source_path: String::new(),

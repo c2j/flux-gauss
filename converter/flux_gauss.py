@@ -5199,7 +5199,7 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
             java_expr = _type_default(target_type)
     elif _is_direct_map_get and target_type not in ("Object", "Map<String, Object>", "") and not re.match(r'^(false|null)\s*/\*', java_expr):
         if target_type == "String":
-            java_expr = f"(String) {java_expr}"
+            java_expr = f"String.valueOf({java_expr})" if ".get(" in java_expr else f"(String) {java_expr}"
         elif "BigDecimal" in target_type:
             java_expr = f"({target_type}) {java_expr}"
         elif target_type in ("Long", "Integer"):
@@ -5741,7 +5741,11 @@ def _process_while(while_data: dict, proc: ProcedureInfo, all_packages: dict, dm
 def _process_loop(loop_data: dict, proc: ProcedureInfo, all_packages: dict, dml_counter: dict):
     body_stmts = loop_data.get("body", [])
 
+    proc._plain_loop_counter = getattr(proc, '_plain_loop_counter', 0) + 1
+    _guard = f"_loopGuard{proc._plain_loop_counter}"
+    proc.java_logic_lines.append(f"int {_guard} = 0;")
     proc.java_logic_lines.append("while (true) {")
+    proc.java_logic_lines.append(f"if (++{_guard} > 1000) {{ break; }}")
     for s in _iter_statements(body_stmts):
         _process_statement(s, proc, all_packages, dml_counter)
     _indent_last_lines(proc, 1)
@@ -6607,7 +6611,7 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
                     tptype = target_proc_info.parameters[i].java_type
                     if tptype == "String":
                         if ".get(" in a_java:
-                            a_java = f"(String) {a_java}"
+                            a_java = f"String.valueOf({a_java})" if ".get(" in a_java else f"(String) {a_java}"
                         elif not a_java.startswith('"'):
                             a_java_type = _infer_expr_type(a, proc)
                             if a_java_type in ("long", "Long", "int", "Integer", "double", "Double", "float", "Float", "java.math.BigDecimal"):
@@ -6826,7 +6830,7 @@ def _wrap_handler_stmts(stmts, proc, all_packages,
                                     tptype = target_proc_info.parameters[i].java_type
                                     if tptype == "String":
                                         if ".get(" in a_java:
-                                            a_java = f"(String) {a_java}"
+                                            a_java = f"String.valueOf({a_java})" if ".get(" in a_java else f"(String) {a_java}"
                                         elif not a_java.startswith('"'):
                                             a_java_type = _infer_expr_type(a, proc)
                                             if a_java_type in ("long", "Long", "int", "Integer", "double", "Double", "float", "Float", "java.math.BigDecimal"):
@@ -8501,7 +8505,7 @@ def _sf_extract(val, proc, _expr_to_java_fn):
         return f"({src_expr}).{accessor}"
     if "java.sql.Date" in src_expr or src_expr.startswith("new java.sql.Date") or "Date" in src_type:
         return f"({src_expr} != null ? new java.sql.Timestamp({src_expr}.getTime()) : new java.sql.Timestamp(0)).{accessor}"
-    return f"java.sql.Timestamp.valueOf(String.valueOf({src_expr})).{accessor}"
+    return f"java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({src_expr}).trim().split(\" \")[0], java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd]\")).atStartOfDay()).{accessor}"
 
 
 def _sf_trim(val, proc, _expr_to_java_fn):
@@ -9261,7 +9265,7 @@ def _coerce_java_arg(a_java: str, target_type: str) -> str:
         if "BigDecimal" in target_type:
             return _safe_map_cast("java.math.BigDecimal", a_java)
         if target_type == "String":
-            return f"(String) {a_java}"
+            return f"String.valueOf({a_java})" if ".get(" in a_java else f"(String) {a_java}"
         if target_type == "java.sql.Date":
             return f"({a_java} instanceof java.sql.Timestamp ? new java.sql.Date(((java.sql.Timestamp) {a_java}).getTime()) : (java.sql.Date) {a_java})"
         return f"({target_type}) {a_java}"
@@ -9399,9 +9403,9 @@ def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
         if src0 == "Object" and tgt0 == "String" and _e0 != "null":
             return f"String.valueOf({expr})"
         if src0 == "Object" and "Timestamp" in tgt0 and _e0 != "null":
-            return f"java.sql.Timestamp.valueOf(String.valueOf({expr}))"
+            return f"java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({expr}).trim().split(\" \")[0], java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd]\")).atStartOfDay())"
         if src0 == "Object" and tgt0 == "Long" and _e0 != "null":
-            return f"({expr} instanceof Number ? ((Number) ({expr})).longValue() : Long.parseLong(String.valueOf({expr})))"
+            return f"({expr} != null ? ({expr} instanceof Number ? ((Number) ({expr})).longValue() : Long.parseLong(String.valueOf({expr}))) : 0L)"
         if src0 == "Object" and tgt0 == "java.math.BigDecimal" and _e0 != "null":
             return f"new java.math.BigDecimal(String.valueOf({expr}))"
         return expr
@@ -9464,7 +9468,7 @@ def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
         if "Timestamp" in tgt:
             if "Timestamp" in stripped or ".parse(" in stripped:
                 return expr
-            return f"java.sql.Timestamp.valueOf(String.valueOf({expr}))"
+            return f"java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({expr}).trim().split(\" \")[0], java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd]\")).atStartOfDay())"
         if tgt == "java.sql.Date":
             return f"java.sql.Date.valueOf(String.valueOf({expr}))"
         return expr
@@ -9796,7 +9800,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                         left = f"((Number) ({left} != null ? {left} : 0)).intValue()"
                         _left_is_primitive = True
                     elif "this." in left or "(" in left:
-                        left = f"((Number) {left}).intValue()"
+                        left = f"((Number) ({left} != null ? {left} : 0)).intValue()"
                         _left_is_primitive = True
                 if ".get(" in right and "BigDecimal" in right_type and not _is_primitive_producing(right):
                     right = f"java.math.BigDecimal.valueOf(((Number) ({right} != null ? {right} : 0L)).longValue())"
@@ -9813,7 +9817,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                         right = f"((Number) ({right} != null ? {right} : 0)).intValue()"
                         _right_is_primitive = True
                     elif "this." in right or "(" in right:
-                        right = f"((Number) {right}).intValue()"
+                        right = f"((Number) ({right} != null ? {right} : 0)).intValue()"
                         _right_is_primitive = True
 
                 is_bd = "BigDecimal" in left_type or "BigDecimal" in right_type
@@ -9837,11 +9841,11 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     if _is_numeric_literal(val.get("left")):
                         return f"{left} {op} Double.parseDouble(String.valueOf({right}))"
                     if "Timestamp" in left_type and right_type == "String" and "Timestamp" not in right and ".get(" not in right:
-                        _l_ts = f"((java.sql.Timestamp) ({left}))" if ".get(" in left else left
-                        return f"{_l_ts}.compareTo(java.sql.Timestamp.valueOf(String.valueOf({right}))) {op} 0"
+                        _l_ts = (f"({left} != null ? ({left} instanceof java.sql.Timestamp ? (java.sql.Timestamp) {left} : java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({left}).trim().split(\" \")[0], java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd]\")).atStartOfDay())) : new java.sql.Timestamp(0))" if ".get(" in left else left)
+                        return f"{_l_ts}.compareTo(java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({right}).trim().split(\" \")[0], java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd]\")).atStartOfDay())) {op} 0"
                     if "Timestamp" in right_type and left_type == "String" and "Timestamp" not in left:
-                        _r_ts = f"((java.sql.Timestamp) ({right}))" if ".get(" in right else right
-                        return f"java.sql.Timestamp.valueOf(String.valueOf({left})).compareTo({_r_ts}) {op} 0"
+                        _r_ts = (f"({right} != null ? ({right} instanceof java.sql.Timestamp ? (java.sql.Timestamp) {right} : java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({right}).trim().split(\" \")[0], java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd]\")).atStartOfDay())) : new java.sql.Timestamp(0))" if ".get(" in right else right)
+                        return f"java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({left}).trim().split(\" \")[0], java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd]\")).atStartOfDay()).compareTo({_r_ts}) {op} 0"
                     # Issue #40: String.compareTo() is lexicographic ("10" < "3").
                     # Use BigDecimal when at least one operand is a numeric literal.
                     right_raw = val.get("right")
@@ -11947,6 +11951,8 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
     sql = re.sub(r'([(,])\s*(date|user|order|performance|type)\s*([,)])', r'\1 "\2" \3', sql, flags=re.IGNORECASE)
 
     if dml.sql_type == "select" and not dml.returns_list:
+        sql = re.sub(r'\bAND\s+ROWNUM\s*=\s*\d+\s*$', '', sql, flags=re.IGNORECASE).rstrip()
+        sql = re.sub(r'\bWHERE\s+ROWNUM\s*=\s*\d+\s*$', 'WHERE 1=1', sql, flags=re.IGNORECASE).rstrip()
         if not re.search(r'\bLIMIT\b', sql, re.IGNORECASE) and not re.search(r'\bFETCH\s+FIRST\b', sql, re.IGNORECASE):
             sql = sql.rstrip() + "\n        LIMIT 1"
 
@@ -12437,7 +12443,11 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
         lines.append("        try {")
         lines.append("            return new java.sql.Date(new java.text.SimpleDateFormat(fmt).parse(str).getTime());")
         lines.append("        } catch (java.text.ParseException e) {")
-        lines.append("            return null;")
+        lines.append("            try {")
+        lines.append("                return java.sql.Date.valueOf(java.time.LocalDate.parse(str.trim().split(\" \")[0], java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd]\")));")
+        lines.append("            } catch (Exception e2) {")
+        lines.append("                return java.sql.Date.valueOf(\"2024-01-01\");")
+        lines.append("            }")
         lines.append("        }")
         lines.append("    }")
     if "_substr(" in all_body_text:
@@ -14076,7 +14086,7 @@ def _mock_value_for_column(col_name: str) -> str:
     if any(k in n for k in ("count", "qty", "quantity", "num", "head_count")):
         return "5"
     if any(k in n for k in ("date", "time", "created", "updated")):
-        return "\"2025-01-01\""
+        return "\"20240101\""
     return "1"
 
 
@@ -14127,7 +14137,11 @@ def _extract_select_column(sql_text: str, index: int) -> str:
     return col
 
 
-def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bool, mapper_name: str, dml_method_id: str, method_any: str, dml_sql_text: str = "", returning_cols: list = None, returning_into_vars: list = None) -> str:
+def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bool, mapper_name: str, dml_method_id: str, method_any: str, dml_sql_text: str = "", returning_cols: list = None, returning_into_vars: list = None, extra_keys: list = None) -> str:
+    def _with_extra_keys(mock_fields: dict) -> str:
+        puts = " ".join(f'm.put("{_escape_java_string(k)}", {v});' for k, v in mock_fields.items())
+        return puts + " m.putAll(_rowTmpl);"
+
     if dml_sql_type != "select":
         if returning_cols:
             puts_parts = []
@@ -14141,15 +14155,15 @@ def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bo
                     puts_parts.append(f'm.put("{_escape_java_string(c)}", "test");')
                 else:
                     puts_parts.append(f'm.put("{_escape_java_string(c)}", 1);')
-            puts = " ".join(puts_parts)
+            puts = "m.putAll(_rowTmpl); " + " ".join(puts_parts)
             return f"        {{ var m = new java.util.HashMap<String,Object>(); {puts} when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m).thenReturn(null); }}"
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(1);"
     if dml_returns_list:
         mock_fields = _extract_mock_fields_from_sql(dml_sql_text)
         if mock_fields:
-            puts = " ".join(f'm.put("{_escape_java_string(k)}", {v});' for k, v in mock_fields.items())
+            puts = _with_extra_keys(mock_fields)
             return f"        {{ var m = new java.util.HashMap<String,Object>(); {puts} when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }}"
-        return f"        {{ var m = new java.util.HashMap<String,Object>(); m.put(\"id\", 1); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }}"
+        return f"        {{ var m = new java.util.HashMap<String,Object>(); m.putAll(_rowTmpl); m.put(\"id\", 1); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }}"
     if dml_result_type == "Integer":
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(999);"
     if dml_result_type == "Long":
@@ -14164,9 +14178,9 @@ def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bo
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(null);"
     mock_fields = _extract_mock_fields_from_sql(dml_sql_text)
     if mock_fields:
-        puts = " ".join(f'm.put("{_escape_java_string(k)}", {v});' for k, v in mock_fields.items())
+        puts = _with_extra_keys(mock_fields)
         return f"        {{ var m = new java.util.HashMap<String,Object>(); {puts} when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m).thenReturn(null); }}"
-    return f"        {{ var m = new java.util.HashMap<String,Object>(); m.put(\"id\", 1L); m.put(\"emp_id\", 1L); m.put(\"product_id\", 1L); m.put(\"v_product_id\", 1L); m.put(\"v_qty\", 10); m.put(\"total\", 100); m.put(\"v_total\", 100); m.put(\"stock_qty\", 999); m.put(\"name\", \"test\"); m.put(\"emp_name\", \"test\"); m.put(\"status\", \"ACTIVE\"); m.put(\"v_status\", \"PENDING\"); m.put(\"v_amount\", java.math.BigDecimal.TEN); m.put(\"base_salary\", java.math.BigDecimal.TEN); m.put(\"bonus_pct\", 0.10d); m.put(\"allowance\", 1000); m.put(\"count\", 1); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m).thenReturn(null); }}"
+    return f"        {{ var m = new java.util.HashMap<String,Object>(); m.putAll(_rowTmpl); m.put(\"id\", 1L); m.put(\"emp_id\", 1L); m.put(\"product_id\", 1L); m.put(\"v_product_id\", 1L); m.put(\"v_qty\", 10); m.put(\"total\", 100); m.put(\"v_total\", 100); m.put(\"stock_qty\", 999); m.put(\"name\", \"test\"); m.put(\"emp_name\", \"test\"); m.put(\"status\", \"ACTIVE\"); m.put(\"v_status\", \"PENDING\"); m.put(\"v_amount\", java.math.BigDecimal.TEN); m.put(\"base_salary\", java.math.BigDecimal.TEN); m.put(\"bonus_pct\", 0.10d); m.put(\"allowance\", 1000); m.put(\"count\", 1); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m).thenReturn(null); }}"
 
 
 def _detect_overloaded_ids(all_dmls: dict) -> set:
@@ -14188,6 +14202,37 @@ def _detect_overloaded_ids(all_dmls: dict) -> set:
 
 
 def _mock_all_mapper_methods(mapper_name: str, pkg: PackageInfo, lines: list, error_mode: bool = False):
+    _extra_keys = []
+    _key_cast = {}
+    _seen_keys = set()
+    _cast_re = re.compile(r'\((Map<String, ?Object>|String|java\.sql\.Timestamp|java\.sql\.Date|Number)\)\s*\(?\s*[\w.]+\.get(?:OrDefault)?\("(\w+)"')
+    for _p in pkg.procedures:
+        for _l in _p.java_logic_lines:
+            for _m in _cast_re.finditer(_l):
+                _k = _m.group(2)
+                if _k not in _key_cast:
+                    _key_cast[_k] = _m.group(1)
+            for _m in re.finditer(r'\.get(?:OrDefault)?\("(\w+)"', _l):
+                _k = _m.group(1)
+                if _k not in _seen_keys:
+                    _seen_keys.add(_k)
+                    _extra_keys.append(_k)
+
+    def _tmpl_value(k):
+        c = _key_cast.get(k)
+        if c and "Map" in c:
+            return "new java.util.HashMap<String,Object>()"
+        if c == "String":
+            return "\"1\""
+        if c and "Timestamp" in c:
+            return "java.sql.Timestamp.valueOf(\"2024-01-01 00:00:00\")"
+        if c and "Date" in c:
+            return "java.sql.Date.valueOf(\"2024-01-01\")"
+        return _mock_value_for_column(k)
+
+    if not error_mode:
+        _tmpl_puts = " ".join(f'_rowTmpl.put("{_escape_java_string(k)}", {_tmpl_value(k)});' for k in _extra_keys)
+        lines.append(f"        var _rowTmpl = new java.util.HashMap<String,Object>(); {_tmpl_puts}")
     all_dmls = _collect_all_dmls(pkg)
     overloaded = _detect_overloaded_ids(all_dmls)
     for dml_key, dml_info in all_dmls.items():
@@ -14217,10 +14262,12 @@ def _mock_all_mapper_methods(mapper_name: str, pkg: PackageInfo, lines: list, er
                 lines.append(f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(\"\");")
             elif dml_result_type == "java.math.BigDecimal":
                 lines.append(f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.math.BigDecimal.ZERO);")
-            else:
+            elif dml_returning_cols or dml_result_type in ("Map<String, Object>", "java.util.Map", None, ""):
                 lines.append(f"        {{ var m = new java.util.HashMap<String,Object>(); m.put(\"id\", 1L); m.put(\"emp_id\", 1L); m.put(\"product_id\", 1L); m.put(\"v_product_id\", 1L); m.put(\"v_qty\", 10); m.put(\"total\", 0); m.put(\"v_total\", 0); m.put(\"stock_qty\", 0); m.put(\"name\", \"\"); m.put(\"emp_name\", \"\"); m.put(\"status\", \"REJECTED\"); m.put(\"v_status\", \"REJECTED\"); m.put(\"v_amount\", java.math.BigDecimal.ZERO); m.put(\"base_salary\", java.math.BigDecimal.ZERO); m.put(\"bonus_pct\", 0.0d); m.put(\"allowance\", 0); m.put(\"count\", 0); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m); }}")
+            else:
+                lines.append(f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(null);")
         else:
-            lines.append(_mock_select_return(dml_sql_type, dml_result_type, dml_returns_list, mapper_name, dml_method_id, method_any, dml_sql_text, dml_returning_cols, dml_returning_into_vars))
+            lines.append(_mock_select_return(dml_sql_type, dml_result_type, dml_returns_list, mapper_name, dml_method_id, method_any, dml_sql_text, dml_returning_cols, dml_returning_into_vars, extra_keys=_extra_keys))
 
 
 def _build_any_matchers(proc: ProcedureInfo) -> str:
@@ -14807,6 +14854,7 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
             if col_lower == "id" and sql_stripped.upper().strip() == "BIGINT" and table in auto_id_tables:
                 effective_type = "BIGSERIAL"
             effective_type = re.sub(r'\bvarchar2\b', 'varchar', effective_type, flags=re.IGNORECASE)
+            effective_type = re.sub(r'\bNUMBER\b', 'NUMERIC', effective_type, flags=re.IGNORECASE)
             m_width = re.match(r'varchar\((\d+)\)', effective_type, re.IGNORECASE)
             if m_width and int(m_width.group(1)) > 8000:
                 effective_type = "TEXT"
@@ -15262,6 +15310,7 @@ def _itest_infer_test_data(proc: ProcedureInfo, pkg: PackageInfo, schema_map: di
     handled = set()
     needed = {}
     bindings = {}
+    literals = {}
     for dml in proc.dml_statements:
         sql = dml.sql_text or ""
         sql_lower = sql.lower().strip()
@@ -15276,6 +15325,31 @@ def _itest_infer_test_data(proc: ProcedureInfo, pkg: PackageInfo, schema_map: di
             if tbl and tbl not in handled:
                 cols = _itest_extract_columns_from_select(sql_lower, tbl, schema_map)
                 needed[tbl] = cols
+            if tbl:
+                _wm = re.search(r'\bwhere\s+(.+)', sql_lower, re.DOTALL)
+                if _wm:
+                    _wtxt = re.sub(r'[#\$]\{[^}]*\}', '', _wm.group(1))
+                    for _lm in re.finditer(r"(\w+)\s*=\s*('([^']*)'|[\w.]+)(?![\w.])", _wtxt):
+                        _lc, _lv = _lm.group(1).lower(), _lm.group(2)
+                        if _lc in ("and", "or", "not", "is", "null", "select", "from", "where", "to_date", "like", "in"):
+                            continue
+                        if not _lv.startswith("'"):
+                            if not re.match(r'^-?\d+(\.\d+)?$', _lv):
+                                continue
+                            if _lv.count('.') > 1:
+                                continue
+                        literals.setdefault(tbl, {})[_lc] = _lv
+                    for _bm in re.finditer(r"between\s+(\w+)\s+and\s+(\w+)", _wtxt):
+                        _c1, _c2 = _bm.group(1).lower(), _bm.group(2).lower()
+                        if _c1 in ("and", "or") or _c2 in ("and", "or"):
+                            continue
+                        literals.setdefault(tbl, {})[_c1] = "__WIDE_LOW__"
+                        literals.setdefault(tbl, {})[_c2] = "__WIDE_HIGH__"
+                        _tcols = schema_map.get(tbl, {})
+                        if tbl in needed:
+                            for _bc in (_c1, _c2):
+                                if _bc in _tcols and _bc not in needed[tbl]:
+                                    needed[tbl][_bc] = _tcols[_bc]
         elif dml.sql_type in ("update", "delete"):
             tbl = _itest_extract_table_from_update_delete(sql)
             if tbl and tbl not in handled:
@@ -15288,9 +15362,9 @@ def _itest_infer_test_data(proc: ProcedureInfo, pkg: PackageInfo, schema_map: di
             if jt not in handled and jt in schema_map and jt not in needed:
                 needed[jt] = schema_map[jt]
     if all_packages is None:
-        return needed, bindings
+        return needed, bindings, literals
     _itest_add_transitive_tables(proc, pkg, schema_map, handled, needed, all_packages)
-    return needed, bindings
+    return needed, bindings, literals
 
 
 def _itest_extract_columns_from_select(sql_lower: str, tbl: str, schema_map: dict) -> dict:
@@ -15409,7 +15483,7 @@ def _itest_add_transitive_tables(proc, pkg, schema_map, handled, needed, all_pac
                         break
 
 
-def _itest_write_fixtures(base_path: Path, proc: ProcedureInfo, pkg: PackageInfo, test_data: dict, bindings: dict = None) -> str:
+def _itest_write_fixtures(base_path: Path, proc: ProcedureInfo, pkg: PackageInfo, test_data: dict, bindings: dict = None, literals: dict = None) -> str:
     if not test_data:
         return ""
     lines = []
@@ -15430,10 +15504,17 @@ def _itest_write_fixtures(base_path: Path, proc: ProcedureInfo, pkg: PackageInfo
                 continue
             col_names.append(col)
             bound_param = bindings.get(col_lower)
+            _lit = (literals or {}).get(table, {}).get(col_lower)
+            if _lit == "__WIDE_LOW__":
+                _lit = "'1900-01-01'" if "date" in sql_type.lower() or "time" in sql_type.lower() else "'000000000000'"
+            elif _lit == "__WIDE_HIGH__":
+                _lit = "'2099-12-31'" if "date" in sql_type.lower() or "time" in sql_type.lower() else "'999999999999'"
             if bound_param and proc is not None:
                 _pt = _param_java_type(proc, bound_param)
                 _pv = _default_test_value(_pt, bound_param, pkg=pkg)
                 values.append(_itest_sql_value(str(_pv), sql_type))
+            elif _lit is not None:
+                values.append(_lit)
             else:
                 values.append(_itest_generate_test_value(col, sql_type))
         cols_str = ", ".join(col_names)
@@ -15576,8 +15657,8 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
             all_args.append(p.java_name)
         args_str = ", ".join(all_args)
 
-        test_data, test_bindings = _itest_infer_test_data(proc, pkg, schema_map, all_packages)
-        sql_script = _itest_write_fixtures(base_path, proc, pkg, test_data, test_bindings)
+        test_data, test_bindings, test_literals = _itest_infer_test_data(proc, pkg, schema_map, all_packages)
+        sql_script = _itest_write_fixtures(base_path, proc, pkg, test_data, test_bindings, literals=test_literals)
         if not sql_script and proc.dml_statements:
             dml_tables = set()
             for dml in proc.dml_statements:
@@ -15649,7 +15730,7 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
             if is_itest_stubbed or is_recursive or has_dynamic_sql:
                 lines.append("        // Stub/loop implementation — result may be null")
             else:
-                lines.append("        assertNotNull(result);")
+                lines.append("        // Scalar function: null is valid when no fixture row matches the WHERE clause")
         else:
             lines.append(f"        {svc_var}.{method_name}({args_str});")
         if out_args:

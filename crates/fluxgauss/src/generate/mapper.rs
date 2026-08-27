@@ -126,6 +126,43 @@ pub fn write_mapper_interface(
     Ok(class_name)
 }
 
+pub(crate) fn mapper_param_types(
+    proc: &crate::types::ProcedureInfo,
+    dml: &crate::types::DmlStatement,
+    package_vars: &std::collections::HashMap<String, crate::types::VarInfo>,
+) -> Vec<String> {
+    let mut extra_params = dml.extra_params.clone();
+    promote_out_params_to_mapper(&proc.parameters, &dml.sql_text, &mut extra_params, &proc.out_local_vars);
+
+    let mut types: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for p in &proc.parameters {
+        if p.is_out() {
+            continue;
+        }
+        types.push(p.java_type.clone());
+        seen.insert(snake_to_camel(&p.name).to_lowercase());
+    }
+    for (java_name, java_type) in &extra_params {
+        if seen.insert(java_name.to_lowercase()) {
+            types.push(java_type.clone());
+        }
+    }
+    let param_java_names = seen.clone();
+    for (java_name, java_type) in extract_local_var_refs(&dml.sql_text, &proc.local_vars, &param_java_names, &proc.out_local_vars) {
+        if seen.insert(java_name.to_lowercase()) {
+            types.push(java_type.clone());
+        }
+    }
+    for (java_name, java_type) in extract_package_var_refs(&dml.sql_text, package_vars, &seen) {
+        if seen.insert(java_name.to_lowercase()) {
+            types.push(java_type.clone());
+        }
+    }
+    types
+}
+
 fn build_mapper_method(
     proc: &crate::types::ProcedureInfo,
     dml: &crate::types::DmlStatement,
@@ -218,7 +255,7 @@ fn build_mapper_method(
     lines.join("\n")
 }
 
-fn promote_out_params_to_mapper(
+pub(crate) fn promote_out_params_to_mapper(
     params: &[crate::types::Parameter],
     sql_text: &str,
     extra_params: &mut Vec<(String, String)>,
@@ -242,7 +279,7 @@ fn promote_out_params_to_mapper(
     }
 }
 
-fn return_type_for_dml(
+pub(crate) fn return_type_for_dml(
     dml: &crate::types::DmlStatement,
     imports: &mut BTreeSet<String>,
 ) -> String {
@@ -296,7 +333,7 @@ pub fn is_simple_java_type(t: &str) -> bool {
     )
 }
 
-fn extract_local_var_refs(
+pub(crate) fn extract_local_var_refs(
     sql_text: &str,
     local_vars: &std::collections::HashMap<String, String>,
     param_java_names: &std::collections::HashSet<String>,
@@ -332,7 +369,7 @@ fn extract_local_var_refs(
     result
 }
 
-fn extract_package_var_refs(
+pub(crate) fn extract_package_var_refs(
     sql_text: &str,
     package_vars: &std::collections::HashMap<String, crate::types::VarInfo>,
     existing_params: &std::collections::HashSet<String>,
@@ -457,6 +494,8 @@ fn build_mapper_statement(
      }
 
     if matches!(dml.sql_type, DmlType::Select) && !dml.returns_list {
+        sql = regex::Regex::new(r"(?i)\bAND\s+ROWNUM\s*=\s*\d+\s*$").unwrap().replace(&sql, "").to_string();
+        sql = regex::Regex::new(r"(?i)\bWHERE\s+ROWNUM\s*=\s*\d+\s*$").unwrap().replace(&sql, "WHERE 1=1").to_string();
         if !sql.to_lowercase().contains("limit") {
             sql = format!("{}\n        LIMIT 1", sql.trim_end());
         }

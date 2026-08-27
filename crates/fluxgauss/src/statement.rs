@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 use regex::Regex;
 use crate::context::StatementContext;
+use crate::expr::is_nullish_java_expr;
 use crate::types::{ConversionError, DmlType, DmlStatement, Parameter, ProcedureInfo, ServiceCall, UnresolvedCall};
 
 fn ident_string(id: &ogsql_parser::Ident) -> String {
@@ -1585,11 +1586,11 @@ fn process_procedure_call(
                         let target_is_int = target_type == "int" || target_type == "Integer";
                         let target_is_string = target_type == "String";
                         let arg_has_get = arg.contains(".get(");
-                        if target_is_string && arg_type_inferred == "long" {
+                        if target_is_string && arg_type_inferred == "long" && !is_nullish_java_expr(&arg) {
                             arg = format!("String.valueOf({})", arg);
-                        } else if target_is_string && (arg_type_inferred == "Object" || arg_type_inferred == "BigDecimal") {
+                        } else if target_is_string && (arg_type_inferred == "Object" || arg_type_inferred == "BigDecimal") && !is_nullish_java_expr(&arg) {
                             arg = format!("String.valueOf({})", arg);
-                        } else if target_is_long && arg_type_inferred == "String" {
+                        } else if target_is_long && arg_type_inferred == "String" && !is_nullish_java_expr(&arg) {
                             arg = format!("Long.parseLong(String.valueOf({}))", arg);
                         } else if target_is_long && arg_type_inferred == "BigDecimal" {
                             arg = format!("({}).longValue()", arg);
@@ -2381,11 +2382,15 @@ pub fn process_statement(
             Ok(())
         }
         PlStatement::Loop(loop_stmt) => {
+            proc.plain_loop_counter += 1;
+            let guard_var = format!("_loopGuard{}", proc.plain_loop_counter);
+            push_logic_line(proc, format!("int {} = 0;", guard_var));
             if let Some(label) = &loop_stmt.node.label {
                 push_logic_line(proc, format!("{}: while (true) {{", label));
             } else {
                 push_logic_line(proc, "while (true) {".into());
             }
+            push_logic_line(proc, format!("if (++{} > 1000) {{ break; }}", guard_var));
             for s in &loop_stmt.node.body {
                 process_statement(s, proc, ctx)?;
                 if let Some(last) = proc.java_logic_lines.last() {

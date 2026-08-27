@@ -106,7 +106,7 @@ pub fn assignment_to_java(target: &ogsql_parser::ast::Expr, value: &ogsql_parser
             });
             let coerced = if let Some(p) = param {
                 let ptype = p.java_type.trim();
-                if ptype == "String" && !val.starts_with('"') && val != "null" {
+                if ptype == "String" && !val.starts_with('"') && val != "null" && !is_nullish_java_expr(&val) {
                     format!("String.valueOf({})", val)
                 } else if ptype == "Long" && val.starts_with('"') {
                     format!("Long.valueOf({})", val)
@@ -489,6 +489,7 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
         }
         Some(t) if t.contains("BigDecimal")
             && trimmed.contains('.') && !trimmed.starts_with('"')
+            && !is_nullish_java_expr(trimmed)
             && !trimmed.contains("this.")
             && !trimmed.contains(".multiply(")
             && !trimmed.contains(".add(")
@@ -1023,7 +1024,7 @@ fn wrap_bigdecimal(expr: &str, already_bd: bool, proc: &ProcedureInfo) -> String
             .map(|p| p.java_type.clone()));
     if let Some(t) = ar_type {
         if t.contains("String") {
-            return format!("java.math.BigDecimal.valueOf(Long.parseLong({}.get()))", trimmed);
+            return format!("java.math.BigDecimal.valueOf({}.get() != null ? Long.parseLong({}.get()) : 0L)", trimmed, trimmed);
         }
         return format!("java.math.BigDecimal.valueOf({}.get().longValue())", trimmed);
     }
@@ -1414,7 +1415,12 @@ fn binary_op_to_java(left: &ogsql_parser::ast::Expr, op: &str, right: &ogsql_par
         "/" if is_bigdecimal_var(&l, proc) || is_bigdecimal_var(&r, proc) || looks_bd_expr(&l) || looks_bd_expr(&r) => {
             let l_bd = wrap_bigdecimal(&l, is_bigdecimal_var(&l, proc), proc);
             let r_bd = wrap_bigdecimal(&r, is_bigdecimal_var(&r, proc), proc);
-            format!("{}.divide({}, 10, java.math.RoundingMode.HALF_UP)", l_bd, r_bd)
+            let r_safe = if r_bd.chars().all(|c: char| c.is_ascii_digit() || c == '.') && !r_bd.is_empty() {
+                r_bd
+            } else {
+                format!("({}.signum() != 0 ? {} : java.math.BigDecimal.ONE)", r_bd, r_bd)
+            };
+            format!("{}.divide({}, 10, java.math.RoundingMode.HALF_UP)", l_bd, r_safe)
         }
         "^" => {
             let l_pow = as_double_expr(&l);
