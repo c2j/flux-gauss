@@ -6,10 +6,10 @@ Converts OpenGauss/PostgreSQL stored procedures (PL/pgSQL) into a Spring Boot + 
 
 ## Key Files
 
-- `converter/flux_gauss.py` — Single-file Python converter (~8500 lines). All logic lives here.
+- `converter/flux_gauss.py` — Single-file Python converter (~17300 lines). All logic lives here.
 - `crates/fluxgauss/` — Rust converter (dual-engine). Uses `ogsql-parser` as a git dependency.
 - `ogsql-parser` — Referenced via git dependency (`https://github.com/c2j/ogsql-parser.git`, branch `main`) in `Cargo.toml`. Not a local submodule.
-- `demo-project/fluxgauss.yaml` — Example config referencing `demo-project/sql/*.sql` sources.
+- `demo-project/fluxgauss_py.yaml` — Example config referencing `demo-project/sql/*.sql` sources (3 demo configs total: `fluxgauss_py.yaml`, `fluxgauss_ru.yaml`, `fluxgauss_tu.yaml`).
 - `dest/` — Generated output (gitignored). Contains a complete Maven/Spring Boot project.
 - `使用指南.md` — Full user guide (Chinese). Covers config, CLI, and supported PL/pgSQL features.
 - `docs/plans/` — Implementation plans for features in progress.
@@ -22,7 +22,7 @@ Converts OpenGauss/PostgreSQL stored procedures (PL/pgSQL) into a Spring Boot + 
 # Config-file mode (recommended, supports incremental)
 python3 converter/flux_gauss.py -c fluxgauss.yaml
 
-# CLI mode (one-shot, no caching)
+# CLI mode (one-shot)
 python3 converter/flux_gauss.py -o ./dest -s sql/file1.sql sql/file2.sql
 
 # Force full regeneration
@@ -44,7 +44,7 @@ cd dest && mvn test      # run generated unit tests
 
 ### Requirements
 
-- Python 3.10+ — `converter/flux_gauss.py` uses PEP 604 (`int | None`) at module level, so Python 3.9 fails at import with `TypeError: unsupported operand type(s) for |`. `tests/regress/conftest.py` enforces this. (The README's "Python 3.9+" claim is stale.)
+- Python 3.10+ — `converter/flux_gauss.py` uses PEP 604 (`int | None`) at module level, so Python 3.9 fails at import with `TypeError: unsupported operand type(s) for |`. `tests/regress/conftest.py` enforces this.
 - Java 17+ (for `mvn compile` verification)
 - `ogsql` binary — resolved via `OGSQL_BIN` env var, `PATH`, or local fallback paths. Build from source: `git clone https://github.com/c2j/ogsql-parser.git && cd ogsql-parser && cargo build --release --features full`
 
@@ -80,7 +80,7 @@ Data flow inside `flux_gauss.py`:
 
 Config-file mode auto-caches in `dest/.fluxgauss/` (manifest.json + AST JSONs). Only changed SQL files are re-parsed. Transitive dependencies (cross-package calls) trigger re-generation of callers.
 
-Resume from checkpoint: `--resume` flag skips packages already successfully generated (tracked via `dest/.fluxgauss/gen-checkpoint.json`).
+Resume from checkpoint: `--resume` flag skips packages already successfully generated (tracked via `dest/.fluxgauss/generation-checkpoint.json`).
 
 Clear cache: `rm -rf dest/.fluxgauss`
 
@@ -113,6 +113,7 @@ java_packages:                    # optional: map SQL files to different Java pa
 ## Conventions
 
 - Each SQL package → 4 files: `{Name}Service.java`, `{Name}Mapper.java`, `{Name}Mapper.xml`, `{Name}ServiceTest.java`
+- Table DDL (`CREATE TABLE`) additionally generates one entity POJO per table under `entity/{PascalTable}.java`.
 - Skeleton files (`pom.xml`, `application.yml`, `DemoApplication.java`, `BusinessException.java`) are written **only if they don't exist**. To regenerate, delete them first.
 - Integration test files are generated under `src/test/java/.../itest/` with `AbstractIntegrationTest` base class and `itest-schema.sql` fixtures.
 - Source tracing comments (`// Source: file.sql:line-range`) are injected into all generated code for debugging.
@@ -125,7 +126,7 @@ java_packages:                    # optional: map SQL files to different Java pa
 
 - **NEVER hardcode table column names** in the converter code. Table columns must always be looked up dynamically from the table schema cache (`TYPE_OVERRIDES` / `_lookup_table_columns()` / `parse_table_ddl()`). Hardcoded column lists break for any table other than the one they were written for, and silently produce incorrect SQL when table schemas evolve.
 
-- The entire converter is one file (~8500 lines). Key dataclasses:
+- The entire converter is one file (~17300 lines). Key dataclasses:
   - `Parameter` — procedure parameter with SQL/Java type mapping
   - `CommentInfo` — SQL comment (text, line range, type: single-line/block)
   - `DmlStatement` — extracted DML with method_id, SQL text, parameter types, optional filters
@@ -138,39 +139,37 @@ java_packages:                    # optional: map SQL files to different Java pa
 - ogsql binary path is resolved at import time via `_resolve_ogsql_bin()`.
 - After changes, run: `python3 converter/flux_gauss.py -c fluxgauss.yaml && cd dest && mvn compile`
 - Conversion reports are saved to `dest/.fluxgauss/reports/`.
-- Generation checkpoint is saved to `dest/.fluxgauss/gen-checkpoint.json`.
+- Generation checkpoint is saved to `dest/.fluxgauss/generation-checkpoint.json`.
 - The ogsql-parser Rust binary is a separate build from `https://github.com/c2j/ogsql-parser`. For the Rust engine, it is pulled automatically as a git dependency via `Cargo.toml`. For the Python engine, build the `ogsql` binary and set `OGSQL_BIN` or place it on `PATH`.
 
 ## Key Internal Modules (by line range)
 
 | Section | Lines | Description |
 |---|---|---|
-| Constants & config | 1–175 | `OGSQL_BIN`, `BASE_PACKAGE`, logger presets, SQL type maps |
-| `parse_table_ddl()` | 176–253 | Parses `CREATE TABLE` DDL for schema info |
-| Type maps | 254–370 | `SQL_TO_JAVA`, `SQL_TO_JDBC_TYPE`, `TYPE_OVERRIDES`, stub tracking |
-| Logging & progress | 371–438 | `_init_log()`, `_log()`, `_progress_bar()` |
-| Tracking helpers | 439–470 | `_record_unsupported()`, `_record_todo()` |
-| Type conversion | 471–624 | `sql_type_to_java()`, `sql_type_to_jdbc()`, `java_type_to_jdbc()` |
-| Naming utilities | 626–700 | `snake_to_camel()`, `package_to_classname()`, `java_method_name()` |
-| Dataclasses | 712–860 | `Parameter`, `CommentInfo`, `DmlStatement`, `ServiceCall`, `ProcedureInfo`, `PackageInfo`, `SkippedItem`, `ProcedureMapping`, `ConversionReport` |
-| SQL parsing | 867–1000 | `_split_sql_statements()`, `_read_sql_file()`, `parse_sql_file()` |
-| AST extraction | 1016–1260 | `extract_parameters()`, `extract_procedures()`, `_recover_constant_declarations()` |
-| Comment handling | 1307–1390 | `extract_comments()`, `_map_comments_to_procedures()` |
-| Non-procedure extraction | 1394–1515 | `extract_non_procedure_statements()` — DDL/grant/type skips |
-| DML analysis | 1519–1710 | `_extract_dml_target()`, OUT param promotion, `analyze_procedure()` |
-| Comment injection | 1778–1935 | `_inject_inline_comments()`, `_find_body_stmt_lines()` |
-| Statement processing | 1937–3460 | `_process_statement()` dispatch → SQL, IF, FOR, WHILE, LOOP, cursor ops, assignments, procedure calls, EXECUTE, RAISE, CASE, etc. |
-| SQL reconstruction | 3464–3780 | Dynamic SQL template handling, concat flattening, placeholder conversion |
-| Expression → Java | 3780–5220 | `_expr_to_java()`, `SQL_FUNCTION_MAP`, `SPECIAL_FUNCTION_MAP`, type inference, coercion |
-| Project generation | 5227–7110 | `generate_project()` → `_write_pom_xml()`, `_write_mapper_xml()`, `_write_service_class()`, `_write_service_test()`, etc. |
-| Integration tests | 7178–7670 | `_itest_*()` functions — schema extraction, test data inference, fixture generation, itest class writing |
-| Report & CLI | 7680–8514 | `ConversionReport`, `_save_gen_checkpoint()`, `_build_arg_parser()`, `main()` |
+| Constants & config | 1–200 | `_resolve_ogsql_bin()`, `OGSQL_BIN`, `BASE_PACKAGE`, `_resolve_logger_config()`, logger presets |
+| `parse_table_ddl()` | 201–278 | Parses `CREATE TABLE` DDL for schema info |
+| Type maps | 279–530 | `SQL_TO_JAVA`, `SQL_TO_JDBC_TYPE`, `TYPE_OVERRIDES`, `_lookup_table_columns()` |
+| Logging & tracking | 531–626 | `_init_log()`, `_log()`, `_progress_bar()`, `_record_unsupported()` |
+| Type conversion | 627–827 | `sql_type_to_java()`, `sql_type_to_jdbc()`, `java_type_to_jdbc()` |
+| Naming utilities | 828–886 | `snake_to_camel()`, `package_to_classname()`, `java_method_name()` |
+| Dataclasses | 887–1178 | `Parameter`, `CommentInfo`, `DmlStatement`, `ServiceCall`, `ProcedureInfo`, `PackageInfo`, `SkippedItem`, `ProcedureMapping`, `ConversionReport` |
+| SQL parsing | 1179–1561 | `_split_sql_statements()`, `_read_sql_file()`, `parse_sql_file()`, `parse_sql_files()` |
+| AST extraction | 1562–1875 | `extract_parameters()`, `extract_procedures()`, `_recover_constant_declarations()` |
+| Comment handling | 1876–1970 | `extract_comments()`, `_map_comments_to_procedures()` |
+| Non-procedure extraction | 1971–2060 | `extract_non_procedure_statements()` — DDL/grant/type skips |
+| DML analysis | 2061–2533 | `_extract_dml_target()`, `_extract_dml_target_simple()`, `analyze_procedure()` |
+| Comment injection | 2534–2835 | `_inject_inline_comments()`, `_find_body_stmt_lines()` |
+| Statement processing | 2836–8289 | `_process_statement()` dispatch → SQL, IF, FOR, WHILE, LOOP, cursor ops, assignments, procedure calls, EXECUTE, RAISE, CASE, dynamic SQL reconstruction |
+| Expression → Java | 8290–10963 | `SQL_FUNCTION_MAP`, `SPECIAL_FUNCTION_MAP`, `_expr_to_java()`, type inference, coercion |
+| Project generation | 10964–13810 | `generate_project()` → `_write_pom_xml()`, `_write_mapper_xml()`, `_write_service_class()`, `_write_service_test()`, entity POJOs |
+| Integration tests | 13811–16223 | `_itest_*()` functions — schema extraction, test data inference, fixture generation, itest class writing |
+| Report & CLI | 16224–17306 | `write_conversion_report()`, `_parse_config()`, `_save_gen_checkpoint()`, `_build_arg_parser()`, `main()` |
 
 ## Notes
 
 - `ogsql.broken` at root is a broken binary — ignore it.
 - `SQL` file at root is empty — ignore it.
 - `docs/plans/` contains implementation plans for features in progress.
-- No linter, formatter config exists in this repo.
-- CI: `.github/workflows/release.yml` — builds ogsql + fluxgauss binaries for Linux/Windows/macOS, tests both Python and Rust engines.
-- Dependencies: Python `pyyaml` (optional, for YAML config), no `requirements.txt`.
+- Lint/format configs: `ruff.toml` (Python), `rustfmt.toml` (Rust), `mypy.ini` (Python typing), `pyproject.toml`.
+- CI: `.github/workflows/release.yml` — builds ogsql + fluxgauss binaries for Linux/Windows/macOS (triggered by `v*` tag push). `.github/workflows/ci.yml` — runs Python + Rust unit/regression tests.
+- Dependencies: `requirements.txt` lists `pyyaml` (YAML config), `pytest` (tests), `mcp` (MCP server mode).

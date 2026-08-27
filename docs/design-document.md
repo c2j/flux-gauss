@@ -32,8 +32,8 @@ FluxGauss 将 OpenGauss/PostgreSQL 的 PL/pgSQL 存储过程转换为 Spring Boo
 
 | 引擎 | 入口 | 代码量 | 适用场景 |
 |------|------|--------|----------|
-| Python | `converter/flux_gauss.py` | ~13900 行 | 通用（100-1000 个 SP） |
-| Rust | `crates/fluxgauss/` | ~14187 行 | 大批量（1000-30000 个 SP），支持 Rayon 并行 |
+| Python | `converter/flux_gauss.py` | ~17300 行 | 通用（100-1000 个 SP） |
+| Rust | `crates/fluxgauss/` | ~18800 行 | 大批量（1000-30000 个 SP），支持 Rayon 并行 |
 
 本文档以 Python 引擎为主要参考描述，并在各章节标注 Rust 引擎的关键差异。**Python 引擎是功能最完整的参考实现**；Rust 引擎持续对齐中。
 
@@ -122,7 +122,7 @@ ogsql json2sql -f <input.json>
 
 | 依赖 | 用途 |
 |------|------|
-| Python 3.9+ | 运行时 |
+| Python 3.10+ | 运行时 |
 | pyyaml | YAML 配置文件解析（可选） |
 | Java 17+ | 编译验证生成的项目 |
 | Maven | 构建生成的 Spring Boot 项目 |

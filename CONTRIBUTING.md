@@ -5,7 +5,7 @@ Thank you for your interest in contributing! FluxGauss is a PL/pgSQL → Spring 
 ## Getting Started
 
 ### Prerequisites
-- Python 3.9+ (Python engine)
+- Python 3.10+ (Python engine)
 - Rust 1.80+ (Rust engine)
 - Java 17+ (for verifying generated output)
 
