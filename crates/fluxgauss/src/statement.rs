@@ -1510,6 +1510,15 @@ fn process_procedure_call(
         .map(|a| crate::expr::expr_to_java(a, proc))
         .collect();
 
+    // RAISE_APPLICATION_ERROR(code, msg) is parsed as a procedure call, not RAISE.
+    if func.eq_ignore_ascii_case("raise_application_error") {
+        let msg = raw_args.get(1).cloned().unwrap_or_else(|| {
+            raw_args.first().cloned().unwrap_or_else(|| "\"RAISE_APPLICATION_ERROR\"".to_string())
+        });
+        push_logic_line(proc, format!("throw new BusinessException({});", msg));
+        return;
+    }
+
     // Try to resolve package from the hint
     let mut matched_pkg = resolve_package_name(pkg_hint, ctx.summaries);
 
@@ -3112,5 +3121,26 @@ mod tests {
         ));
         process_statement(&stmt, &mut proc, &mut ctx).unwrap();
         assert!(proc.java_logic_lines[0].contains("log.info"));
+    }
+
+    #[test]
+    fn test_process_raise_application_error() {
+        use ogsql_parser::ast::Spanned;
+        let mut proc = empty_proc();
+        let mut ctx = empty_stmt_ctx();
+        let call = ogsql_parser::ast::plpgsql::PlProcedureCall {
+            name: vec![ogsql_parser::ast::Ident::new("raise_application_error")],
+            arguments: vec![
+                ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Integer(-20030)),
+                ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String("p_mode must be REPLACE or SWAP".into())),
+            ],
+            builtin: None,
+        };
+        let stmt = ogsql_parser::ast::plpgsql::PlStatement::ProcedureCall(Spanned::without_span(call));
+        process_statement(&stmt, &mut proc, &mut ctx).unwrap();
+        assert_eq!(proc.java_logic_lines.len(), 1);
+        assert!(proc.java_logic_lines[0].contains("throw new BusinessException"));
+        assert!(proc.java_logic_lines[0].contains("p_mode must be REPLACE or SWAP"));
+        assert!(ctx.unresolved_calls.is_empty());
     }
 }
