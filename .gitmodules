@@ -1,0 +1,3 @@
+[submodule "lib/ogagila"]
+	path = lib/ogagila
+	url = git@github.com:c2j/ogagila.git
