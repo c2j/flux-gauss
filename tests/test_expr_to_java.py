@@ -236,6 +236,47 @@ class TestExprToJavaFunctionCall:
         assert "Math.PI" in result
 
 
+class TestExtractEpoch:
+    def test_extract_epoch_from_timestamp_diff(self):
+        proc = fg.ProcedureInfo(
+            name="pkg_ads.build_screen_today", package="pkg_ads",
+            proc_name="build_screen_today", is_function=False, return_type=None,
+            parameters=[], body={}, sql_text="",
+            local_vars={"v_t0": "java.sql.Timestamp", "o_ms": "java.math.BigDecimal"},
+        )
+        ast = {
+            "SpecialFunction": {
+                "name": "extract",
+                "args": [
+                    {"ColumnRef": ["EPOCH"]},
+                    {"Parenthesized": {"BinaryOp": {
+                        "left": {"FunctionCall": {"name": ["clock_timestamp"], "args": []}},
+                        "op": "-",
+                        "right": {"PlVariable": ["v_t0"]},
+                    }}},
+                ],
+            }
+        }
+        result = fg._expr_to_java(ast, proc)
+        assert "getTime()" in result
+        assert "/ 1000.0" in result
+        assert "EXTRACT EPOCH" not in result
+        assert "LocalDate.parse" not in result
+
+    def test_extract_epoch_from_date(self):
+        proc = fg.ProcedureInfo(
+            name="pkg_test.proc_a", package="pkg_test", proc_name="proc_a",
+            is_function=False, return_type=None, parameters=[], body={}, sql_text="",
+            local_vars={"v_d": "java.sql.Date"},
+        )
+        ast = {"SpecialFunction": {"name": "extract", "args": [
+            {"ColumnRef": ["EPOCH"]}, {"ColumnRef": ["v_d"]}]}}
+        result = fg._expr_to_java(ast, proc)
+        assert "getTime()" in result
+        assert "/ 1000.0" in result
+        assert "EXTRACT EPOCH" not in result
+
+
 class TestInferExprType:
     def test_integer_literal(self, proc):
         assert fg._infer_expr_type({"Literal": {"Integer": 42}}, proc) == "Integer"
@@ -271,3 +312,86 @@ class TestCoerceJavaArg:
     def test_passthrough(self):
         result = fg._coerce_java_arg("someVar", "String")
         assert result == "someVar"
+
+    def test_null_to_long_stays_null(self):
+        result = fg._coerce_java_arg("null", "Long")
+        assert result == "null"
+
+    def test_get_to_long_null_safe(self):
+        result = fg._coerce_java_arg("oRows.get()", "Long")
+        assert "== null" in result
+        assert "((Number) (null))" not in result
+
+    def test_get_to_integer_null_safe(self):
+        result = fg._coerce_java_arg("oRows.get()", "Integer")
+        assert "== null" in result
+
+
+class TestIntervalAndTypeCast:
+    def _proc(self):
+        return fg.ProcedureInfo(
+            name="pkg_orch.run_monthly", package="pkg_orch",
+            proc_name="run_monthly", is_function=False, return_type=None,
+            parameters=[], body={}, sql_text="",
+            local_vars={
+                "v_from": "java.sql.Date",
+                "p_months_ahead": "Integer",
+            },
+        )
+
+    def test_date_plus_interval_month(self):
+        proc = self._proc()
+        ast = {"BinaryOp": {"op": "+", "left": {"ColumnRef": ["v_from"]},
+            "right": {"TypeCast": {"type_name": {"Custom": [["interval"], []]}, "expr": {"Literal": {"String": "1 month"}}}}}}
+        result = fg._expr_to_java(ast, proc)
+        assert "plusMonths" in result
+        assert "1 month" not in result
+
+    def test_timestamp_plus_concat_interval(self):
+        proc = self._proc()
+        ast = {"BinaryOp": {"op": "+",
+            "left": {"FunctionCall": {"name": ["date_trunc"], "args": [{"Literal": {"String": "month"}}, {"FunctionCall": {"name": ["now"], "args": []}}]}},
+            "right": {"TypeCast": {"type_name": {"Interval": None},
+                "expr": {"Parenthesized": {"BinaryOp": {"op": "||",
+                    "left": {"Parenthesized": {"BinaryOp": {"op": "+", "left": {"ColumnRef": ["p_months_ahead"]}, "right": {"Literal": {"Integer": 1}}}}},
+                    "right": {"Literal": {"String": " month"}}}}}}}}}
+        result = fg._expr_to_java(ast, proc)
+        assert "plusMonths" in result
+        assert " month" not in result
+
+    def test_type_cast_date_on_date_plus_interval(self):
+        proc = self._proc()
+        ast = {"TypeCast": {"type_name": "Date",
+            "expr": {"Parenthesized": {"BinaryOp": {"op": "+", "left": {"ColumnRef": ["v_from"]},
+                "right": {"TypeCast": {"type_name": {"Custom": [["interval"], []]}, "expr": {"Literal": {"String": "1 month"}}}}}}}}}
+        result = fg._expr_to_java(ast, proc)
+        assert "java.sql.Date" in result
+        assert "1 month" not in result
+
+    def test_standalone_interval_no_marker_leak(self):
+        proc = self._proc()
+        ast = {"TypeCast": {"type_name": {"Custom": [["interval"], []]}, "expr": {"Literal": {"String": "1 month"}}}}
+        result = fg._expr_to_java(ast, proc)
+        assert "__FG_" not in result
+        assert "* 30L" in result
+
+    def test_type_cast_date_on_timestamp_diff_no_double_gettime(self):
+        proc = fg.ProcedureInfo(
+            name="pkg_test.proc_a", package="pkg_test", proc_name="proc_a",
+            is_function=False, return_type=None, parameters=[], body={}, sql_text="",
+            local_vars={"v_t0": "java.sql.Timestamp"},
+        )
+        ast = {"TypeCast": {"type_name": "Date",
+            "expr": {"Parenthesized": {"BinaryOp": {"op": "-",
+                "left": {"FunctionCall": {"name": ["clock_timestamp"], "args": []}},
+                "right": {"PlVariable": ["v_t0"]}}}}}}
+        result = fg._expr_to_java(ast, proc)
+        assert ".getTime()).getTime()" not in result
+
+    def test_date_minus_day_interval(self):
+        proc = self._proc()
+        ast = {"BinaryOp": {"op": "-", "left": {"ColumnRef": ["v_from"]},
+            "right": {"TypeCast": {"type_name": {"Custom": [["interval"], []]}, "expr": {"Literal": {"String": "1 day"}}}}}}
+        result = fg._expr_to_java(ast, proc)
+        assert "Duration.ofDays" in result
+        assert ".toMillis()" in result

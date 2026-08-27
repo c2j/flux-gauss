@@ -53,6 +53,25 @@ class TestProcessRaise:
         assert any("BusinessException" in line or "throw" in line for line in proc.java_logic_lines)
 
 
+class TestProcessRaiseApplicationError:
+    def test_raise_application_error_emits_business_exception(self, proc, all_packages, dml_counter):
+        before = len(fg.UNRESOLVED_CALLS)
+        stmt = {
+            "ProcedureCall": {
+                "name": ["RAISE_APPLICATION_ERROR"],
+                "arguments": [
+                    {"UnaryOp": {"op": "-", "expr": {"Literal": {"Integer": 20030}}}},
+                    {"Literal": {"String": "bad mode"}},
+                ],
+            }
+        }
+        fg._process_statement(stmt, proc, all_packages, dml_counter)
+        lines = proc.java_logic_lines
+        assert any("throw new BusinessException" in l for l in lines)
+        assert any('"bad mode"' in l for l in lines)
+        assert len(fg.UNRESOLVED_CALLS) == before
+
+
 class TestProcessIf:
     def test_simple_if(self, proc, all_packages, dml_counter):
         if_stmt = {

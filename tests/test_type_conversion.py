@@ -167,6 +167,23 @@ class TestSqlTypeToJava:
         result = fg.sql_type_to_java("varchar immutable")
         assert result == "String"
 
+    # ── LANGUAGE clause stripped (issue #79) ──
+    def test_language_clause_stripped(self):
+        assert fg.sql_type_to_java("numeric language plpgsql") == "java.math.BigDecimal"
+        assert fg.sql_type_to_java("integer language plpgsql") == "Integer"
+        assert fg.sql_type_to_java("boolean language plpgsql") == "Boolean"
+        assert fg.sql_type_to_java("date language sql immutable strict") == "java.sql.Date"
+
+    def test_language_clause_case_insensitive(self):
+        assert fg.sql_type_to_java("NUMERIC LANGUAGE PLPGSQL") == "java.math.BigDecimal"
+
+    # ── timestamptz / timestampz aliases (issue #83/#84) ──
+    def test_timestamptz_short(self):
+        assert fg.sql_type_to_java("timestamptz") == "java.sql.Timestamp"
+
+    def test_timestampz(self):
+        assert fg.sql_type_to_java("timestampz") == "java.sql.Timestamp"
+
 
 class TestSqlTypeToJdbc:
     """Test sql_type_to_jdbc() — SQL → MyBatis JdbcType mapping."""
@@ -188,6 +205,12 @@ class TestSqlTypeToJdbc:
 
     def test_date(self):
         assert fg.sql_type_to_jdbc("date") == "DATE"
+
+    def test_timestamptz(self):
+        assert fg.sql_type_to_jdbc("timestamptz") == "TIMESTAMP"
+
+    def test_timestampz(self):
+        assert fg.sql_type_to_jdbc("timestampz") == "TIMESTAMP"
 
     def test_none_returns_none(self):
         assert fg.sql_type_to_jdbc(None) is None

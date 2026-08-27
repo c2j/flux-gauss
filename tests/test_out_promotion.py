@@ -647,8 +647,46 @@ class TestSelfCallPromotion:
             "Self-call with single-part name did not promote"
 
 
-# ── Test: Target proc not found — graceful degradation ──────
+# ── Test: three-part schema-qualified name + timestamptz OUT (planIncrement) ──
 
+class TestThreePartNamePromotion:
+    """Call `dw.pkg_etl_core.plan_increment` style (3-part name) promotes OUT holders."""
+
+    def test_promotes_schema_qualified_out_with_timestamptz(self):
+        target = _make_target_proc("plan_increment", [
+            _make_in_param("p_source"),
+            _make_out_param("o_id_from", "Long", "bigint"),
+            _make_out_param("o_id_to", "Long", "bigint"),
+            _make_out_param("o_ts_from", "java.sql.Timestamp", "timestamptz"),
+            _make_out_param("o_ts_to", "java.sql.Timestamp", "timestamptz"),
+        ], package="pkg_etl_core")
+        all_pkgs = _build_all_packages(target, "pkg_etl_core")
+        proc = _make_caller_proc(
+            local_vars={
+                "v_id_from": "Long", "v_id_to": "Long",
+                "v_ts_from": "java.sql.Timestamp", "v_ts_to": "java.sql.Timestamp",
+            },
+            body_stmts=[
+                {"ProcedureCall": {
+                    "name": ["dw", "pkg_etl_core", "plan_increment"],
+                    "arguments": [
+                        {"Literal": {"String": "payment"}},
+                        {"PlVariable": ["v_id_from"]},
+                        {"PlVariable": ["v_id_to"]},
+                        {"PlVariable": ["v_ts_from"]},
+                        {"PlVariable": ["v_ts_to"]},
+                    ],
+                }},
+            ],
+        )
+        fg._promote_out_local_vars(proc, all_pkgs)
+        assert proc.local_vars["v_id_from"] == "AtomicReference<Long>"
+        assert proc.local_vars["v_id_to"] == "AtomicReference<Long>"
+        assert proc.local_vars["v_ts_from"] == "AtomicReference<java.sql.Timestamp>"
+        assert proc.local_vars["v_ts_to"] == "AtomicReference<java.sql.Timestamp>"
+
+
+# ── Test: Target proc not found — graceful degradation ──────
 class TestTargetNotFound:
     """When target proc is not in all_packages, should not crash."""
 

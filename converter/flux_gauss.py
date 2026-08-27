@@ -305,6 +305,8 @@ SQL_TO_JAVA = {
     "timestamp": "java.sql.Timestamp",
     "timestamp without time zone": "java.sql.Timestamp",
     "timestamp with time zone": "java.sql.Timestamp",
+    "timestamptz": "java.sql.Timestamp",
+    "timestampz": "java.sql.Timestamp",
     "date": "java.sql.Date",
     "time": "java.sql.Time",
     "bytea": "byte[]",
@@ -445,6 +447,8 @@ SQL_TO_JDBC_TYPE = {
     "timestamp": "TIMESTAMP",
     "timestamp without time zone": "TIMESTAMP",
     "timestamp with time zone": "TIMESTAMP",
+    "timestamptz": "TIMESTAMP",
+    "timestampz": "TIMESTAMP",
     "date": "DATE",
     "time": "TIME",
     # Binary
@@ -663,6 +667,9 @@ def sql_type_to_java(sql_type) -> str:
             return sql_type_to_java(_infer_type_from_column_name(column))
 
     normalized = sql_type.lower().strip()
+    # ogsql-parser 0.8.32 absorbs the trailing "LANGUAGE <name> [attrs]" clause into
+    # return_type when it sits on the line after "RETURNS <type>" (issue #79).
+    normalized = re.sub(r'\s+\blanguage\b.*$', '', normalized, flags=re.IGNORECASE).strip()
     # Strip function modifiers that the parser may include in return_type
     for _mod in ("deterministic", "parallel", "immutable", "stable", "volatile", "strict", "called on null input", "returns null on null input"):
         normalized = normalized.replace(_mod, "").strip()
@@ -6512,6 +6519,17 @@ def _find_target_proc(pkg_name: str, proc_name: str, all_packages: dict, arg_cou
     return candidates[0]
 
 
+def _emit_raise_application_error(args: list, proc: ProcedureInfo) -> list:
+    """Map RAISE_APPLICATION_ERROR(code, msg) → Java BusinessException throw."""
+    _msg = _expr_to_java(args[1], proc, as_read=True) if len(args) >= 2 else '""'
+    _code = _expr_to_java(args[0], proc, as_read=True) if len(args) >= 1 else "null"
+    _lines = []
+    if len(args) >= 1:
+        _lines.append(f"// RAISE_APPLICATION_ERROR({_code}, ...)")
+    _lines.append(f'throw new BusinessException(String.valueOf({_msg}));')
+    return _lines
+
+
 def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: dict):
     func_name_parts = call_data.get("name", [])
     args = call_data.get("arguments", [])
@@ -6530,6 +6548,10 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
         return
 
     func_lower = func.lower() if func else ""
+
+    if func_lower == "raise_application_error":
+        proc.java_logic_lines.extend(_emit_raise_application_error(args, proc))
+        return
 
     if pkg.upper() in ("DBE_SCHEDULER", "DBMS_SCHEDULER"):
         if func.upper() == "ENABLE":
@@ -6806,6 +6828,10 @@ def _wrap_handler_stmts(stmts, proc, all_packages,
                         func = func_name_parts[0]
                     else:
                         _lines.append(f"{indent}// CALL {'.'.join(func_name_parts)}(...)")
+                        continue
+                    if func.lower() == "raise_application_error":
+                        for _rl in _emit_raise_application_error(call_args, proc):
+                            _lines.append(f"{indent}{_rl}")
                         continue
                     matched = _find_registered_pkg(pkg, all_packages)
                     if matched:
@@ -8501,6 +8527,11 @@ def _sf_extract(val, proc, _expr_to_java_fn):
     }
     accessor = field_map.get(field_name, f"/* EXTRACT {field_name} */ -1")
     src_type = _infer_expr_type(args[1], proc) if proc and len(args) > 1 else ""
+    if field_name == "EPOCH":
+        if (src_expr.startswith("new java.sql.Timestamp") or "Timestamp" in src_type
+                or src_expr.startswith("new java.sql.Date") or "java.sql.Date" in src_type):
+            return f"({src_expr}).getTime() / 1000.0"
+        return f"({src_expr}) / 1000.0"
     if src_expr.startswith("new java.sql.Timestamp") or src_expr.startswith("java.sql.Timestamp.valueOf") or "Timestamp" in src_type:
         return f"({src_expr}).{accessor}"
     if "java.sql.Date" in src_expr or src_expr.startswith("new java.sql.Date") or "Date" in src_type:
@@ -9259,9 +9290,9 @@ def _coerce_java_arg(a_java: str, target_type: str) -> str:
     # Map.get() or List.get() result needs casting to target type
     if ".get(" in a_java and target_type not in ("Object", "Map<String, Object>"):
         if target_type in ("long", "Long"):
-            return f"Long.parseLong(String.valueOf({a_java}))"
+            return f"({a_java} == null ? null : Long.parseLong(String.valueOf({a_java})))"
         if target_type in ("int", "Integer"):
-            return f"Integer.parseInt(String.valueOf({a_java}))"
+            return f"({a_java} == null ? null : Integer.parseInt(String.valueOf({a_java})))"
         if "BigDecimal" in target_type:
             return _safe_map_cast("java.math.BigDecimal", a_java)
         if target_type == "String":
@@ -9287,6 +9318,9 @@ def _coerce_java_arg(a_java: str, target_type: str) -> str:
         # Integer literal: 0, 1, 100 → 0L, 1L, 100L
         if re.match(r'^-?\d+$', stripped):
             return f"{a_java}L"
+        # SQL NULL literal stays null (boxed Long param accepts null)
+        if stripped == "null":
+            return a_java
         # Boxed Integer variable (or any simple variable) → safe long conversion
         # Using Number.longValue() handles Integer, Long, Double, etc.
         if re.match(r'^[a-zA-Z_]\w*$', stripped):
@@ -9570,6 +9604,144 @@ def _wrap_ternary_nullsafe_bd(expr: str) -> str:
     return f"java.math.BigDecimal.valueOf({expr})"
 
 
+def _literal_string(node) -> str:
+    if isinstance(node, dict) and "Literal" in node:
+        lit = node["Literal"]
+        if isinstance(lit, dict) and "String" in lit:
+            return lit["String"]
+        if isinstance(lit, str):
+            return lit
+    return ""
+
+
+def _normalize_cast_type_name(tc_type) -> str:
+    if isinstance(tc_type, dict):
+        if "Interval" in tc_type:
+            return "interval"
+        if "Custom" in tc_type:
+            custom = tc_type["Custom"]
+            if isinstance(custom, list) and custom:
+                head = custom[0]
+                if isinstance(head, list) and head:
+                    return str(head[0]).lower()
+                return str(head).lower()
+        return ""
+    if isinstance(tc_type, str):
+        return tc_type.lower()
+    return ""
+
+
+def _parse_interval_value_unit(tc_expr, proc, all_packages):
+    """Extract (unit, value_java) from an interval cast inner expr, or None."""
+    s = _literal_string(tc_expr)
+    if s:
+        m = re.match(r'^\s*(\d+)\s*(day|month|year|hour|minute|second)s?\s*$', s, re.IGNORECASE)
+        if m:
+            return (m.group(2).lower(), m.group(1))
+        return None
+    if isinstance(tc_expr, dict) and "Parenthesized" in tc_expr:
+        inner = tc_expr["Parenthesized"]
+        if isinstance(inner, dict) and "BinaryOp" in inner:
+            bop = inner["BinaryOp"]
+            if bop.get("op") == "||":
+                unit = _literal_string(bop.get("right", {})).strip().lower().rstrip('s')
+                if unit in ("day", "month", "year", "hour", "minute", "second"):
+                    value_java = _expr_to_java(bop.get("left", {}), proc, all_packages=all_packages)
+                    return (unit, value_java)
+    return None
+
+
+def _interval_cast_to_java(tc_expr, proc, all_packages):
+    iu = _parse_interval_value_unit(tc_expr, proc, all_packages)
+    if iu is None:
+        return _expr_to_java(tc_expr, proc, all_packages=all_packages)
+    unit, value_java = iu
+    millis_map = {
+        "day": "java.time.Duration.ofDays((long)({v})).toMillis()",
+        "hour": "java.time.Duration.ofHours((long)({v})).toMillis()",
+        "minute": "java.time.Duration.ofMinutes((long)({v})).toMillis()",
+        "second": "java.time.Duration.ofSeconds((long)({v})).toMillis()",
+        "month": "(long)({v}) * 30L * 24L * 60L * 60L * 1000L",
+        "months": "(long)({v}) * 30L * 24L * 60L * 60L * 1000L",
+        "year": "(long)({v}) * 365L * 24L * 60L * 60L * 1000L",
+        "years": "(long)({v}) * 365L * 24L * 60L * 60L * 1000L",
+    }
+    template = millis_map.get(unit)
+    if template:
+        return template.replace("{v}", value_java)
+    return f"/* INTERVAL {unit} */ 0L"
+
+
+def _date_month_arith(date_java: str, date_type: str, value_java: str, is_year: bool, op: str) -> str:
+    if op == "+":
+        method = "plusYears" if is_year else "plusMonths"
+    else:
+        method = "minusYears" if is_year else "minusMonths"
+    if date_type == "java.sql.Date" or date_java.strip().startswith("new java.sql.Date"):
+        return f"java.sql.Date.valueOf({date_java}.toLocalDate().{method}((long)({value_java})))"
+    return f"java.sql.Timestamp.valueOf({date_java}.toLocalDateTime().{method}((long)({value_java})))"
+
+
+def _cast_to_date(inner_java: str, inner_type: str = "") -> str:
+    _s = inner_java.strip()
+    if _s.startswith("new java.sql.Date") or "java.sql.Date.valueOf" in _s:
+        return inner_java
+    if ("Timestamp" in inner_type or _s.startswith("new java.sql.Timestamp")
+            or "java.sql.Timestamp.valueOf" in _s):
+        return f"new java.sql.Date({inner_java}.getTime())"
+    if _s.startswith('"') or inner_type == "String":
+        return f"java.sql.Date.valueOf(String.valueOf({inner_java}))"
+    return f"java.sql.Date.valueOf({inner_java})"
+
+
+def _extract_interval_parts(ast, proc, all_packages):
+    """Extract (unit, value_java) from an interval TypeCast/SpecialFunction AST, or None."""
+    if not isinstance(ast, dict):
+        return None
+    if "TypeCast" in ast:
+        tc = ast["TypeCast"]
+        if _normalize_cast_type_name(tc.get("type_name")) == "interval":
+            return _parse_interval_value_unit(tc.get("expr", {}), proc, all_packages)
+        return None
+    if "SpecialFunction" in ast:
+        sf = ast["SpecialFunction"]
+        if str(sf.get("name", "")).lower() != "interval":
+            return None
+        args = sf.get("args", [])
+        if len(args) < 2:
+            return None
+        n_expr = _expr_to_java(args[0], proc, all_packages=all_packages)
+        if n_expr.startswith('"') and n_expr.endswith('"'):
+            n_expr = n_expr[1:-1]
+        unit_node = args[1]
+        if isinstance(unit_node, dict) and "ColumnRef" in unit_node:
+            parts = unit_node["ColumnRef"]
+            unit = parts[-1].lower() if isinstance(parts, list) else str(parts).lower()
+        else:
+            unit = str(unit_node).lower()
+        return (unit, n_expr)
+    return None
+
+
+def _extract_month_interval(ast, proc, all_packages):
+    """Extract (is_year, value_java) from a month/year interval AST, or None."""
+    parts = _extract_interval_parts(ast, proc, all_packages)
+    if parts is None:
+        return None
+    unit, value_java = parts
+    if unit in ("month", "months"):
+        return (False, value_java)
+    if unit in ("year", "years"):
+        return (True, value_java)
+    return None
+
+
+def _is_temporal_java(java: str, ttype: str) -> bool:
+    return ("Timestamp" in ttype or "Timestamp" in java or "java.sql.Date" in java
+            or ttype in ("java.sql.Date", "java.util.Date")
+            or java.strip().startswith("new java.sql.Date"))
+
+
 def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_packages: dict = None) -> str:
     """Convert an AST expression to Java code."""
     if expr is None:
@@ -9738,6 +9910,21 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
         elif key == "Literal":
             return _literal_to_java(val)
         elif key == "BinaryOp":
+            op = val.get("op", "")
+            if op in ("+", "-") and proc is not None:
+                _r_mi = _extract_month_interval(val.get("right", {}), proc, all_packages)
+                if _r_mi:
+                    _l_java = _expr_to_java(val.get("left", {}), proc, all_packages=all_packages)
+                    _l_type = _infer_expr_type(val.get("left", {}), proc)
+                    if _is_temporal_java(_l_java, _l_type):
+                        return _date_month_arith(_l_java, _l_type, _r_mi[1], _r_mi[0], op)
+                if op == "+":
+                    _l_mi = _extract_month_interval(val.get("left", {}), proc, all_packages)
+                    if _l_mi:
+                        _r_java = _expr_to_java(val.get("right", {}), proc, all_packages=all_packages)
+                        _r_type = _infer_expr_type(val.get("right", {}), proc)
+                        if _is_temporal_java(_r_java, _r_type):
+                            return _date_month_arith(_r_java, _r_type, _l_mi[1], _l_mi[0], op)
             left = _expr_to_java(val.get("left", {}), proc, all_packages=all_packages)
             right = _expr_to_java(val.get("right", {}), proc, all_packages=all_packages)
             op = val.get("op", "")
@@ -10505,7 +10692,19 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 cmp = f"({expr_java}) >= ({low_java}) && ({expr_java}) <= ({high_java})"
             return f"!({cmp})" if negated else cmp
         elif key == "TypeCast":
-            return _expr_to_java(val.get("expr", {}), proc, all_packages=all_packages)
+            _tc_expr = val.get("expr", {})
+            _tc_name = _normalize_cast_type_name(val.get("type_name"))
+            if _tc_name == "interval":
+                return _interval_cast_to_java(_tc_expr, proc, all_packages)
+            _inner = _expr_to_java(_tc_expr, proc, all_packages=all_packages)
+            if _tc_name == "date":
+                _inner_t = _infer_expr_type(_tc_expr, proc) if proc else ""
+                return _cast_to_date(_inner, _inner_t)
+            if _tc_name in ("timestamp", "timestamptz", "timestamp with time zone", "timestamp without time zone"):
+                if _inner.strip().startswith("new java.sql.Timestamp") or "java.sql.Timestamp.valueOf" in _inner:
+                    return _inner
+                return f"java.sql.Timestamp.valueOf(String.valueOf({_inner}))"
+            return _inner
         elif key == "CursorAttribute":
             cursor_expr = val.get("cursor", {})
             cursor_java = _expr_to_java(cursor_expr, proc)
@@ -14230,9 +14429,8 @@ def _mock_all_mapper_methods(mapper_name: str, pkg: PackageInfo, lines: list, er
             return "java.sql.Date.valueOf(\"2024-01-01\")"
         return _mock_value_for_column(k)
 
-    if not error_mode:
-        _tmpl_puts = " ".join(f'_rowTmpl.put("{_escape_java_string(k)}", {_tmpl_value(k)});' for k in _extra_keys)
-        lines.append(f"        var _rowTmpl = new java.util.HashMap<String,Object>(); {_tmpl_puts}")
+    _tmpl_puts = " ".join(f'_rowTmpl.put("{_escape_java_string(k)}", {_tmpl_value(k)});' for k in _extra_keys)
+    lines.append(f"        var _rowTmpl = new java.util.HashMap<String,Object>(); {_tmpl_puts}")
     all_dmls = _collect_all_dmls(pkg)
     overloaded = _detect_overloaded_ids(all_dmls)
     for dml_key, dml_info in all_dmls.items():
