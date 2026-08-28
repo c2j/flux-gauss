@@ -96,9 +96,7 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
-    let config_path_str = cli.config.as_ref()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "CLI mode".into());
+    let config_path_str = cli.config.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "CLI mode".into());
 
     let (mut config, sql_files, output_dir) = resolve_inputs(&cli)?;
 
@@ -133,8 +131,12 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     // ── Phase 0: Validate SQL syntax ──
     if !cli.skip_validate {
         let validate_result = pipeline::phase0_validate(&sql_files);
-        log.log(&format!("Validate: {} error(s), {} warning(s) across {} file(s)",
-            validate_result.error_file_count, validate_result.warning_file_count, sql_files.len()));
+        log.log(&format!(
+            "Validate: {} error(s), {} warning(s) across {} file(s)",
+            validate_result.error_file_count,
+            validate_result.warning_file_count,
+            sql_files.len()
+        ));
 
         for file_result in &validate_result.file_results {
             if !file_result.errors.is_empty() {
@@ -197,8 +199,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let total_procedures: usize = result.packages.iter().map(|p| p.procedures.len()).sum();
     let total_generated = result.generated_files.len();
 
-    log.log(&format!("Done! {} packages, {} procedures, {} files",
-              total_packages, total_procedures, total_generated));
+    log.log(&format!("Done! {} packages, {} procedures, {} files", total_packages, total_procedures, total_generated));
 
     println!();
     println!("  Done!");
@@ -208,27 +209,22 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     println!("    Cross-calls: {}", result.total_cross_calls);
     println!("    Test files:  {} (generated unit tests)", result.test_file_count);
 
-    let itest_enabled = config.integration_test
-        .as_ref()
-        .and_then(|it| it.enabled)
-        .unwrap_or(false);
+    let itest_enabled = config.integration_test.as_ref().and_then(|it| it.enabled).unwrap_or(false);
     if itest_enabled {
-        let itest_mode = config.integration_test
-            .as_ref()
-            .and_then(|it| it.mode.clone())
-            .unwrap_or_else(|| "remote".into());
-        println!("    IT files:    {} (generated integration tests, {} mode)",
-                 result.itest_file_count, itest_mode);
+        let itest_mode =
+            config.integration_test.as_ref().and_then(|it| it.mode.clone()).unwrap_or_else(|| "remote".into());
+        println!("    IT files:    {} (generated integration tests, {} mode)", result.itest_file_count, itest_mode);
     }
 
     println!("    Skipped:     {} (non-procedure SQL)", result.skipped.len());
 
     if !result.unresolved_calls.is_empty() {
-        println!("    Unresolved:  {} (cross-package calls, 详见转换报告)",
-                 result.unresolved_calls.len());
+        println!("    Unresolved:  {} (cross-package calls, 详见转换报告)", result.unresolved_calls.len());
         for call in &result.unresolved_calls {
-            log.log(&format!("    Unresolved call: {} -> {} (args: {}) [{}] — {}",
-                call.caller, call.callee, call.args, call.caller_file, call.hint));
+            log.log(&format!(
+                "    Unresolved call: {} -> {} (args: {}) [{}] — {}",
+                call.caller, call.callee, call.args, call.caller_file, call.hint
+            ));
         }
     }
 
@@ -273,7 +269,8 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         println!("    - {}", log_latest.display());
     }
 
-    let abs_output = std::path::Path::new(&output_dir).canonicalize()
+    let abs_output = std::path::Path::new(&output_dir)
+        .canonicalize()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| output_dir.clone());
     println!("\n  Output: {}", abs_output);
@@ -287,10 +284,16 @@ fn format_validate_error(err: &ogsql_parser::ParserError) -> String {
             format!("error at line {}, col {}: expected {}, got {}", location.line, location.column, expected, got)
         }
         ogsql_parser::ParserError::UnexpectedEof { expected, location } => {
-            format!("error at line {}, col {}: unexpected end of input, expected {}", location.line, location.column, expected)
+            format!(
+                "error at line {}, col {}: unexpected end of input, expected {}",
+                location.line, location.column, expected
+            )
         }
         ogsql_parser::ParserError::ReservedKeywordAsIdentifier { keyword, location } => {
-            format!("error at line {}, col {}: reserved keyword '{}' cannot be used as identifier", location.line, location.column, keyword)
+            format!(
+                "error at line {}, col {}: reserved keyword '{}' cannot be used as identifier",
+                location.line, location.column, keyword
+            )
         }
         ogsql_parser::ParserError::UnsupportedSyntax { location, syntax, hint } => {
             format!("error at line {}, col {}: {} ({})", location.line, location.column, syntax, hint)
@@ -311,14 +314,11 @@ fn resolve_inputs(cli: &Cli) -> Result<(config::AppConfig, Vec<PathBuf>, String)
         }
         let config = config::load_config(config_path)?;
         let output_dir = config.output_dir_or_default();
-        let sql_files: Vec<PathBuf> = config.sources
-            .as_ref()
-            .map(|s| s.iter().map(PathBuf::from).collect())
-            .unwrap_or_default();
+        let sql_files: Vec<PathBuf> =
+            config.sources.as_ref().map(|s| s.iter().map(PathBuf::from).collect()).unwrap_or_default();
         Ok((config, sql_files, output_dir))
     } else if cli.output.is_some() || !cli.sources.is_empty() {
-        let output = cli.output.clone()
-            .ok_or("Missing --output directory. Use -o <dir> with -s <sql_files>")?;
+        let output = cli.output.clone().ok_or("Missing --output directory. Use -o <dir> with -s <sql_files>")?;
         let sql_files = cli.sources.clone();
         let config = config::AppConfig::default();
         Ok((config, sql_files, output.to_string_lossy().to_string()))

@@ -6621,12 +6621,9 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
         resolved_args = []
         for i, a in enumerate(args):
             if target_proc_info and i in target_out_indices:
+                # OUT/INOUT args pass the caller's AtomicReference itself — never dereferenced
                 raw_java = _expr_to_java(a, proc, as_read=False)
-                raw_type = _infer_expr_type(a, proc)
-                if raw_java in out_param_java_names or "AtomicReference" in raw_type:
-                    resolved_args.append(raw_java)
-                else:
-                    resolved_args.append(_expr_to_java(a, proc, as_read=True))
+                resolved_args.append(raw_java)
             else:
                 a_java = _expr_to_java(a, proc, as_read=True)
                 if target_proc_info and i < len(target_proc_info.parameters):
@@ -6636,6 +6633,8 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
                             a_java = f"String.valueOf({a_java})" if ".get(" in a_java else f"(String) {a_java}"
                         elif not a_java.startswith('"'):
                             a_java_type = _infer_expr_type(a, proc)
+                            if a_java_type == "Object":
+                                a_java_type = _infer_target_type(a_java, proc)
                             if a_java_type in ("long", "Long", "int", "Integer", "double", "Double", "float", "Float", "java.math.BigDecimal"):
                                 a_java = f"String.valueOf({a_java})"
                     else:
@@ -6846,10 +6845,7 @@ def _wrap_handler_stmts(stmts, proc, all_packages,
                         for i, a in enumerate(call_args):
                             if target_proc_info and i in _target_out_indices:
                                 raw_java = _expr_to_java(a, proc, as_read=False)
-                                if raw_java in _out_param_java_names:
-                                    _resolved.append(raw_java)
-                                else:
-                                    _resolved.append(_expr_to_java(a, proc, as_read=True))
+                                _resolved.append(raw_java)
                             else:
                                 a_java = _expr_to_java(a, proc, as_read=True)
                                 if target_proc_info and i < len(target_proc_info.parameters):
@@ -6859,11 +6855,17 @@ def _wrap_handler_stmts(stmts, proc, all_packages,
                                             a_java = f"String.valueOf({a_java})" if ".get(" in a_java else f"(String) {a_java}"
                                         elif not a_java.startswith('"'):
                                             a_java_type = _infer_expr_type(a, proc)
+                                            if a_java_type == "Object":
+                                                a_java_type = _infer_target_type(a_java, proc)
                                             if a_java_type in ("long", "Long", "int", "Integer", "double", "Double", "float", "Float", "java.math.BigDecimal"):
+                                                a_java = f"String.valueOf({a_java})"
+                                            # Type inference unavailable for a bare variable — String.valueOf
+                                            # is identity for String vars and numeric-safe otherwise
+                                            elif a_java_type == "Object" and re.match(r'^[a-zA-Z_]\w*$', a_java):
                                                 a_java = f"String.valueOf({a_java})"
                                     else:
                                         a_java = _coerce_java_arg(a_java, tptype)
-                                _resolved.append(a_java)
+                                    _resolved.append(a_java)
                         args_java = ", ".join(_resolved)
                         is_self_call = (matched.lower() == proc.package.lower())
                         if not is_self_call:
@@ -8356,9 +8358,9 @@ SQL_FUNCTION_MAP = {
     "ascii": "__EXPR__String.valueOf({args0}).charAt(0)",
     "add_months": "__EXPR__java.time.LocalDate.now().plusMonths({args1})",
     "months_between": "__EXPR__java.time.Period.between(((java.time.LocalDate){args0}), ((java.time.LocalDate){args1})).toTotalMonths()",
-    "last_day": "__EXPR__java.time.LocalDate.now().withDayOfMonth(java.time.LocalDate.now().lengthOfMonth())",
-    "next_day": "__EXPR__java.time.LocalDate.now().plusWeeks(1)",
-    "trunc_date": "__EXPR__java.time.LocalDate.from(java.time.LocalDateTime.ofInstant(java.sql.Timestamp.valueOf({args0}).toInstant(), java.time.ZoneId.systemDefault()))",
+    "last_day": "__EXPR__java.sql.Date.valueOf(java.time.LocalDate.now().withDayOfMonth(java.time.LocalDate.now().lengthOfMonth()))",
+    "next_day": "__EXPR__java.sql.Date.valueOf(java.time.LocalDate.now().plusWeeks(1))",
+    "trunc_date": "__EXPR__java.sql.Date.valueOf(java.time.LocalDateTime.ofInstant(java.sql.Timestamp.valueOf({args0}).toInstant(), java.time.ZoneId.systemDefault()).toLocalDate())",
     "row_number": "rowNumber",
     "rownum": "rowNumber",
     "count": "__EXPR__0L",
@@ -9504,6 +9506,9 @@ def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
                 return expr
             return f"java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({expr}).trim().split(\" \")[0], java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd]\")).atStartOfDay())"
         if tgt == "java.sql.Date":
+            # Already Date-producing (function map / prior coercion) — do not double-wrap
+            if _es.startswith("new java.sql.Date") or "java.sql.Date.valueOf" in _es:
+                return expr
             return f"java.sql.Date.valueOf(String.valueOf({expr}))"
         return expr
 
@@ -10705,6 +10710,19 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     return _inner
                 return f"java.sql.Timestamp.valueOf(String.valueOf({_inner}))"
             return _inner
+        elif key == "AtTimeZone":
+            # <timestamp expr> AT TIME ZONE '<zone>' — convert instant to the zone's wall time
+            _atz_inner = _expr_to_java(val.get("expr", {}), proc, all_packages=all_packages)
+            _atz_zone_v = val.get("zone", {})
+            if isinstance(_atz_zone_v, dict):
+                _atz_lit = _atz_zone_v.get("Literal", {})
+                _atz_zone = _atz_lit.get("String", "UTC") if isinstance(_atz_lit, dict) else "UTC"
+            else:
+                _atz_zone = "UTC"
+            if "Timestamp" in _atz_inner or ".getTime()" in _atz_inner or "current_timestamp" in _atz_inner.lower():
+                return (f"java.sql.Timestamp.valueOf({_atz_inner}.toInstant()"
+                        f".atZone(java.time.ZoneId.of(\"{_atz_zone}\")).toLocalDateTime())")
+            return _atz_inner
         elif key == "CursorAttribute":
             cursor_expr = val.get("cursor", {})
             cursor_java = _expr_to_java(cursor_expr, proc)
@@ -12506,6 +12524,13 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
         method = _build_service_method(proc, mapper_name, all_packages)
         methods.append(method)
 
+    # Signature/body-driven import: any Map< / List< usage needs java.util imports
+    _all_method_text = "\n".join(m for m in methods if m) + "\n" + all_body_text
+    if re.search(r'\bMap<', _all_method_text):
+        all_imports.add("import java.util.Map;")
+    if re.search(r'\bList<', _all_method_text):
+        all_imports.add("import java.util.List;")
+
     service_injections = _collect_service_injections(pkg)
 
     for svc_var, pkg_name in service_injections.items():
@@ -13030,6 +13055,7 @@ def _drop_unreachable_fallback(lines):
 def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: dict = None) -> str:
     params = []
     out_params = []
+    _used_param_names = set()
     for p in proc.parameters:
         if p.is_out:
             if p.is_refcursor:
@@ -13046,7 +13072,14 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
             # types when BinaryOp comparison logic looks up the type via
             # _infer_expr_type() → Parameter.java_type.
             param_type = p.java_type
-            params.append(f"{param_type} {p.java_name}")
+            # Deduplicate generated parameter names (e.g. two overloads both named `text`)
+            _base = p.java_name
+            _dedup, _k = _base, 2
+            while _dedup in _used_param_names:
+                _dedup = f"{_base}{_k}"
+                _k += 1
+            _used_param_names.add(_dedup)
+            params.append(f"{param_type} {_dedup}")
 
     params_str = ", ".join(params) if params else ""
 

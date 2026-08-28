@@ -53,10 +53,18 @@ pub struct DatabaseConfig {
     pub driver: Option<String>,
 }
 
-fn default_db_url() -> Option<String> { Some("jdbc:postgresql://localhost:5432/demo".into()) }
-fn default_db_user() -> Option<String> { Some("postgres".into()) }
-fn default_db_pass() -> Option<String> { Some("postgres".into()) }
-fn default_db_driver() -> Option<String> { Some("org.postgresql.Driver".into()) }
+fn default_db_url() -> Option<String> {
+    Some("jdbc:postgresql://localhost:5432/demo".into())
+}
+fn default_db_user() -> Option<String> {
+    Some("postgres".into())
+}
+fn default_db_pass() -> Option<String> {
+    Some("postgres".into())
+}
+fn default_db_driver() -> Option<String> {
+    Some("org.postgresql.Driver".into())
+}
 
 #[derive(Debug, Deserialize)]
 pub struct JavaPackageMapping {

@@ -25,10 +25,7 @@ pub fn write_skeleton_files(
         generated.push("src/main/resources/application.yml".to_string());
     }
 
-    let java_dir = output_dir.join(format!(
-        "src/main/java/{}",
-        base_package.replace('.', "/")
-    ));
+    let java_dir = output_dir.join(format!("src/main/java/{}", base_package.replace('.', "/")));
 
     let app_path = java_dir.join("DemoApplication.java");
     if !app_path.exists() {
@@ -111,7 +108,10 @@ fn write_pom_xml(output_dir: &Path, _base_package: &str, encoding: &'static Enco
     w.push_indent();
     w.line("<java.version>17</java.version>");
     if encoding.name() != "utf-8" {
-        w.line(&format!("<project.build.sourceEncoding>{}</project.build.sourceEncoding>", encoding.name().to_uppercase()));
+        w.line(&format!(
+            "<project.build.sourceEncoding>{}</project.build.sourceEncoding>",
+            encoding.name().to_uppercase()
+        ));
     }
     w.pop_indent();
     w.line("</properties>");
@@ -215,13 +215,7 @@ fn write_pom_xml(output_dir: &Path, _base_package: &str, encoding: &'static Enco
     w.write_to_file(&output_dir.join("pom.xml"), encoding)
 }
 
-fn write_dep(
-    w: &mut CodeWriter,
-    group: &str,
-    artifact: &str,
-    version: Option<&str>,
-    scope: Option<&str>,
-) {
+fn write_dep(w: &mut CodeWriter, group: &str, artifact: &str, version: Option<&str>, scope: Option<&str>) {
     w.line("<dependency>");
     w.push_indent();
     w.line(&format!("<groupId>{}</groupId>", group));
@@ -239,15 +233,14 @@ fn write_dep(
 fn write_application_yml(resources_dir: &Path, config: &AppConfig, encoding: &'static Encoding) -> std::io::Result<()> {
     let db = config.database.as_ref();
     let it = config.integration_test.as_ref();
-    let url = db.and_then(|d| d.url.as_deref())
+    let url = db
+        .and_then(|d| d.url.as_deref())
         .or_else(|| it.and_then(|i| i.url.as_deref()))
         .unwrap_or("jdbc:postgresql://localhost:5432/demo");
-    let username = db.and_then(|d| d.username.as_deref())
-        .or_else(|| it.and_then(|i| i.username.as_deref()))
-        .unwrap_or("postgres");
-    let password = db.and_then(|d| d.password.as_deref())
-        .or_else(|| it.and_then(|i| i.password.as_deref()))
-        .unwrap_or("postgres");
+    let username =
+        db.and_then(|d| d.username.as_deref()).or_else(|| it.and_then(|i| i.username.as_deref())).unwrap_or("postgres");
+    let password =
+        db.and_then(|d| d.password.as_deref()).or_else(|| it.and_then(|i| i.password.as_deref())).unwrap_or("postgres");
     let driver = db.and_then(|d| d.driver.as_deref()).unwrap_or("org.postgresql.Driver");
 
     let mut w = CodeWriter::new();

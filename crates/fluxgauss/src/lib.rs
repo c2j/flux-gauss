@@ -1,7 +1,10 @@
+pub mod analyze;
 pub mod config;
 pub mod context;
 pub mod debug;
+pub mod expr;
 pub mod extract;
+pub mod generate;
 pub mod incremental;
 pub mod logging;
 pub mod naming;
@@ -12,6 +15,3 @@ pub mod statement;
 pub mod statements;
 pub mod type_map;
 pub mod types;
-pub mod generate;
-pub mod analyze;
-pub mod expr;

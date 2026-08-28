@@ -8,9 +8,7 @@ pub struct ScanContext {
 
 impl ScanContext {
     pub fn new() -> Self {
-        Self {
-            type_overrides: HashMap::new(),
-        }
+        Self { type_overrides: HashMap::new() }
     }
 }
 
@@ -65,10 +63,7 @@ pub struct GenerationContext {
 
 impl GenerationContext {
     pub fn new(base_package: &str, logger_config: crate::config::LoggerConfig) -> Self {
-        Self {
-            base_package: base_package.into(),
-            logger_config,
-        }
+        Self { base_package: base_package.into(), logger_config }
     }
 }
 

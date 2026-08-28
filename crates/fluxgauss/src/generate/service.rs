@@ -22,24 +22,17 @@ pub fn write_service_class(
     let java_pkg = format!("{}.service", base_package);
     let svc_dir = base_path.join(format!("src/main/java/{}/service", base_package.replace('.', "/")));
     let class_name = format!("{}Service", package_to_classname(&pkg.package_name));
-    let mapper_var = format!(
-        "{}Mapper",
-        {
-            let cn = package_to_classname(&pkg.package_name);
-            let mut c = cn.chars();
-            match c.next() {
-                Some(f) => f.to_ascii_lowercase().to_string() + c.as_str(),
-                None => String::new(),
-            }
+    let mapper_var = format!("{}Mapper", {
+        let cn = package_to_classname(&pkg.package_name);
+        let mut c = cn.chars();
+        match c.next() {
+            Some(f) => f.to_ascii_lowercase().to_string() + c.as_str(),
+            None => String::new(),
         }
-    );
+    });
 
     let mut all_imports: BTreeSet<String> = BTreeSet::new();
-    all_imports.insert(format!(
-        "import {}.mapper.{}Mapper;",
-        base_package,
-        package_to_classname(&pkg.package_name)
-    ));
+    all_imports.insert(format!("import {}.mapper.{}Mapper;", base_package, package_to_classname(&pkg.package_name)));
     all_imports.insert(format!("import {}.exception.BusinessException;", base_package));
     all_imports.insert("import org.slf4j.Logger;".to_string());
     all_imports.insert("import org.slf4j.LoggerFactory;".to_string());
@@ -65,12 +58,8 @@ pub fn write_service_class(
         all_imports.insert(format!("import {}.service.{};", base_package, svc_class));
     }
 
-    let all_body: String = pkg
-        .procedures
-        .iter()
-        .flat_map(|p| p.java_logic_lines.iter().cloned())
-        .collect::<Vec<_>>()
-        .join(" ");
+    let all_body: String =
+        pkg.procedures.iter().flat_map(|p| p.java_logic_lines.iter().cloned()).collect::<Vec<_>>().join(" ");
     let has_list_return = pkg.procedures.iter().any(|p| {
         if p.is_function {
             p.return_type.as_ref().map_or(false, |t| t.contains("List"))
@@ -101,9 +90,7 @@ pub fn write_service_class(
     {
         all_imports.insert("import java.util.concurrent.atomic.AtomicReference;".to_string());
     }
-    let has_map_var = pkg.procedures.iter().any(|p| {
-        p.local_vars.values().any(|t| t.contains("Map<String"))
-    });
+    let has_map_var = pkg.procedures.iter().any(|p| p.local_vars.values().any(|t| t.contains("Map<String")));
     if has_map_var {
         all_imports.insert("import java.util.HashMap;".to_string());
     }
@@ -121,17 +108,10 @@ pub fn write_service_class(
     }
     w.line(&format!("public class {} {{", class_name));
     w.push_indent();
-    w.line(&format!(
-        "private static final Logger log = LoggerFactory.getLogger({}.class);",
-        class_name
-    ));
+    w.line(&format!("private static final Logger log = LoggerFactory.getLogger({}.class);", class_name));
     w.blank();
 
-    w.line(&format!(
-        "private final {} {};",
-        format!("{}Mapper", package_to_classname(&pkg.package_name)),
-        mapper_var
-    ));
+    w.line(&format!("private final {} {};", format!("{}Mapper", package_to_classname(&pkg.package_name)), mapper_var));
     for (svc_var, pkg_name) in &sorted_injections {
         let svc_class = if !pkg_name.is_empty() {
             format!("{}Service", package_to_classname(pkg_name))
@@ -142,9 +122,8 @@ pub fn write_service_class(
         w.line(&format!("private final {} {};", svc_class, svc_var));
     }
     // Collect all package variable names that are written in any procedure
-    let written_package_vars: std::collections::HashSet<&str> = pkg.procedures.iter()
-        .flat_map(|p| p.written_package_vars.iter().map(|s| s.as_str()))
-        .collect();
+    let written_package_vars: std::collections::HashSet<&str> =
+        pkg.procedures.iter().flat_map(|p| p.written_package_vars.iter().map(|s| s.as_str())).collect();
     let mut sorted_pkg_vars: Vec<_> = pkg.package_vars.iter().collect();
     sorted_pkg_vars.sort_by_key(|(k, _)| *k);
     for (var_name, var_info) in sorted_pkg_vars {
@@ -163,11 +142,8 @@ pub fn write_service_class(
     }
     w.blank();
 
-    let mut constructor_params = vec![format!(
-        "{} {}",
-        format!("{}Mapper", package_to_classname(&pkg.package_name)),
-        mapper_var
-    )];
+    let mut constructor_params =
+        vec![format!("{} {}", format!("{}Mapper", package_to_classname(&pkg.package_name)), mapper_var)];
     let mut constructor_assigns = vec![format!("this.{} = {};", mapper_var, mapper_var)];
     for (svc_var, _pkg_name) in &sorted_injections {
         let svc_class = if let Some(pn) = service_injections.get(*svc_var) {
@@ -210,7 +186,9 @@ pub fn write_service_class(
         }
     }
 
-    let object_pkg_var_names: Vec<String> = pkg.package_vars.iter()
+    let object_pkg_var_names: Vec<String> = pkg
+        .package_vars
+        .iter()
         .filter(|(_, v)| v.java_type == "Object")
         .map(|(name, _)| snake_to_camel(name))
         .collect();
@@ -233,11 +211,8 @@ pub fn write_service_class(
         w.line("}");
     }
 
-    let all_body: String = pkg.procedures.iter()
-        .flat_map(|p| p.java_logic_lines.iter())
-        .cloned()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let all_body: String =
+        pkg.procedures.iter().flat_map(|p| p.java_logic_lines.iter()).cloned().collect::<Vec<_>>().join(" ");
     if all_body.contains("this.jsonbArrayLength(") {
         w.blank();
         w.line("public Integer jsonbArrayLength(String jsonb) {");
@@ -307,14 +282,22 @@ pub fn write_service_class(
         w.line(&format!("public Long nextval(String seqName) {{"));
         w.line(&format!("    return {}.selectNextval(seqName);", mapper_var));
         w.line("}");
-        pkg.extra_mapper_methods.push(("selectNextval".into(), "SELECT nextval(#{seqName,jdbcType=VARCHAR}) AS val".into(), "Long".into()));
+        pkg.extra_mapper_methods.push((
+            "selectNextval".into(),
+            "SELECT nextval(#{seqName,jdbcType=VARCHAR}) AS val".into(),
+            "Long".into(),
+        ));
     }
     if all_body.contains("this.currval(") {
         w.blank();
         w.line(&format!("public Long currval(String seqName) {{"));
         w.line(&format!("    return {}.selectCurrval(seqName);", mapper_var));
         w.line("}");
-        pkg.extra_mapper_methods.push(("selectCurrval".into(), "SELECT currval(#{seqName,jdbcType=VARCHAR}) AS val".into(), "Long".into()));
+        pkg.extra_mapper_methods.push((
+            "selectCurrval".into(),
+            "SELECT currval(#{seqName,jdbcType=VARCHAR}) AS val".into(),
+            "Long".into(),
+        ));
     }
 
     w.pop_indent();
@@ -339,13 +322,27 @@ fn boxed_to_primitive(t: &str) -> &str {
 
 fn default_for_type(t: &str) -> &'static str {
     let tl = t.to_lowercase();
-    if tl.contains("long") { return "0L"; }
-    if tl.contains("integer") || tl == "int" { return "0"; }
-    if tl.contains("bigdecimal") { return "java.math.BigDecimal.ZERO"; }
-    if tl.contains("double") { return "0.0d"; }
-    if tl.contains("float") { return "0.0f"; }
-    if tl.contains("boolean") { return "false"; }
-    if tl.starts_with("map<") { return "new HashMap<>()"; }
+    if tl.contains("long") {
+        return "0L";
+    }
+    if tl.contains("integer") || tl == "int" {
+        return "0";
+    }
+    if tl.contains("bigdecimal") {
+        return "java.math.BigDecimal.ZERO";
+    }
+    if tl.contains("double") {
+        return "0.0d";
+    }
+    if tl.contains("float") {
+        return "0.0f";
+    }
+    if tl.contains("boolean") {
+        return "false";
+    }
+    if tl.starts_with("map<") {
+        return "new HashMap<>()";
+    }
     if tl.starts_with("atomicreference") {
         let inner = tl.trim_start_matches("atomicreference<").trim_end_matches('>');
         return if inner.contains("long") || inner.contains("Long") {
@@ -406,7 +403,8 @@ fn dead_code_guard(lines: &mut Vec<String>) {
     }
 }
 
-fn coerce_default_value(java_type: &str, default_val: &str) -> String {    let trimmed = default_val.trim();
+fn coerce_default_value(java_type: &str, default_val: &str) -> String {
+    let trimmed = default_val.trim();
     let tl = java_type.to_lowercase();
     if tl.contains("list") || tl.contains("array") {
         if trimmed.starts_with('"') {
@@ -421,7 +419,12 @@ fn coerce_default_value(java_type: &str, default_val: &str) -> String {    let t
         if trimmed == "1" {
             return "java.math.BigDecimal.ONE".to_string();
         }
-        if trimmed == "null" || trimmed == "java.math.bigdecimal.zero" || trimmed == "java.math.bigdecimal.one" || trimmed == "\"\"" || trimmed == "''" {
+        if trimmed == "null"
+            || trimmed == "java.math.bigdecimal.zero"
+            || trimmed == "java.math.bigdecimal.one"
+            || trimmed == "\"\""
+            || trimmed == "''"
+        {
             return "java.math.BigDecimal.ZERO".to_string();
         }
         if trimmed.parse::<i64>().is_ok() {
@@ -431,7 +434,7 @@ fn coerce_default_value(java_type: &str, default_val: &str) -> String {    let t
             return format!("new java.math.BigDecimal(\"{}\")", trimmed);
         }
         if trimmed.starts_with("(") && trimmed.ends_with(")") {
-            let inner = &trimmed[1..trimmed.len()-1];
+            let inner = &trimmed[1..trimmed.len() - 1];
             if inner.parse::<i64>().is_ok() || inner.parse::<f64>().is_ok() {
                 return format!("java.math.BigDecimal.valueOf({})", crate::expr::java_int_lit(inner));
             }
@@ -470,7 +473,11 @@ fn coerce_default_value(java_type: &str, default_val: &str) -> String {    let t
         }
     }
     if tl.contains("double") {
-        if trimmed.parse::<f64>().is_ok() && !trimmed.ends_with('d') && !trimmed.ends_with('D') && !trimmed.contains('.') {
+        if trimmed.parse::<f64>().is_ok()
+            && !trimmed.ends_with('d')
+            && !trimmed.ends_with('D')
+            && !trimmed.contains('.')
+        {
             return format!("{}d", trimmed);
         }
     }
@@ -502,12 +509,8 @@ fn format_comment_for_java(comment: &crate::types::CommentBlock) -> String {
     let stripped = if text.starts_with("--") {
         text[2..].trim().to_string()
     } else if text.starts_with("/*") && text.ends_with("*/") {
-        let inner = text[2..text.len()-2].trim();
-        inner.lines()
-            .map(|l| l.trim())
-            .filter(|l| !l.is_empty())
-            .collect::<Vec<_>>()
-            .join(" ")
+        let inner = text[2..text.len() - 2].trim();
+        inner.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" ")
     } else {
         text.to_string()
     };
@@ -519,6 +522,13 @@ fn format_comment_for_java(comment: &crate::types::CommentBlock) -> String {
 }
 
 pub(crate) fn should_stub_procedure(proc: &crate::types::ProcedureInfo, _object_pkg_var_names: &[String]) -> bool {
+    if proc.is_function
+        && (proc.return_type.as_deref().map_or(false, |t| t.eq_ignore_ascii_case("trigger"))
+            || proc.sql_text.to_ascii_lowercase().contains("returns trigger")
+            || proc.java_logic_lines.iter().any(|line| line.trim() == "return new;"))
+    {
+        return true;
+    }
     let lines = &proc.java_logic_lines;
 
     let has_goto = lines.iter().any(|l| l.trim().starts_with("// GOTO "));
@@ -528,14 +538,19 @@ pub(crate) fn should_stub_procedure(proc: &crate::types::ProcedureInfo, _object_
 
     let broken_java = lines.iter().any(|l| {
         let t = l.trim();
-        t.contains("null ^ ") || t.contains("null > null") || t.contains("null < null")
-            || t.contains("if (1)") || t.contains("if (2)") || t.contains("if (3)")
+        t.contains("null ^ ")
+            || t.contains("null > null")
+            || t.contains("null < null")
+            || t.contains("if (1)")
+            || t.contains("if (2)")
+            || t.contains("if (3)")
             || t.contains("Objects.equals(null,")
             || t.contains("((Object)")
             || t.contains("(Object[])")
             || t.contains("Math.pow(null,")
             || t.contains("/* ENCODE */")
-            || (t.contains(".set((-") && t[t.find(".set((-").unwrap() + 7..].chars().next().map_or(false, |c| !c.is_ascii_digit()))
+            || (t.contains(".set((-")
+                && t[t.find(".set((-").unwrap() + 7..].chars().next().map_or(false, |c| !c.is_ascii_digit()))
             || t.contains("Math.abs(") && t.contains(".compareTo(")
             || t.contains(".longValue() / 0")
             || t.contains("Timestamp(System.currentTimeMillis()) - ")
@@ -545,7 +560,10 @@ pub(crate) fn should_stub_procedure(proc: &crate::types::ProcedureInfo, _object_
         return true;
     }
 
-    let broken_defaults = proc.local_var_defaults.values().any(|v| v.contains("((Object)") || v.contains(">>") || v.contains("-> ") || v.contains("(Object[])"));
+    let broken_defaults = proc
+        .local_var_defaults
+        .values()
+        .any(|v| v.contains("((Object)") || v.contains(">>") || v.contains("-> ") || v.contains("(Object[])"));
     if broken_defaults {
         return true;
     }
@@ -576,16 +594,16 @@ fn build_service_method(
             if p.is_refcursor() {
                 continue;
             }
-             params.push(format!("AtomicReference<{}> {}", p.java_type, snake_to_camel(&p.name)));
-             out_params.push(p);
-         } else {
-             let is_null_default = p.default_value.as_ref().map_or(false, |dv| dv.to_lowercase() == "null");
-             let param_type = if is_null_default { &p.java_type } else { boxed_to_primitive(&p.java_type) };
-             params.push(format!("{} {}", param_type, snake_to_camel(&p.name)));
-         }
-     }
+            params.push(format!("AtomicReference<{}> {}", p.java_type, snake_to_camel(&p.name)));
+            out_params.push(p);
+        } else {
+            let is_null_default = p.default_value.as_ref().map_or(false, |dv| dv.to_lowercase() == "null");
+            let param_type = if is_null_default { &p.java_type } else { boxed_to_primitive(&p.java_type) };
+            params.push(format!("{} {}", param_type, snake_to_camel(&p.name)));
+        }
+    }
 
-     let params_str = params.join(", ");
+    let params_str = params.join(", ");
 
     let mut ret_type = if proc.is_function {
         match &proc.return_type {
@@ -593,8 +611,7 @@ fn build_service_method(
                 if rt.chars().next().map_or(false, |c| c.is_uppercase()) || rt.contains('.') {
                     rt.clone()
                 } else {
-                    sql_type_to_java(rt).map(|s| s.to_string())
-                        .unwrap_or_else(|| "Object".to_string())
+                    sql_type_to_java(rt).map(|s| s.to_string()).unwrap_or_else(|| "Object".to_string())
                 }
             }
             None => "Object".to_string(),
@@ -617,16 +634,25 @@ fn build_service_method(
     }
 
     let method_name = java_method_name(&proc.proc_name);
-    let has_dml = proc.dml_statements.iter().any(|d| matches!(d.sql_type, DmlType::Insert | DmlType::Update | DmlType::Delete));
+    let has_dml =
+        proc.dml_statements.iter().any(|d| matches!(d.sql_type, DmlType::Insert | DmlType::Update | DmlType::Delete));
 
     let mut body_lines: Vec<String> = Vec::new();
+    let has_return_next = proc.java_logic_lines.iter().any(|line| line.contains("_returnResults.add("));
+    if has_return_next {
+        ret_type = "List<Object>".to_string();
+    }
 
     if should_stub_procedure(proc, object_pkg_var_names) {
-        body_lines.push("// TODO: Auto-generated stub — complex PL/pgSQL pattern requires manual implementation".to_string());
+        body_lines
+            .push("// TODO: Auto-generated stub — complex PL/pgSQL pattern requires manual implementation".to_string());
         if ret_type != "void" {
             body_lines.push("return null;".to_string());
         }
     } else {
+        if has_return_next {
+            body_lines.push("List<Object> _returnResults = new ArrayList<>();".to_string());
+        }
         let out_java_names: std::collections::HashSet<String> =
             out_params.iter().map(|p| snake_to_camel(&p.name)).collect();
 
@@ -653,33 +679,44 @@ fn build_service_method(
                     } else {
                         "null"
                     };
-                    body_lines.push(format!("AtomicReference<{}> {} = new AtomicReference<>({});", inner_type, var_java, ar_init));
+                    body_lines.push(format!(
+                        "AtomicReference<{}> {} = new AtomicReference<>({});",
+                        inner_type, var_java, ar_init
+                    ));
                 } else {
-                    let default_val = proc.local_var_defaults.get(&var_name.to_lowercase())
+                    let default_val = proc
+                        .local_var_defaults
+                        .get(&var_name.to_lowercase())
                         .cloned()
                         .unwrap_or_else(|| default_for_type(var_type).to_string());
                     let coerced = coerce_default_value(var_type, &default_val);
-                    let is_object_used_as_map = var_type == "Object" && proc.java_logic_lines.iter()
-                        .any(|l| {
-                            l.contains(&format!("((java.util.Map<String, Object>) {}).put(", var_java)) ||
-                            l.contains(&format!("{}.getOrDefault(", var_java)) ||
-                            l.contains(&format!("{}.put(", var_java)) ||
-                            l.contains(&format!("{}.get(\"", var_java))
+                    let is_object_used_as_map = var_type == "Object"
+                        && proc.java_logic_lines.iter().any(|l| {
+                            l.contains(&format!("((java.util.Map<String, Object>) {}).put(", var_java))
+                                || l.contains(&format!("{}.getOrDefault(", var_java))
+                                || l.contains(&format!("{}.put(", var_java))
+                                || l.contains(&format!("{}.get(\"", var_java))
                         });
-                    let is_object_used_as_list = var_type == "Object" && proc.java_logic_lines.iter()
-                        .any(|l| l.contains(&format!("((java.util.List<?>) {})", var_java)));
+                    let is_object_used_as_list = var_type == "Object"
+                        && proc
+                            .java_logic_lines
+                            .iter()
+                            .any(|l| l.contains(&format!("((java.util.List<?>) {})", var_java)));
                     if is_object_used_as_map {
                         if debug {
                             if let Some(&line) = proc.local_var_source_lines.get(&var_name.to_lowercase()) {
-                                let src_path = if !proc.source_path.is_empty() { &proc.source_path } else { &proc.source_file };
+                                let src_path =
+                                    if !proc.source_path.is_empty() { &proc.source_path } else { &proc.source_file };
                                 body_lines.push(crate::debug::format_debug_comment(src_path, line, 100));
                             }
                         }
-                        body_lines.push(format!("java.util.Map<String, Object> {} = new java.util.HashMap<>();", var_java));
+                        body_lines
+                            .push(format!("java.util.Map<String, Object> {} = new java.util.HashMap<>();", var_java));
                     } else if is_object_used_as_list {
                         if debug {
                             if let Some(&line) = proc.local_var_source_lines.get(&var_name.to_lowercase()) {
-                                let src_path = if !proc.source_path.is_empty() { &proc.source_path } else { &proc.source_file };
+                                let src_path =
+                                    if !proc.source_path.is_empty() { &proc.source_path } else { &proc.source_file };
                                 body_lines.push(crate::debug::format_debug_comment(src_path, line, 100));
                             }
                         }
@@ -687,7 +724,8 @@ fn build_service_method(
                     } else {
                         if debug {
                             if let Some(&line) = proc.local_var_source_lines.get(&var_name.to_lowercase()) {
-                                let src_path = if !proc.source_path.is_empty() { &proc.source_path } else { &proc.source_file };
+                                let src_path =
+                                    if !proc.source_path.is_empty() { &proc.source_path } else { &proc.source_file };
                                 body_lines.push(crate::debug::format_debug_comment(src_path, line, 100));
                             }
                         }
@@ -697,12 +735,9 @@ fn build_service_method(
             }
         }
 
-        let refcursor_outs: Vec<_> = proc.parameters.iter()
-            .filter(|p| p.is_out() && p.is_refcursor())
-            .collect();
-        let refcursor_names: std::collections::HashSet<String> = refcursor_outs.iter()
-            .map(|p| snake_to_camel(&p.name))
-            .collect();
+        let refcursor_outs: Vec<_> = proc.parameters.iter().filter(|p| p.is_out() && p.is_refcursor()).collect();
+        let refcursor_names: std::collections::HashSet<String> =
+            refcursor_outs.iter().map(|p| snake_to_camel(&p.name)).collect();
         let mut declared_cursor_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut declared_cursor_idxs: std::collections::HashSet<String> = std::collections::HashSet::new();
         for rc_out in &refcursor_outs {
@@ -716,7 +751,8 @@ fn build_service_method(
             } else {
                 let var_name = format!("{}Result", rc_java);
                 if declared_cursor_vars.insert(var_name.clone()) {
-                    body_lines.push(format!("List<Map<String, Object>> {} = java.util.Collections.emptyList();", var_name));
+                    body_lines
+                        .push(format!("List<Map<String, Object>> {} = java.util.Collections.emptyList();", var_name));
                 }
             }
         }
@@ -749,7 +785,11 @@ fn build_service_method(
         }
 
         let logic_text = proc.java_logic_lines.join(" ");
-        let needs_found = logic_text.contains(" found ") || logic_text.contains("!found") || logic_text.contains("(found");
+        if logic_text.contains("tgOp") {
+            body_lines.push("String tgOp = \"INSERT\"; // TODO: trigger context unavailable in Java".to_string());
+        }
+        let needs_found =
+            logic_text.contains(" found ") || logic_text.contains("!found") || logic_text.contains("(found");
         if needs_found {
             body_lines.push("boolean found = false;".to_string());
         }
@@ -770,6 +810,27 @@ fn build_service_method(
         for line in &proc.java_logic_lines {
             let mut l = line.replace("mapper.", &format!("{}.", mapper_name));
             l = append_local_vars_to_mapper_calls(&l, proc, mapper_name, package_vars);
+            for (name, inner_type) in &proc.out_local_vars {
+                if inner_type == "Integer" || inner_type == "int" {
+                    let prefix = format!("{}.set(", snake_to_camel(name));
+                    if let Some(start) = l.find(&prefix) {
+                        if l.ends_with(");") {
+                            let expr_start = start + prefix.len();
+                            let expr_end = l.len() - 2;
+                            let expr = &l[expr_start..expr_end];
+                            if expr.contains(".longValue()") || expr.contains("0L") {
+                                l = format!("{}{}((Number)({})).intValue());", &l[..start], prefix, expr);
+                            }
+                        }
+                    }
+                }
+            }
+            if l.contains(".logEnd(") {
+                l = l.replace(", null, null, null);", ", 0L, null, null);");
+            }
+            if l.contains("this.enqueue(") {
+                l = l.replace(", null, String.valueOf(", ", 0, String.valueOf(");
+            }
             let trimmed = l.trim().to_string();
             if trimmed == "null;" || trimmed == "null" {
                 l = format!("// {}", trimmed);
@@ -778,10 +839,24 @@ fn build_service_method(
             } else if trimmed.starts_with("/*") && trimmed.contains("null;") {
                 l = l.replace("null;", "");
             }
-            if needs_rowcount && l.contains(&format!("{}.", mapper_name)) && l.trim().ends_with(";") && !l.contains("=") && !l.contains("List<") && !l.contains("Map<") && !l.to_lowercase().contains("select") {
+            if needs_rowcount
+                && l.contains(&format!("{}.", mapper_name))
+                && l.trim().ends_with(";")
+                && !l.contains("=")
+                && !l.contains("List<")
+                && !l.contains("Map<")
+                && !l.to_lowercase().contains("select")
+            {
                 l = l.replace(&format!("{}.", mapper_name), &format!("__ROWCOUNT__ = {}.", mapper_name));
             }
             body_lines.push(l);
+        }
+        if has_return_next {
+            for line in &mut body_lines {
+                if line.trim() == "return null;" || line.trim() == "return;" {
+                    *line = "return _returnResults;".to_string();
+                }
+            }
         }
 
         for rc_out in &refcursor_outs {
@@ -804,45 +879,44 @@ fn build_service_method(
         }
 
         if ret_type != "void" {
-              // Find last executable line (skip // UNREACHABLE: comments)
-              let last_line = body_lines.iter().rev()
-                  .find(|l| !l.trim_start().starts_with("// UNREACHABLE:"))
-                  .map(|l| l.trim().to_string())
-                  .unwrap_or_default();
-              let needs_fallback = if last_line.starts_with("return ") || last_line.starts_with("return;") {
-                  false
-              } else if last_line == "}" {
-                  !is_if_else_all_return(&body_lines)
-              } else {
-                  true
-              };
-              if needs_fallback {
-                 let fallback = if ret_type.contains("List") {
-                     "return java.util.Collections.emptyList();"
-                 } else if ret_type == "int" || ret_type == "Integer" {
-                     "return 0;"
-                 } else if ret_type == "long" || ret_type == "Long" {
-                     "return 0L;"
-                 } else if ret_type == "double" || ret_type == "Double" {
-                     "return 0.0;"
-                 } else if ret_type == "boolean" || ret_type == "Boolean" {
-                     "return false;"
-                 } else if ret_type.contains("BigDecimal") {
-                      "return java.math.BigDecimal.ZERO;"
-                  } else {
-                      "return null;"
-                  };
-                  body_lines.push(fallback.to_string());
-              }
-          }
-     }
+            // Find last executable line (skip // UNREACHABLE: comments)
+            let last_line = body_lines
+                .iter()
+                .rev()
+                .find(|l| !l.trim_start().starts_with("// UNREACHABLE:"))
+                .map(|l| l.trim().to_string())
+                .unwrap_or_default();
+            let needs_fallback = if last_line.starts_with("return ") || last_line.starts_with("return;") {
+                false
+            } else if last_line == "}" {
+                !is_if_else_all_return(&body_lines)
+            } else {
+                true
+            };
+            if needs_fallback {
+                let fallback = if ret_type.contains("List") {
+                    "return java.util.Collections.emptyList();"
+                } else if ret_type == "int" || ret_type == "Integer" {
+                    "return 0;"
+                } else if ret_type == "long" || ret_type == "Long" {
+                    "return 0L;"
+                } else if ret_type == "double" || ret_type == "Double" {
+                    "return 0.0;"
+                } else if ret_type == "boolean" || ret_type == "Boolean" {
+                    "return false;"
+                } else if ret_type.contains("BigDecimal") {
+                    "return java.math.BigDecimal.ZERO;"
+                } else {
+                    "return null;"
+                };
+                body_lines.push(fallback.to_string());
+            }
+        }
+    }
 
     let mut result = Vec::new();
     let source_info = if !proc.source_file.is_empty() {
-        format!(
-            "{}:{}-{}",
-            proc.source_file, proc.source_start_line, proc.source_end_line
-        )
+        format!("{}:{}-{}", proc.source_file, proc.source_start_line, proc.source_end_line)
     } else {
         String::new()
     };
@@ -889,23 +963,12 @@ fn append_local_vars_to_mapper_calls(
         return line.to_string();
     }
 
-    let param_java_names: std::collections::HashSet<String> = proc
-        .parameters
-        .iter()
-        .filter(|p| !p.is_out())
-        .map(|p| snake_to_camel(&p.name))
-        .collect();
+    let param_java_names: std::collections::HashSet<String> =
+        proc.parameters.iter().filter(|p| !p.is_out()).map(|p| snake_to_camel(&p.name)).collect();
 
-    let out_params: Vec<&crate::types::Parameter> = proc
-        .parameters
-        .iter()
-        .filter(|p| p.is_out())
-        .collect();
+    let out_params: Vec<&crate::types::Parameter> = proc.parameters.iter().filter(|p| p.is_out()).collect();
 
-    let call_re = regex::Regex::new(&format!(
-        r"{}\.(\w+)\s*\(([^)]*)\)",
-        regex::escape(mapper_name)
-    )).unwrap();
+    let call_re = regex::Regex::new(&format!(r"{}\.(\w+)\s*\(([^)]*)\)", regex::escape(mapper_name))).unwrap();
 
     let mut result = line.to_string();
     for caps in call_re.captures_iter(line) {
@@ -920,7 +983,9 @@ fn append_local_vars_to_mapper_calls(
                 if re.is_match(&dml.sql_text) {
                     let jn = snake_to_camel(&p.name);
                     if !promoted_extra.iter().any(|(n, _)| n == &jn) {
-                        let jt = proc.out_local_vars.get(&p.name.to_lowercase())
+                        let jt = proc
+                            .out_local_vars
+                            .get(&p.name.to_lowercase())
                             .cloned()
                             .unwrap_or_else(|| p.java_type.clone());
                         promoted_extra.push((jn, jt));
@@ -928,10 +993,8 @@ fn append_local_vars_to_mapper_calls(
                 }
             }
 
-            let extra_param_names: std::collections::HashSet<String> = promoted_extra
-                .iter()
-                .map(|(name, _)| name.to_lowercase())
-                .collect();
+            let extra_param_names: std::collections::HashSet<String> =
+                promoted_extra.iter().map(|(name, _)| name.to_lowercase()).collect();
 
             let mut local_args: Vec<String> = Vec::new();
             let mut pkg_args: Vec<String> = Vec::new();
@@ -974,8 +1037,10 @@ fn append_local_vars_to_mapper_calls(
                 let jn_lower = name.to_lowercase();
                 if !param_java_names.iter().any(|pn| pn.to_lowercase() == jn_lower) {
                     let is_ar = out_params.iter().any(|p| snake_to_camel(&p.name).to_lowercase() == jn_lower)
-                        || proc.out_local_vars.iter().any(|(k, _)|
-                            k.to_lowercase().replace("_", "") == jn_lower.replace("_", ""));
+                        || proc
+                            .out_local_vars
+                            .iter()
+                            .any(|(k, _)| k.to_lowercase().replace("_", "") == jn_lower.replace("_", ""));
                     if is_ar {
                         extra_args.push(format!("{}.get()", name));
                     } else {
@@ -985,15 +1050,20 @@ fn append_local_vars_to_mapper_calls(
             }
 
             // Also unwrap local_args that are promoted to AtomicReference
-            local_args = local_args.iter().map(|name| {
-                if proc.out_local_vars.iter().any(|(k, _)|
-                    k.to_lowercase().replace("_", "") == name.to_lowercase().replace("_", ""))
-                {
-                    format!("{}.get()", name)
-                } else {
-                    name.clone()
-                }
-            }).collect();
+            local_args = local_args
+                .iter()
+                .map(|name| {
+                    if proc
+                        .out_local_vars
+                        .iter()
+                        .any(|(k, _)| k.to_lowercase().replace("_", "") == name.to_lowercase().replace("_", ""))
+                    {
+                        format!("{}.get()", name)
+                    } else {
+                        name.clone()
+                    }
+                })
+                .collect();
 
             extra_args.extend(local_args);
             extra_args.extend(pkg_args);
@@ -1014,18 +1084,16 @@ fn append_local_vars_to_mapper_calls(
 }
 
 pub fn collect_service_injections(pkg: &PackageInfo) -> std::collections::HashMap<String, String> {
-    let own_svc = format!(
-        "{}Service",
-        {
-            let cn = package_to_classname(&pkg.package_name);
-            let mut c = cn.chars();
-            match c.next() {
-                Some(f) => f.to_ascii_lowercase().to_string() + c.as_str(),
-                None => String::new(),
-            }
+    let own_svc = format!("{}Service", {
+        let cn = package_to_classname(&pkg.package_name);
+        let mut c = cn.chars();
+        match c.next() {
+            Some(f) => f.to_ascii_lowercase().to_string() + c.as_str(),
+            None => String::new(),
         }
-    );
-    let system_svc_prefixes = ["DbeScheduler", "DbmsOutput", "DbmsRandom", "DbmsLob", "DbeOutput", "UtlFile", "DbmsSql", "DbmsJob"];
+    });
+    let system_svc_prefixes =
+        ["DbeScheduler", "DbmsOutput", "DbmsRandom", "DbmsLob", "DbeOutput", "UtlFile", "DbmsSql", "DbmsJob"];
     let mut services = std::collections::HashMap::new();
     for proc in &pkg.procedures {
         for call in &proc.service_calls {
@@ -1050,17 +1118,17 @@ mod tests {
 
     fn make_pkg(name: &str, procs: Vec<ProcedureInfo>) -> PackageInfo {
         PackageInfo {
-                    package_name: name.to_string(),
-                    procedures: procs,
-                    table_refs: Default::default(),
-                    package_vars: Default::default(),
-                    source_file: String::new(),
-                    source_files: Vec::new(),
-                    comments: Vec::new(),
-                    java_package: String::new(),
-                    custom_types: Default::default(),
-                    extra_mapper_methods: Vec::new(),
-                }
+            package_name: name.to_string(),
+            procedures: procs,
+            table_refs: Default::default(),
+            package_vars: Default::default(),
+            source_file: String::new(),
+            source_files: Vec::new(),
+            comments: Vec::new(),
+            java_package: String::new(),
+            custom_types: Default::default(),
+            extra_mapper_methods: Vec::new(),
+        }
     }
 
     fn make_proc(name: &str) -> ProcedureInfo {
@@ -1072,10 +1140,11 @@ mod tests {
         let proc = make_proc("do_stuff");
         let mut pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8, false).unwrap();
-        let content = std::fs::read_to_string(
-            dir.path().join("src/main/java/com/example/demo/service/OrderService.java"),
-        ).unwrap();
+        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8, false)
+            .unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join("src/main/java/com/example/demo/service/OrderService.java"))
+                .unwrap();
         assert!(content.contains("package com.example.demo.service;"));
         assert!(content.contains("@Service"));
         assert!(content.contains("public class OrderService"));
@@ -1094,10 +1163,11 @@ mod tests {
         proc.return_type = Some("timestamp".to_string());
         let mut pkg = make_pkg("pkg_common", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8, false).unwrap();
-        let content = std::fs::read_to_string(
-            dir.path().join("src/main/java/com/example/demo/service/CommonService.java"),
-        ).unwrap();
+        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8, false)
+            .unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join("src/main/java/com/example/demo/service/CommonService.java"))
+                .unwrap();
         assert!(content.contains("public java.sql.Timestamp getSysDate()"));
     }
 
@@ -1113,10 +1183,11 @@ mod tests {
         });
         let mut pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8, false).unwrap();
-        let content = std::fs::read_to_string(
-            dir.path().join("src/main/java/com/example/demo/service/DataService.java"),
-        ).unwrap();
+        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8, false)
+            .unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join("src/main/java/com/example/demo/service/DataService.java"))
+                .unwrap();
         assert!(content.contains("AtomicReference<String> pResult"));
         assert!(content.contains("import java.util.concurrent.atomic.AtomicReference;"));
     }
@@ -1136,9 +1207,9 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         write_service_class(dir.path(), &mut pkg, "com.example.demo", &injections, encoding_rs::UTF_8, false).unwrap();
-        let content = std::fs::read_to_string(
-            dir.path().join("src/main/java/com/example/demo/service/OrderService.java"),
-        ).unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join("src/main/java/com/example/demo/service/OrderService.java"))
+                .unwrap();
         assert!(content.contains("private final InventoryService inventoryService;"));
         assert!(content.contains("import com.example.demo.service.InventoryService;"));
     }
@@ -1147,20 +1218,21 @@ mod tests {
     fn test_transactional_on_dml() {
         let mut proc = make_proc("create_order");
         proc.dml_statements.push(DmlStatement {
-                    sql_type: DmlType::Insert,
-                    method_id: "insertOrder".to_string(),
-                    sql_text: "insert into t values(1)".to_string(),
-                    result_type: None,
-                    ..Default::default()
-                });
+            sql_type: DmlType::Insert,
+            method_id: "insertOrder".to_string(),
+            sql_text: "insert into t values(1)".to_string(),
+            result_type: None,
+            ..Default::default()
+        });
         let mut pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8, false).unwrap();
-        let content = std::fs::read_to_string(
-            dir.path().join("src/main/java/com/example/demo/service/OrderService.java"),
-        ).unwrap();
-         assert!(content.contains("@Transactional"));
-     }
+        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8, false)
+            .unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join("src/main/java/com/example/demo/service/OrderService.java"))
+                .unwrap();
+        assert!(content.contains("@Transactional"));
+    }
 
     #[test]
     fn test_sqlstate_variable_declared() {
@@ -1168,19 +1240,24 @@ mod tests {
         proc.java_logic_lines.push("throw new BusinessException(String.valueOf(__SQLSTATE__));".to_string());
         let mut pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8, false).unwrap();
-        let content = std::fs::read_to_string(
-            dir.path().join("src/main/java/com/example/demo/service/OrderService.java"),
-        ).unwrap();
+        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8, false)
+            .unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join("src/main/java/com/example/demo/service/OrderService.java"))
+                .unwrap();
         assert!(content.contains("String __SQLSTATE__ = \"\";"));
     }
- }
+}
 
 fn is_if_else_all_return(lines: &[String]) -> bool {
     let lines_trimmed: Vec<&str> = lines.iter().map(|l| l.trim()).collect();
     let n = lines_trimmed.len();
-    if n < 3 { return false; }
-    if lines_trimmed[n-1] != "}" { return false; }
+    if n < 3 {
+        return false;
+    }
+    if lines_trimmed[n - 1] != "}" {
+        return false;
+    }
 
     let mut depth: i32 = 0;
     let mut found_return_in_branch = false;

@@ -9,9 +9,7 @@ pub struct ConversionLog {
 
 impl ConversionLog {
     pub fn new(output_dir: &str) -> std::io::Result<Self> {
-        let log_dir = Path::new(output_dir)
-            .join(".fluxgauss")
-            .join("logs");
+        let log_dir = Path::new(output_dir).join(".fluxgauss").join("logs");
         std::fs::create_dir_all(&log_dir)?;
 
         let ts = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();

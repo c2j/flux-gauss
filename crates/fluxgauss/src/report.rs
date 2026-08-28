@@ -152,10 +152,7 @@ impl ConversionReport {
 
         let report_dir = output_dir.join(".fluxgauss").join("reports");
         if std::fs::create_dir_all(&report_dir).is_ok() {
-            let ts = self.timestamp
-                .replace(" ", "_")
-                .replace(":", "")
-                .replace("-", "");
+            let ts = self.timestamp.replace(" ", "_").replace(":", "").replace("-", "");
             let ts_path = report_dir.join(format!("conversion-report-{}.md", ts));
             if std::fs::write(&ts_path, &content).is_ok() {
                 written.push(ts_path.to_string_lossy().into_owned());
@@ -180,14 +177,9 @@ pub fn build_report(
     total_files: usize,
 ) -> ConversionReport {
     let total_procedures: usize = packages.iter().map(|p| p.procedures.len()).sum();
-    let total_dml: usize = packages.iter()
-        .flat_map(|p| p.procedures.iter())
-        .map(|p| p.dml_statements.len())
-        .sum();
-    let total_cross_calls: usize = packages.iter()
-        .flat_map(|p| p.procedures.iter())
-        .map(|p| p.service_calls.len())
-        .sum();
+    let total_dml: usize = packages.iter().flat_map(|p| p.procedures.iter()).map(|p| p.dml_statements.len()).sum();
+    let total_cross_calls: usize =
+        packages.iter().flat_map(|p| p.procedures.iter()).map(|p| p.service_calls.len()).sum();
 
     let mut mappings = Vec::new();
     for pkg in packages {
@@ -265,11 +257,7 @@ mod tests {
         use crate::types::ProcedureInfo;
         let pkg = crate::types::PackageInfo {
             package_name: "pkg_test".into(),
-            procedures: vec![ProcedureInfo::new(
-                "pkg_test.do_thing".into(),
-                "pkg_test".into(),
-                "do_thing".into(),
-            )],
+            procedures: vec![ProcedureInfo::new("pkg_test.do_thing".into(), "pkg_test".into(), "do_thing".into())],
             table_refs: Default::default(),
             package_vars: Default::default(),
             source_file: "test.sql".into(),
@@ -279,16 +267,7 @@ mod tests {
             custom_types: Default::default(),
             extra_mapper_methods: Vec::new(),
         };
-        let report = build_report(
-            &[pkg],
-            vec![],
-            vec![],
-            vec![],
-            0,
-            "test.yaml",
-            "./dest",
-            1,
-        );
+        let report = build_report(&[pkg], vec![], vec![], vec![], 0, "test.yaml", "./dest", 1);
         assert_eq!(report.total_packages, 1);
         assert_eq!(report.total_procedures, 1);
         assert_eq!(report.mappings.len(), 1);

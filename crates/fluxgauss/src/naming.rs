@@ -4,21 +4,65 @@ pub fn java_safe_identifier(s: &str) -> String {
     if s.is_empty() || s == "_" {
         return "_unnamed".to_string();
     }
-    let s = if s.starts_with(|c: char| c.is_ascii_digit()) {
-        format!("_{}", s)
-    } else {
-        s
-    };
+    let s = if s.starts_with(|c: char| c.is_ascii_digit()) { format!("_{}", s) } else { s };
 
     const JAVA_KEYWORDS: &[&str] = &[
-        "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char",
-        "class", "const", "continue", "default", "do", "double", "else", "enum",
-        "extends", "final", "finally", "float", "for", "goto", "if", "implements",
-        "import", "instanceof", "int", "interface", "long", "native", "new", "package",
-        "private", "protected", "public", "return", "short", "static", "strictfp",
-        "super", "switch", "synchronized", "this", "throw", "throws", "transient",
-        "try", "void", "volatile", "while", "true", "false", "null",
-        "old", "new", "raise",
+        "abstract",
+        "assert",
+        "boolean",
+        "break",
+        "byte",
+        "case",
+        "catch",
+        "char",
+        "class",
+        "const",
+        "continue",
+        "default",
+        "do",
+        "double",
+        "else",
+        "enum",
+        "extends",
+        "final",
+        "finally",
+        "float",
+        "for",
+        "goto",
+        "if",
+        "implements",
+        "import",
+        "instanceof",
+        "int",
+        "interface",
+        "long",
+        "native",
+        "new",
+        "package",
+        "private",
+        "protected",
+        "public",
+        "return",
+        "short",
+        "static",
+        "strictfp",
+        "super",
+        "switch",
+        "synchronized",
+        "this",
+        "throw",
+        "throws",
+        "transient",
+        "try",
+        "void",
+        "volatile",
+        "while",
+        "true",
+        "false",
+        "null",
+        "old",
+        "new",
+        "raise",
     ];
 
     if JAVA_KEYWORDS.contains(&s.to_lowercase().as_str()) {

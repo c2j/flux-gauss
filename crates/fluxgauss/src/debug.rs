@@ -71,9 +71,17 @@ pub fn find_body_stmt_lines(proc: &ProcedureInfo, ctx: &mut AnalysisContext) -> 
         }
         if blk_depth > 0 {
             let up2 = up.as_str();
-            if up2 == "END IF" || up2 == "END IF;" || up2.starts_with("END IF;") || up2.starts_with("END IF ")
-                || up2 == "END LOOP" || up2 == "END LOOP;" || up2.starts_with("END LOOP;") || up2.starts_with("END LOOP ")
-                || up2 == "END CASE" || up2 == "END CASE;" {
+            if up2 == "END IF"
+                || up2 == "END IF;"
+                || up2.starts_with("END IF;")
+                || up2.starts_with("END IF ")
+                || up2 == "END LOOP"
+                || up2 == "END LOOP;"
+                || up2.starts_with("END LOOP;")
+                || up2.starts_with("END LOOP ")
+                || up2 == "END CASE"
+                || up2 == "END CASE;"
+            {
                 blk_depth -= 1;
             }
             continue;
@@ -165,10 +173,7 @@ pub fn format_debug_comment(source_path: &str, line_number: u32, max_len: usize)
         return format!("// [DEBUG] L{}", line_number);
     }
     let raw = lines[line_number as usize - 1].trim();
-    let fname = Path::new(source_path)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
+    let fname = Path::new(source_path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     let truncated: String = raw.chars().take(max_len).collect();
     let suffix = if raw.chars().count() > max_len { "..." } else { "" };
     format!("// [DEBUG] {}:{} → {}{}", fname, line_number, truncated, suffix)

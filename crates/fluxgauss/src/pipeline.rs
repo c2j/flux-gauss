@@ -5,8 +5,7 @@ use crate::config::AppConfig;
 use crate::context::AnalysisContext;
 use crate::incremental::IncrementalState;
 use crate::types::{
-    AnalyzedPackages, ConversionError, PackageInfo, PackageSummary, ParsedPackages, SkippedItem,
-    UnresolvedCall,
+    AnalyzedPackages, ConversionError, PackageInfo, PackageSummary, ParsedPackages, SkippedItem, UnresolvedCall,
 };
 
 pub struct FileValidateResult {
@@ -50,9 +49,7 @@ pub fn phase0_validate(sql_files: &[PathBuf]) -> ValidateResult {
     let mut all_defined_funcs: Vec<String> = Vec::new();
 
     for (idx, sql_file) in sql_files.iter().enumerate() {
-        let basename = sql_file.file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let basename = sql_file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         crate::progress::progress_bar("Validate", idx + 1, total, &format!("Validating {}", basename));
 
         let content = match std::fs::read(sql_file) {
@@ -142,15 +139,10 @@ pub fn phase0_validate(sql_files: &[PathBuf]) -> ValidateResult {
     crate::progress::progress_done("Validate", total);
 
     let error_file_count = file_results.iter().filter(|r| r.errors.iter().any(|e| !is_warning(e))).count();
-    let warning_file_count = file_results.iter().filter(|r| {
-        r.errors.iter().all(|e| is_warning(e)) && !r.warnings.is_empty()
-    }).count();
+    let warning_file_count =
+        file_results.iter().filter(|r| r.errors.iter().all(|e| is_warning(e)) && !r.warnings.is_empty()).count();
 
-    ValidateResult {
-        file_results,
-        error_file_count,
-        warning_file_count,
-    }
+    ValidateResult { file_results, error_file_count, warning_file_count }
 }
 
 fn collect_defined_routine_names(stmts: &[ogsql_parser::StatementInfo]) -> Vec<String> {
@@ -197,7 +189,11 @@ fn validate_pl_variables_from_stmts(
             Statement::CreateProcedure(proc) => {
                 if let Some(ref block) = proc.block {
                     let vars = ogsql_parser::validate_pl_variables_with_extra_vars_and_funcs(
-                        block, &proc.parameters, &[], &funcs_str, false,
+                        block,
+                        &proc.parameters,
+                        &[],
+                        &funcs_str,
+                        false,
                     );
                     warnings.extend(vars);
                 }
@@ -205,7 +201,11 @@ fn validate_pl_variables_from_stmts(
             Statement::CreateFunction(func) => {
                 if let Some(ref block) = func.block {
                     let vars = ogsql_parser::validate_pl_variables_with_extra_vars_and_funcs(
-                        block, &func.parameters, &[], &funcs_str, false,
+                        block,
+                        &func.parameters,
+                        &[],
+                        &funcs_str,
+                        false,
                     );
                     warnings.extend(vars);
                 }
@@ -213,13 +213,19 @@ fn validate_pl_variables_from_stmts(
             Statement::Do(do_stmt) => {
                 if let Some(ref block) = do_stmt.block {
                     let vars = ogsql_parser::validate_pl_variables_with_extra_vars_and_funcs(
-                        block, &[], &[], &funcs_str, false,
+                        block,
+                        &[],
+                        &[],
+                        &funcs_str,
+                        false,
                     );
                     warnings.extend(vars);
                 }
             }
             Statement::CreatePackageBody(body) => {
-                let pkg_vars: Vec<&str> = body.items.iter()
+                let pkg_vars: Vec<&str> = body
+                    .items
+                    .iter()
                     .filter_map(|item| match item {
                         ogsql_parser::ast::PackageItem::Variable(v) => Some(v.name.as_str()),
                         _ => None,
@@ -229,17 +235,25 @@ fn validate_pl_variables_from_stmts(
                     match item {
                         ogsql_parser::ast::PackageItem::Procedure(proc) => {
                             if let Some(ref block) = proc.block {
-                            let vars = ogsql_parser::validate_pl_variables_with_extra_vars_and_funcs(
-                                block, &proc.parameters, &pkg_vars, &funcs_str, false,
-                            );
-                            warnings.extend(vars);
+                                let vars = ogsql_parser::validate_pl_variables_with_extra_vars_and_funcs(
+                                    block,
+                                    &proc.parameters,
+                                    &pkg_vars,
+                                    &funcs_str,
+                                    false,
+                                );
+                                warnings.extend(vars);
+                            }
                         }
-                    }
-                    ogsql_parser::ast::PackageItem::Function(func) => {
-                        if let Some(ref block) = func.block {
-                            let vars = ogsql_parser::validate_pl_variables_with_extra_vars_and_funcs(
-                                block, &func.parameters, &pkg_vars, &funcs_str, false,
-                            );
+                        ogsql_parser::ast::PackageItem::Function(func) => {
+                            if let Some(ref block) = func.block {
+                                let vars = ogsql_parser::validate_pl_variables_with_extra_vars_and_funcs(
+                                    block,
+                                    &func.parameters,
+                                    &pkg_vars,
+                                    &funcs_str,
+                                    false,
+                                );
                                 warnings.extend(vars);
                             }
                         }
@@ -256,15 +270,12 @@ fn validate_pl_variables_from_stmts(
 fn is_warning(e: &ogsql_parser::ParserError) -> bool {
     matches!(
         e,
-        ogsql_parser::ParserError::Warning { .. }
-            | ogsql_parser::ParserError::ReservedKeywordAsIdentifier { .. }
+        ogsql_parser::ParserError::Warning { .. } | ogsql_parser::ParserError::ReservedKeywordAsIdentifier { .. }
     )
 }
 
 fn format_undefined_var_error(ve: &ogsql_parser::UndefinedVariableError) -> String {
-    let line_info = ve.location.as_ref()
-        .map(|sp| format!(":{}", sp.start.line))
-        .unwrap_or_default();
+    let line_info = ve.location.as_ref().map(|sp| format!(":{}", sp.start.line)).unwrap_or_default();
     format!("undefined variable '{}' in {}{}", ve.variable_name, ve.context, line_info)
 }
 
@@ -279,21 +290,15 @@ pub fn run_pipeline(
 
     let parsed = phase1_parse(sql_files, config, incremental);
     let mut analyzed = phase2_analyze(parsed, &mut ctx, sql_files, debug);
-    let (generated, test_count, itest_count, errors) = phase3_generate(&mut analyzed, config, incremental, sql_files, debug);
+    let (generated, test_count, itest_count, errors) =
+        phase3_generate(&mut analyzed, config, incremental, sql_files, debug);
 
     let packages = analyzed.packages;
     let skipped = analyzed.skipped;
 
-    let total_dml: usize = packages
-        .iter()
-        .flat_map(|p| p.procedures.iter())
-        .map(|p| p.dml_statements.len())
-        .sum();
-    let total_cross_calls: usize = packages
-        .iter()
-        .flat_map(|p| p.procedures.iter())
-        .map(|p| p.service_calls.len())
-        .sum();
+    let total_dml: usize = packages.iter().flat_map(|p| p.procedures.iter()).map(|p| p.dml_statements.len()).sum();
+    let total_cross_calls: usize =
+        packages.iter().flat_map(|p| p.procedures.iter()).map(|p| p.service_calls.len()).sum();
 
     PipelineResult {
         packages,
@@ -311,11 +316,7 @@ pub fn run_pipeline(
     }
 }
 
-fn phase1_parse(
-    sql_files: &[PathBuf],
-    config: &AppConfig,
-    incremental: &mut IncrementalState,
-) -> ParsedPackages {
+fn phase1_parse(sql_files: &[PathBuf], config: &AppConfig, incremental: &mut IncrementalState) -> ParsedPackages {
     let base_package = config.base_package_or_default();
 
     let mut packages = Vec::new();
@@ -325,27 +326,20 @@ fn phase1_parse(
     let total = sql_files.len();
 
     for (idx, sql_file) in sql_files.iter().enumerate() {
-        let basename = sql_file.file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let basename = sql_file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
 
         if incremental.is_cached(sql_file) {
             if let Some(ast_json) = incremental.load_cached_ast(sql_file) {
-                if let Ok(parse_output) =
-                    serde_json::from_str::<ogsql_parser::parser::ParseOutput>(&ast_json)
-                {
+                if let Ok(parse_output) = serde_json::from_str::<ogsql_parser::parser::ParseOutput>(&ast_json) {
                     track_package_origins(&parse_output, &mut package_origins);
                     let result = crate::extract::extract_from_parse_output(
                         &parse_output,
                         &sql_file.to_string_lossy(),
                         &base_package,
                     );
-                    let package_names: Vec<String> = result.packages.iter()
-                        .map(|pkg| pkg.package_name.clone())
-                        .collect();
-                    let java_package = result.packages.first()
-                        .map(|pkg| pkg.java_package.as_str())
-                        .unwrap_or("");
+                    let package_names: Vec<String> =
+                        result.packages.iter().map(|pkg| pkg.package_name.clone()).collect();
+                    let java_package = result.packages.first().map(|pkg| pkg.java_package.as_str()).unwrap_or("");
                     let _ = incremental.update_file_packages(sql_file, &package_names, java_package);
                     packages.extend(result.packages);
                     skipped.extend(result.skipped);
@@ -390,28 +384,18 @@ fn phase1_parse(
         };
 
         let stmts_with_info = ogsql_parser::Parser::with_source(tokens, content).parse_with_text();
-        let parse_output = ogsql_parser::parser::ParseOutput {
-            statements: stmts_with_info,
-            errors: Vec::new(),
-            comments: Vec::new(),
-        };
+        let parse_output =
+            ogsql_parser::parser::ParseOutput { statements: stmts_with_info, errors: Vec::new(), comments: Vec::new() };
         track_package_origins(&parse_output, &mut package_origins);
 
         if let Ok(json) = serde_json::to_string(&parse_output) {
             let _ = incremental.save_cached_ast(sql_file, &json);
         }
 
-        let result = crate::extract::extract_from_parse_output(
-            &parse_output,
-            &sql_file.to_string_lossy(),
-            &base_package,
-        );
-        let package_names: Vec<String> = result.packages.iter()
-            .map(|pkg| pkg.package_name.clone())
-            .collect();
-        let java_package = result.packages.first()
-            .map(|pkg| pkg.java_package.as_str())
-            .unwrap_or("");
+        let result =
+            crate::extract::extract_from_parse_output(&parse_output, &sql_file.to_string_lossy(), &base_package);
+        let package_names: Vec<String> = result.packages.iter().map(|pkg| pkg.package_name.clone()).collect();
+        let java_package = result.packages.first().map(|pkg| pkg.java_package.as_str()).unwrap_or("");
         let _ = incremental.update_file_packages(sql_file, &package_names, java_package);
 
         packages.extend(result.packages);
@@ -442,21 +426,17 @@ fn phase1_parse(
     let warnings = package_origins
         .into_iter()
         .filter_map(|(registration_name, qualified_names)| {
-            (qualified_names.len() > 1).then(|| format!(
-                "Package registration collision: {} fold into '{}'; schemas are merged for Python parity",
-                qualified_names.into_iter().collect::<Vec<_>>().join(", "),
-                registration_name,
-            ))
+            (qualified_names.len() > 1).then(|| {
+                format!(
+                    "Package registration collision: {} fold into '{}'; schemas are merged for Python parity",
+                    qualified_names.into_iter().collect::<Vec<_>>().join(", "),
+                    registration_name,
+                )
+            })
         })
         .collect();
 
-    ParsedPackages {
-        packages,
-        summaries,
-        warnings,
-        skipped,
-        errors,
-    }
+    ParsedPackages { packages, summaries, warnings, skipped, errors }
 }
 
 fn merge_package_info(existing: &mut PackageInfo, incoming: PackageInfo, skipped: &mut Vec<SkippedItem>) {
@@ -469,9 +449,8 @@ fn merge_package_info(existing: &mut PackageInfo, incoming: PackageInfo, skipped
         }
     }
 
-    let mut seen: BTreeSet<(String, usize)> = existing.procedures.iter()
-        .map(|proc| (proc.proc_name.clone(), proc.parameters.len()))
-        .collect();
+    let mut seen: BTreeSet<(String, usize)> =
+        existing.procedures.iter().map(|proc| (proc.proc_name.clone(), proc.parameters.len())).collect();
     for proc in incoming.procedures {
         let key = (proc.proc_name.clone(), proc.parameters.len());
         if !seen.insert(key) {
@@ -497,7 +476,10 @@ fn merge_package_info(existing: &mut PackageInfo, incoming: PackageInfo, skipped
                 name,
                 source_file: incoming.source_file.clone(),
                 line_number: 0,
-                reason: format!("Conflicting package variable while merging {}; kept first definition", existing.package_name),
+                reason: format!(
+                    "Conflicting package variable while merging {}; kept first definition",
+                    existing.package_name
+                ),
             });
         } else {
             existing.package_vars.insert(name, value);
@@ -510,7 +492,10 @@ fn merge_package_info(existing: &mut PackageInfo, incoming: PackageInfo, skipped
                 name,
                 source_file: incoming.source_file.clone(),
                 line_number: 0,
-                reason: format!("Conflicting custom type while merging {}; kept first definition", existing.package_name),
+                reason: format!(
+                    "Conflicting custom type while merging {}; kept first definition",
+                    existing.package_name
+                ),
             });
         } else {
             existing.custom_types.insert(name, value);
@@ -527,7 +512,10 @@ fn merge_package_info(existing: &mut PackageInfo, incoming: PackageInfo, skipped
                 name: existing.package_name.clone(),
                 source_file: incoming.source_file,
                 line_number: 0,
-                reason: format!("Conflicting Java package while merging {}; kept first definition", existing.package_name),
+                reason: format!(
+                    "Conflicting Java package while merging {}; kept first definition",
+                    existing.package_name
+                ),
             });
         }
     }
@@ -547,10 +535,7 @@ fn track_package_origins(
         };
         let Some(name) = name else { continue };
         let Some(registration_name) = name.last() else { continue };
-        origins
-            .entry(crate::naming::package_to_classname(registration_name))
-            .or_default()
-            .insert(name.join("."));
+        origins.entry(crate::naming::package_to_classname(registration_name)).or_default().insert(name.join("."));
     }
 }
 
@@ -564,11 +549,8 @@ fn phase2_analyze(
     let mut packages = parsed.packages;
     ctx.debug = debug;
 
-    let proc_summaries: std::collections::HashMap<String, PackageSummary> = parsed
-        .summaries
-        .iter()
-        .map(|s| (s.name.clone(), s.clone()))
-        .collect();
+    let proc_summaries: std::collections::HashMap<String, PackageSummary> =
+        parsed.summaries.iter().map(|s| (s.name.clone(), s.clone())).collect();
 
     let ddl_schema = crate::generate::itest::parse_table_ddl(sql_files);
 
@@ -652,21 +634,17 @@ fn phase3_generate(
     let mut itest_count = 0usize;
 
     let encoding_name = config.encoding_or_default();
-    let encoding = encoding_rs::Encoding::for_label(encoding_name.as_bytes())
-        .unwrap_or(encoding_rs::UTF_8);
+    let encoding = encoding_rs::Encoding::for_label(encoding_name.as_bytes()).unwrap_or(encoding_rs::UTF_8);
 
     match crate::generate::skeleton::write_skeleton_files(output_dir, config, &base_package, encoding) {
         Ok(files) => generated.extend(files),
-        Err(e) => errors.push(ConversionError::Io {
-            path: output_dir.to_string_lossy().into_owned(),
-            message: e.to_string(),
-        }),
+        Err(e) => {
+            errors.push(ConversionError::Io { path: output_dir.to_string_lossy().into_owned(), message: e.to_string() })
+        }
     }
 
-    let itest_mode = config.integration_test.as_ref()
-        .and_then(|it| it.mode.as_deref())
-        .unwrap_or("testcontainers")
-        .to_string();
+    let itest_mode =
+        config.integration_test.as_ref().and_then(|it| it.mode.as_deref()).unwrap_or("testcontainers").to_string();
 
     let schema_map = if config.integration_test.as_ref().and_then(|it| it.enabled).unwrap_or(false) {
         Some(crate::generate::itest::build_full_schema_map(&analyzed.packages, sql_files))
@@ -682,7 +660,13 @@ fn phase3_generate(
             });
         }
 
-        if let Err(e) = crate::generate::itest::write_itest_schema_sql(output_dir, &analyzed.packages, schema_map.as_ref().unwrap(), &itest_mode, encoding) {
+        if let Err(e) = crate::generate::itest::write_itest_schema_sql(
+            output_dir,
+            &analyzed.packages,
+            schema_map.as_ref().unwrap(),
+            &itest_mode,
+            encoding,
+        ) {
             errors.push(ConversionError::Io {
                 path: output_dir.to_string_lossy().into_owned(),
                 message: format!("write_itest_schema_sql: {}", e),
@@ -699,7 +683,14 @@ fn phase3_generate(
         let service_injections = crate::generate::service::collect_service_injections(pkg);
 
         // Service class first — it populates extra_mapper_methods for nextval/currval stubs
-        match crate::generate::service::write_service_class(output_dir, pkg, &base_package, &service_injections, encoding, debug) {
+        match crate::generate::service::write_service_class(
+            output_dir,
+            pkg,
+            &base_package,
+            &service_injections,
+            encoding,
+            debug,
+        ) {
             Ok(name) => generated.push(format!("{}.java", name)),
             Err(e) => {
                 errors.push(ConversionError::Io {
@@ -726,7 +717,9 @@ fn phase3_generate(
             continue;
         }
 
-        if let Err(e) = crate::generate::test::write_service_test(output_dir, pkg, &base_package, &service_injections, encoding) {
+        if let Err(e) =
+            crate::generate::test::write_service_test(output_dir, pkg, &base_package, &service_injections, encoding)
+        {
             errors.push(ConversionError::Io {
                 path: pkg.package_name.clone(),
                 message: format!("write_service_test: {}", e),
@@ -736,7 +729,15 @@ fn phase3_generate(
         }
 
         if let Some(sm) = schema_map.as_ref() {
-            if let Err(e) = crate::generate::itest::write_itest_class(output_dir, pkg, &base_package, &service_injections, &all_packages, sm, encoding) {
+            if let Err(e) = crate::generate::itest::write_itest_class(
+                output_dir,
+                pkg,
+                &base_package,
+                &service_injections,
+                &all_packages,
+                sm,
+                encoding,
+            ) {
                 errors.push(ConversionError::Io {
                     path: pkg.package_name.clone(),
                     message: format!("write_itest_class: {}", e),

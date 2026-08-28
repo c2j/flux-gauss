@@ -9,10 +9,7 @@ pub struct CodeWriter {
 
 impl CodeWriter {
     pub fn new() -> Self {
-        Self {
-            lines: Vec::new(),
-            indent_level: 0,
-        }
+        Self { lines: Vec::new(), indent_level: 0 }
     }
 
     pub fn line(&mut self, text: &str) {
@@ -89,12 +86,7 @@ pub fn indent_java_body(lines: &[String], base: &str) -> Vec<String> {
             }
         }
 
-        indented.push(format!(
-            "{}{}{}",
-            base,
-            "    ".repeat(depth as usize),
-            stripped
-        ));
+        indented.push(format!("{}{}{}", base, "    ".repeat(depth as usize), stripped));
 
         if opens && !single_line {
             depth += 1;
@@ -169,10 +161,7 @@ mod tests {
         w.line("indented");
         w.raw_line("    already_formatted");
         w.raw_line("        nested");
-        assert_eq!(
-            w.to_string(),
-            "    indented\n    already_formatted\n        nested"
-        );
+        assert_eq!(w.to_string(), "    indented\n    already_formatted\n        nested");
     }
 
     #[test]
@@ -209,18 +198,9 @@ mod tests {
 
     #[test]
     fn test_indent_java_body_single_line_braces_no_depth_change() {
-        let lines = vec![
-            "if (x == null) { x = 0; }".to_string(),
-            "y = 1;".to_string(),
-        ];
+        let lines = vec!["if (x == null) { x = 0; }".to_string(), "y = 1;".to_string()];
         let out = indent_java_body(&lines, "        ");
-        assert_eq!(
-            out,
-            vec![
-                "        if (x == null) { x = 0; }",
-                "        y = 1;",
-            ]
-        );
+        assert_eq!(out, vec!["        if (x == null) { x = 0; }", "        y = 1;",]);
     }
 
     #[test]

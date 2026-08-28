@@ -16,12 +16,12 @@ fn case_insensitive_word_match(text: &str, word: &str) -> bool {
     let mut start = 0;
     while let Some(pos) = lower_text[start..].find(&lower_word) {
         let abs_pos = start + pos;
-        let before_ok = abs_pos == 0 || !lower_text.as_bytes()[abs_pos - 1].is_ascii_alphanumeric()
-            && lower_text.as_bytes()[abs_pos - 1] != b'_';
+        let before_ok = abs_pos == 0
+            || !lower_text.as_bytes()[abs_pos - 1].is_ascii_alphanumeric()
+                && lower_text.as_bytes()[abs_pos - 1] != b'_';
         let after_pos = abs_pos + lower_word.len();
         let after_ok = after_pos >= lower_text.len()
-            || (!lower_text.as_bytes()[after_pos].is_ascii_alphanumeric()
-                && lower_text.as_bytes()[after_pos] != b'_');
+            || (!lower_text.as_bytes()[after_pos].is_ascii_alphanumeric() && lower_text.as_bytes()[after_pos] != b'_');
         if before_ok && after_ok {
             return true;
         }
@@ -54,11 +54,7 @@ pub fn write_service_test(
     imports.insert("import org.mockito.junit.jupiter.MockitoSettings;".to_string());
     imports.insert("import org.mockito.quality.Strictness;".to_string());
     imports.insert(format!("import {}.{};", java_pkg, class_name));
-    imports.insert(format!(
-        "import {}.mapper.{}Mapper;",
-        base_package,
-        package_to_classname(&pkg.package_name)
-    ));
+    imports.insert(format!("import {}.mapper.{}Mapper;", base_package, package_to_classname(&pkg.package_name)));
     imports.insert(format!("import {}.exception.BusinessException;", base_package));
     imports.insert("import static org.mockito.Mockito.*;".to_string());
     imports.insert("import static org.junit.jupiter.api.Assertions.*;".to_string());
@@ -99,11 +95,7 @@ pub fn write_service_test(
     w.push_indent();
 
     w.line("@Mock");
-    w.line(&format!(
-        "private {} {};",
-        format!("{}Mapper", package_to_classname(&pkg.package_name)),
-        mapper_var
-    ));
+    w.line(&format!("private {} {};", format!("{}Mapper", package_to_classname(&pkg.package_name)), mapper_var));
 
     for &(svc_var, pkg_name) in &sorted_injections {
         let svc_class = if !pkg_name.is_empty() {
@@ -121,7 +113,9 @@ pub fn write_service_test(
     w.line("@InjectMocks");
     w.line(&format!("private {} service;", class_name));
 
-    let overload_counts: std::collections::HashMap<String, usize> = pkg.procedures.iter()
+    let overload_counts: std::collections::HashMap<String, usize> = pkg
+        .procedures
+        .iter()
         .map(|p| java_method_name(&p.proc_name))
         .fold(std::collections::HashMap::new(), |mut m, name| {
             *m.entry(name).or_insert(0) += 1;
@@ -163,11 +157,8 @@ fn count_mapper_params_for_dml(
     let in_count = proc.parameters.iter().filter(|p| !p.is_out()).count();
     // Collect all param java names (lowercase) — mirroring mapper.rs logic:
     //   1. non-out proc params + 2. extra_params + 3. local var refs + 4. pkg var refs + 5. OUT params
-    let mut all_names: std::collections::HashSet<String> = proc
-        .parameters.iter()
-        .filter(|p| !p.is_out())
-        .map(|p| snake_to_camel(&p.name).to_lowercase())
-        .collect();
+    let mut all_names: std::collections::HashSet<String> =
+        proc.parameters.iter().filter(|p| !p.is_out()).map(|p| snake_to_camel(&p.name).to_lowercase()).collect();
 
     // Step 2: dml.extra_params (deduped against proc params)
     for (jn, _) in &dml.extra_params {
@@ -179,11 +170,8 @@ fn count_mapper_params_for_dml(
     // count_local_var_refs_in_sql already returns count of unique local vars not in proc.params
     // We need their actual names to prevent double-counting with extra_params.
     // Re-implement inline to get names:
-    let param_names: std::collections::HashSet<String> = proc
-        .parameters.iter()
-        .filter(|p| !p.is_out())
-        .map(|p| p.name.to_lowercase())
-        .collect();
+    let param_names: std::collections::HashSet<String> =
+        proc.parameters.iter().filter(|p| !p.is_out()).map(|p| p.name.to_lowercase()).collect();
     let re = IDENTIFIER_RE.get_or_init(|| regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap());
     for caps in re.captures_iter(&dml.sql_text) {
         let word = caps.get(1).unwrap().as_str();
@@ -194,11 +182,8 @@ fn count_mapper_params_for_dml(
     }
 
     // Step 4: package vars referenced in SQL text
-    let pkg_param_names: std::collections::HashSet<String> = proc
-        .parameters.iter()
-        .filter(|p| !p.is_out())
-        .map(|p| p.name.to_lowercase())
-        .collect();
+    let pkg_param_names: std::collections::HashSet<String> =
+        proc.parameters.iter().filter(|p| !p.is_out()).map(|p| p.name.to_lowercase()).collect();
     for caps in re.captures_iter(&dml.sql_text) {
         let word = caps.get(1).unwrap().as_str();
         if pkg.package_vars.contains_key(word)
@@ -236,10 +221,14 @@ fn build_success_test(
     let needs_disable = proc_has_unterminated_loop(proc, pkg);
 
     if needs_disable {
-        lines.push("    @org.junit.jupiter.api.Disabled(\"auto-generated mock cannot terminate while loop\")".to_string());
+        lines.push(
+            "    @org.junit.jupiter.api.Disabled(\"auto-generated mock cannot terminate while loop\")".to_string(),
+        );
     }
     lines.push("    @Test".to_string());
-    lines.push("    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)".to_string());
+    lines.push(
+        "    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)".to_string(),
+    );
     lines.push(format!("    void test_{}_success{}() {{", method_name, overload_suffix));
 
     let mut param_values: Vec<String> = Vec::new();
@@ -261,10 +250,8 @@ fn build_success_test(
             } else {
                 "null"
             };
-            param_values.push(format!(
-                "AtomicReference<{}> {} = new AtomicReference<>({});",
-                inner_type, ref_var, ar_init
-            ));
+            param_values
+                .push(format!("AtomicReference<{}> {} = new AtomicReference<>({});", inner_type, ref_var, ar_init));
             param_args.push(ref_var);
         } else {
             let val = default_test_value(&p.java_type, &snake_to_camel(&p.name));
@@ -293,17 +280,14 @@ fn build_success_test(
         lines.push(format!("        service.{}({});", method_name, args_str));
     }
 
-    let first_dml = proc.dml_statements.iter()
-        .find(|d| matches!(d.sql_type, DmlType::Insert | DmlType::Update | DmlType::Delete));
+    let first_dml =
+        proc.dml_statements.iter().find(|d| matches!(d.sql_type, DmlType::Insert | DmlType::Update | DmlType::Delete));
     if let Some(dml) = first_dml {
         let pts = crate::generate::mapper::mapper_param_types(proc, dml, &pkg.package_vars);
         let verify_args = if pts.is_empty() {
             String::new()
         } else {
-            pts.iter()
-                .map(|t| format!("({}) any()", any_matcher_type(t)))
-                .collect::<Vec<_>>()
-                .join(", ")
+            pts.iter().map(|t| format!("({}) any()", any_matcher_type(t))).collect::<Vec<_>>().join(", ")
         };
         lines.push(format!("        verify({}, atLeast(0)).{}({});", mapper_name, dml.method_id, verify_args));
     }
@@ -320,16 +304,15 @@ fn proc_has_unterminated_loop(proc: &crate::types::ProcedureInfo, pkg: &PackageI
     if has_while_true {
         return true;
     }
-    let has_recursive_call = proc.service_calls.iter().any(|sc| {
-        sc.package_name == pkg.package_name && sc.method_name == java_method_name(&proc.proc_name)
-    });
+    let has_recursive_call = proc
+        .service_calls
+        .iter()
+        .any(|sc| sc.package_name == pkg.package_name && sc.method_name == java_method_name(&proc.proc_name));
     if has_recursive_call {
         return true;
     }
     let camel_name = java_method_name(&proc.proc_name);
-    let has_self_call_in_expr = proc.java_logic_lines.iter().any(|l| {
-        l.contains(&format!("this.{}(", camel_name))
-    });
+    let has_self_call_in_expr = proc.java_logic_lines.iter().any(|l| l.contains(&format!("this.{}(", camel_name)));
     if has_self_call_in_expr {
         return true;
     }
@@ -357,11 +340,8 @@ fn count_local_var_refs_in_sql(
     local_vars: &std::collections::HashMap<String, String>,
     params: &[crate::types::Parameter],
 ) -> usize {
-    let param_names: std::collections::HashSet<String> = params
-        .iter()
-        .filter(|p| !p.is_out())
-        .map(|p| p.name.to_lowercase())
-        .collect();
+    let param_names: std::collections::HashSet<String> =
+        params.iter().filter(|p| !p.is_out()).map(|p| p.name.to_lowercase()).collect();
     let mut found: std::collections::HashSet<String> = std::collections::HashSet::new();
     let re = IDENTIFIER_RE.get_or_init(|| regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap());
     for caps in re.captures_iter(sql_text) {
@@ -379,11 +359,8 @@ fn count_package_var_refs_in_sql(
     local_vars: &std::collections::HashMap<String, String>,
     params: &[crate::types::Parameter],
 ) -> usize {
-    let param_names: std::collections::HashSet<String> = params
-        .iter()
-        .filter(|p| !p.is_out())
-        .map(|p| p.name.to_lowercase())
-        .collect();
+    let param_names: std::collections::HashSet<String> =
+        params.iter().filter(|p| !p.is_out()).map(|p| p.name.to_lowercase()).collect();
     let mut found: std::collections::HashSet<String> = std::collections::HashSet::new();
     let re = IDENTIFIER_RE.get_or_init(|| regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap());
     for caps in re.captures_iter(sql_text) {
@@ -422,31 +399,16 @@ fn extract_select_columns(sql: &str) -> Vec<String> {
         if up == "*" {
             return Vec::new();
         }
-        let part = if up.starts_with("DISTINCT ") {
-            &part[9..]
-        } else {
-            part
-        };
+        let part = if up.starts_with("DISTINCT ") { &part[9..] } else { part };
         let part = part.trim();
         if part.is_empty() {
             continue;
         }
-        let col_name = if let Some(as_pos) = part.to_uppercase().find(" AS ") {
-            part[as_pos + 4..].trim()
-        } else {
-            part
-        };
-        let col_name = if let Some(dot_pos) = col_name.rfind('.') {
-            &col_name[dot_pos + 1..]
-        } else {
-            col_name
-        };
+        let col_name =
+            if let Some(as_pos) = part.to_uppercase().find(" AS ") { part[as_pos + 4..].trim() } else { part };
+        let col_name = if let Some(dot_pos) = col_name.rfind('.') { &col_name[dot_pos + 1..] } else { col_name };
         let col_name = col_name.trim().trim_matches('"').trim_matches('\'');
-        let col_name = if let Some(space_pos) = col_name.find(' ') {
-            &col_name[..space_pos]
-        } else {
-            col_name
-        };
+        let col_name = if let Some(space_pos) = col_name.find(' ') { &col_name[..space_pos] } else { col_name };
         let col_name = col_name.replace('"', "");
         if !col_name.is_empty() && col_name != "*" && !col_name.contains('(') && !col_name.contains(')') {
             cols.push(col_name.to_lowercase());
@@ -498,7 +460,15 @@ fn column_mock_value_for_key(camel_key: &str) -> String {
     if nl.ends_with("flag") || nl.starts_with("is") {
         return "true".to_string();
     }
-    if nl == "age" || nl.ends_with("age") || nl == "year" || nl.ends_with("year") || nl == "month" || nl.ends_with("month") || nl == "day" || nl.ends_with("day") {
+    if nl == "age"
+        || nl.ends_with("age")
+        || nl == "year"
+        || nl.ends_with("year")
+        || nl == "month"
+        || nl.ends_with("month")
+        || nl == "day"
+        || nl.ends_with("day")
+    {
         return "1".to_string();
     }
     "1L".to_string()
@@ -516,11 +486,7 @@ fn build_map_mock(cols: &[String]) -> String {
 }
 
 fn escape_java_string(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-        .replace('"', "\\\"")
-        .replace('\t', "\\t")
+    s.replace('\\', "\\\\").replace('\n', "\\n").replace('\r', "\\r").replace('"', "\\\"").replace('\t', "\\t")
 }
 
 /// Scan all procedures in the package for `.get("key")` patterns in logic lines,
@@ -542,33 +508,40 @@ fn extract_map_access_keys(pkg: &PackageInfo) -> Vec<String> {
     result
 }
 
-  fn mock_all_mapper_methods(mapper_name: &str, pkg: &PackageInfo) -> Vec<String> {
-       let extra_keys = extract_map_access_keys(pkg);
-       let mut all_dmls: Vec<(String, DmlType, usize, bool, Option<String>, String, Vec<String>)> = Vec::new();
-       for proc in &pkg.procedures {
-           for dml in &proc.dml_statements {
-               let param_types = crate::generate::mapper::mapper_param_types(proc, dml, &pkg.package_vars);
-               let mut dummy_imports: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-               let ret_type = crate::generate::mapper::return_type_for_dml(dml, &mut dummy_imports);
-               let total_params = param_types.len();
-              all_dmls.push((dml.method_id.clone(), dml.sql_type, total_params, dml.returns_list, Some(ret_type), dml.sql_text.clone(), param_types));
-          }
-      }
+fn mock_all_mapper_methods(mapper_name: &str, pkg: &PackageInfo) -> Vec<String> {
+    let extra_keys = extract_map_access_keys(pkg);
+    let mut all_dmls: Vec<(String, DmlType, usize, bool, Option<String>, String, Vec<String>)> = Vec::new();
+    for proc in &pkg.procedures {
+        for dml in &proc.dml_statements {
+            let param_types = crate::generate::mapper::mapper_param_types(proc, dml, &pkg.package_vars);
+            let mut dummy_imports: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+            let ret_type = crate::generate::mapper::return_type_for_dml(dml, &mut dummy_imports);
+            let total_params = param_types.len();
+            all_dmls.push((
+                dml.method_id.clone(),
+                dml.sql_type,
+                total_params,
+                dml.returns_list,
+                Some(ret_type),
+                dml.sql_text.clone(),
+                param_types,
+            ));
+        }
+    }
 
     let mut lines = Vec::new();
     let mut seen_sigs: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let all_dmls: Vec<_> = all_dmls.into_iter()
+    let all_dmls: Vec<_> = all_dmls
+        .into_iter()
         .filter(|(id, _, _, _, _, _, pts)| seen_sigs.insert(format!("{}|{}", id, pts.join(","))))
         .collect();
     for (method_id, sql_type, param_count, returns_list, result_type, sql_text, param_types) in &all_dmls {
-        let is_overloaded = all_dmls.iter()
-            .filter(|(id, _, _, _, _, _, pts)| id == method_id && pts != param_types)
-            .count() > 0;
+        let is_overloaded =
+            all_dmls.iter().filter(|(id, _, _, _, _, _, pts)| id == method_id && pts != param_types).count() > 0;
         let any_args = if *param_count > 0 {
             if !param_types.is_empty() {
-                let mut args: Vec<String> = param_types.iter()
-                    .map(|t| format!("({}) any()", any_matcher_type(t)))
-                    .collect();
+                let mut args: Vec<String> =
+                    param_types.iter().map(|t| format!("({}) any()", any_matcher_type(t))).collect();
                 while args.len() < *param_count {
                     args.push("any()".to_string());
                 }
@@ -587,20 +560,24 @@ fn extract_map_access_keys(pkg: &PackageInfo) -> Vec<String> {
                     let cols = extract_select_columns(sql_text);
                     if cols.is_empty() {
                         let mut mock = build_map_mock(&extra_keys);
-                        if extra_keys.is_empty() { mock.push_str("m.put(\"id\", 1L); "); }
-                        mock.push_str(&format!("when({}.{}({})).thenReturn(java.util.List.of(m)); }}", mapper_name, method_id, any_args));
+                        if extra_keys.is_empty() {
+                            mock.push_str("m.put(\"id\", 1L); ");
+                        }
+                        mock.push_str(&format!(
+                            "when({}.{}({})).thenReturn(java.util.List.of(m)); }}",
+                            mapper_name, method_id, any_args
+                        ));
                         lines.push(format!("        {}", mock));
                     } else {
                         let mut mock = build_map_mock(&cols);
-                        mock.push_str(&format!("when({}.{}({})).thenReturn(java.util.List.of(m)); }}", mapper_name, method_id, any_args));
+                        mock.push_str(&format!(
+                            "when({}.{}({})).thenReturn(java.util.List.of(m)); }}",
+                            mapper_name, method_id, any_args
+                        ));
                         lines.push(format!("        {}", mock));
                     }
                 } else if is_scalar {
-                    let scalar_val = if rt == "Object" {
-                        "999".to_string()
-                    } else {
-                        scalar_mock_value(rt)
-                    };
+                    let scalar_val = if rt == "Object" { "999".to_string() } else { scalar_mock_value(rt) };
                     lines.push(format!(
                         "        when({}.{}({})).thenReturn({});",
                         mapper_name, method_id, any_args, scalar_val
@@ -609,14 +586,20 @@ fn extract_map_access_keys(pkg: &PackageInfo) -> Vec<String> {
                     let cols = extract_select_columns(sql_text);
                     if cols.is_empty() {
                         let mut mock = build_map_mock(&extra_keys);
-                        if extra_keys.is_empty() { mock.push_str("m.put(\"id\", 1L); "); }
+                        if extra_keys.is_empty() {
+                            mock.push_str("m.put(\"id\", 1L); ");
+                        }
                         mock.push_str(&format!("when({}.{}({})).thenReturn(m); }}", mapper_name, method_id, any_args));
                         lines.push(format!("        {}", mock));
                     } else {
                         let mut mock = build_map_mock(&cols);
                         for k in &extra_keys {
                             if !cols.iter().any(|c| crate::naming::snake_to_camel(c) == *k) {
-                                mock.push_str(&format!("m.put(\"{}\", {}); ", escape_java_string(k), column_mock_value_for_key(k)));
+                                mock.push_str(&format!(
+                                    "m.put(\"{}\", {}); ",
+                                    escape_java_string(k),
+                                    column_mock_value_for_key(k)
+                                ));
                             }
                         }
                         mock.push_str(&format!("when({}.{}({})).thenReturn(m); }}", mapper_name, method_id, any_args));
@@ -625,10 +608,7 @@ fn extract_map_access_keys(pkg: &PackageInfo) -> Vec<String> {
                 }
             }
             _ => {
-                lines.push(format!(
-                    "        when({}.{}({})).thenReturn(1);",
-                    mapper_name, method_id, any_args
-                ));
+                lines.push(format!("        when({}.{}({})).thenReturn(1);", mapper_name, method_id, any_args));
             }
         }
     }
@@ -639,33 +619,77 @@ fn default_test_value(java_type: &str, param_name: &str) -> String {
     let tl = java_type.to_lowercase();
     let nl = param_name.to_lowercase();
     if tl.contains("long") {
-        if nl.contains("id") { return "1L".to_string(); }
+        if nl.contains("id") {
+            return "1L".to_string();
+        }
         return "100L".to_string();
     }
     if tl.contains("integer") || tl == "int" {
-        if nl.contains("qty") || nl.contains("limit") { return "5".to_string(); }
+        if nl.contains("qty") || nl.contains("limit") {
+            return "5".to_string();
+        }
         return "1".to_string();
     }
-    if tl.contains("bigdecimal") { return "new java.math.BigDecimal(\"99.99\")".to_string(); }
-    if tl.contains("double") { return "1.0d".to_string(); }
-    if tl.contains("float") { return "1.0f".to_string(); }
-    if tl.contains("boolean") { return "true".to_string(); }
-    if tl.contains("timestamp") { return "java.sql.Timestamp.valueOf(\"2024-01-01 00:00:00\")".to_string(); }
-    if tl.contains("date") { return "java.sql.Date.valueOf(\"2024-01-01\")".to_string(); }
-    if tl.contains("map") { return "new java.util.HashMap<>()".to_string(); }
+    if tl.contains("bigdecimal") {
+        return "new java.math.BigDecimal(\"99.99\")".to_string();
+    }
+    if tl.contains("double") {
+        return "1.0d".to_string();
+    }
+    if tl.contains("float") {
+        return "1.0f".to_string();
+    }
+    if tl.contains("boolean") {
+        return "true".to_string();
+    }
+    if tl.contains("timestamp") {
+        return "java.sql.Timestamp.valueOf(\"2024-01-01 00:00:00\")".to_string();
+    }
+    if tl.contains("date") {
+        return "java.sql.Date.valueOf(\"2024-01-01\")".to_string();
+    }
+    if tl.contains("map") {
+        return "new java.util.HashMap<>()".to_string();
+    }
     if tl == "object" {
         if nl.contains("spectrum") {
             return "java.util.Arrays.asList(1.0, 2.0, 3.0, 2.5, 1.5, 0.5, 1.0, 2.0, 3.0, 1.0)".to_string();
         }
-        if nl.contains("array") || nl.contains("list") || nl.contains("funds") || nl.contains("tab") || nl.ends_with("arr") || nl.contains("_arr") {
+        if nl.contains("array")
+            || nl.contains("list")
+            || nl.contains("funds")
+            || nl.contains("tab")
+            || nl.ends_with("arr")
+            || nl.contains("_arr")
+        {
             return "java.util.Arrays.asList(\"1\")".to_string();
         }
         return "new java.util.HashMap<String, Object>()".to_string();
     }
     if tl.contains("string") {
-        if nl.contains("date") || nl.contains("day") { return "\"20240101\"".to_string(); }
-        if nl.contains("ids") || nl.contains("list") { return "\"1,2,3\"".to_string(); }
-        if ["flag", "amount", "seqno", "seq", "interfaceseq", "operflag", "stepno", "count", "quantity", "qty", "price", "total"].iter().any(|kw| nl.contains(kw)) {
+        if nl.contains("date") || nl.contains("day") {
+            return "\"20240101\"".to_string();
+        }
+        if nl.contains("ids") || nl.contains("list") {
+            return "\"1,2,3\"".to_string();
+        }
+        if [
+            "flag",
+            "amount",
+            "seqno",
+            "seq",
+            "interfaceseq",
+            "operflag",
+            "stepno",
+            "count",
+            "quantity",
+            "qty",
+            "price",
+            "total",
+        ]
+        .iter()
+        .any(|kw| nl.contains(kw))
+        {
             return "\"1\"".to_string();
         }
     }
@@ -674,15 +698,33 @@ fn default_test_value(java_type: &str, param_name: &str) -> String {
 
 fn scalar_mock_value(java_type: &str) -> String {
     let tl = java_type.to_lowercase();
-    if tl.contains("long") { return "999L".to_string(); }
-    if tl.contains("integer") || tl == "int" { return "999".to_string(); }
-    if tl.contains("bigdecimal") { return "new java.math.BigDecimal(\"999.99\")".to_string(); }
-    if tl.contains("double") { return "999.0d".to_string(); }
-    if tl.contains("float") { return "999.0f".to_string(); }
-    if tl.contains("boolean") { return "true".to_string(); }
-    if tl.contains("string") { return "\"1\"".to_string(); }
-    if tl.contains("timestamp") { return "java.sql.Timestamp.valueOf(\"2024-01-01 00:00:00\")".to_string(); }
-    if tl.contains("date") { return "java.sql.Date.valueOf(\"2024-01-01\")".to_string(); }
+    if tl.contains("long") {
+        return "999L".to_string();
+    }
+    if tl.contains("integer") || tl == "int" {
+        return "999".to_string();
+    }
+    if tl.contains("bigdecimal") {
+        return "new java.math.BigDecimal(\"999.99\")".to_string();
+    }
+    if tl.contains("double") {
+        return "999.0d".to_string();
+    }
+    if tl.contains("float") {
+        return "999.0f".to_string();
+    }
+    if tl.contains("boolean") {
+        return "true".to_string();
+    }
+    if tl.contains("string") {
+        return "\"1\"".to_string();
+    }
+    if tl.contains("timestamp") {
+        return "java.sql.Timestamp.valueOf(\"2024-01-01 00:00:00\")".to_string();
+    }
+    if tl.contains("date") {
+        return "java.sql.Date.valueOf(\"2024-01-01\")".to_string();
+    }
     "null".to_string()
 }
 
@@ -714,21 +756,21 @@ fn any_matcher_type(java_type: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{DmlStatement, DmlType, Parameter, ParamMode, ProcedureInfo};
+    use crate::types::{DmlStatement, DmlType, ParamMode, Parameter, ProcedureInfo};
 
     fn make_pkg(name: &str, procs: Vec<ProcedureInfo>) -> PackageInfo {
         PackageInfo {
-                    package_name: name.to_string(),
-                    procedures: procs,
-                    table_refs: Default::default(),
-                    package_vars: Default::default(),
-                    source_file: String::new(),
-                    source_files: Vec::new(),
-                    comments: Vec::new(),
-                    java_package: String::new(),
-                    custom_types: Default::default(),
-                    extra_mapper_methods: Vec::new(),
-                }
+            package_name: name.to_string(),
+            procedures: procs,
+            table_refs: Default::default(),
+            package_vars: Default::default(),
+            source_file: String::new(),
+            source_files: Vec::new(),
+            comments: Vec::new(),
+            java_package: String::new(),
+            custom_types: Default::default(),
+            extra_mapper_methods: Vec::new(),
+        }
     }
 
     fn make_proc(name: &str) -> ProcedureInfo {
@@ -741,9 +783,9 @@ mod tests {
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
         write_service_test(dir.path(), &pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
-        let content = std::fs::read_to_string(
-            dir.path().join("src/test/java/com/example/demo/service/OrderServiceTest.java"),
-        ).unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join("src/test/java/com/example/demo/service/OrderServiceTest.java"))
+                .unwrap();
         assert!(content.contains("@ExtendWith(MockitoExtension.class)"));
         assert!(content.contains("class OrderServiceTest"));
         assert!(content.contains("@Mock"));
@@ -757,18 +799,18 @@ mod tests {
     fn test_mock_insert_dml() {
         let mut proc = make_proc("create_order");
         proc.dml_statements.push(DmlStatement {
-                    sql_type: DmlType::Insert,
-                    method_id: "insertOrder".to_string(),
-                    sql_text: "insert into t values(1)".to_string(),
-                    result_type: None,
-                    ..Default::default()
-                });
+            sql_type: DmlType::Insert,
+            method_id: "insertOrder".to_string(),
+            sql_text: "insert into t values(1)".to_string(),
+            result_type: None,
+            ..Default::default()
+        });
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
         write_service_test(dir.path(), &pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
-        let content = std::fs::read_to_string(
-            dir.path().join("src/test/java/com/example/demo/service/OrderServiceTest.java"),
-        ).unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join("src/test/java/com/example/demo/service/OrderServiceTest.java"))
+                .unwrap();
         assert!(content.contains("when(orderMapper.insertOrder()).thenReturn(1);"));
     }
 
@@ -776,18 +818,18 @@ mod tests {
     fn test_mock_select_dml() {
         let mut proc = make_proc("get_data");
         proc.dml_statements.push(DmlStatement {
-                    sql_type: DmlType::Select,
-                    method_id: "selectData".to_string(),
-                    sql_text: "select * from t".to_string(),
-                    result_type: None,
-                    ..Default::default()
-                });
+            sql_type: DmlType::Select,
+            method_id: "selectData".to_string(),
+            sql_text: "select * from t".to_string(),
+            result_type: None,
+            ..Default::default()
+        });
         let pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
         write_service_test(dir.path(), &pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
-        let content = std::fs::read_to_string(
-            dir.path().join("src/test/java/com/example/demo/service/DataServiceTest.java"),
-        ).unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join("src/test/java/com/example/demo/service/DataServiceTest.java"))
+                .unwrap();
         assert!(content.contains("HashMap<String,Object>"));
         assert!(content.contains("selectData"));
     }
@@ -796,19 +838,19 @@ mod tests {
     fn test_mock_select_dml_returns_list() {
         let mut proc = make_proc("list_data");
         proc.dml_statements.push(DmlStatement {
-                    sql_type: DmlType::Select,
-                    method_id: "selectListData".to_string(),
-                    sql_text: "select * from t".to_string(),
-                    result_type: None,
-                    returns_list: true,
-                    ..Default::default()
-                });
+            sql_type: DmlType::Select,
+            method_id: "selectListData".to_string(),
+            sql_text: "select * from t".to_string(),
+            result_type: None,
+            returns_list: true,
+            ..Default::default()
+        });
         let pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
         write_service_test(dir.path(), &pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
-        let content = std::fs::read_to_string(
-            dir.path().join("src/test/java/com/example/demo/service/DataServiceTest.java"),
-        ).unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join("src/test/java/com/example/demo/service/DataServiceTest.java"))
+                .unwrap();
         assert!(content.contains("when(dataMapper.selectListData()).thenReturn(java.util.List.of(m))"));
     }
 
@@ -816,18 +858,19 @@ mod tests {
     fn test_mock_select_dml_scalar_integer() {
         let mut proc = make_proc("check_stock");
         proc.dml_statements.push(DmlStatement {
-                    sql_type: DmlType::Select,
-                    method_id: "selectCheckStock".to_string(),
-                    sql_text: "select count(*) into v_count from t".to_string(),
-                    result_type: Some("Integer".to_string()),
-                    ..Default::default()
-                });
+            sql_type: DmlType::Select,
+            method_id: "selectCheckStock".to_string(),
+            sql_text: "select count(*) into v_count from t".to_string(),
+            result_type: Some("Integer".to_string()),
+            ..Default::default()
+        });
         let pkg = make_pkg("pkg_inventory", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
         write_service_test(dir.path(), &pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/service/InventoryServiceTest.java"),
-        ).unwrap();
+        )
+        .unwrap();
         assert!(content.contains("when(inventoryMapper.selectCheckStock()).thenReturn(999)"));
         assert!(!content.contains("HashMap"));
     }
@@ -836,18 +879,18 @@ mod tests {
     fn test_mock_select_dml_scalar_long() {
         let mut proc = make_proc("get_id");
         proc.dml_statements.push(DmlStatement {
-                    sql_type: DmlType::Select,
-                    method_id: "selectGetId".to_string(),
-                    sql_text: "select seq.nextval into v_id from dual".to_string(),
-                    result_type: Some("Long".to_string()),
-                    ..Default::default()
-                });
+            sql_type: DmlType::Select,
+            method_id: "selectGetId".to_string(),
+            sql_text: "select seq.nextval into v_id from dual".to_string(),
+            result_type: Some("Long".to_string()),
+            ..Default::default()
+        });
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
         write_service_test(dir.path(), &pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8).unwrap();
-        let content = std::fs::read_to_string(
-            dir.path().join("src/test/java/com/example/demo/service/OrderServiceTest.java"),
-        ).unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join("src/test/java/com/example/demo/service/OrderServiceTest.java"))
+                .unwrap();
         assert!(content.contains("when(orderMapper.selectGetId()).thenReturn(999L)"));
         assert!(!content.contains("HashMap"));
     }
@@ -916,12 +959,12 @@ mod tests {
     fn test_mock_select_with_columns() {
         let mut proc = make_proc("get_data");
         proc.dml_statements.push(DmlStatement {
-                    sql_type: DmlType::Select,
-                    method_id: "selectData".to_string(),
-                    sql_text: "select id, name, salary from t_employees".to_string(),
-                    result_type: Some("Map<String, Object>".to_string()),
-                    ..Default::default()
-                });
+            sql_type: DmlType::Select,
+            method_id: "selectData".to_string(),
+            sql_text: "select id, name, salary from t_employees".to_string(),
+            result_type: Some("Map<String, Object>".to_string()),
+            ..Default::default()
+        });
         let pkg = make_pkg("pkg_data", vec![proc]);
         let lines = mock_all_mapper_methods("dataMapper", &pkg);
         let joined = lines.join("\n");
@@ -935,13 +978,13 @@ mod tests {
     fn test_mock_select_returns_list_with_columns() {
         let mut proc = make_proc("list_data");
         proc.dml_statements.push(DmlStatement {
-                    sql_type: DmlType::Select,
-                    method_id: "selectListData".to_string(),
-                    sql_text: "select id, name from t".to_string(),
-                    result_type: None,
-                    returns_list: true,
-                    ..Default::default()
-                });
+            sql_type: DmlType::Select,
+            method_id: "selectListData".to_string(),
+            sql_text: "select id, name from t".to_string(),
+            result_type: None,
+            returns_list: true,
+            ..Default::default()
+        });
         let pkg = make_pkg("pkg_data", vec![proc]);
         let lines = mock_all_mapper_methods("dataMapper", &pkg);
         let joined = lines.join("\n");

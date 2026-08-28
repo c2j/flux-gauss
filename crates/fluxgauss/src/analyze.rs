@@ -17,29 +17,59 @@ pub fn analyze_procedure(
                 match s {
                     PlStatement::Goto { .. } => return true,
                     PlStatement::If(if_stmt) => {
-                        if has_goto_deep(&if_stmt.node.then_stmts) { return true; }
-                        for elsif in &if_stmt.node.elsifs {
-                            if has_goto_deep(&elsif.stmts) { return true; }
+                        if has_goto_deep(&if_stmt.node.then_stmts) {
+                            return true;
                         }
-                        if has_goto_deep(&if_stmt.node.else_stmts) { return true; }
+                        for elsif in &if_stmt.node.elsifs {
+                            if has_goto_deep(&elsif.stmts) {
+                                return true;
+                            }
+                        }
+                        if has_goto_deep(&if_stmt.node.else_stmts) {
+                            return true;
+                        }
                     }
                     PlStatement::Block(block) => {
-                        if has_goto_deep(&block.node.body) { return true; }
+                        if has_goto_deep(&block.node.body) {
+                            return true;
+                        }
                         if let Some(exc) = &block.node.exception_block {
                             for h in &exc.handlers {
-                                if has_goto_deep(&h.statements) { return true; }
+                                if has_goto_deep(&h.statements) {
+                                    return true;
+                                }
                             }
                         }
                     }
-                    PlStatement::Loop(loop_stmt) => if has_goto_deep(&loop_stmt.node.body) { return true; },
-                    PlStatement::While(while_stmt) => if has_goto_deep(&while_stmt.node.body) { return true; },
-                    PlStatement::For(for_stmt) => if has_goto_deep(&for_stmt.node.body) { return true; },
-                    PlStatement::ForEach(for_each) => if has_goto_deep(&for_each.node.body) { return true; },
+                    PlStatement::Loop(loop_stmt) => {
+                        if has_goto_deep(&loop_stmt.node.body) {
+                            return true;
+                        }
+                    }
+                    PlStatement::While(while_stmt) => {
+                        if has_goto_deep(&while_stmt.node.body) {
+                            return true;
+                        }
+                    }
+                    PlStatement::For(for_stmt) => {
+                        if has_goto_deep(&for_stmt.node.body) {
+                            return true;
+                        }
+                    }
+                    PlStatement::ForEach(for_each) => {
+                        if has_goto_deep(&for_each.node.body) {
+                            return true;
+                        }
+                    }
                     PlStatement::Case(case_stmt) => {
                         for when in &case_stmt.node.whens {
-                            if has_goto_deep(&when.stmts) { return true; }
+                            if has_goto_deep(&when.stmts) {
+                                return true;
+                            }
                         }
-                        if has_goto_deep(&case_stmt.node.else_stmts) { return true; }
+                        if has_goto_deep(&case_stmt.node.else_stmts) {
+                            return true;
+                        }
                     }
                     _ => {}
                 }
@@ -47,9 +77,8 @@ pub fn analyze_procedure(
             false
         }
         if has_goto_deep(&body_inner.body) {
-            let analysis = crate::statements::goto::analyze_goto_patterns(
-                &body_inner.body, proc, &mut ctx.source_cache,
-            );
+            let analysis =
+                crate::statements::goto::analyze_goto_patterns(&body_inner.body, proc, &mut ctx.source_cache);
             proc.goto_analysis = Some(analysis);
         }
         for decl in &body_inner.declarations {
@@ -72,8 +101,7 @@ pub fn analyze_procedure(
         for (idx, stmt) in body_inner.body.iter().enumerate() {
             stmt_ctx.current_stmt_idx = idx;
             if let Err(e) = crate::statement::process_statement(stmt, proc, &mut stmt_ctx) {
-                ctx.stub_procedures
-                    .insert((proc.name.clone(), proc.parameters.len()));
+                ctx.stub_procedures.insert((proc.name.clone(), proc.parameters.len()));
                 result = Err(e);
                 break;
             }
@@ -86,9 +114,8 @@ pub fn analyze_procedure(
             proc.dml_statements.clear();
             proc.select_counter = 0;
             proc.for_loop_counter = 0;
-            let rewrite_result = crate::statements::goto::rewrite_with_pattern(
-                &body_inner.body, &analysis, proc, summaries
-            );
+            let rewrite_result =
+                crate::statements::goto::rewrite_with_pattern(&body_inner.body, &analysis, proc, summaries);
             proc.goto_analysis = Some(analysis);
             if let Err(e) = rewrite_result {
                 proc.java_logic_lines.push("// TODO: GOTO pattern requires manual implementation".into());
@@ -110,7 +137,11 @@ pub fn analyze_procedure(
             for handler in &exc_block.handlers {
                 let is_others = handler.conditions.is_empty()
                     || handler.conditions.iter().any(|c| c.eq_ignore_ascii_case("others"));
-                let evar = format!("__e{}", { let n = proc.catch_counter; proc.catch_counter += 1; n + 1 });
+                let evar = format!("__e{}", {
+                    let n = proc.catch_counter;
+                    proc.catch_counter += 1;
+                    n + 1
+                });
                 if is_others {
                     proc.java_logic_lines.push(format!("}} catch (Exception {evar}) {{"));
                 } else {
@@ -178,7 +209,10 @@ pub fn process_declaration(
                     let sql_type_raw = crate::extract::format_pl_data_type(&var.data_type);
                     let sql_type_lower = sql_type_raw.to_lowercase();
                     // Detect array-like types (e.g., pkg_param_common.arrytype, VARCHAR2_ARRAY)
-                    if sql_type_lower.contains("arrytype") || sql_type_lower.contains("array_type") || sql_type_lower.ends_with("_array") {
+                    if sql_type_lower.contains("arrytype")
+                        || sql_type_lower.contains("array_type")
+                        || sql_type_lower.ends_with("_array")
+                    {
                         proc.imports.insert("import java.util.List;".into());
                         proc.imports.insert("import java.util.Collections;".into());
                         proc.has_array_vars = true;
@@ -186,7 +220,9 @@ pub fn process_declaration(
                     } else {
                         let sql_type = crate::extract::normalize_sql_type(&sql_type_raw);
                         let sql_type_lower = sql_type.to_lowercase();
-                        if let Some(ct) = proc.custom_types.get(&sql_type_lower).or_else(|| proc.custom_types.get(&sql_type)) {
+                        if let Some(ct) =
+                            proc.custom_types.get(&sql_type_lower).or_else(|| proc.custom_types.get(&sql_type))
+                        {
                             if ct.is_record {
                                 proc.imports.insert("import java.util.Map;".into());
                                 "Map<String, Object>".into()
@@ -227,19 +263,13 @@ pub fn process_declaration(
                     }
                     _ => crate::expr::expr_to_java(default, proc),
                 };
-                proc.local_var_defaults
-                    .insert(var.name.to_lowercase(), default_java);
+                proc.local_var_defaults.insert(var.name.to_lowercase(), default_java);
             }
         }
         PlDeclaration::Cursor(cursor) => {
-            proc.cursor_decls
-                .insert(cursor.name.clone(), cursor.query.clone());
+            proc.cursor_decls.insert(cursor.name.clone(), cursor.query.clone());
             if !cursor.arguments.is_empty() {
-                let params: Vec<String> = cursor
-                    .arguments
-                    .iter()
-                    .map(|a| a.name.clone())
-                    .collect();
+                let params: Vec<String> = cursor.arguments.iter().map(|a| a.name.clone()).collect();
                 proc.cursor_params.insert(cursor.name.clone(), params);
             }
         }
@@ -263,31 +293,28 @@ pub fn process_declaration(
 pub fn promote_out_local_vars(proc: &mut ProcedureInfo) {
     for param in &proc.parameters {
         if param.is_out() && !param.is_refcursor() {
-            proc.imports
-                .insert("import java.util.concurrent.atomic.AtomicReference;".into());
+            proc.imports.insert("import java.util.concurrent.atomic.AtomicReference;".into());
         }
     }
 }
 
 pub fn discover_cross_service_refs(pkg: &mut crate::types::PackageInfo, known_packages: &[String]) {
-    let own_svc = format!(
-        "{}Service",
-        {
-            let cn = crate::naming::package_to_classname(&pkg.package_name);
-            let mut c = cn.chars();
-            match c.next() {
-                Some(f) => f.to_ascii_lowercase().to_string() + c.as_str(),
-                None => String::new(),
-            }
+    let own_svc = format!("{}Service", {
+        let cn = crate::naming::package_to_classname(&pkg.package_name);
+        let mut c = cn.chars();
+        match c.next() {
+            Some(f) => f.to_ascii_lowercase().to_string() + c.as_str(),
+            None => String::new(),
         }
-    );
-    let existing_calls: std::collections::HashSet<String> = pkg.procedures.iter()
-        .flat_map(|p| p.service_calls.iter().map(|c| c.service_name.clone()))
-        .collect();
+    });
+    let existing_calls: std::collections::HashSet<String> =
+        pkg.procedures.iter().flat_map(|p| p.service_calls.iter().map(|c| c.service_name.clone())).collect();
 
-    let system_prefixes = ["dbe_scheduler", "dbms_output", "dbms_random", "dbms_lob", "dbe_output", "utl_file", "dbms_sql", "dbms_job"];
+    let system_prefixes =
+        ["dbe_scheduler", "dbms_output", "dbms_random", "dbms_lob", "dbe_output", "utl_file", "dbms_sql", "dbms_job"];
 
-    let known_svc_names: std::collections::HashMap<String, String> = known_packages.iter()
+    let known_svc_names: std::collections::HashMap<String, String> = known_packages
+        .iter()
         .filter(|pkg_name| {
             let lower = pkg_name.to_lowercase();
             !system_prefixes.iter().any(|sp| lower.starts_with(sp))

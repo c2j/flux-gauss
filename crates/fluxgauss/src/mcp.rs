@@ -1,12 +1,19 @@
 use std::path::PathBuf;
 
 use rmcp::{
+    ErrorData as McpError,
+    ServiceExt,
     handler::server::ServerHandler,
     model::{Implementation, InitializeResult, ProtocolVersion, ServerCapabilities},
-    tool, tool_handler, tool_router, transport, ErrorData as McpError, ServiceExt,
+    tool, tool_handler, tool_router,
+    transport,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+use crate::incremental::IncrementalState;
+use crate::pipeline;
+use crate::report;
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct ValidateSqlRequest {
@@ -38,6 +45,7 @@ pub struct ValidateSqlResponse {
     pub valid: bool,
     pub error_file_count: usize,
     pub warning_file_count: usize,
+    #[schemars(skip)]
     pub file_results: Vec<FileValidateResultJson>,
 }
 
@@ -59,12 +67,18 @@ pub struct ConvertSqlRequest {
 pub struct ConvertSqlResponse {
     pub success: bool,
     pub output_dir: String,
+    #[schemars(skip)]
     pub generated_files: Vec<String>,
+    #[schemars(skip)]
     pub report: ConvertReportJson,
+    #[schemars(skip)]
     pub report_paths: Vec<String>,
+    #[schemars(skip)]
     pub log_path: String,
+    #[schemars(skip)]
     pub summary: ConvertSummaryJson,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip)]
     pub error: Option<String>,
 }
 
@@ -118,18 +132,33 @@ impl FluxGaussMcpServer {
         for file_path in &req.files {
             let p = PathBuf::from(file_path);
             if !p.exists() {
-                return Err(McpError::internal_error(format!("File not found: {}", file_path), None));
+                return Err(McpError::internal_error(
+                    format!("File not found: {}", file_path),
+                    None,
+                ));
             }
             paths.push(p);
         }
 
-        let validate_result = fluxgauss::pipeline::phase0_validate(&paths);
+        let validate_result = pipeline::phase0_validate(&paths);
 
         let mut file_results = Vec::new();
         for file_result in &validate_result.file_results {
-            let errors: Vec<ValidateErrorJson> = file_result.errors.iter().map(validate_error_to_json).collect();
-            let warnings: Vec<ValidateErrorJson> = file_result.warnings.iter().map(validate_error_to_json).collect();
-            file_results.push(FileValidateResultJson { file: file_result.basename.clone(), errors, warnings });
+            let errors: Vec<ValidateErrorJson> = file_result
+                .errors
+                .iter()
+                .map(validate_error_to_json)
+                .collect();
+            let warnings: Vec<ValidateErrorJson> = file_result
+                .warnings
+                .iter()
+                .map(validate_error_to_json)
+                .collect();
+            file_results.push(FileValidateResultJson {
+                file: file_result.basename.clone(),
+                errors,
+                warnings,
+            });
         }
 
         let response = ValidateSqlResponse {
@@ -164,15 +193,25 @@ impl FluxGaussMcpServer {
         }
 
         if !req.skip_validation {
-            let validate_result = fluxgauss::pipeline::phase0_validate(&sql_files);
+            let validate_result = pipeline::phase0_validate(&sql_files);
             if validate_result.has_errors() {
                 let mut file_results = Vec::new();
                 for file_result in &validate_result.file_results {
-                    let errors: Vec<ValidateErrorJson> =
-                        file_result.errors.iter().map(validate_error_to_json).collect();
-                    let warnings: Vec<ValidateErrorJson> =
-                        file_result.warnings.iter().map(validate_error_to_json).collect();
-                    file_results.push(FileValidateResultJson { file: file_result.basename.clone(), errors, warnings });
+                    let errors: Vec<ValidateErrorJson> = file_result
+                        .errors
+                        .iter()
+                        .map(validate_error_to_json)
+                        .collect();
+                    let warnings: Vec<ValidateErrorJson> = file_result
+                        .warnings
+                        .iter()
+                        .map(validate_error_to_json)
+                        .collect();
+                    file_results.push(FileValidateResultJson {
+                        file: file_result.basename.clone(),
+                        errors,
+                        warnings,
+                    });
                 }
 
                 let response = ConvertSqlResponse {
@@ -212,17 +251,21 @@ impl FluxGaussMcpServer {
             }
         }
 
-        let mut incremental = fluxgauss::incremental::IncrementalState::new(&output_dir, req.full);
+        let mut incremental = IncrementalState::new(&output_dir, req.full);
         if let Err(e) = incremental.initialize() {
-            return Err(McpError::internal_error(format!("Failed to initialize incremental state: {}", e), None));
+            return Err(McpError::internal_error(
+                format!("Failed to initialize incremental state: {}", e),
+                None,
+            ));
         }
 
-        let result = fluxgauss::pipeline::run_pipeline(&sql_files, &config, &mut incremental, req.debug);
+        let result =
+            pipeline::run_pipeline(&sql_files, &config, &mut incremental, req.debug);
 
         let total_packages = result.packages.len();
         let total_procedures: usize = result.packages.iter().map(|p| p.procedures.len()).sum();
 
-        let report = fluxgauss::report::build_report(
+        let report = report::build_report(
             &result.packages,
             result.skipped,
             result.warnings,
@@ -234,7 +277,9 @@ impl FluxGaussMcpServer {
         );
         let report_paths = report.save_auto(std::path::Path::new(&output_dir));
 
-        let log_dir = std::path::Path::new(&output_dir).join(".fluxgauss").join("logs");
+        let log_dir = std::path::Path::new(&output_dir)
+            .join(".fluxgauss")
+            .join("logs");
         let log_path = log_dir.join("conversion.log").to_string_lossy().to_string();
 
         let mappings: Vec<ProcedureMappingJson> = report
@@ -278,7 +323,10 @@ impl FluxGaussMcpServer {
             error: if result.errors.is_empty() {
                 None
             } else {
-                Some(format!("{} conversion error(s) occurred", result.errors.len()))
+                Some(format!(
+                    "{} conversion error(s) occurred",
+                    result.errors.len()
+                ))
             },
         };
 
@@ -299,20 +347,22 @@ impl ServerHandler for FluxGaussMcpServer {
 }
 
 pub async fn run_mcp_server() -> anyhow::Result<()> {
-    tracing_subscriber::fmt().with_writer(std::io::stderr).with_env_filter("info").init();
-
-    tracing::info!("FluxGauss MCP server starting on stdio");
+    // MUST NOT write to stdout or stderr — MCP protocol uses stdout for JSON-RPC,
+    // and clients may capture stderr as error indicators.
     let server = FluxGaussMcpServer;
     let transport = transport::io::stdio();
     let server_instance = server.serve(transport).await?;
-    let quit_reason = server_instance.waiting().await?;
-    tracing::info!("Server shutdown: {:?}", quit_reason);
+    server_instance.waiting().await?;
     Ok(())
 }
 
 fn validate_error_to_json(err: &ogsql_parser::ParserError) -> ValidateErrorJson {
     match err {
-        ogsql_parser::ParserError::UnexpectedToken { location, expected, got } => ValidateErrorJson {
+        ogsql_parser::ParserError::UnexpectedToken {
+            location,
+            expected,
+            got,
+        } => ValidateErrorJson {
             line: location.line as usize,
             column: location.column as usize,
             message: format!("Expected {}, got {}", expected, got),
@@ -322,46 +372,73 @@ fn validate_error_to_json(err: &ogsql_parser::ParserError) -> ValidateErrorJson 
             column: location.column as usize,
             message: format!("Unexpected end of input, expected {}", expected),
         },
-        ogsql_parser::ParserError::ReservedKeywordAsIdentifier { keyword, location } => ValidateErrorJson {
+        ogsql_parser::ParserError::ReservedKeywordAsIdentifier {
+            keyword,
+            location,
+        } => ValidateErrorJson {
             line: location.line as usize,
             column: location.column as usize,
-            message: format!("Reserved keyword '{}' cannot be used as identifier", keyword),
+            message: format!(
+                "Reserved keyword '{}' cannot be used as identifier",
+                keyword
+            ),
         },
-        ogsql_parser::ParserError::UnsupportedSyntax { location, syntax, hint } => ValidateErrorJson {
+        ogsql_parser::ParserError::UnsupportedSyntax {
+            location,
+            syntax,
+            hint,
+        } => ValidateErrorJson {
             line: location.line as usize,
             column: location.column as usize,
             message: format!("{} ({})", syntax, hint),
         },
-        ogsql_parser::ParserError::Warning { message, location: _, level: _ } => {
-            ValidateErrorJson { line: 0, column: 0, message: format!("Warning: {}", message) }
-        }
-        ogsql_parser::ParserError::TokenizerError(e) => {
-            ValidateErrorJson { line: 0, column: 0, message: format!("Tokenizer error: {}", e) }
-        }
+        ogsql_parser::ParserError::Warning {
+            message,
+            location: _,
+            level: _,
+        } => ValidateErrorJson {
+            line: 0,
+            column: 0,
+            message: format!("Warning: {}", message),
+        },
+        ogsql_parser::ParserError::TokenizerError(e) => ValidateErrorJson {
+            line: 0,
+            column: 0,
+            message: format!("Tokenizer error: {}", e),
+        },
     }
 }
 
 fn resolve_convert_inputs(
     req: &ConvertSqlRequest,
-) -> Result<(fluxgauss::config::AppConfig, Vec<PathBuf>, String), String> {
+) -> Result<(crate::config::AppConfig, Vec<PathBuf>, String), String> {
     if let Some(config_value) = &req.config {
-        let config: fluxgauss::config::AppConfig =
-            serde_json::from_value(config_value.clone()).map_err(|e| format!("Failed to parse config JSON: {}", e))?;
+        let config: crate::config::AppConfig =
+            serde_json::from_value(config_value.clone())
+                .map_err(|e| format!("Failed to parse config JSON: {}", e))?;
         let output_dir = config.output_dir_or_default();
-        let sql_files: Vec<PathBuf> =
-            config.sources.as_ref().map(|s| s.iter().map(PathBuf::from).collect()).unwrap_or_default();
+        let sql_files: Vec<PathBuf> = config
+            .sources
+            .as_ref()
+            .map(|s| s.iter().map(PathBuf::from).collect())
+            .unwrap_or_default();
         return Ok((config, sql_files, output_dir));
     }
 
-    let output_dir = req.output_dir.clone().unwrap_or_else(|| "./dest".to_string());
+    let output_dir = req
+        .output_dir
+        .clone()
+        .unwrap_or_else(|| "./dest".to_string());
     let sql_files: Vec<PathBuf> = match &req.files {
         Some(files) => files.iter().map(PathBuf::from).collect(),
         None => {
-            return Err("Either 'config' or 'files' must be provided for convert_sql".to_string());
+            return Err(
+                "Either 'config' or 'files' must be provided for convert_sql".to_string(),
+            );
         }
     };
 
-    let mut config = fluxgauss::config::AppConfig::default();
+    let mut config = crate::config::AppConfig::default();
     config.sources = req.files.clone();
     config.output_dir = Some(output_dir.clone());
 

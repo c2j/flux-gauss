@@ -2,17 +2,16 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use ogsql_parser::ast::{
-    CreateFunctionStatement, CreatePackageBodyStatement, CreatePackageStatement,
-    CreateProcedureStatement, PackageFunction, PackageItem, PackageProcedure, RoutineParam,
-    Statement, StatementInfo, TypeKind,
+    CreateFunctionStatement, CreatePackageBodyStatement, CreatePackageStatement, CreateProcedureStatement,
+    PackageFunction, PackageItem, PackageProcedure, RoutineParam, Statement, StatementInfo, TypeKind,
 };
 use ogsql_parser::parser::ParseOutput;
 
 use crate::naming::{java_method_name, package_to_classname, snake_to_camel};
 use crate::type_map::{sql_type_to_java, sql_type_to_jdbc};
 use crate::types::{
-    CommentBlock, ConversionError, CustomTypeInfo, PackageInfo, ParamMode, Parameter,
-    ProcedureInfo, SkippedItem, VarInfo,
+    CommentBlock, ConversionError, CustomTypeInfo, PackageInfo, ParamMode, Parameter, ProcedureInfo, SkippedItem,
+    VarInfo,
 };
 
 pub struct ExtractionResult {
@@ -56,8 +55,8 @@ pub fn extract_from_parse_output(
             }
             Statement::CreatePackageBody(pkg_body) => {
                 if !current_pkg_name.is_empty() && !procedures.is_empty() {
-                    let (standalone, owned): (Vec<ProcedureInfo>, Vec<ProcedureInfo>) = procedures.iter().cloned()
-                        .partition(|p| p.package.is_empty());
+                    let (standalone, owned): (Vec<ProcedureInfo>, Vec<ProcedureInfo>) =
+                        procedures.iter().cloned().partition(|p| p.package.is_empty());
                     if !standalone.is_empty() {
                         let standalone_pkg = std::path::Path::new(source_file)
                             .file_stem()
@@ -79,7 +78,8 @@ pub fn extract_from_parse_output(
                         // Procedures matching current_pkg_name go into the main package with its vars/types.
                         // Mismatched ones (e.g., boyfriend.func_xxx inside pkg_function_calls file)
                         // go into their own separate packages (without the current package's vars/types).
-                        let mut by_pkg: std::collections::BTreeMap<String, Vec<ProcedureInfo>> = std::collections::BTreeMap::new();
+                        let mut by_pkg: std::collections::BTreeMap<String, Vec<ProcedureInfo>> =
+                            std::collections::BTreeMap::new();
                         for p in owned {
                             let pk = if p.package == current_pkg_name {
                                 current_pkg_name.clone()
@@ -145,15 +145,12 @@ pub fn extract_from_parse_output(
                 let full_obj_name = object_name_to_string(&proc_stmt.node.name);
                 let (pkg_name, proc_name) = if full_obj_name.contains('.') {
                     let parts: Vec<&str> = full_obj_name.split('.').collect();
-                    (parts[..parts.len()-1].join("."), parts.last().unwrap().to_string())
+                    (parts[..parts.len() - 1].join("."), parts.last().unwrap().to_string())
                 } else {
                     (current_pkg_name.clone(), full_obj_name.clone())
                 };
-                let full_name = if pkg_name.is_empty() {
-                    proc_name.clone()
-                } else {
-                    format!("{}.{}", pkg_name, proc_name)
-                };
+                let full_name =
+                    if pkg_name.is_empty() { proc_name.clone() } else { format!("{}.{}", pkg_name, proc_name) };
 
                 let params = convert_params(&proc_stmt.node.parameters);
                 let proc_info = build_procedure_info(
@@ -175,20 +172,16 @@ pub fn extract_from_parse_output(
                 let full_obj_name = object_name_to_string(&func_stmt.node.name);
                 let (pkg_name, proc_name) = if full_obj_name.contains('.') {
                     let parts: Vec<&str> = full_obj_name.split('.').collect();
-                    (parts[..parts.len()-1].join("."), parts.last().unwrap().to_string())
+                    (parts[..parts.len() - 1].join("."), parts.last().unwrap().to_string())
                 } else {
                     (current_pkg_name.clone(), full_obj_name.clone())
                 };
-                let full_name = if pkg_name.is_empty() {
-                    proc_name.clone()
-                } else {
-                    format!("{}.{}", pkg_name, proc_name)
-                };
+                let full_name =
+                    if pkg_name.is_empty() { proc_name.clone() } else { format!("{}.{}", pkg_name, proc_name) };
 
                 let params = convert_params(&func_stmt.node.parameters);
-                let return_type = func_stmt.node.return_type.as_deref().and_then(|rt| {
-                    sql_type_to_java(rt).map(|s| s.to_string())
-                });
+                let return_type =
+                    func_stmt.node.return_type.as_deref().and_then(|rt| sql_type_to_java(rt).map(|s| s.to_string()));
                 let proc_info = build_procedure_info(
                     full_name,
                     pkg_name,
@@ -218,17 +211,15 @@ pub fn extract_from_parse_output(
             Statement::CreateType(ct) => {
                 let type_name = object_name_to_string(&ct.name);
                 if let TypeKind::Composite { attributes } = &ct.type_kind {
-                    let fields: Vec<(String, String)> = attributes.iter().map(|attr| {
-                        let sql_t = format_sql_data_type(&attr.data_type);
-                        let jt = sql_type_to_java(&sql_t)
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| "Object".into());
-                        (attr.name.clone(), jt)
-                    }).collect();
-                    custom_types.insert(type_name.clone(), CustomTypeInfo {
-                        fields,
-                        is_record: true,
-                    });
+                    let fields: Vec<(String, String)> = attributes
+                        .iter()
+                        .map(|attr| {
+                            let sql_t = format_sql_data_type(&attr.data_type);
+                            let jt = sql_type_to_java(&sql_t).map(|s| s.to_string()).unwrap_or_else(|| "Object".into());
+                            (attr.name.clone(), jt)
+                        })
+                        .collect();
+                    custom_types.insert(type_name.clone(), CustomTypeInfo { fields, is_record: true });
                 }
             }
             Statement::Grant(_) => {
@@ -261,18 +252,10 @@ pub fn extract_from_parse_output(
             if !first_proc.package.is_empty() {
                 first_proc.package.clone()
             } else {
-                std::path::Path::new(source_file)
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("unknown")
-                    .to_string()
+                std::path::Path::new(source_file).file_stem().and_then(|s| s.to_str()).unwrap_or("unknown").to_string()
             }
         } else {
-            std::path::Path::new(source_file)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("unknown")
-                .to_string()
+            std::path::Path::new(source_file).file_stem().and_then(|s| s.to_str()).unwrap_or("unknown").to_string()
         };
         packages.push(build_package_info(
             &pkg_name,
@@ -285,11 +268,7 @@ pub fn extract_from_parse_output(
         ));
     }
 
-    ExtractionResult {
-        packages,
-        skipped,
-        errors,
-    }
+    ExtractionResult { packages, skipped, errors }
 }
 
 fn extract_package_item(
@@ -324,9 +303,7 @@ fn extract_package_item(
             let proc_name = object_name_to_string(&func.name);
             let full_name = format!("{}.{}", pkg_name, proc_name);
             let params = convert_params(&func.parameters);
-            let return_type = func.return_type.as_deref().and_then(|rt| {
-                sql_type_to_java(rt).map(|s| s.to_string())
-            });
+            let return_type = func.return_type.as_deref().and_then(|rt| sql_type_to_java(rt).map(|s| s.to_string()));
             let proc_info = build_procedure_info(
                 full_name,
                 pkg_name.to_string(),
@@ -343,65 +320,63 @@ fn extract_package_item(
             procedures.push(proc_info);
         }
         PackageItem::Variable(var_decl) => {
-             let raw_sql_type = format_pl_data_type(&var_decl.data_type);
-             let is_constant_workaround = raw_sql_type.to_lowercase() == "constant";
-             let (sql_type, java_type, recovered_default) = if is_constant_workaround {
-                 let recovered = recover_constant_type_from_source(
-                     &var_decl.name, source_file,
-                 );
-                 if let Some((ref svt, ref jvt, ref dv)) = recovered {
-                     (svt.clone(), jvt.clone(), dv.clone())
-                 } else {
-                     let inferred_java = var_decl.default.as_ref().and_then(|expr| {
-                         use ogsql_parser::ast::Expr;
-                         match expr {
-                             Expr::Literal(lit) => match lit {
-                                 ogsql_parser::ast::Literal::Integer(_) => Some("Integer".to_string()),
-                                 ogsql_parser::ast::Literal::Float(_) => Some("java.math.BigDecimal".to_string()),
-                                 ogsql_parser::ast::Literal::String(_) => Some("String".to_string()),
-                                 ogsql_parser::ast::Literal::Boolean(_) => Some("Boolean".to_string()),
-                                 _ => None,
-                             },
-                             _ => None,
-                         }
-                     });
-                     let jt = inferred_java.unwrap_or_else(|| "Object".into());
-                     (raw_sql_type.clone(), jt, None)
-                 }
-             } else {
-                 let base_type = raw_sql_type.split('(').next().unwrap_or(&raw_sql_type);
-                 let jt = sql_type_to_java(base_type)
-                     .map(|s| s.to_string())
-                     .unwrap_or_else(|| "Object".into());
-                 (raw_sql_type, jt, None)
-             };
-             let default_value = recovered_default.or_else(|| {
-                 var_decl.default.as_ref().and_then(|expr| {
-                     use ogsql_parser::ast::Expr;
-                     match expr {
-                         Expr::Literal(lit) => match lit {
-                             ogsql_parser::ast::Literal::Integer(n) => Some(n.to_string()),
-                             ogsql_parser::ast::Literal::Float(f) => Some(f.clone()),
-                             ogsql_parser::ast::Literal::String(s) => Some(format!("\"{}\"", s)),
-                             ogsql_parser::ast::Literal::Boolean(b) => Some(if *b { "true".into() } else { "false".into() }),
-                             ogsql_parser::ast::Literal::Null => Some("null".into()),
-                             _ => None,
-                         },
-                         _ => None,
-                     }
-                 })
-             });
-             package_vars.insert(
-                 var_decl.name.clone(),
-                 VarInfo {
-                     name: var_decl.name.clone(),
-                     java_type,
-                     sql_type,
-                     default_value,
-                     is_constant: var_decl.constant || is_constant_workaround,
-                 },
-             );
-         }
+            let raw_sql_type = format_pl_data_type(&var_decl.data_type);
+            let is_constant_workaround = raw_sql_type.to_lowercase() == "constant";
+            let (sql_type, java_type, recovered_default) = if is_constant_workaround {
+                let recovered = recover_constant_type_from_source(&var_decl.name, source_file);
+                if let Some((ref svt, ref jvt, ref dv)) = recovered {
+                    (svt.clone(), jvt.clone(), dv.clone())
+                } else {
+                    let inferred_java = var_decl.default.as_ref().and_then(|expr| {
+                        use ogsql_parser::ast::Expr;
+                        match expr {
+                            Expr::Literal(lit) => match lit {
+                                ogsql_parser::ast::Literal::Integer(_) => Some("Integer".to_string()),
+                                ogsql_parser::ast::Literal::Float(_) => Some("java.math.BigDecimal".to_string()),
+                                ogsql_parser::ast::Literal::String(_) => Some("String".to_string()),
+                                ogsql_parser::ast::Literal::Boolean(_) => Some("Boolean".to_string()),
+                                _ => None,
+                            },
+                            _ => None,
+                        }
+                    });
+                    let jt = inferred_java.unwrap_or_else(|| "Object".into());
+                    (raw_sql_type.clone(), jt, None)
+                }
+            } else {
+                let base_type = raw_sql_type.split('(').next().unwrap_or(&raw_sql_type);
+                let jt = sql_type_to_java(base_type).map(|s| s.to_string()).unwrap_or_else(|| "Object".into());
+                (raw_sql_type, jt, None)
+            };
+            let default_value = recovered_default.or_else(|| {
+                var_decl.default.as_ref().and_then(|expr| {
+                    use ogsql_parser::ast::Expr;
+                    match expr {
+                        Expr::Literal(lit) => match lit {
+                            ogsql_parser::ast::Literal::Integer(n) => Some(n.to_string()),
+                            ogsql_parser::ast::Literal::Float(f) => Some(f.clone()),
+                            ogsql_parser::ast::Literal::String(s) => Some(format!("\"{}\"", s)),
+                            ogsql_parser::ast::Literal::Boolean(b) => {
+                                Some(if *b { "true".into() } else { "false".into() })
+                            }
+                            ogsql_parser::ast::Literal::Null => Some("null".into()),
+                            _ => None,
+                        },
+                        _ => None,
+                    }
+                })
+            });
+            package_vars.insert(
+                var_decl.name.clone(),
+                VarInfo {
+                    name: var_decl.name.clone(),
+                    java_type,
+                    sql_type,
+                    default_value,
+                    is_constant: var_decl.constant || is_constant_workaround,
+                },
+            );
+        }
         PackageItem::Type(type_decl) => {
             use ogsql_parser::ast::plpgsql::PlTypeDecl;
             match type_decl {
@@ -410,54 +385,30 @@ fn extract_package_item(
                         .iter()
                         .map(|f| {
                             let sql_t = format_pl_data_type(&f.data_type);
-                            let jt = sql_type_to_java(&sql_t)
-                                .map(|s| s.to_string())
-                                .unwrap_or_else(|| "Object".into());
+                            let jt = sql_type_to_java(&sql_t).map(|s| s.to_string()).unwrap_or_else(|| "Object".into());
                             (f.name.clone(), jt)
                         })
                         .collect();
-                    custom_types.insert(
-                        name.clone(),
-                        CustomTypeInfo {
-                            fields: java_fields,
-                            is_record: true,
-                        },
-                    );
+                    custom_types.insert(name.clone(), CustomTypeInfo { fields: java_fields, is_record: true });
                 }
                 PlTypeDecl::TableOf { name, elem_type, .. } => {
                     let sql_t = format_pl_data_type(elem_type);
-                    let jt = sql_type_to_java(&sql_t)
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| "Object".into());
+                    let jt = sql_type_to_java(&sql_t).map(|s| s.to_string()).unwrap_or_else(|| "Object".into());
                     custom_types.insert(
                         name.clone(),
-                        CustomTypeInfo {
-                            fields: vec![("element".into(), jt)],
-                            is_record: false,
-                        },
+                        CustomTypeInfo { fields: vec![("element".into(), jt)], is_record: false },
                     );
                 }
                 PlTypeDecl::VarrayOf { name, elem_type, .. } => {
                     let sql_t = format_pl_data_type(elem_type);
-                    let jt = sql_type_to_java(&sql_t)
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| "Object".into());
+                    let jt = sql_type_to_java(&sql_t).map(|s| s.to_string()).unwrap_or_else(|| "Object".into());
                     custom_types.insert(
                         name.clone(),
-                        CustomTypeInfo {
-                            fields: vec![("element".into(), jt)],
-                            is_record: false,
-                        },
+                        CustomTypeInfo { fields: vec![("element".into(), jt)], is_record: false },
                     );
                 }
                 PlTypeDecl::RefCursor { name } => {
-                    custom_types.insert(
-                        name.clone(),
-                        CustomTypeInfo {
-                            fields: Vec::new(),
-                            is_record: false,
-                        },
-                    );
+                    custom_types.insert(name.clone(), CustomTypeInfo { fields: Vec::new(), is_record: false });
                 }
             }
         }
@@ -466,37 +417,35 @@ fn extract_package_item(
     }
 }
 
- fn recover_constant_type_from_source(var_name: &str, source_file: &str) -> Option<(String, String, Option<String>)> {
-     use std::fs;
-     let content = fs::read_to_string(source_file).ok()?;
-     for line in content.lines() {
-         let trimmed = line.trim();
-         let var_lower = var_name.to_lowercase();
-         if !trimmed.to_lowercase().starts_with(&var_lower) {
-             continue;
-         }
-         let rest = trimmed[var_lower.len()..].trim();
-         if !rest.to_lowercase().starts_with("constant") {
-             continue;
-         }
-         let after_const = rest["constant".len()..].trim();
-         let type_token = after_const.split_whitespace().next()?;
-         let paren_pos = type_token.find('(').unwrap_or(type_token.len());
-         let sql_type = &type_token[..paren_pos];
-         let java_type = sql_type_to_java(sql_type)
-             .map(|s| s.to_string())
-             .unwrap_or_else(|| "Object".into());
-         let default_value = if let Some(eq_pos) = after_const.find(":=") {
-             let raw = after_const[eq_pos + 2..].trim();
-             let val_str = strip_inline_comment(raw).trim().trim_end_matches(';').trim();
-             parse_sql_literal_to_java(val_str)
-         } else {
-             None
-         };
-         return Some((sql_type.to_uppercase(), java_type, default_value));
-     }
-     None
- }
+fn recover_constant_type_from_source(var_name: &str, source_file: &str) -> Option<(String, String, Option<String>)> {
+    use std::fs;
+    let content = fs::read_to_string(source_file).ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        let var_lower = var_name.to_lowercase();
+        if !trimmed.to_lowercase().starts_with(&var_lower) {
+            continue;
+        }
+        let rest = trimmed[var_lower.len()..].trim();
+        if !rest.to_lowercase().starts_with("constant") {
+            continue;
+        }
+        let after_const = rest["constant".len()..].trim();
+        let type_token = after_const.split_whitespace().next()?;
+        let paren_pos = type_token.find('(').unwrap_or(type_token.len());
+        let sql_type = &type_token[..paren_pos];
+        let java_type = sql_type_to_java(sql_type).map(|s| s.to_string()).unwrap_or_else(|| "Object".into());
+        let default_value = if let Some(eq_pos) = after_const.find(":=") {
+            let raw = after_const[eq_pos + 2..].trim();
+            let val_str = strip_inline_comment(raw).trim().trim_end_matches(';').trim();
+            parse_sql_literal_to_java(val_str)
+        } else {
+            None
+        };
+        return Some((sql_type.to_uppercase(), java_type, default_value));
+    }
+    None
+}
 
 fn strip_inline_comment(s: &str) -> &str {
     if let Some(pos) = s.find("--") {
@@ -512,7 +461,7 @@ fn parse_sql_literal_to_java(val: &str) -> Option<String> {
         return Some("null".into());
     }
     if val.starts_with('\'') && val.ends_with('\'') {
-        let s = &val[1..val.len()-1];
+        let s = &val[1..val.len() - 1];
         return Some(format!("\"{}\"", s));
     }
     if let Ok(n) = val.parse::<i64>() {
@@ -551,13 +500,11 @@ fn format_sql_data_type(dt: &ogsql_parser::ast::DataType) -> String {
         DataType::Integer(_) => "INTEGER".into(),
         DataType::SmallInt(_) => "SMALLINT".into(),
         DataType::TinyInt(_) => "TINYINT".into(),
-        DataType::Numeric(p, s) => {
-            match (p, s) {
-                (Some(p), Some(s)) => format!("NUMERIC({},{})", p, s),
-                (Some(p), None) => format!("NUMERIC({})", p),
-                _ => "NUMERIC".into(),
-            }
-        }
+        DataType::Numeric(p, s) => match (p, s) {
+            (Some(p), Some(s)) => format!("NUMERIC({},{})", p, s),
+            (Some(p), None) => format!("NUMERIC({})", p),
+            _ => "NUMERIC".into(),
+        },
         DataType::Real => "REAL".into(),
         DataType::Float(_) => "FLOAT".into(),
         DataType::Double => "DOUBLE".into(),
@@ -584,10 +531,16 @@ fn format_sql_data_type(dt: &ogsql_parser::ast::DataType) -> String {
 }
 
 fn convert_params(params: &[RoutineParam]) -> Vec<Parameter> {
+    let mut seen_names: HashMap<String, usize> = HashMap::new();
     params
         .iter()
         .map(|p| {
-            let (name, sql_type_raw, mode) = recover_param_info(&p.name, &p.data_type, p.mode.as_deref());
+            let (mut name, sql_type_raw, mode) = recover_param_info(&p.name, &p.data_type, p.mode.as_deref());
+            let count = seen_names.entry(name.to_lowercase()).or_insert(0);
+            *count += 1;
+            if *count > 1 {
+                name.push_str(&count.to_string());
+            }
             let sql_type = normalize_sql_type(&sql_type_raw);
             let sql_type_lower = sql_type.to_lowercase();
             let java_type = if sql_type_lower.contains("%rowtype") {
@@ -595,17 +548,9 @@ fn convert_params(params: &[RoutineParam]) -> Vec<Parameter> {
             } else if sql_type_lower.contains("%type") {
                 "String".into()
             } else {
-                sql_type_to_java(&sql_type)
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "Object".into())
+                sql_type_to_java(&sql_type).map(|s| s.to_string()).unwrap_or_else(|| "Object".into())
             };
-            Parameter {
-                name,
-                java_type,
-                sql_type,
-                mode,
-                default_value: p.default_value.clone(),
-            }
+            Parameter { name, java_type, sql_type, mode, default_value: p.default_value.clone() }
         })
         .collect()
 }
@@ -788,10 +733,7 @@ fn dedup_procedures(procs: Vec<ProcedureInfo>) -> Vec<ProcedureInfo> {
     result
 }
 
-pub fn map_comments(
-    comments: &[ogsql_parser::parser::CommentInfo],
-    procedures: &mut [ProcedureInfo],
-) {
+pub fn map_comments(comments: &[ogsql_parser::parser::CommentInfo], procedures: &mut [ProcedureInfo]) {
     for comment in comments {
         let block = CommentBlock {
             text: comment.text.clone(),
@@ -806,9 +748,7 @@ pub fn map_comments(
                 if gap <= 5 {
                     proc.leading_comments.push(block.clone());
                 }
-            } else if comment.line >= proc.source_start_line as usize
-                && comment.line <= proc.source_end_line as usize
-            {
+            } else if comment.line >= proc.source_start_line as usize && comment.line <= proc.source_end_line as usize {
                 proc.inline_comments.push(block.clone());
             }
         }
@@ -860,10 +800,7 @@ mod tests {
     #[test]
     fn test_normalize_sql_type_timestamp() {
         assert_eq!(normalize_sql_type("TIMESTAMP"), "timestamp");
-        assert_eq!(
-            normalize_sql_type("TIMESTAMP WITH TIME ZONE"),
-            "timestamp"
-        );
+        assert_eq!(normalize_sql_type("TIMESTAMP WITH TIME ZONE"), "timestamp");
     }
 
     #[test]
@@ -928,14 +865,17 @@ mod tests {
         let tokens = Tokenizer::new(sql).tokenize().unwrap();
         let stmts = Parser::new(tokens).parse();
         let output = ogsql_parser::parser::ParseOutput {
-            statements: stmts.into_iter().map(|s| ogsql_parser::ast::StatementInfo {
-                sql_text: String::new(),
-                start_line: 0,
-                start_col: 0,
-                end_line: 0,
-                end_col: 0,
-                statement: s,
-            }).collect(),
+            statements: stmts
+                .into_iter()
+                .map(|s| ogsql_parser::ast::StatementInfo {
+                    sql_text: String::new(),
+                    start_line: 0,
+                    start_col: 0,
+                    end_line: 0,
+                    end_col: 0,
+                    statement: s,
+                })
+                .collect(),
             errors: Vec::new(),
             comments: Vec::new(),
         };
@@ -959,14 +899,17 @@ mod tests {
         let tokens = Tokenizer::new(sql).tokenize().unwrap();
         let stmts = Parser::new(tokens).parse();
         let output = ogsql_parser::parser::ParseOutput {
-            statements: stmts.into_iter().map(|s| ogsql_parser::ast::StatementInfo {
-                sql_text: String::new(),
-                start_line: 0,
-                start_col: 0,
-                end_line: 0,
-                end_col: 0,
-                statement: s,
-            }).collect(),
+            statements: stmts
+                .into_iter()
+                .map(|s| ogsql_parser::ast::StatementInfo {
+                    sql_text: String::new(),
+                    start_line: 0,
+                    start_col: 0,
+                    end_line: 0,
+                    end_col: 0,
+                    statement: s,
+                })
+                .collect(),
             errors: Vec::new(),
             comments: Vec::new(),
         };
@@ -999,14 +942,17 @@ mod tests {
         let tokens = Tokenizer::new(sql).tokenize().unwrap();
         let stmts = Parser::new(tokens).parse();
         let output = ogsql_parser::parser::ParseOutput {
-            statements: stmts.into_iter().map(|s| ogsql_parser::ast::StatementInfo {
-                sql_text: String::new(),
-                start_line: 0,
-                start_col: 0,
-                end_line: 0,
-                end_col: 0,
-                statement: s,
-            }).collect(),
+            statements: stmts
+                .into_iter()
+                .map(|s| ogsql_parser::ast::StatementInfo {
+                    sql_text: String::new(),
+                    start_line: 0,
+                    start_col: 0,
+                    end_line: 0,
+                    end_col: 0,
+                    statement: s,
+                })
+                .collect(),
             errors: Vec::new(),
             comments: Vec::new(),
         };
@@ -1027,22 +973,23 @@ mod tests {
         let tokens = Tokenizer::new(sql).tokenize().unwrap();
         let stmts = Parser::new(tokens).parse();
         let output = ogsql_parser::parser::ParseOutput {
-            statements: stmts.into_iter().map(|s| ogsql_parser::ast::StatementInfo {
-                sql_text: String::new(),
-                start_line: 0,
-                start_col: 0,
-                end_line: 0,
-                end_col: 0,
-                statement: s,
-            }).collect(),
+            statements: stmts
+                .into_iter()
+                .map(|s| ogsql_parser::ast::StatementInfo {
+                    sql_text: String::new(),
+                    start_line: 0,
+                    start_col: 0,
+                    end_line: 0,
+                    end_col: 0,
+                    statement: s,
+                })
+                .collect(),
             errors: Vec::new(),
             comments: Vec::new(),
         };
 
         let result = extract_from_parse_output(&output, "issue_71.sql", "com.example");
-        let biz_packages: Vec<_> = result.packages.iter()
-            .filter(|pkg| pkg.package_name == "PKG_BIZ")
-            .collect();
+        let biz_packages: Vec<_> = result.packages.iter().filter(|pkg| pkg.package_name == "PKG_BIZ").collect();
         assert_eq!(biz_packages.len(), 1, "all PKG_BIZ procedures must land in one package");
         let pkg = biz_packages[0];
         assert!(
@@ -1106,5 +1053,5 @@ mod tests {
         assert_eq!(result[1].java_type, "String");
         assert_eq!(result[2].java_type, "Integer");
         assert!(result[2].is_out());
-     }
+    }
 }

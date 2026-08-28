@@ -18,10 +18,7 @@ pub fn write_itest_class(
 ) -> std::io::Result<String> {
     let mut sorted_injections: Vec<(&String, &String)> = service_injections.iter().collect();
     sorted_injections.sort_by_key(|(k, _)| k.as_str());
-    let itest_dir = base_path.join(format!(
-        "src/test/java/{}/itest",
-        base_package.replace('.', "/")
-    ));
+    let itest_dir = base_path.join(format!("src/test/java/{}/itest", base_package.replace('.', "/")));
     let class_name = format!("{}Service", package_to_classname(&pkg.package_name));
     let itest_class_name = format!("{}IntegrationTest", class_name);
     let mapper_class = format!("{}Mapper", package_to_classname(&pkg.package_name));
@@ -38,23 +35,18 @@ pub fn write_itest_class(
     imports.insert("import static org.junit.jupiter.api.Assertions.*;".to_string());
     imports.insert("import java.util.concurrent.TimeUnit;".to_string());
 
-    let needs_map = pkg.procedures.iter().any(|proc| {
-        proc.parameters.iter().any(|p| p.java_type.contains("Map<String, Object>"))
-    });
+    let needs_map =
+        pkg.procedures.iter().any(|proc| proc.parameters.iter().any(|p| p.java_type.contains("Map<String, Object>")));
     if needs_map {
         imports.insert("import java.util.Map;".to_string());
         imports.insert("import java.util.HashMap;".to_string());
     }
-    let needs_list = pkg.procedures.iter().any(|proc| {
-        proc.parameters.iter().any(|p| p.java_type.starts_with("List<"))
-    });
+    let needs_list = pkg.procedures.iter().any(|proc| proc.parameters.iter().any(|p| p.java_type.starts_with("List<")));
     if needs_list {
         imports.insert("import java.util.List;".to_string());
         imports.insert("import java.util.ArrayList;".to_string());
     }
-    let needs_atomic_ref = pkg.procedures.iter().any(|proc| {
-        proc.parameters.iter().any(|p| p.is_out())
-    });
+    let needs_atomic_ref = pkg.procedures.iter().any(|proc| proc.parameters.iter().any(|p| p.is_out()));
     if needs_atomic_ref {
         imports.insert("import java.util.concurrent.atomic.AtomicReference;".to_string());
     }
@@ -76,7 +68,9 @@ pub fn write_itest_class(
 
     let schema_map = precomputed_schema_map;
 
-    let object_pkg_var_names: Vec<String> = pkg.package_vars.iter()
+    let object_pkg_var_names: Vec<String> = pkg
+        .package_vars
+        .iter()
         .filter(|(_, v)| v.java_type == "Object")
         .map(|(name, _)| crate::naming::snake_to_camel(name))
         .collect();
@@ -96,7 +90,10 @@ pub fn write_itest_class(
         let mut param_args: Vec<String> = Vec::new();
         for p in in_params {
             let mut val = default_test_value(&p.java_type, &snake_to_camel(&p.name));
-            if p.java_type == "String" && (numeric_string_params.contains(&p.name.to_lowercase()) || numeric_string_params.contains(&snake_to_camel(&p.name).to_lowercase())) {
+            if p.java_type == "String"
+                && (numeric_string_params.contains(&p.name.to_lowercase())
+                    || numeric_string_params.contains(&snake_to_camel(&p.name).to_lowercase()))
+            {
                 val = "\"1\"".to_string();
             }
             let param_key = p.name.to_lowercase();
@@ -134,10 +131,8 @@ pub fn write_itest_class(
         }
 
         // Build argument list in original parameter declaration order (mixed IN/OUT)
-        let all_args: Vec<String> = proc.parameters.iter()
-            .filter(|p| !p.is_refcursor())
-            .map(|p| snake_to_camel(&p.name))
-            .collect();
+        let all_args: Vec<String> =
+            proc.parameters.iter().filter(|p| !p.is_refcursor()).map(|p| snake_to_camel(&p.name)).collect();
         let args_str = all_args.join(", ");
 
         let test_data = infer_test_data(proc, pkg, &schema_map, all_packages);
@@ -145,11 +140,7 @@ pub fn write_itest_class(
 
         let base_test_name = format!("test_{}_integration", method_name);
         let count = seen_method_names.entry(base_test_name.clone()).or_insert(0);
-        let test_name = if *count > 0 {
-            format!("{}_{}", base_test_name, count)
-        } else {
-            base_test_name.clone()
-        };
+        let test_name = if *count > 0 { format!("{}_{}", base_test_name, count) } else { base_test_name.clone() };
         *seen_method_names.get_mut(&base_test_name).unwrap() += 1;
 
         let complexity_score = proc.dml_statements.len() + proc.service_calls.len() + proc.java_logic_lines.len() / 10;
@@ -161,50 +152,62 @@ pub fn write_itest_class(
             10
         };
 
-          let is_stubbed = super::service::should_stub_procedure(proc, &object_pkg_var_names);
-          let has_while_loop = proc.java_logic_lines.iter().any(|l| {
-              let t = l.trim();
-              t.starts_with("while (true)") || t.starts_with("while (running")
-          });
-          let has_dynamic_sql = proc.dml_statements.iter().any(|dml| {
-              let sql = dml.sql_text.trim();
-              let has_text_subst = sql.contains("${");
-              let has_bind_using = sql.contains("} using ");
-              let is_single_bind = sql.starts_with("#{") && sql.ends_with('}') && !sql[2..sql.len()-1].contains("#{");
-              let starts_with_var_using = {
-                  let lower = sql.to_lowercase();
-                  let looks_like_var = sql.chars().next().map_or(false, |c| c.is_ascii_alphabetic() || c == '_');
-                  let has_using = lower.contains(" using ");
-                  looks_like_var && has_using && !lower.starts_with("select") && !lower.starts_with("insert")
-                      && !lower.starts_with("update") && !lower.starts_with("delete")
-              };
-              let is_just_var = {
-                  let looks_like_var = sql.chars().next().map_or(false, |c| c.is_ascii_alphabetic() || c == '_');
-                  let no_sql_keywords = !sql.to_lowercase().starts_with("select")
-                      && !sql.to_lowercase().starts_with("insert")
-                      && !sql.to_lowercase().starts_with("update")
-                      && !sql.to_lowercase().starts_with("delete")
-                      && !sql.to_lowercase().starts_with("truncate")
-                      && !sql.to_lowercase().starts_with("merge");
-                  looks_like_var && no_sql_keywords && !sql.contains(' ') && !sql.contains('(')
-              };
-              let has_dynamic_cond_subst = dml.dynamic_conditions.iter().any(|dc| {
-                  dc.sql_fragment.contains("${") || dc.condition_expr.contains("${")
-              });
-              is_single_bind || has_text_subst || has_bind_using || starts_with_var_using || is_just_var || has_dynamic_cond_subst
-          });
+        let is_stubbed = super::service::should_stub_procedure(proc, &object_pkg_var_names);
+        let has_while_loop = proc.java_logic_lines.iter().any(|l| {
+            let t = l.trim();
+            t.starts_with("while (true)") || t.starts_with("while (running")
+        });
+        let has_dynamic_sql = proc.dml_statements.iter().any(|dml| {
+            let sql = dml.sql_text.trim();
+            let has_text_subst = sql.contains("${");
+            let has_bind_using = sql.contains("} using ");
+            let is_single_bind = sql.starts_with("#{") && sql.ends_with('}') && !sql[2..sql.len() - 1].contains("#{");
+            let starts_with_var_using = {
+                let lower = sql.to_lowercase();
+                let looks_like_var = sql.chars().next().map_or(false, |c| c.is_ascii_alphabetic() || c == '_');
+                let has_using = lower.contains(" using ");
+                looks_like_var
+                    && has_using
+                    && !lower.starts_with("select")
+                    && !lower.starts_with("insert")
+                    && !lower.starts_with("update")
+                    && !lower.starts_with("delete")
+            };
+            let is_just_var = {
+                let looks_like_var = sql.chars().next().map_or(false, |c| c.is_ascii_alphabetic() || c == '_');
+                let no_sql_keywords = !sql.to_lowercase().starts_with("select")
+                    && !sql.to_lowercase().starts_with("insert")
+                    && !sql.to_lowercase().starts_with("update")
+                    && !sql.to_lowercase().starts_with("delete")
+                    && !sql.to_lowercase().starts_with("truncate")
+                    && !sql.to_lowercase().starts_with("merge");
+                looks_like_var && no_sql_keywords && !sql.contains(' ') && !sql.contains('(')
+            };
+            let has_dynamic_cond_subst = dml
+                .dynamic_conditions
+                .iter()
+                .any(|dc| dc.sql_fragment.contains("${") || dc.condition_expr.contains("${"));
+            is_single_bind
+                || has_text_subst
+                || has_bind_using
+                || starts_with_var_using
+                || is_just_var
+                || has_dynamic_cond_subst
+        });
 
-       let mut lines: Vec<String> = Vec::new();
-          if is_stubbed {
-              lines.push("    @org.junit.jupiter.api.Disabled(\"Converter stub — complex PL/pgSQL pattern requires manual implementation\")".to_string());
-          } else if has_while_loop {
-              lines.push("    @org.junit.jupiter.api.Disabled(\"auto-generated itest cannot terminate while loop\")".to_string());
-          } else if has_dynamic_sql {
-              lines.push("    @org.junit.jupiter.api.Disabled(\"auto-generated itest cannot exercise runtime-constructed dynamic SQL\")".to_string());
-           }
-         if !sql_script.is_empty() {
-             lines.push(format!("    @org.springframework.test.context.jdbc.Sql(scripts = \"{}\")", sql_script));
-         }
+        let mut lines: Vec<String> = Vec::new();
+        if is_stubbed {
+            lines.push("    @org.junit.jupiter.api.Disabled(\"Converter stub — complex PL/pgSQL pattern requires manual implementation\")".to_string());
+        } else if has_while_loop {
+            lines.push(
+                "    @org.junit.jupiter.api.Disabled(\"auto-generated itest cannot terminate while loop\")".to_string(),
+            );
+        } else if has_dynamic_sql {
+            lines.push("    @org.junit.jupiter.api.Disabled(\"auto-generated itest cannot exercise runtime-constructed dynamic SQL\")".to_string());
+        }
+        if !sql_script.is_empty() {
+            lines.push(format!("    @org.springframework.test.context.jdbc.Sql(scripts = \"{}\")", sql_script));
+        }
         lines.push("    @Test".to_string());
         lines.push(format!("    @Timeout(value = {}, unit = TimeUnit.SECONDS)", timeout_seconds));
         lines.push(format!("    void {}() {{", test_name));
@@ -214,25 +217,28 @@ pub fn write_itest_class(
         for od in &out_decls {
             lines.push(format!("        {}", od));
         }
-         if proc.is_function {
-             let is_recursive = proc.java_logic_lines.iter().any(|l| l.contains(&format!("this.{}(", method_name)));
-             if is_recursive {
-                 lines.push(format!("        // Recursive function — skip invocation to avoid StackOverflow"));
-                 lines.push(format!("        // var result = {}.{}({});", svc_var, method_name, args_str));
-             } else {
-                 lines.push(format!("        var result = {}.{}({});", svc_var, method_name, args_str));
-                 if is_stubbed {
-                     lines.push("        // Stub implementation — result is null".to_string());
-                 } else if proc.return_type.as_ref().map_or(true, |t| t == "Object") {
-                     lines.push("        // Object return type — skip assertNotNull".to_string());
-                 } else if proc.java_logic_lines.iter().any(|l| l.trim() == "return null;") {
-                     lines.push("        // Function may return null — skip assertNotNull".to_string());
-                 } else {
-                     lines.push("        // Scalar function: null is valid when no fixture row matches the WHERE clause".to_string());
-                 }
-             }
-             lines.push("        // TODO: Add domain-specific assertions".to_string());
-         } else {
+        if proc.is_function {
+            let is_recursive = proc.java_logic_lines.iter().any(|l| l.contains(&format!("this.{}(", method_name)));
+            if is_recursive {
+                lines.push(format!("        // Recursive function — skip invocation to avoid StackOverflow"));
+                lines.push(format!("        // var result = {}.{}({});", svc_var, method_name, args_str));
+            } else {
+                lines.push(format!("        var result = {}.{}({});", svc_var, method_name, args_str));
+                if is_stubbed {
+                    lines.push("        // Stub implementation — result is null".to_string());
+                } else if proc.return_type.as_ref().map_or(true, |t| t == "Object") {
+                    lines.push("        // Object return type — skip assertNotNull".to_string());
+                } else if proc.java_logic_lines.iter().any(|l| l.trim() == "return null;") {
+                    lines.push("        // Function may return null — skip assertNotNull".to_string());
+                } else {
+                    lines.push(
+                        "        // Scalar function: null is valid when no fixture row matches the WHERE clause"
+                            .to_string(),
+                    );
+                }
+            }
+            lines.push("        // TODO: Add domain-specific assertions".to_string());
+        } else {
             lines.push(format!("        {}.{}({});", svc_var, method_name, args_str));
             lines.push("        // TODO: Add domain-specific assertions".to_string());
         }
@@ -242,8 +248,7 @@ pub fn write_itest_class(
 
     if test_methods.is_empty() {
         test_methods.push(
-            "    @Test\n"
-                .to_string()
+            "    @Test\n".to_string()
                 + "    @Timeout(value = 10, unit = TimeUnit.SECONDS)\n"
                 + "    void testServiceExists() {\n"
                 + "        assertNotNull(service);\n"
@@ -308,10 +313,7 @@ pub fn write_abstract_integration_test(
     base_package: &str,
     encoding: &'static Encoding,
 ) -> std::io::Result<()> {
-    let itest_dir = base_path.join(format!(
-        "src/test/java/{}/itest",
-        base_package.replace('.', "/")
-    ));
+    let itest_dir = base_path.join(format!("src/test/java/{}/itest", base_package.replace('.', "/")));
 
     let mut w = CodeWriter::new();
     w.line(&format!("package {}.itest;", base_package));
@@ -363,7 +365,8 @@ pub fn write_itest_schema_sql(
                     if let Some(caps) = insert_re.captures(&raw_lower) {
                         let tbl = caps.get(1).unwrap().as_str().to_lowercase();
                         let cols_str = caps.get(2).unwrap().as_str();
-                        let insert_cols: Vec<String> = cols_str.split(',').map(|s| s.trim().trim_matches('"').to_lowercase()).collect();
+                        let insert_cols: Vec<String> =
+                            cols_str.split(',').map(|s| s.trim().trim_matches('"').to_lowercase()).collect();
                         if insert_cols.contains(&"id".to_string()) {
                             tables_with_explicit_id_insert.insert(tbl);
                         } else {
@@ -374,7 +377,8 @@ pub fn write_itest_schema_sql(
             }
         }
     }
-    let auto_id_tables: HashSet<String> = tables_with_implicit_id_insert.difference(&tables_with_explicit_id_insert).cloned().collect();
+    let auto_id_tables: HashSet<String> =
+        tables_with_implicit_id_insert.difference(&tables_with_explicit_id_insert).cloned().collect();
 
     let mut sequences_needed: HashSet<String> = HashSet::new();
     for pkg in all_packages {
@@ -398,7 +402,9 @@ pub fn write_itest_schema_sql(
                 let raw_lower = dml.sql_text.to_lowercase();
                 if raw_lower.contains("on conflict") {
                     if let Some(caps) = regex::Regex::new(r"on\s+conflict\s*\(\s*(\w+)").unwrap().captures(&raw_lower) {
-                        if let Some(tbl_match) = regex::Regex::new(r"(?:insert\s+into|update)\s+(\w+)").unwrap().captures(&raw_lower) {
+                        if let Some(tbl_match) =
+                            regex::Regex::new(r"(?:insert\s+into|update)\s+(\w+)").unwrap().captures(&raw_lower)
+                        {
                             needs_pk.insert(tbl_match.get(1).unwrap().as_str().to_lowercase());
                         }
                     }
@@ -406,9 +412,10 @@ pub fn write_itest_schema_sql(
             }
         }
     }
-    let pk_map: HashMap<String, &str> = [
-        ("employees", "emp_id"), ("departments", "dept_id"), ("t_products", "id"),
-    ].iter().map(|&(k, v)| (k.to_string(), v)).collect();
+    let pk_map: HashMap<String, &str> = [("employees", "emp_id"), ("departments", "dept_id"), ("t_products", "id")]
+        .iter()
+        .map(|&(k, v)| (k.to_string(), v))
+        .collect();
 
     let mut lines: Vec<String> = Vec::new();
     let is_remote = mode.trim().eq_ignore_ascii_case("remote");
@@ -445,7 +452,14 @@ pub fn write_itest_schema_sql(
         for col in sorted_hashmap_keys(columns) {
             let sql_type = columns.get(&col).unwrap();
             let col_lower = col.to_lowercase();
-            if col_lower.starts_with("constraint") || col_lower.starts_with("check") || col_lower.starts_with("primary") || col_lower.starts_with("foreign") || col_lower.starts_with("unique") || col_lower.starts_with("index") || col_lower == "like" {
+            if col_lower.starts_with("constraint")
+                || col_lower.starts_with("check")
+                || col_lower.starts_with("primary")
+                || col_lower.starts_with("foreign")
+                || col_lower.starts_with("unique")
+                || col_lower.starts_with("index")
+                || col_lower == "like"
+            {
                 continue;
             }
             if sql_type.to_uppercase().contains("GENERATED ALWAYS") {
@@ -461,7 +475,8 @@ pub fn write_itest_schema_sql(
             if effective_type.to_lowercase().starts_with("number") {
                 effective_type = effective_type.replace("number", "numeric").replace("NUMBER", "numeric");
             }
-            if col_lower == "id" && effective_type.to_uppercase().trim() == "BIGINT" && auto_id_tables.contains(&table) {
+            if col_lower == "id" && effective_type.to_uppercase().trim() == "BIGINT" && auto_id_tables.contains(&table)
+            {
                 effective_type = "BIGSERIAL".to_string();
             }
             let effective_lower = effective_type.to_lowercase();
@@ -494,14 +509,14 @@ pub fn write_itest_schema_sql(
             }
         }
         lines.push(");".to_string());
-         lines.push(String::new());
-     }
- 
+        lines.push(String::new());
+    }
+
     if schema_map.contains_key("t_products") {
         lines.push("INSERT INTO \"t_products\" (id, name, price, stock_qty, active) VALUES (1, 'Test Product', 10.00, 100, true) ON CONFLICT DO NOTHING;".to_string());
     }
 
-     let content = lines.join("\n");
+    let content = lines.join("\n");
     let res_dir = base_path.join("src/test/resources");
     std::fs::create_dir_all(&res_dir)?;
     let (encoded, _, _) = encoding.encode(&content);
@@ -526,7 +541,15 @@ fn is_better_type(new_type: &str, existing_type: &str) -> bool {
     if existing_upper == "TEXT" && new_upper != "TEXT" {
         return true;
     }
-    if existing_upper == "VARCHAR(255)" && (new_upper.contains("INT") || new_upper.contains("BIGINT") || new_upper.contains("NUMERIC") || new_upper.contains("DECIMAL") || new_upper.contains("TIMESTAMP") || new_upper.contains("DATE") || new_upper.contains("BOOLEAN")) {
+    if existing_upper == "VARCHAR(255)"
+        && (new_upper.contains("INT")
+            || new_upper.contains("BIGINT")
+            || new_upper.contains("NUMERIC")
+            || new_upper.contains("DECIMAL")
+            || new_upper.contains("TIMESTAMP")
+            || new_upper.contains("DATE")
+            || new_upper.contains("BOOLEAN"))
+    {
         return true;
     }
     false
@@ -535,11 +558,52 @@ fn is_better_type(new_type: &str, existing_type: &str) -> bool {
 fn maybe_upgrade_type(sql_type: &str, col_name: &str) -> String {
     if sql_type == "TEXT" {
         let lc = col_name.to_lowercase();
-        if lc == "id" || lc.ends_with("_id") { return "BIGINT".to_string(); }
-        if lc.ends_with("_qty") || lc.ends_with("_count") || lc.ends_with("_no") || lc.ends_with("_num") || lc == "quantity" { return "INT".to_string(); }
-        if lc == "price" || lc == "amount" || lc.ends_with("_amount") || lc.ends_with("_price") || lc.ends_with("_fee") || lc.ends_with("_balance") || lc.ends_with("_rate") || lc.ends_with("_total") || lc == "salary" || lc.ends_with("_salary") || lc == "budget" || lc.ends_with("_budget") || lc == "bonus" || lc.ends_with("_bonus") || lc.ends_with("_pct") || lc.ends_with("_percent") || lc == "cost" || lc.ends_with("_cost") || lc == "revenue" || lc.ends_with("_revenue") || lc.ends_with("_score") { return "NUMERIC(18,2)".to_string(); }
-        if lc.ends_with("_at") || lc.ends_with("_time") || lc.ends_with("_date") || lc == "created_at" || lc == "updated_at" { return "TIMESTAMP".to_string(); }
-        if lc == "active" || lc == "processed" || lc == "enabled" || lc.starts_with("is_") || lc.starts_with("has_") { return "BOOLEAN".to_string(); }
+        if lc == "id" || lc.ends_with("_id") {
+            return "BIGINT".to_string();
+        }
+        if lc.ends_with("_qty")
+            || lc.ends_with("_count")
+            || lc.ends_with("_no")
+            || lc.ends_with("_num")
+            || lc == "quantity"
+        {
+            return "INT".to_string();
+        }
+        if lc == "price"
+            || lc == "amount"
+            || lc.ends_with("_amount")
+            || lc.ends_with("_price")
+            || lc.ends_with("_fee")
+            || lc.ends_with("_balance")
+            || lc.ends_with("_rate")
+            || lc.ends_with("_total")
+            || lc == "salary"
+            || lc.ends_with("_salary")
+            || lc == "budget"
+            || lc.ends_with("_budget")
+            || lc == "bonus"
+            || lc.ends_with("_bonus")
+            || lc.ends_with("_pct")
+            || lc.ends_with("_percent")
+            || lc == "cost"
+            || lc.ends_with("_cost")
+            || lc == "revenue"
+            || lc.ends_with("_revenue")
+            || lc.ends_with("_score")
+        {
+            return "NUMERIC(18,2)".to_string();
+        }
+        if lc.ends_with("_at")
+            || lc.ends_with("_time")
+            || lc.ends_with("_date")
+            || lc == "created_at"
+            || lc == "updated_at"
+        {
+            return "TIMESTAMP".to_string();
+        }
+        if lc == "active" || lc == "processed" || lc == "enabled" || lc.starts_with("is_") || lc.starts_with("has_") {
+            return "BOOLEAN".to_string();
+        }
     }
     sql_type.to_string()
 }
@@ -574,7 +638,9 @@ fn build_schema_map(
                     let has_ddl = ddl_schemas.contains_key(&tbl);
                     let entry = schema_map.entry(tbl).or_insert_with(HashMap::new);
                     for (col, sql_type) in cols_map {
-                        if !entry.contains_key(&col) || (!has_ddl && is_better_type(&sql_type, entry.get(&col).unwrap())) {
+                        if !entry.contains_key(&col)
+                            || (!has_ddl && is_better_type(&sql_type, entry.get(&col).unwrap()))
+                        {
                             entry.insert(col, sql_type);
                         }
                     }
@@ -593,7 +659,9 @@ fn build_schema_map(
                     let has_ddl = ddl_schemas.contains_key(&tbl);
                     let entry = schema_map.entry(tbl).or_insert_with(HashMap::new);
                     for (col, sql_type) in cols_map {
-                        if !entry.contains_key(&col) || (!has_ddl && is_better_type(&sql_type, entry.get(&col).unwrap())) {
+                        if !entry.contains_key(&col)
+                            || (!has_ddl && is_better_type(&sql_type, entry.get(&col).unwrap()))
+                        {
                             entry.insert(col, sql_type);
                         }
                     }
@@ -602,7 +670,9 @@ fn build_schema_map(
                     let has_ddl = ddl_schemas.contains_key(&tbl);
                     let entry = schema_map.entry(tbl).or_insert_with(HashMap::new);
                     for (col, sql_type) in cols_map {
-                        if !entry.contains_key(&col) || (!has_ddl && is_better_type(&sql_type, entry.get(&col).unwrap())) {
+                        if !entry.contains_key(&col)
+                            || (!has_ddl && is_better_type(&sql_type, entry.get(&col).unwrap()))
+                        {
                             entry.insert(col, sql_type);
                         }
                     }
@@ -618,15 +688,15 @@ fn build_schema_map(
     }
 
     // Ensure commonly referenced columns exist for known tables (real DB has them but test DDL doesn't)
-     let augmentations: Vec<(&str, &str, &str)> = vec![
-         ("departments", "is_active", "INTEGER"),
-         ("employees", "email", "varchar(100)"),
-         ("employees", "phone", "varchar(50)"),
-         ("employees", "perf_score", "INTEGER"),
-         ("employees", "status", "varchar(20)"),
-         ("emp_performance", "eval_year", "INTEGER"),
-         ("emp_performance", "perf_rating", "varchar(10)"),
-     ];
+    let augmentations: Vec<(&str, &str, &str)> = vec![
+        ("departments", "is_active", "INTEGER"),
+        ("employees", "email", "varchar(100)"),
+        ("employees", "phone", "varchar(50)"),
+        ("employees", "perf_score", "INTEGER"),
+        ("employees", "status", "varchar(20)"),
+        ("emp_performance", "eval_year", "INTEGER"),
+        ("emp_performance", "perf_rating", "varchar(10)"),
+    ];
     for (table, col, sql_type) in &augmentations {
         if let Some(entry) = schema_map.get_mut(*table) {
             if !entry.contains_key(*col) {
@@ -637,18 +707,26 @@ fn build_schema_map(
 
     // Ensure tables referenced in DML but missing from DDL have minimal schemas
     let missing_tables: Vec<(&str, Vec<(&str, &str)>)> = vec![
-        ("emp_projects", vec![
-            ("emp_id", "INTEGER"), ("project_id", "INTEGER"),
-            ("role", "varchar(50)"), ("hours_per_week", "NUMERIC(5,1)"),
-            ("end_date", "DATE"),
-        ]),
-        ("tmp_emp_report", vec![
-            ("emp_id", "INTEGER"), ("emp_name", "varchar(100)"),
-            ("dept_id", "INTEGER"), ("base_salary", "NUMERIC(18,2)"),
-        ]),
-        ("delete_audit", vec![
-            ("audit_id", "INTEGER"), ("batch_id", "INTEGER"),
-        ]),
+        (
+            "emp_projects",
+            vec![
+                ("emp_id", "INTEGER"),
+                ("project_id", "INTEGER"),
+                ("role", "varchar(50)"),
+                ("hours_per_week", "NUMERIC(5,1)"),
+                ("end_date", "DATE"),
+            ],
+        ),
+        (
+            "tmp_emp_report",
+            vec![
+                ("emp_id", "INTEGER"),
+                ("emp_name", "varchar(100)"),
+                ("dept_id", "INTEGER"),
+                ("base_salary", "NUMERIC(18,2)"),
+            ],
+        ),
+        ("delete_audit", vec![("audit_id", "INTEGER"), ("batch_id", "INTEGER")]),
     ];
     for (table, cols) in &missing_tables {
         let entry = schema_map.entry(table.to_string()).or_insert_with(HashMap::new);
@@ -721,7 +799,14 @@ pub fn parse_table_ddl(sql_files: &[std::path::PathBuf]) -> HashMap<String, Hash
                 }
 
                 let first_word = part.split_whitespace().next().unwrap_or("").to_uppercase();
-                if first_word == "CONSTRAINT" || first_word == "PRIMARY" || first_word == "UNIQUE" || first_word == "FOREIGN" || first_word == "CHECK" || first_word == "INDEX" || first_word == "LIKE" {
+                if first_word == "CONSTRAINT"
+                    || first_word == "PRIMARY"
+                    || first_word == "UNIQUE"
+                    || first_word == "FOREIGN"
+                    || first_word == "CHECK"
+                    || first_word == "INDEX"
+                    || first_word == "LIKE"
+                {
                     continue;
                 }
 
@@ -805,8 +890,24 @@ fn parse_select_columns(sql: &str) -> Option<(String, HashMap<String, String>)> 
         for caps in func_re.captures_iter(part) {
             let func_name = caps.get(1)?.as_str().to_lowercase();
             let inner_col = caps.get(2)?.as_str().to_string();
-            let skip_funcs = ["substring", "trim", "coalesce", "nvl", "nvl2", "nullif", "cast", "extract", "overlay", "replace", "position"];
-            if !skip_funcs.contains(&func_name.as_str()) && inner_col != "*" && inner_col.to_lowercase() != "distinct" && inner_col.to_lowercase() != "all" {
+            let skip_funcs = [
+                "substring",
+                "trim",
+                "coalesce",
+                "nvl",
+                "nvl2",
+                "nullif",
+                "cast",
+                "extract",
+                "overlay",
+                "replace",
+                "position",
+            ];
+            if !skip_funcs.contains(&func_name.as_str())
+                && inner_col != "*"
+                && inner_col.to_lowercase() != "distinct"
+                && inner_col.to_lowercase() != "all"
+            {
                 let sql_type = maybe_upgrade_type("TEXT", &inner_col);
                 if !result.contains_key(&inner_col) || is_better_type(&sql_type, result.get(&inner_col).unwrap()) {
                     result.insert(inner_col, sql_type);
@@ -818,8 +919,17 @@ fn parse_select_columns(sql: &str) -> Option<(String, HashMap<String, String>)> 
         }
         let col_re = regex::Regex::new(r"(\w+)(?:\s+as\s+(\w+))?").ok()?;
         if let Some(caps) = col_re.captures(part) {
-            let col_name = caps.get(2).map(|m| m.as_str().to_string()).unwrap_or_else(|| caps.get(1).unwrap().as_str().to_string());
-            if col_name != "*" && col_name.to_lowercase() != "count" && col_name.to_lowercase() != "sum" && col_name.to_lowercase() != "avg" && col_name.to_lowercase() != "min" && col_name.to_lowercase() != "max" {
+            let col_name = caps
+                .get(2)
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_else(|| caps.get(1).unwrap().as_str().to_string());
+            if col_name != "*"
+                && col_name.to_lowercase() != "count"
+                && col_name.to_lowercase() != "sum"
+                && col_name.to_lowercase() != "avg"
+                && col_name.to_lowercase() != "min"
+                && col_name.to_lowercase() != "max"
+            {
                 let sql_type = maybe_upgrade_type("TEXT", &col_name);
                 if !result.contains_key(&col_name) || is_better_type(&sql_type, result.get(&col_name).unwrap()) {
                     result.insert(col_name, sql_type);
@@ -832,7 +942,22 @@ fn parse_select_columns(sql: &str) -> Option<(String, HashMap<String, String>)> 
         let where_re = regex::Regex::new(r"(\w+)\s*(?:=|!=|<|>|<=|>=|like)\s*").ok()?;
         for caps in where_re.captures_iter(where_clause) {
             let wcol = caps.get(1)?.as_str().to_lowercase();
-            let skip_words = ["and", "or", "not", "is", "in", "between", "null", "true", "false", "javatype", "jdbctype", "mode", "resulttype", "parametertype"];
+            let skip_words = [
+                "and",
+                "or",
+                "not",
+                "is",
+                "in",
+                "between",
+                "null",
+                "true",
+                "false",
+                "javatype",
+                "jdbctype",
+                "mode",
+                "resulttype",
+                "parametertype",
+            ];
             if !skip_words.contains(&wcol.as_str()) {
                 let param_re = regex::Regex::new(r"#\{[^}]+\}").ok()?;
                 let mut sql_type = "TEXT".to_string();
@@ -1013,7 +1138,12 @@ fn split_values(vals_str: &str) -> Vec<String> {
     parts
 }
 
-fn infer_test_data(proc: &ProcedureInfo, pkg: &PackageInfo, schema_map: &HashMap<String, HashMap<String, String>>, all_packages: &[PackageInfo]) -> HashMap<String, HashMap<String, String>> {
+fn infer_test_data(
+    proc: &ProcedureInfo,
+    pkg: &PackageInfo,
+    schema_map: &HashMap<String, HashMap<String, String>>,
+    all_packages: &[PackageInfo],
+) -> HashMap<String, HashMap<String, String>> {
     let mut needed: HashMap<String, HashMap<String, String>> = HashMap::new();
     let mut handled: HashSet<String> = HashSet::new();
     for dml in &proc.dml_statements {
@@ -1065,7 +1195,9 @@ fn add_transitive_tables(
     let self_call_re = regex::Regex::new(r"\bthis\.(\w+)\s*\(").unwrap();
     let mut visited: HashSet<String> = HashSet::new();
 
-    let add_proc_tables = |target_proc: &ProcedureInfo, handled: &mut HashSet<String>, needed: &mut HashMap<String, HashMap<String, String>>| {
+    let add_proc_tables = |target_proc: &ProcedureInfo,
+                           handled: &mut HashSet<String>,
+                           needed: &mut HashMap<String, HashMap<String, String>>| {
         for dml in &target_proc.dml_statements {
             let sql = &dml.sql_text;
             match dml.sql_type {
@@ -1142,7 +1274,13 @@ fn add_transitive_tables(
     }
 }
 
-fn write_fixtures(base_path: &Path, proc: &ProcedureInfo, pkg: &PackageInfo, test_data: &HashMap<String, HashMap<String, String>>, encoding: &'static Encoding) -> std::io::Result<String> {
+fn write_fixtures(
+    base_path: &Path,
+    proc: &ProcedureInfo,
+    pkg: &PackageInfo,
+    test_data: &HashMap<String, HashMap<String, String>>,
+    encoding: &'static Encoding,
+) -> std::io::Result<String> {
     if test_data.is_empty() {
         return Ok(String::new());
     }
@@ -1151,7 +1289,9 @@ fn write_fixtures(base_path: &Path, proc: &ProcedureInfo, pkg: &PackageInfo, tes
     let mut tables: Vec<&String> = test_data.keys().collect();
     tables.sort();
     for table in tables {
-        if is_sql_reserved_word(table) { continue; }
+        if is_sql_reserved_word(table) {
+            continue;
+        }
         let columns = test_data.get(table).unwrap();
         if columns.is_empty() {
             continue;
@@ -1178,7 +1318,12 @@ fn write_fixtures(base_path: &Path, proc: &ProcedureInfo, pkg: &PackageInfo, tes
         if col_names.is_empty() {
             continue;
         }
-        lines.push(format!("INSERT INTO {} ({}) VALUES ({});", table, col_names.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", "), values.join(", ")));
+        lines.push(format!(
+            "INSERT INTO {} ({}) VALUES ({});",
+            table,
+            col_names.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", "),
+            values.join(", ")
+        ));
     }
     if lines.is_empty() {
         return Ok(String::new());
@@ -1216,9 +1361,17 @@ fn generate_test_value(col_name: &str, sql_type: &str) -> String {
         }
         return "5".to_string();
     }
-    if lower_type.contains("numeric") || lower_type.contains("number") || lower_type.contains("decimal") || lower_type.contains("real") || lower_type.contains("float") || lower_type.contains("double") {
+    if lower_type.contains("numeric")
+        || lower_type.contains("number")
+        || lower_type.contains("decimal")
+        || lower_type.contains("real")
+        || lower_type.contains("float")
+        || lower_type.contains("double")
+    {
         static NUMERIC_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-        let re = NUMERIC_RE.get_or_init(|| regex::Regex::new(r"(?:numeric|number|decimal)\s*\(\s*(\d+)\s*(?:,\s*(\d+))?\s*\)").unwrap());
+        let re = NUMERIC_RE.get_or_init(|| {
+            regex::Regex::new(r"(?:numeric|number|decimal)\s*\(\s*(\d+)\s*(?:,\s*(\d+))?\s*\)").unwrap()
+        });
         if let Some(caps) = re.captures(&lower_type) {
             let precision: i32 = caps.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(10);
             let scale: i32 = caps.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
@@ -1244,19 +1397,24 @@ fn generate_test_value(col_name: &str, sql_type: &str) -> String {
     if lower_type.contains("bytea") {
         return "'\\x00'".to_string();
     }
-    if lower_type.contains("varchar") || lower_type.contains("char") || lower_type.contains("text") || lower_type.contains("json") || lower_type.contains("jsonb") || lower_type.contains("uuid") {
+    if lower_type.contains("varchar")
+        || lower_type.contains("char")
+        || lower_type.contains("text")
+        || lower_type.contains("json")
+        || lower_type.contains("jsonb")
+        || lower_type.contains("uuid")
+    {
         static VARCHAR_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-        let re = VARCHAR_RE.get_or_init(|| regex::Regex::new(r"(?:varchar2?|character\s+varying|char|character)\s*\(\s*(\d+)\s*\)").unwrap());
-        let max_len = re.captures(&lower_type).and_then(|caps| caps.get(1)?.as_str().parse::<usize>().ok()).unwrap_or(0);
+        let re = VARCHAR_RE.get_or_init(|| {
+            regex::Regex::new(r"(?:varchar2?|character\s+varying|char|character)\s*\(\s*(\d+)\s*\)").unwrap()
+        });
+        let max_len =
+            re.captures(&lower_type).and_then(|caps| caps.get(1)?.as_str().parse::<usize>().ok()).unwrap_or(0);
         if max_len == 1 {
             return "'Y'".to_string();
         }
         let val = format!("t_{}", lower_col);
-        let val = if max_len > 0 && val.len() > max_len {
-            val[..max_len].to_string()
-        } else {
-            val
-        };
+        let val = if max_len > 0 && val.len() > max_len { val[..max_len].to_string() } else { val };
         return format!("'{}'", val);
     }
     "'test'".to_string()
@@ -1349,33 +1507,77 @@ fn default_test_value(java_type: &str, param_name: &str) -> String {
     let tl = java_type.to_lowercase();
     let nl = param_name.to_lowercase();
     if tl.contains("long") {
-        if nl.contains("id") { return "1L".to_string(); }
+        if nl.contains("id") {
+            return "1L".to_string();
+        }
         return "100L".to_string();
     }
     if tl.contains("integer") || tl == "int" {
-        if nl.contains("qty") || nl.contains("limit") { return "5".to_string(); }
+        if nl.contains("qty") || nl.contains("limit") {
+            return "5".to_string();
+        }
         return "1".to_string();
     }
-    if tl.contains("bigdecimal") { return "new java.math.BigDecimal(\"99.99\")".to_string(); }
-    if tl.contains("double") { return "1.0d".to_string(); }
-    if tl.contains("float") { return "1.0f".to_string(); }
-    if tl.contains("boolean") { return "true".to_string(); }
-    if tl.contains("timestamp") { return "java.sql.Timestamp.valueOf(\"2024-01-01 00:00:00\")".to_string(); }
-    if tl.contains("date") { return "java.sql.Date.valueOf(\"2024-01-01\")".to_string(); }
-    if tl.contains("map") { return "new java.util.HashMap<>()".to_string(); }
+    if tl.contains("bigdecimal") {
+        return "new java.math.BigDecimal(\"99.99\")".to_string();
+    }
+    if tl.contains("double") {
+        return "1.0d".to_string();
+    }
+    if tl.contains("float") {
+        return "1.0f".to_string();
+    }
+    if tl.contains("boolean") {
+        return "true".to_string();
+    }
+    if tl.contains("timestamp") {
+        return "java.sql.Timestamp.valueOf(\"2024-01-01 00:00:00\")".to_string();
+    }
+    if tl.contains("date") {
+        return "java.sql.Date.valueOf(\"2024-01-01\")".to_string();
+    }
+    if tl.contains("map") {
+        return "new java.util.HashMap<>()".to_string();
+    }
     if tl == "object" {
         if nl.contains("spectrum") {
             return "java.util.Arrays.asList(1.0, 2.0, 3.0, 2.5, 1.5, 0.5, 1.0, 2.0, 3.0, 1.0)".to_string();
         }
-        if nl.contains("array") || nl.contains("list") || nl.contains("funds") || nl.contains("tab") || nl.ends_with("arr") || nl.contains("_arr") {
+        if nl.contains("array")
+            || nl.contains("list")
+            || nl.contains("funds")
+            || nl.contains("tab")
+            || nl.ends_with("arr")
+            || nl.contains("_arr")
+        {
             return "java.util.Arrays.asList(\"1\")".to_string();
         }
         return "new java.util.HashMap<String, Object>()".to_string();
     }
     if tl.contains("string") {
-        if nl.contains("date") { return "\"20240101\"".to_string(); }
-        if nl.contains("ids") || nl.contains("list") { return "\"1,2,3\"".to_string(); }
-        if ["flag", "amount", "seqno", "seq", "interfaceseq", "operflag", "stepno", "count", "quantity", "qty", "price", "total"].iter().any(|kw| nl.contains(kw)) {
+        if nl.contains("date") {
+            return "\"20240101\"".to_string();
+        }
+        if nl.contains("ids") || nl.contains("list") {
+            return "\"1,2,3\"".to_string();
+        }
+        if [
+            "flag",
+            "amount",
+            "seqno",
+            "seq",
+            "interfaceseq",
+            "operflag",
+            "stepno",
+            "count",
+            "quantity",
+            "qty",
+            "price",
+            "total",
+        ]
+        .iter()
+        .any(|kw| nl.contains(kw))
+        {
             return "\"1\"".to_string();
         }
     }
@@ -1407,20 +1609,86 @@ fn is_valid_identifier(s: &str) -> bool {
     }
 }
 
- fn is_sql_reserved_word(s: &str) -> bool {
-     let lower = s.to_lowercase();
-     [
-         "as", "into", "from", "where", "and", "or", "not", "is", "in", "between",
-         "null", "select", "insert", "update", "delete", "set", "values", "on",
-         "by", "case", "when", "then", "else", "end", "for", "if", "while", "loop",
-         "return", "begin", "declare", "with", "over", "default", "like", "exists",
-         "join", "left", "right", "inner", "outer", "cross", "order", "group",
-         "having", "limit", "offset", "union", "distinct", "asc", "desc", "true",
-         "false", "cast", "coalesce", "count", "sum", "avg", "min", "max",
-         "date", "user", "performance", "type", "check", "primary", "timestamp",
-         "table", "index", "create", "drop", "alter", "grant", "revoke",
-     ].contains(&lower.as_str())
- }
+fn is_sql_reserved_word(s: &str) -> bool {
+    let lower = s.to_lowercase();
+    [
+        "as",
+        "into",
+        "from",
+        "where",
+        "and",
+        "or",
+        "not",
+        "is",
+        "in",
+        "between",
+        "null",
+        "select",
+        "insert",
+        "update",
+        "delete",
+        "set",
+        "values",
+        "on",
+        "by",
+        "case",
+        "when",
+        "then",
+        "else",
+        "end",
+        "for",
+        "if",
+        "while",
+        "loop",
+        "return",
+        "begin",
+        "declare",
+        "with",
+        "over",
+        "default",
+        "like",
+        "exists",
+        "join",
+        "left",
+        "right",
+        "inner",
+        "outer",
+        "cross",
+        "order",
+        "group",
+        "having",
+        "limit",
+        "offset",
+        "union",
+        "distinct",
+        "asc",
+        "desc",
+        "true",
+        "false",
+        "cast",
+        "coalesce",
+        "count",
+        "sum",
+        "avg",
+        "min",
+        "max",
+        "date",
+        "user",
+        "performance",
+        "type",
+        "check",
+        "primary",
+        "timestamp",
+        "table",
+        "index",
+        "create",
+        "drop",
+        "alter",
+        "grant",
+        "revoke",
+    ]
+    .contains(&lower.as_str())
+}
 
 fn sorted<T: Ord + Clone>(set: &HashSet<T>) -> Vec<T> {
     let mut v: Vec<T> = set.iter().cloned().collect();
@@ -1458,21 +1726,21 @@ fn regex_extract(pattern: &str, text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{DmlStatement, DmlType, Parameter, ParamMode, ProcedureInfo};
+    use crate::types::{DmlStatement, DmlType, ParamMode, Parameter, ProcedureInfo};
 
     fn make_pkg(name: &str, procs: Vec<ProcedureInfo>) -> PackageInfo {
         PackageInfo {
-                    package_name: name.to_string(),
-                    procedures: procs,
-                    table_refs: Default::default(),
-                    package_vars: Default::default(),
-                    source_file: String::new(),
-                    source_files: Vec::new(),
-                    comments: Vec::new(),
-                    java_package: String::new(),
-                    custom_types: Default::default(),
-                    extra_mapper_methods: Vec::new(),
-                }
+            package_name: name.to_string(),
+            procedures: procs,
+            table_refs: Default::default(),
+            package_vars: Default::default(),
+            source_file: String::new(),
+            source_files: Vec::new(),
+            comments: Vec::new(),
+            java_package: String::new(),
+            custom_types: Default::default(),
+            extra_mapper_methods: Vec::new(),
+        }
     }
 
     fn make_proc(name: &str) -> ProcedureInfo {
@@ -1484,10 +1752,20 @@ mod tests {
         let proc = make_proc("do_work");
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new(), encoding_rs::UTF_8).unwrap();
+        write_itest_class(
+            dir.path(),
+            &pkg,
+            "com.example.demo",
+            &Default::default(),
+            &[],
+            &HashMap::new(),
+            encoding_rs::UTF_8,
+        )
+        .unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/itest/OrderServiceIntegrationTest.java"),
-        ).unwrap();
+        )
+        .unwrap();
         assert!(content.contains("class OrderServiceIntegrationTest extends AbstractIntegrationTest"));
         assert!(content.contains("@Autowired"));
         assert!(content.contains("private OrderMapper orderMapper;"));
@@ -1502,7 +1780,8 @@ mod tests {
         write_abstract_integration_test(dir.path(), "com.example.demo", encoding_rs::UTF_8).unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/itest/AbstractIntegrationTest.java"),
-        ).unwrap();
+        )
+        .unwrap();
         assert!(content.contains("public abstract class AbstractIntegrationTest"));
         assert!(content.contains("@ActiveProfiles(\"integration\")"));
         assert!(content.contains("@SqlMergeMode(SqlMergeMode.MergeMode.MERGE)"));
@@ -1515,10 +1794,20 @@ mod tests {
         let p2 = make_proc("cancel_order");
         let pkg = make_pkg("pkg_order", vec![p1, p2]);
         let dir = tempfile::tempdir().unwrap();
-        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new(), encoding_rs::UTF_8).unwrap();
+        write_itest_class(
+            dir.path(),
+            &pkg,
+            "com.example.demo",
+            &Default::default(),
+            &[],
+            &HashMap::new(),
+            encoding_rs::UTF_8,
+        )
+        .unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/itest/OrderServiceIntegrationTest.java"),
-        ).unwrap();
+        )
+        .unwrap();
         assert!(content.contains("test_createOrder_integration()"));
         assert!(content.contains("test_cancelOrder_integration()"));
     }
@@ -1542,10 +1831,20 @@ mod tests {
         });
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new(), encoding_rs::UTF_8).unwrap();
+        write_itest_class(
+            dir.path(),
+            &pkg,
+            "com.example.demo",
+            &Default::default(),
+            &[],
+            &HashMap::new(),
+            encoding_rs::UTF_8,
+        )
+        .unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/itest/OrderServiceIntegrationTest.java"),
-        ).unwrap();
+        )
+        .unwrap();
         assert!(content.contains("Long pUserId = 1L;"));
         assert!(content.contains("Integer pQty = 5;"));
         assert!(content.contains("orderService.createOrder(pUserId, pQty);"));
@@ -1565,10 +1864,20 @@ mod tests {
         });
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new(), encoding_rs::UTF_8).unwrap();
+        write_itest_class(
+            dir.path(),
+            &pkg,
+            "com.example.demo",
+            &Default::default(),
+            &[],
+            &HashMap::new(),
+            encoding_rs::UTF_8,
+        )
+        .unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/itest/OrderServiceIntegrationTest.java"),
-        ).unwrap();
+        )
+        .unwrap();
         assert!(content.contains("var result = orderService.getOrderCount(pUserId);"));
         assert!(content.contains("// Scalar function: null is valid when no fixture row matches the WHERE clause"));
         assert!(!content.contains("assertNotNull(result);"));
@@ -1593,10 +1902,20 @@ mod tests {
         });
         let pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new(), encoding_rs::UTF_8).unwrap();
+        write_itest_class(
+            dir.path(),
+            &pkg,
+            "com.example.demo",
+            &Default::default(),
+            &[],
+            &HashMap::new(),
+            encoding_rs::UTF_8,
+        )
+        .unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/itest/DataServiceIntegrationTest.java"),
-        ).unwrap();
+        )
+        .unwrap();
         assert!(content.contains("AtomicReference<String> pResult = new AtomicReference<>(\"\");"));
         assert!(content.contains("dataService.getData(pId, pResult);"));
     }
@@ -1605,19 +1924,29 @@ mod tests {
     fn test_fixture_generation() {
         let mut proc = make_proc("check_stock");
         proc.dml_statements.push(DmlStatement {
-                    sql_type: DmlType::Insert,
-                    method_id: "insertCheckStock".to_string(),
-                    sql_text: "INSERT INTO inventory (id, qty) VALUES (#{id}, #{qty})".to_string(),
-                    result_type: None,
-                    ..Default::default()
-                });
+            sql_type: DmlType::Insert,
+            method_id: "insertCheckStock".to_string(),
+            sql_text: "INSERT INTO inventory (id, qty) VALUES (#{id}, #{qty})".to_string(),
+            result_type: None,
+            ..Default::default()
+        });
         let mut pkg = make_pkg("pkg_inventory", vec![proc]);
         pkg.table_refs.insert("inventory".to_string());
         let dir = tempfile::tempdir().unwrap();
-        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[pkg.clone()], &HashMap::new(), encoding_rs::UTF_8).unwrap();
+        write_itest_class(
+            dir.path(),
+            &pkg,
+            "com.example.demo",
+            &Default::default(),
+            &[pkg.clone()],
+            &HashMap::new(),
+            encoding_rs::UTF_8,
+        )
+        .unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/itest/InventoryServiceIntegrationTest.java"),
-        ).unwrap();
+        )
+        .unwrap();
         assert!(content.contains("@Test"));
         assert!(content.contains("test_checkStock"));
         assert!(content.contains("inventoryService"));
@@ -1627,19 +1956,19 @@ mod tests {
     fn test_schema_sql_generation() {
         let mut proc = make_proc("check_stock");
         proc.dml_statements.push(DmlStatement {
-                    sql_type: DmlType::Select,
-                    method_id: "selectCheckStock".to_string(),
-                    sql_text: "SELECT id, qty FROM inventory WHERE product_id = #{productId}".to_string(),
-                    result_type: None,
-                    ..Default::default()
-                });
+            sql_type: DmlType::Select,
+            method_id: "selectCheckStock".to_string(),
+            sql_text: "SELECT id, qty FROM inventory WHERE product_id = #{productId}".to_string(),
+            result_type: None,
+            ..Default::default()
+        });
         let pkg = make_pkg("pkg_inventory", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
         write_itest_schema_sql(dir.path(), &[pkg], &HashMap::new(), "testcontainers", encoding_rs::UTF_8).unwrap();
         let schema_path = dir.path().join("src/test/resources/itest-schema.sql");
         assert!(schema_path.exists());
         let content = std::fs::read_to_string(&schema_path).unwrap();
-        // schema_map is empty so no DDL is inferred from DML alone — 
+        // schema_map is empty so no DDL is inferred from DML alone —
         // the file should exist but may be empty or contain only DDL from schema_map
         assert!(content.is_empty() || content.contains("CREATE TABLE"));
     }
@@ -1699,7 +2028,9 @@ mod tests {
     fn test_parse_table_ddl_basic() {
         let dir = tempfile::tempdir().unwrap();
         let sql_file = dir.path().join("test.sql");
-        std::fs::write(&sql_file, r#"
+        std::fs::write(
+            &sql_file,
+            r#"
 CREATE TABLE users (
     id BIGINT PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
@@ -1708,7 +2039,9 @@ CREATE TABLE users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     is_active BOOLEAN
 );
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         let schemas = parse_table_ddl(&[sql_file]);
         assert!(schemas.contains_key("users"));
         let cols = schemas.get("users").unwrap();
@@ -1724,13 +2057,17 @@ CREATE TABLE users (
     fn test_parse_table_ddl_schema_prefix() {
         let dir = tempfile::tempdir().unwrap();
         let sql_file = dir.path().join("test.sql");
-        std::fs::write(&sql_file, r#"
+        std::fs::write(
+            &sql_file,
+            r#"
 CREATE TABLE BIGFUND.orders (
     order_id NUMBER(18,4),
     qty INT,
     processed BOOLEAN
 );
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         let schemas = parse_table_ddl(&[sql_file]);
         assert!(schemas.contains_key("orders"));
         let cols = schemas.get("orders").unwrap();
@@ -1743,12 +2080,12 @@ CREATE TABLE BIGFUND.orders (
     fn test_build_schema_map_ddl_priority() {
         let mut proc = make_proc("check_stock");
         proc.dml_statements.push(DmlStatement {
-                    sql_type: DmlType::Insert,
-                    method_id: "insertCheckStock".to_string(),
-                    sql_text: "INSERT INTO inventory (id, qty) VALUES (#{id}, #{qty})".to_string(),
-                    result_type: None,
-                    ..Default::default()
-                });
+            sql_type: DmlType::Insert,
+            method_id: "insertCheckStock".to_string(),
+            sql_text: "INSERT INTO inventory (id, qty) VALUES (#{id}, #{qty})".to_string(),
+            result_type: None,
+            ..Default::default()
+        });
         let pkg = make_pkg("pkg_inventory", vec![proc]);
         let mut ddl_schemas: HashMap<String, HashMap<String, String>> = HashMap::new();
         let mut cols: HashMap<String, String> = HashMap::new();
@@ -1820,10 +2157,20 @@ CREATE TABLE BIGFUND.orders (
         });
         let pkg = make_pkg("pkg_test", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_itest_class(dir.path(), &pkg, "com.example.demo", &Default::default(), &[], &HashMap::new(), encoding_rs::UTF_8).unwrap();
+        write_itest_class(
+            dir.path(),
+            &pkg,
+            "com.example.demo",
+            &Default::default(),
+            &[],
+            &HashMap::new(),
+            encoding_rs::UTF_8,
+        )
+        .unwrap();
         let content = std::fs::read_to_string(
             dir.path().join("src/test/java/com/example/demo/itest/TestServiceIntegrationTest.java"),
-        ).unwrap();
+        )
+        .unwrap();
         assert!(content.contains("auto-generated itest cannot exercise runtime-constructed dynamic SQL"));
     }
 }

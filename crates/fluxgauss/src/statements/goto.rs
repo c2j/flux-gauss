@@ -57,14 +57,7 @@ pub fn analyze_goto_patterns(
         }
     }
 
-    let mut analysis = GotoAnalysis {
-        pattern: None,
-        labels,
-        gotos,
-        has_backward,
-        has_forward,
-        cross_block,
-    };
+    let mut analysis = GotoAnalysis { pattern: None, labels, gotos, has_backward, has_forward, cross_block };
 
     analysis.pattern = classify_goto_pattern(&analysis, body.len());
 
@@ -80,28 +73,18 @@ fn scan_source_text_for_labels(
     proc: &ProcedureInfo,
     body: &[PlStatement],
     source_cache: &mut HashMap<String, Vec<String>>,
-) -> (
-    HashMap<String, usize>,
-    HashMap<String, Vec<usize>>,
-    HashMap<String, usize>,
-) {
+) -> (HashMap<String, usize>, HashMap<String, Vec<usize>>, HashMap<String, usize>) {
     let mut text_labels: HashMap<String, usize> = HashMap::new();
     let mut goto_lines: HashMap<String, Vec<usize>> = HashMap::new();
     let mut label_lines: HashMap<String, usize> = HashMap::new();
 
-    if proc.source_file.is_empty()
-        || proc.source_start_line == 0
-        || proc.source_end_line == 0
-    {
+    if proc.source_file.is_empty() || proc.source_start_line == 0 || proc.source_end_line == 0 {
         return (text_labels, goto_lines, label_lines);
     }
 
-    let all_lines = source_cache.entry(proc.source_file.clone())
-        .or_insert_with(|| {
-            std::fs::read_to_string(&proc.source_file)
-                .map(|c| c.lines().map(String::from).collect())
-                .unwrap_or_default()
-        });
+    let all_lines = source_cache.entry(proc.source_file.clone()).or_insert_with(|| {
+        std::fs::read_to_string(&proc.source_file).map(|c| c.lines().map(String::from).collect()).unwrap_or_default()
+    });
     if all_lines.is_empty() {
         return (text_labels, goto_lines, label_lines);
     }
@@ -116,7 +99,7 @@ fn scan_source_text_for_labels(
     for line_idx in start..end {
         let line = &all_lines[line_idx];
         let line_num = line_idx + 1; // 1-based line number
-        // Find all <<label>> on this line
+                                     // Find all <<label>> on this line
         let mut chars = line.char_indices().peekable();
         while let Some((i, c)) = chars.next() {
             if c == '<' {
@@ -170,11 +153,7 @@ fn scan_source_text_for_labels(
     // Use the AST body length if available; otherwise fall back to line count.
     let text_body_len = end - start;
     let ast_body_len = body.len();
-    let effective_body_len = if ast_body_len > 0 {
-        ast_body_len
-    } else {
-        text_body_len
-    };
+    let effective_body_len = if ast_body_len > 0 { ast_body_len } else { text_body_len };
     for (label_name, label_line) in &label_lines {
         if !goto_lines.contains_key(label_name) {
             continue;
@@ -210,7 +189,14 @@ fn collect_labels_and_gotos(
                 collect_labels_and_gotos(&block.node.body, depth + 1, inside_loop, current_top, labels, gotos);
                 if let Some(exc) = &block.node.exception_block {
                     for handler in &exc.handlers {
-                        collect_labels_and_gotos(&handler.statements, depth + 1, inside_loop, current_top, labels, gotos);
+                        collect_labels_and_gotos(
+                            &handler.statements,
+                            depth + 1,
+                            inside_loop,
+                            current_top,
+                            labels,
+                            gotos,
+                        );
                     }
                 }
             }
@@ -254,10 +240,7 @@ fn collect_labels_and_gotos(
     }
 }
 
-fn classify_goto_pattern(
-    analysis: &GotoAnalysis,
-    body_len: usize,
-) -> Option<GotoPattern> {
+fn classify_goto_pattern(analysis: &GotoAnalysis, body_len: usize) -> Option<GotoPattern> {
     if analysis.gotos.is_empty() {
         return None;
     }
@@ -341,7 +324,7 @@ fn rewrite_with_pattern_ctx(
 fn invert_condition(cond: &str) -> String {
     let c = cond.trim();
     if c.starts_with("(!") && c.ends_with(')') {
-        c[2..c.len()-1].to_string()
+        c[2..c.len() - 1].to_string()
     } else if c.starts_with('(') && c.ends_with(')') {
         format!("!{}", c)
     } else if !c.contains(' ') {
@@ -360,10 +343,8 @@ fn generate_cleanup_goto(
     stmt_ctx: &mut crate::context::StatementContext,
 ) -> Result<(), ConversionError> {
     // Find the cleanup label — it's the label closest to the end
-    let cleanup_label = analysis.labels.iter()
-        .max_by_key(|(_, &idx)| idx)
-        .map(|(name, _)| name.clone())
-        .unwrap_or_default();
+    let cleanup_label =
+        analysis.labels.iter().max_by_key(|(_, &idx)| idx).map(|(name, _)| name.clone()).unwrap_or_default();
     let cleanup_idx = *analysis.labels.get(&cleanup_label).unwrap_or(&0);
 
     proc.java_logic_lines.push("try {".to_string());
@@ -447,7 +428,11 @@ fn process_cleanup_stmt(
                 for handler in &exc_block.handlers {
                     let is_others = handler.conditions.is_empty()
                         || handler.conditions.iter().any(|c| c.eq_ignore_ascii_case("others"));
-                    let evar = format!("__e{}", { let n = proc.catch_counter; proc.catch_counter += 1; n + 1 });
+                    let evar = format!("__e{}", {
+                        let n = proc.catch_counter;
+                        proc.catch_counter += 1;
+                        n + 1
+                    });
                     if is_others {
                         proc.java_logic_lines.push(format!("}} catch (Exception {evar}) {{"));
                     } else {
@@ -469,9 +454,7 @@ fn process_cleanup_stmt(
             }
             Ok(())
         }
-        _ => {
-            crate::statement::process_statement(stmt, proc, stmt_ctx)
-        }
+        _ => crate::statement::process_statement(stmt, proc, stmt_ctx),
     }
 }
 
@@ -483,21 +466,22 @@ fn generate_loop_goto(
     proc: &mut ProcedureInfo,
     stmt_ctx: &mut crate::context::StatementContext,
 ) -> Result<(), ConversionError> {
-    let backward_goto = analysis.gotos.iter()
-        .find(|g| {
-            if let Some(&target_idx) = analysis.labels.get(&g.label) {
-                target_idx < g.stmt_index
-            } else {
-                false
-            }
-        });
+    let backward_goto = analysis.gotos.iter().find(|g| {
+        if let Some(&target_idx) = analysis.labels.get(&g.label) {
+            target_idx < g.stmt_index
+        } else {
+            false
+        }
+    });
 
     let backward_goto = match backward_goto {
         Some(g) => g,
-        None => return Err(ConversionError::Analysis {
-            procedure: proc.name.clone(),
-            message: "No backward GOTO found for loop pattern".into(),
-        }),
+        None => {
+            return Err(ConversionError::Analysis {
+                procedure: proc.name.clone(),
+                message: "No backward GOTO found for loop pattern".into(),
+            })
+        }
     };
 
     let label_name = &backward_goto.label;
@@ -658,15 +642,16 @@ fn generate_deep_nested_goto(
     proc: &mut ProcedureInfo,
     stmt_ctx: &mut crate::context::StatementContext,
 ) -> Result<(), ConversionError> {
-    let goto_labels: HashSet<String> = analysis.gotos.iter()
-        .map(|g| g.label.clone())
-        .collect();
+    let goto_labels: HashSet<String> = analysis.gotos.iter().map(|g| g.label.clone()).collect();
 
     proc.java_logic_lines.push("mainLoop: while (true) {".to_string());
 
     process_with_goto_replace(body, &goto_labels, proc, stmt_ctx)?;
 
-    let has_terminal = proc.java_logic_lines.iter().rev()
+    let has_terminal = proc
+        .java_logic_lines
+        .iter()
+        .rev()
         .find(|l| {
             let t = l.trim();
             !t.starts_with("//") && !t.is_empty() && !t.starts_with("}")
@@ -696,107 +681,115 @@ fn process_with_goto_replace(
             }
             PlStatement::If(if_stmt) => {
                 let cond = crate::expr::bool_expr_to_java(&if_stmt.node.condition, proc);
-            proc.java_logic_lines.push(format!("if ({}) {{", cond));
-            process_with_goto_replace(&if_stmt.node.then_stmts, goto_labels, proc, stmt_ctx)?;
-            for elsif in &if_stmt.node.elsifs {
-                let elsif_cond = crate::expr::bool_expr_to_java(&elsif.condition, proc);
-                proc.java_logic_lines.push(format!("}} else if ({}) {{", elsif_cond));
-                process_with_goto_replace(&elsif.stmts, goto_labels, proc, stmt_ctx)?;
-            }
-            if !if_stmt.node.else_stmts.is_empty() {
-                proc.java_logic_lines.push("} else {".to_string());
-                process_with_goto_replace(&if_stmt.node.else_stmts, goto_labels, proc, stmt_ctx)?;
-            }
-            proc.java_logic_lines.push("}".to_string());
-        }
-        PlStatement::Block(block) => {
-            for decl in &block.node.declarations {
-                crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new(), None);
-            }
-            let has_exceptions = block.node.exception_block.is_some();
-            if has_exceptions {
-                proc.java_logic_lines.push("try {".to_string());
-            }
-            process_with_goto_replace(&block.node.body, goto_labels, proc, stmt_ctx)?;
-            if let Some(exc_block) = &block.node.exception_block {
-                for handler in &exc_block.handlers {
-                    let is_others = handler.conditions.is_empty()
-                        || handler.conditions.iter().any(|c| c.eq_ignore_ascii_case("others"));
-                    let evar = format!("__e{}", { let n = proc.catch_counter; proc.catch_counter += 1; n + 1 });
-                    if is_others {
-                        proc.java_logic_lines.push(format!("}} catch (Exception {evar}) {{"));
-                    } else {
-                        let cond = handler.conditions.join(", ");
-                        proc.java_logic_lines.push(format!("}} catch (BusinessException {evar}) {{ // {}", cond));
-                    }
-                    proc.java_logic_lines.push(format!("    __SQLERRM__ = {evar}.getMessage();"));
-                    proc.java_logic_lines.push("    __SQLCODE__ = -1;".to_string());
-                    process_with_goto_replace(&handler.statements, goto_labels, proc, stmt_ctx)?;
+                proc.java_logic_lines.push(format!("if ({}) {{", cond));
+                process_with_goto_replace(&if_stmt.node.then_stmts, goto_labels, proc, stmt_ctx)?;
+                for elsif in &if_stmt.node.elsifs {
+                    let elsif_cond = crate::expr::bool_expr_to_java(&elsif.condition, proc);
+                    proc.java_logic_lines.push(format!("}} else if ({}) {{", elsif_cond));
+                    process_with_goto_replace(&elsif.stmts, goto_labels, proc, stmt_ctx)?;
                 }
-            }
-            if has_exceptions {
+                if !if_stmt.node.else_stmts.is_empty() {
+                    proc.java_logic_lines.push("} else {".to_string());
+                    process_with_goto_replace(&if_stmt.node.else_stmts, goto_labels, proc, stmt_ctx)?;
+                }
                 proc.java_logic_lines.push("}".to_string());
             }
-        }
-        PlStatement::Loop(loop_stmt) => {
-            proc.java_logic_lines.push("while (true) {".to_string());
-            process_with_goto_replace(&loop_stmt.node.body, goto_labels, proc, stmt_ctx)?;
-            proc.java_logic_lines.push("}".to_string());
-        }
-        PlStatement::While(while_stmt) => {
-            let cond = crate::expr::bool_expr_to_java(&while_stmt.node.condition, proc);
-            proc.java_logic_lines.push(format!("while ({}) {{", cond));
-            process_with_goto_replace(&while_stmt.node.body, goto_labels, proc, stmt_ctx)?;
-            proc.java_logic_lines.push("}".to_string());
-        }
-        PlStatement::For(for_stmt) => {
-            let var = crate::naming::snake_to_camel(&for_stmt.node.variable);
-            match &for_stmt.node.kind {
-                ogsql_parser::ast::plpgsql::PlForKind::Range { low, high, step, reverse } => {
-                    let lo = crate::expr::expr_to_java(low, proc);
-                    let hi = crate::expr::expr_to_java(high, proc);
-                    let already_declared = proc.local_vars.contains_key(&for_stmt.node.variable);
-                    if already_declared {
-                        if *reverse {
-                            proc.java_logic_lines.push(format!("for ({0} = {1}; {0} >= {2}; {0}--) {{", var, hi, lo));
+            PlStatement::Block(block) => {
+                for decl in &block.node.declarations {
+                    crate::analyze::process_declaration(decl, proc, &std::collections::HashMap::new(), None);
+                }
+                let has_exceptions = block.node.exception_block.is_some();
+                if has_exceptions {
+                    proc.java_logic_lines.push("try {".to_string());
+                }
+                process_with_goto_replace(&block.node.body, goto_labels, proc, stmt_ctx)?;
+                if let Some(exc_block) = &block.node.exception_block {
+                    for handler in &exc_block.handlers {
+                        let is_others = handler.conditions.is_empty()
+                            || handler.conditions.iter().any(|c| c.eq_ignore_ascii_case("others"));
+                        let evar = format!("__e{}", {
+                            let n = proc.catch_counter;
+                            proc.catch_counter += 1;
+                            n + 1
+                        });
+                        if is_others {
+                            proc.java_logic_lines.push(format!("}} catch (Exception {evar}) {{"));
                         } else {
-                            let step_code = match step {
-                                Some(s) => format!("{} += {}", var, crate::expr::expr_to_java(s, proc)),
-                                None => format!("{}++", var),
-                            };
-                            proc.java_logic_lines.push(format!("for ({} = {}; {} <= {}; {}) {{", var, lo, var, hi, step_code));
+                            let cond = handler.conditions.join(", ");
+                            proc.java_logic_lines.push(format!("}} catch (BusinessException {evar}) {{ // {}", cond));
                         }
-                    } else {
-                        if *reverse {
-                            proc.java_logic_lines.push(format!("for (int {0} = {1}; {0} >= {2}; {0}--) {{", var, hi, lo));
-                        } else {
-                            let step_code = match step {
-                                Some(s) => format!("{} += {}", var, crate::expr::expr_to_java(s, proc)),
-                                None => format!("{}++", var),
-                            };
-                            proc.java_logic_lines.push(format!("for (int {} = {}; {} <= {}; {}) {{", var, lo, var, hi, step_code));
-                        }
+                        proc.java_logic_lines.push(format!("    __SQLERRM__ = {evar}.getMessage();"));
+                        proc.java_logic_lines.push("    __SQLCODE__ = -1;".to_string());
+                        process_with_goto_replace(&handler.statements, goto_labels, proc, stmt_ctx)?;
                     }
                 }
-                _ => {
-                    let already_declared = proc.local_vars.contains_key(&for_stmt.node.variable);
-                    if already_declared {
-                        let iter_var = format!("_{}", var);
-                        proc.java_logic_lines.push(
-                            format!("for (Map<String, Object> {} : java.util.Collections.<Map<String, Object>>emptyList()) {{", iter_var));
-                        proc.java_logic_lines.push(format!("{} = {};", var, iter_var));
-                    } else {
-                        proc.java_logic_lines.push(
-                            format!("for (Map<String, Object> {} : java.util.Collections.<Map<String, Object>>emptyList()) {{", var));
-                    }
+                if has_exceptions {
+                    proc.java_logic_lines.push("}".to_string());
                 }
             }
-            process_with_goto_replace(&for_stmt.node.body, goto_labels, proc, stmt_ctx)?;
-            proc.java_logic_lines.push("}".to_string());
-        }
-        _ => {
-            crate::statement::process_statement(stmt, proc, stmt_ctx)?;
-        }
+            PlStatement::Loop(loop_stmt) => {
+                proc.java_logic_lines.push("while (true) {".to_string());
+                process_with_goto_replace(&loop_stmt.node.body, goto_labels, proc, stmt_ctx)?;
+                proc.java_logic_lines.push("}".to_string());
+            }
+            PlStatement::While(while_stmt) => {
+                let cond = crate::expr::bool_expr_to_java(&while_stmt.node.condition, proc);
+                proc.java_logic_lines.push(format!("while ({}) {{", cond));
+                process_with_goto_replace(&while_stmt.node.body, goto_labels, proc, stmt_ctx)?;
+                proc.java_logic_lines.push("}".to_string());
+            }
+            PlStatement::For(for_stmt) => {
+                let var = crate::naming::snake_to_camel(&for_stmt.node.variable);
+                match &for_stmt.node.kind {
+                    ogsql_parser::ast::plpgsql::PlForKind::Range { low, high, step, reverse } => {
+                        let lo = crate::expr::expr_to_java(low, proc);
+                        let hi = crate::expr::expr_to_java(high, proc);
+                        let already_declared = proc.local_vars.contains_key(&for_stmt.node.variable);
+                        if already_declared {
+                            if *reverse {
+                                proc.java_logic_lines
+                                    .push(format!("for ({0} = {1}; {0} >= {2}; {0}--) {{", var, hi, lo));
+                            } else {
+                                let step_code = match step {
+                                    Some(s) => format!("{} += {}", var, crate::expr::expr_to_java(s, proc)),
+                                    None => format!("{}++", var),
+                                };
+                                proc.java_logic_lines
+                                    .push(format!("for ({} = {}; {} <= {}; {}) {{", var, lo, var, hi, step_code));
+                            }
+                        } else {
+                            if *reverse {
+                                proc.java_logic_lines
+                                    .push(format!("for (int {0} = {1}; {0} >= {2}; {0}--) {{", var, hi, lo));
+                            } else {
+                                let step_code = match step {
+                                    Some(s) => format!("{} += {}", var, crate::expr::expr_to_java(s, proc)),
+                                    None => format!("{}++", var),
+                                };
+                                proc.java_logic_lines
+                                    .push(format!("for (int {} = {}; {} <= {}; {}) {{", var, lo, var, hi, step_code));
+                            }
+                        }
+                    }
+                    _ => {
+                        let already_declared = proc.local_vars.contains_key(&for_stmt.node.variable);
+                        if already_declared {
+                            let iter_var = format!("_{}", var);
+                            proc.java_logic_lines.push(
+                            format!("for (Map<String, Object> {} : java.util.Collections.<Map<String, Object>>emptyList()) {{", iter_var));
+                            proc.java_logic_lines.push(format!("{} = {};", var, iter_var));
+                        } else {
+                            proc.java_logic_lines.push(
+                            format!("for (Map<String, Object> {} : java.util.Collections.<Map<String, Object>>emptyList()) {{", var));
+                        }
+                    }
+                }
+                process_with_goto_replace(&for_stmt.node.body, goto_labels, proc, stmt_ctx)?;
+                proc.java_logic_lines.push("}".to_string());
+            }
+            _ => {
+                crate::statement::process_statement(stmt, proc, stmt_ctx)?;
+            }
         }
     }
     Ok(())
@@ -818,14 +811,12 @@ fn generate_state_machine_goto(
     stmt_ctx.sm_labels = all_labels;
 
     // Build ordered label list
-    let mut ordered_labels: Vec<(String, usize)> = analysis.labels.iter()
-        .map(|(name, &idx)| (name.clone(), idx))
-        .collect();
+    let mut ordered_labels: Vec<(String, usize)> =
+        analysis.labels.iter().map(|(name, &idx)| (name.clone(), idx)).collect();
     ordered_labels.sort_by_key(|(_, idx)| *idx);
 
-    let state_names: Vec<String> = ordered_labels.iter()
-        .map(|(name, _)| crate::naming::snake_to_pascal(name))
-        .collect();
+    let state_names: Vec<String> =
+        ordered_labels.iter().map(|(name, _)| crate::naming::snake_to_pascal(name)).collect();
 
     proc.java_logic_lines.push("// State machine generated from GOTO labels".to_string());
     proc.java_logic_lines.push(format!("enum {} {{ {} }}", enum_name, state_names.join(", ")));
@@ -840,7 +831,9 @@ fn generate_state_machine_goto(
         crate::statement::process_statement(stmt, proc, stmt_ctx)?;
         if let Some(last) = proc.java_logic_lines.last() {
             let t = last.trim();
-            if t == "break;" || t.starts_with("return ") || t == "return;" { break; }
+            if t == "break;" || t.starts_with("return ") || t == "return;" {
+                break;
+            }
         }
     }
 
@@ -851,7 +844,8 @@ fn generate_state_machine_goto(
         proc.java_logic_lines.push(format!("        case {}:", state_java));
 
         let target = *target_idx;
-        let end_idx = ordered_labels.iter()
+        let end_idx = ordered_labels
+            .iter()
             .filter(|(_, idx)| *idx > target)
             .min_by_key(|(_, idx)| *idx)
             .map(|(_, idx)| *idx)
@@ -909,14 +903,17 @@ fn generate_state_machine_goto(
                 }
             }
         }
-        let last_meaningful = proc.java_logic_lines.iter().rev()
-            .find(|l| {
-                let t = l.trim();
-                !t.is_empty() && t != "}" && !t.starts_with("//")
-            });
+        let last_meaningful = proc.java_logic_lines.iter().rev().find(|l| {
+            let t = l.trim();
+            !t.is_empty() && t != "}" && !t.starts_with("//")
+        });
         let needs_break = !last_meaningful.map_or(true, |l| {
             let t = l.trim();
-            t == "break;" || t == "continue;" || t.starts_with("return ") || t == "return;" || t.starts_with("throw ")
+            t == "break;"
+                || t == "continue;"
+                || t.starts_with("return ")
+                || t == "return;"
+                || t.starts_with("throw ")
                 || t == "running = false;"
         });
         if needs_break {

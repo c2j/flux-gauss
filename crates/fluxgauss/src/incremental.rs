@@ -46,13 +46,7 @@ impl IncrementalState {
     pub fn new(output_dir: impl Into<PathBuf>, force_full: bool) -> Self {
         let output_dir = output_dir.into();
         let cache_dir = output_dir.join(".fluxgauss");
-        Self {
-            output_dir,
-            cache_dir,
-            manifest: None,
-            checkpoint: None,
-            force_full,
-        }
+        Self { output_dir, cache_dir, manifest: None, checkpoint: None, force_full }
     }
 
     pub fn initialize(&mut self) -> std::io::Result<()> {
@@ -104,16 +98,11 @@ impl IncrementalState {
         // while the stored AST belongs to the other file — silently generating
         // the wrong Service. A digest of the full path makes the name unique.
         let full = sql_file.to_string_lossy();
-        let safe: String = full
-            .chars()
-            .map(|c| if c.is_alphanumeric() || c == '.' { c } else { '_' })
-            .collect();
+        let safe: String = full.chars().map(|c| if c.is_alphanumeric() || c == '.' { c } else { '_' }).collect();
         let mut hasher = Sha256::new();
         hasher.update(full.as_bytes());
         let digest = format!("{:x}", hasher.finalize());
-        self.cache_dir
-            .join("ast")
-            .join(format!("{}.{}.json", safe, &digest[..12]))
+        self.cache_dir.join("ast").join(format!("{}.{}.json", safe, &digest[..12]))
     }
 
     pub fn save_cached_ast(&self, sql_file: &Path, json: &str) -> std::io::Result<()> {
@@ -150,12 +139,7 @@ impl IncrementalState {
         Ok(())
     }
 
-    pub fn update_file_entry(
-        &mut self,
-        sql_file: &Path,
-        package: &str,
-        java_package: &str,
-    ) -> std::io::Result<()> {
+    pub fn update_file_entry(&mut self, sql_file: &Path, package: &str, java_package: &str) -> std::io::Result<()> {
         self.update_file_packages(sql_file, &[package.to_string()], java_package)
     }
 
@@ -169,20 +153,14 @@ impl IncrementalState {
         let manifest = self.manifest.get_or_insert_with(Manifest::default);
         manifest.files.insert(
             sql_file.to_string_lossy().into_owned(),
-            FileEntry {
-                hash,
-                packages: packages.to_vec(),
-                java_package: java_package.to_string(),
-            },
+            FileEntry { hash, packages: packages.to_vec(), java_package: java_package.to_string() },
         );
         Ok(())
     }
 
     pub fn save_checkpoint(&mut self, completed: &HashSet<String>) -> std::io::Result<()> {
-        let checkpoint = GenerationCheckpoint {
-            completed: completed.clone(),
-            updated_at: chrono::Utc::now().to_rfc3339(),
-        };
+        let checkpoint =
+            GenerationCheckpoint { completed: completed.clone(), updated_at: chrono::Utc::now().to_rfc3339() };
         let path = self.cache_dir.join("gen-checkpoint.json");
         let json = serde_json::to_string_pretty(&checkpoint)?;
         std::fs::write(path, json)?;
@@ -201,10 +179,7 @@ impl IncrementalState {
     }
 
     pub fn is_checkpoint_complete(&self, package_name: &str) -> bool {
-        self.checkpoint
-            .as_ref()
-            .map(|cp| cp.completed.contains(package_name))
-            .unwrap_or(false)
+        self.checkpoint.as_ref().map(|cp| cp.completed.contains(package_name)).unwrap_or(false)
     }
 
     pub fn clear_checkpoint(&mut self) -> std::io::Result<()> {
@@ -216,20 +191,13 @@ impl IncrementalState {
         Ok(())
     }
 
-    pub fn build_dependency_graph(
-        packages: &[PackageInfo],
-    ) -> HashMap<String, HashSet<String>> {
+    pub fn build_dependency_graph(packages: &[PackageInfo]) -> HashMap<String, HashSet<String>> {
         let mut reverse_deps: HashMap<String, HashSet<String>> = HashMap::new();
         for pkg in packages {
             for proc in &pkg.procedures {
                 for call in &proc.service_calls {
-                    if !call.package_name.is_empty()
-                        && call.package_name != pkg.package_name
-                    {
-                        reverse_deps
-                            .entry(call.package_name.clone())
-                            .or_default()
-                            .insert(pkg.package_name.clone());
+                    if !call.package_name.is_empty() && call.package_name != pkg.package_name {
+                        reverse_deps.entry(call.package_name.clone()).or_default().insert(pkg.package_name.clone());
                     }
                 }
             }
@@ -237,10 +205,7 @@ impl IncrementalState {
         reverse_deps
     }
 
-    pub fn find_dependent_packages(
-        packages: &[PackageInfo],
-        changed: &HashSet<String>,
-    ) -> HashSet<String> {
+    pub fn find_dependent_packages(packages: &[PackageInfo], changed: &HashSet<String>) -> HashSet<String> {
         let reverse_deps = Self::build_dependency_graph(packages);
         let mut affected = changed.clone();
         let mut queue: VecDeque<String> = changed.iter().cloned().collect();
@@ -259,10 +224,7 @@ impl IncrementalState {
     }
 
     pub fn cleanup_stale(&mut self, current_sources: &[PathBuf]) -> std::io::Result<()> {
-        let current_keys: HashSet<String> = current_sources
-            .iter()
-            .map(|p| p.to_string_lossy().into_owned())
-            .collect();
+        let current_keys: HashSet<String> = current_sources.iter().map(|p| p.to_string_lossy().into_owned()).collect();
 
         let stale_entries: Vec<(String, FileEntry)> = match &self.manifest {
             Some(manifest) => manifest
@@ -280,11 +242,7 @@ impl IncrementalState {
             if ast_path.exists() {
                 let _ = std::fs::remove_file(ast_path);
             }
-            let _ = std::fs::remove_dir_all(
-                self.output_dir
-                    .join("src")
-                    .join(entry.java_package.replace('.', "/")),
-            );
+            let _ = std::fs::remove_dir_all(self.output_dir.join("src").join(entry.java_package.replace('.', "/")));
         }
 
         if let Some(manifest) = &mut self.manifest {
@@ -339,9 +297,7 @@ mod tests {
 
         let sql_path = dir.path().join("test.sql");
         std::fs::write(&sql_path, "SELECT 1").unwrap();
-        state
-            .update_file_entry(&sql_path, "pkg_test", "com.example")
-            .unwrap();
+        state.update_file_entry(&sql_path, "pkg_test", "com.example").unwrap();
         state.save_cached_ast(&sql_path, r#"{"statements":[]}"#).unwrap();
 
         assert!(state.is_cached(&sql_path));
@@ -366,9 +322,7 @@ mod tests {
 
         let sql_path = dir.path().join("test.sql");
         std::fs::write(&sql_path, "SELECT 1").unwrap();
-        state
-            .update_file_entry(&sql_path, "pkg_test", "com.example")
-            .unwrap();
+        state.update_file_entry(&sql_path, "pkg_test", "com.example").unwrap();
         state.save_manifest().unwrap();
 
         let mut state2 = IncrementalState::new(dir.path(), false);
@@ -385,30 +339,14 @@ mod tests {
 
         let sql_path = dir.path().join("test.sql");
         std::fs::write(&sql_path, "v1").unwrap();
-        state
-            .update_file_entry(&sql_path, "pkg_a", "com.a")
-            .unwrap();
+        state.update_file_entry(&sql_path, "pkg_a", "com.a").unwrap();
 
-        let entry = state
-            .manifest
-            .as_ref()
-            .unwrap()
-            .files
-            .get(&sql_path.to_string_lossy().into_owned())
-            .unwrap();
+        let entry = state.manifest.as_ref().unwrap().files.get(&sql_path.to_string_lossy().into_owned()).unwrap();
         assert_eq!(entry.packages, vec!["pkg_a"]);
 
         std::fs::write(&sql_path, "v2").unwrap();
-        state
-            .update_file_entry(&sql_path, "pkg_b", "com.b")
-            .unwrap();
-        let entry = state
-            .manifest
-            .as_ref()
-            .unwrap()
-            .files
-            .get(&sql_path.to_string_lossy().into_owned())
-            .unwrap();
+        state.update_file_entry(&sql_path, "pkg_b", "com.b").unwrap();
+        let entry = state.manifest.as_ref().unwrap().files.get(&sql_path.to_string_lossy().into_owned()).unwrap();
         assert_eq!(entry.packages, vec!["pkg_b"]);
     }
 
@@ -417,8 +355,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut state = setup_state(&dir);
 
-        let completed: HashSet<String> =
-            ["pkg_order".into(), "pkg_product".into()].into_iter().collect();
+        let completed: HashSet<String> = ["pkg_order".into(), "pkg_product".into()].into_iter().collect();
         state.save_checkpoint(&completed).unwrap();
         assert!(state.is_checkpoint_complete("pkg_order"));
         assert!(state.is_checkpoint_complete("pkg_product"));
@@ -458,8 +395,7 @@ mod tests {
             PackageInfo {
                 package_name: "pkg_a".into(),
                 procedures: vec![{
-                    let mut p =
-                        ProcedureInfo::new("pkg_a.do_a".into(), "pkg_a".into(), "do_a".into());
+                    let mut p = ProcedureInfo::new("pkg_a.do_a".into(), "pkg_a".into(), "do_a".into());
                     p.service_calls.push(ServiceCall {
                         service_name: "BService".into(),
                         method_name: "do_b".into(),
@@ -480,8 +416,7 @@ mod tests {
             PackageInfo {
                 package_name: "pkg_b".into(),
                 procedures: vec![{
-                    let mut p =
-                        ProcedureInfo::new("pkg_b.do_b".into(), "pkg_b".into(), "do_b".into());
+                    let mut p = ProcedureInfo::new("pkg_b.do_b".into(), "pkg_b".into(), "do_b".into());
                     p.service_calls.push(ServiceCall {
                         service_name: "CService".into(),
                         method_name: "do_c".into(),
@@ -501,11 +436,7 @@ mod tests {
             },
             PackageInfo {
                 package_name: "pkg_c".into(),
-                procedures: vec![ProcedureInfo::new(
-                    "pkg_c.do_c".into(),
-                    "pkg_c".into(),
-                    "do_c".into(),
-                )],
+                procedures: vec![ProcedureInfo::new("pkg_c.do_c".into(), "pkg_c".into(), "do_c".into())],
                 table_refs: HashSet::new(),
                 package_vars: HashMap::new(),
                 source_file: "c.sql".into(),
@@ -530,11 +461,7 @@ mod tests {
         use crate::types::ProcedureInfo;
         let packages = vec![PackageInfo {
             package_name: "isolated".into(),
-            procedures: vec![ProcedureInfo::new(
-                "isolated.run".into(),
-                "isolated".into(),
-                "run".into(),
-            )],
+            procedures: vec![ProcedureInfo::new("isolated.run".into(), "isolated".into(), "run".into())],
             table_refs: HashSet::new(),
             package_vars: HashMap::new(),
             source_file: "iso.sql".into(),
@@ -556,8 +483,7 @@ mod tests {
             PackageInfo {
                 package_name: "pkg_a".into(),
                 procedures: vec![{
-                    let mut p =
-                        ProcedureInfo::new("pkg_a.run".into(), "pkg_a".into(), "run".into());
+                    let mut p = ProcedureInfo::new("pkg_a.run".into(), "pkg_a".into(), "run".into());
                     p.service_calls.push(ServiceCall {
                         service_name: "BService".into(),
                         method_name: "do".into(),
@@ -578,8 +504,7 @@ mod tests {
             PackageInfo {
                 package_name: "pkg_b".into(),
                 procedures: vec![{
-                    let mut p =
-                        ProcedureInfo::new("pkg_b.do".into(), "pkg_b".into(), "do".into());
+                    let mut p = ProcedureInfo::new("pkg_b.do".into(), "pkg_b".into(), "do".into());
                     p.service_calls.push(ServiceCall {
                         service_name: "CService".into(),
                         method_name: "fin".into(),
@@ -599,11 +524,7 @@ mod tests {
             },
             PackageInfo {
                 package_name: "pkg_c".into(),
-                procedures: vec![ProcedureInfo::new(
-                    "pkg_c.fin".into(),
-                    "pkg_c".into(),
-                    "fin".into(),
-                )],
+                procedures: vec![ProcedureInfo::new("pkg_c.fin".into(), "pkg_c".into(), "fin".into())],
                 table_refs: HashSet::new(),
                 package_vars: HashMap::new(),
                 source_file: "c.sql".into(),
@@ -635,18 +556,12 @@ mod tests {
 
         let old_sql = dir.path().join("old.sql");
         std::fs::write(&old_sql, "SELECT 1").unwrap();
-        state
-            .update_file_entry(&old_sql, "pkg_old", "com.old")
-            .unwrap();
-        state
-            .save_cached_ast(&old_sql, "{}")
-            .unwrap();
+        state.update_file_entry(&old_sql, "pkg_old", "com.old").unwrap();
+        state.save_cached_ast(&old_sql, "{}").unwrap();
 
         let new_sql = dir.path().join("new.sql");
         std::fs::write(&new_sql, "SELECT 2").unwrap();
-        state
-            .update_file_entry(&new_sql, "pkg_new", "com.new")
-            .unwrap();
+        state.update_file_entry(&new_sql, "pkg_new", "com.new").unwrap();
 
         state.cleanup_stale(&[new_sql.clone()]).unwrap();
 
@@ -664,9 +579,7 @@ mod tests {
 
         let sql_path = dir.path().join("test.sql");
         std::fs::write(&sql_path, "SELECT 1").unwrap();
-        state
-            .update_file_entry(&sql_path, "pkg_test", "com.example")
-            .unwrap();
+        state.update_file_entry(&sql_path, "pkg_test", "com.example").unwrap();
         state.save_cached_ast(&sql_path, "{}").unwrap();
 
         assert!(!state.is_cached(&sql_path));

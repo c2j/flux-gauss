@@ -53,7 +53,12 @@ pub fn write_mapper_interface(
     for proc in &pkg.procedures {
         for dml in &proc.dml_statements {
             let mut dml_mut = dml.clone();
-            promote_out_params_to_mapper(&proc.parameters, &dml.sql_text, &mut dml_mut.extra_params, &proc.out_local_vars);
+            promote_out_params_to_mapper(
+                &proc.parameters,
+                &dml.sql_text,
+                &mut dml_mut.extra_params,
+                &proc.out_local_vars,
+            );
             let method_sig = build_mapper_method(proc, &dml_mut, &mut imports, &pkg.package_vars);
             methods.push(method_sig);
         }
@@ -78,9 +83,7 @@ pub fn write_mapper_interface(
             }
         }
         if sig_map.contains(&norm) {
-            let commented: Vec<String> = m.lines()
-                .map(|l| format!("    // [DUPLICATE] {}", l))
-                .collect();
+            let commented: Vec<String> = m.lines().map(|l| format!("    // [DUPLICATE] {}", l)).collect();
             deduped.push(commented.join("\n"));
         } else {
             sig_map.insert(norm);
@@ -90,10 +93,7 @@ pub fn write_mapper_interface(
     methods = deduped;
 
     if methods.is_empty() {
-        methods.push(format!(
-            "// No direct DML operations for {}",
-            pkg.package_name
-        ));
+        methods.push(format!("// No direct DML operations for {}", pkg.package_name));
     }
 
     let mut w = CodeWriter::new();
@@ -150,7 +150,9 @@ pub(crate) fn mapper_param_types(
         }
     }
     let param_java_names = seen.clone();
-    for (java_name, java_type) in extract_local_var_refs(&dml.sql_text, &proc.local_vars, &param_java_names, &proc.out_local_vars) {
+    for (java_name, java_type) in
+        extract_local_var_refs(&dml.sql_text, &proc.local_vars, &param_java_names, &proc.out_local_vars)
+    {
         if seen.insert(java_name.to_lowercase()) {
             types.push(java_type.clone());
         }
@@ -200,12 +202,8 @@ fn build_mapper_method(
         }
     }
 
-    let param_java_names: std::collections::HashSet<String> = proc
-        .parameters
-        .iter()
-        .filter(|p| !p.is_out())
-        .map(|p| snake_to_camel(&p.name).to_lowercase())
-        .collect();
+    let param_java_names: std::collections::HashSet<String> =
+        proc.parameters.iter().filter(|p| !p.is_out()).map(|p| snake_to_camel(&p.name).to_lowercase()).collect();
 
     for (java_name, java_type) in &dml.extra_params {
         let jn_lower = java_name.to_lowercase();
@@ -218,7 +216,8 @@ fn build_mapper_method(
         }
     }
 
-    let local_var_refs = extract_local_var_refs(&dml.sql_text, &proc.local_vars, &param_java_names, &proc.out_local_vars);
+    let local_var_refs =
+        extract_local_var_refs(&dml.sql_text, &proc.local_vars, &param_java_names, &proc.out_local_vars);
     let mut all_param_names: std::collections::HashSet<String> = param_java_names.clone();
     for (jn, _) in &local_var_refs {
         all_param_names.insert(jn.to_lowercase());
@@ -270,19 +269,15 @@ pub(crate) fn promote_out_params_to_mapper(
             let jn = snake_to_camel(&p.name);
             let already = extra_params.iter().any(|(name, _)| name == &jn);
             if !already {
-                let java_type = out_local_vars.get(&p.name.to_lowercase())
-                    .cloned()
-                    .unwrap_or_else(|| p.java_type.clone());
+                let java_type =
+                    out_local_vars.get(&p.name.to_lowercase()).cloned().unwrap_or_else(|| p.java_type.clone());
                 extra_params.push((jn, java_type));
             }
         }
     }
 }
 
-pub(crate) fn return_type_for_dml(
-    dml: &crate::types::DmlStatement,
-    imports: &mut BTreeSet<String>,
-) -> String {
+pub(crate) fn return_type_for_dml(dml: &crate::types::DmlStatement, imports: &mut BTreeSet<String>) -> String {
     match dml.sql_type {
         DmlType::Select => {
             if dml.returns_list {
@@ -328,8 +323,20 @@ pub fn resolve_import(java_type: &str) -> Option<String> {
 pub fn is_simple_java_type(t: &str) -> bool {
     matches!(
         t,
-        "int" | "long" | "double" | "float" | "boolean" | "short" | "byte" | "char"
-            | "String" | "Integer" | "Long" | "Double" | "Float" | "Boolean"
+        "int"
+            | "long"
+            | "double"
+            | "float"
+            | "boolean"
+            | "short"
+            | "byte"
+            | "char"
+            | "String"
+            | "Integer"
+            | "Long"
+            | "Double"
+            | "Float"
+            | "Boolean"
     )
 }
 
@@ -344,14 +351,64 @@ pub(crate) fn extract_local_var_refs(
     for caps in re.captures_iter(sql_text) {
         let word = caps.get(1).unwrap().as_str();
         let lower = word.to_lowercase();
-        if matches!(lower.as_str(),
-            "select" | "from" | "where" | "insert" | "into" | "values" | "update" | "set" |
-            "delete" | "and" | "or" | "not" | "null" | "is" | "in" | "between" | "like" |
-            "as" | "on" | "join" | "left" | "right" | "inner" | "outer" | "order" | "by" |
-            "group" | "having" | "limit" | "offset" | "union" | "all" | "distinct" | "case" |
-            "when" | "then" | "else" | "end" | "exists" | "true" | "false" | "asc" | "desc" |
-            "current_timestamp" | "current_date" | "current_time" | "now" | "count" | "sum" |
-            "avg" | "min" | "max" | "coalesce" | "nvl" | "cast" | "default"
+        if matches!(
+            lower.as_str(),
+            "select"
+                | "from"
+                | "where"
+                | "insert"
+                | "into"
+                | "values"
+                | "update"
+                | "set"
+                | "delete"
+                | "and"
+                | "or"
+                | "not"
+                | "null"
+                | "is"
+                | "in"
+                | "between"
+                | "like"
+                | "as"
+                | "on"
+                | "join"
+                | "left"
+                | "right"
+                | "inner"
+                | "outer"
+                | "order"
+                | "by"
+                | "group"
+                | "having"
+                | "limit"
+                | "offset"
+                | "union"
+                | "all"
+                | "distinct"
+                | "case"
+                | "when"
+                | "then"
+                | "else"
+                | "end"
+                | "exists"
+                | "true"
+                | "false"
+                | "asc"
+                | "desc"
+                | "current_timestamp"
+                | "current_date"
+                | "current_time"
+                | "now"
+                | "count"
+                | "sum"
+                | "avg"
+                | "min"
+                | "max"
+                | "coalesce"
+                | "nvl"
+                | "cast"
+                | "default"
         ) {
             continue;
         }
@@ -359,7 +416,8 @@ pub(crate) fn extract_local_var_refs(
             let jn = snake_to_camel(word);
             let jn_lower = jn.to_lowercase();
             if !param_java_names.iter().any(|pn| pn == &jn_lower) {
-                let resolved_type = out_local_vars.get(&word.to_lowercase()).cloned().unwrap_or_else(|| java_type.clone());
+                let resolved_type =
+                    out_local_vars.get(&word.to_lowercase()).cloned().unwrap_or_else(|| java_type.clone());
                 result.push((jn, resolved_type));
             }
         }
@@ -379,14 +437,64 @@ pub(crate) fn extract_package_var_refs(
     for caps in re.captures_iter(sql_text) {
         let word = caps.get(1).unwrap().as_str();
         let lower = word.to_lowercase();
-        if matches!(lower.as_str(),
-            "select" | "from" | "where" | "insert" | "into" | "values" | "update" | "set" |
-            "delete" | "and" | "or" | "not" | "null" | "is" | "in" | "between" | "like" |
-            "as" | "on" | "join" | "left" | "right" | "inner" | "outer" | "order" | "by" |
-            "group" | "having" | "limit" | "offset" | "union" | "all" | "distinct" | "case" |
-            "when" | "then" | "else" | "end" | "exists" | "true" | "false" | "asc" | "desc" |
-            "current_timestamp" | "current_date" | "current_time" | "now" | "count" | "sum" |
-            "avg" | "min" | "max" | "coalesce" | "nvl" | "cast" | "default"
+        if matches!(
+            lower.as_str(),
+            "select"
+                | "from"
+                | "where"
+                | "insert"
+                | "into"
+                | "values"
+                | "update"
+                | "set"
+                | "delete"
+                | "and"
+                | "or"
+                | "not"
+                | "null"
+                | "is"
+                | "in"
+                | "between"
+                | "like"
+                | "as"
+                | "on"
+                | "join"
+                | "left"
+                | "right"
+                | "inner"
+                | "outer"
+                | "order"
+                | "by"
+                | "group"
+                | "having"
+                | "limit"
+                | "offset"
+                | "union"
+                | "all"
+                | "distinct"
+                | "case"
+                | "when"
+                | "then"
+                | "else"
+                | "end"
+                | "exists"
+                | "true"
+                | "false"
+                | "asc"
+                | "desc"
+                | "current_timestamp"
+                | "current_date"
+                | "current_time"
+                | "now"
+                | "count"
+                | "sum"
+                | "avg"
+                | "min"
+                | "max"
+                | "coalesce"
+                | "nvl"
+                | "cast"
+                | "default"
         ) {
             continue;
         }
@@ -420,7 +528,9 @@ pub fn write_mapper_xml(
     for proc in &pkg.procedures {
         for dml in &proc.dml_statements {
             let id_attr = format!("id=\"{}\"", dml.method_id);
-            if seen_ids.contains(&id_attr) { continue; }
+            if seen_ids.contains(&id_attr) {
+                continue;
+            }
             let stmt_xml = build_mapper_statement(proc, dml, &pkg.package_vars);
             statements.push(stmt_xml);
             seen_ids.insert(id_attr);
@@ -471,27 +581,26 @@ fn build_mapper_statement(
         sql = sql[..sql.len() - 1].to_string();
     }
 
-     sql = replace_cross_package_functions(&sql);
-     sql = replace_sequence_refs(&sql);
-     sql = fix_postgresql_syntax(&sql);
-     if matches!(dml.sql_type, DmlType::Select) {
-         sql = fix_select_into_aliases(&sql, &proc.local_vars, package_vars);
-     }
+    sql = replace_cross_package_functions(&sql);
+    sql = replace_sequence_refs(&sql);
+    sql = fix_postgresql_syntax(&sql);
+    if matches!(dml.sql_type, DmlType::Select) {
+        sql = fix_select_into_aliases(&sql, &proc.local_vars, package_vars);
+    }
 
-     sql = convert_params_to_mybatis(&sql, &proc.parameters, &proc.local_vars, package_vars);
+    sql = convert_params_to_mybatis(&sql, &proc.parameters, &proc.local_vars, package_vars);
 
-     // Dynamic SQL stubs have #{param} in comments that MyBatis still tries to bind.
-     // Strip all #{...} from DYNAMIC SQL comment stubs so MyBatis ignores them.
-     if sql.contains("/* DYNAMIC SQL:") {
-         sql = regex::Regex::new(r"#\{[^}]+\}")
-             .unwrap().replace_all(&sql, "'?'").to_string();
-     }
+    // Dynamic SQL stubs have #{param} in comments that MyBatis still tries to bind.
+    // Strip all #{...} from DYNAMIC SQL comment stubs so MyBatis ignores them.
+    if sql.contains("/* DYNAMIC SQL:") {
+        sql = regex::Regex::new(r"#\{[^}]+\}").unwrap().replace_all(&sql, "'?'").to_string();
+    }
 
-     sql = expand_rowtype_insert(&sql);
+    sql = expand_rowtype_insert(&sql);
 
-     if matches!(dml.sql_type, DmlType::Select) {
-         sql = cleanup_as_param_aliases(&sql);
-     }
+    if matches!(dml.sql_type, DmlType::Select) {
+        sql = cleanup_as_param_aliases(&sql);
+    }
 
     if matches!(dml.sql_type, DmlType::Select) && !dml.returns_list {
         sql = regex::Regex::new(r"(?i)\bAND\s+ROWNUM\s*=\s*\d+\s*$").unwrap().replace(&sql, "").to_string();
@@ -518,17 +627,16 @@ fn build_mapper_statement(
     parts.push(format!("<!-- {} -->", source_info));
 
     if !dml.dynamic_conditions.is_empty() {
-        let local_var_names: Vec<String> = proc.local_vars.keys()
-            .map(|k| crate::naming::snake_to_camel(k).to_lowercase())
-            .collect();
+        let local_var_names: Vec<String> =
+            proc.local_vars.keys().map(|k| crate::naming::snake_to_camel(k).to_lowercase()).collect();
         let is_valid_condition = |dc: &&DynamicCondition| -> bool {
             let frag_lower = dc.sql_fragment.to_lowercase();
             let cond_lower = dc.condition_expr.to_lowercase();
             let has_local_var = local_var_names.iter().any(|lv| {
-                frag_lower.contains(&format!("#{{{}}}", lv)) ||
-                frag_lower.contains(&format!("${{{}}}", lv)) ||
-                cond_lower.contains(&format!("#{{{}}}", lv)) ||
-                cond_lower.contains(&format!("${{{}}}", lv))
+                frag_lower.contains(&format!("#{{{}}}", lv))
+                    || frag_lower.contains(&format!("${{{}}}", lv))
+                    || cond_lower.contains(&format!("#{{{}}}", lv))
+                    || cond_lower.contains(&format!("${{{}}}", lv))
             });
             !has_local_var
         };
@@ -572,10 +680,11 @@ fn build_mapper_statement(
                     };
                     let cond_lower = dc.condition_expr.to_lowercase();
                     let cond_refs_local = local_var_names.iter().any(|lv| {
-                        cond_lower.contains(&format!("#{{{}}}", lv)) ||
-                        cond_lower.contains(&format!("${{{}}}", lv)) ||
-                        cond_lower.split(|c: char| !c.is_alphanumeric() && c != '_')
-                            .any(|word| word == lv.as_str())
+                        cond_lower.contains(&format!("#{{{}}}", lv))
+                            || cond_lower.contains(&format!("${{{}}}", lv))
+                            || cond_lower
+                                .split(|c: char| !c.is_alphanumeric() && c != '_')
+                                .any(|word| word == lv.as_str())
                     });
                     if cond_refs_local {
                         new_dc.condition_expr = "true".to_string();
@@ -620,15 +729,15 @@ fn build_mapper_statement(
         }
         base_clean = convert_params_to_mybatis(&base_clean, &proc.parameters, &proc.local_vars, package_vars);
         if base_clean.contains("/* DYNAMIC SQL:") {
-            base_clean = regex::Regex::new(r"#\{[^}]+\}")
-                .unwrap().replace_all(&base_clean, "'?'").to_string();
+            base_clean = regex::Regex::new(r"#\{[^}]+\}").unwrap().replace_all(&base_clean, "'?'").to_string();
         }
         base_clean = expand_rowtype_insert(&base_clean);
         if matches!(dml.sql_type, DmlType::Select) {
             base_clean = cleanup_as_param_aliases(&base_clean);
         }
         base_clean = xml_escape(&base_clean);
-        let formatted_base: String = base_clean.split('\n').map(|l| format!("    {}", l)).collect::<Vec<_>>().join("\n");
+        let formatted_base: String =
+            base_clean.split('\n').map(|l| format!("    {}", l)).collect::<Vec<_>>().join("\n");
         parts.push(formatted_base);
 
         if !where_conds.is_empty() {
@@ -698,19 +807,15 @@ fn clean_sql(sql: &str) -> String {
 fn fix_postgresql_syntax(sql: &str) -> String {
     let mut result = sql.to_string();
 
-    let interval_re = INTERVAL_PAREN_RE.get_or_init(|| regex::Regex::new(
-        r"(?i)\)\s*interval\b"
-    ).unwrap());
+    let interval_re = INTERVAL_PAREN_RE.get_or_init(|| regex::Regex::new(r"(?i)\)\s*interval\b").unwrap());
     result = interval_re.replace_all(&result, ")::interval").to_string();
 
-    let interval_re2 = INTERVAL_CONCAT_RE.get_or_init(|| regex::Regex::new(
-        r"(?i)(\|\|\s*'[^']+'\s*)interval\b"
-    ).unwrap());
+    let interval_re2 =
+        INTERVAL_CONCAT_RE.get_or_init(|| regex::Regex::new(r"(?i)(\|\|\s*'[^']+'\s*)interval\b").unwrap());
     result = interval_re2.replace_all(&result, "${1}::interval").to_string();
 
-    let outer_join_re = OUTER_JOIN_RE.get_or_init(|| regex::Regex::new(
-        r"(?i)(\w+)\s*\.\s*(\w+)\s*\(\s*\+\s*\)"
-    ).unwrap());
+    let outer_join_re =
+        OUTER_JOIN_RE.get_or_init(|| regex::Regex::new(r"(?i)(\w+)\s*\.\s*(\w+)\s*\(\s*\+\s*\)").unwrap());
     result = outer_join_re.replace_all(&result, "$1.$2").to_string();
 
     result = replace_decode_with_case(&result);
@@ -718,32 +823,27 @@ fn fix_postgresql_syntax(sql: &str) -> String {
     let nvl_re = NVL_RE.get_or_init(|| regex::Regex::new(r"(?i)\bnvl\s*\(").unwrap());
     result = nvl_re.replace_all(&result, "coalesce(").to_string();
 
-    let add_months_re = ADD_MONTHS_RE.get_or_init(|| regex::Regex::new(
-        r"(?i)add_months\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)"
-    ).unwrap());
+    let add_months_re =
+        ADD_MONTHS_RE.get_or_init(|| regex::Regex::new(r"(?i)add_months\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)").unwrap());
     result = add_months_re.replace_all(&result, "($1 + ($2 || ' months')::interval)").to_string();
 
-    let to_char_re = TO_CHAR_NOW_RE.get_or_init(|| regex::Regex::new(
-        r"(?i)to_char\s*\(\s*now\s*\(\s*\)\s*,\s*'([^']+)'\s*\)"
-    ).unwrap());
+    let to_char_re = TO_CHAR_NOW_RE
+        .get_or_init(|| regex::Regex::new(r"(?i)to_char\s*\(\s*now\s*\(\s*\)\s*,\s*'([^']+)'\s*\)").unwrap());
     result = to_char_re.replace_all(&result, "to_char(now(), '$1')").to_string();
 
     let empty_blob_re = EMPTY_BLOB_RE.get_or_init(|| regex::Regex::new(r"(?i)\bempty_blob\s*\(\s*\)").unwrap());
     result = empty_blob_re.replace_all(&result, "''").to_string();
 
-    let date_cast_eq_re = DATE_CAST_EQ_RE.get_or_init(|| regex::Regex::new(
-        r"(?i)date\s*\(\s*(\w+)\s*\)\s*=\s*(\w+)\s+date\b"
-    ).unwrap());
+    let date_cast_eq_re =
+        DATE_CAST_EQ_RE.get_or_init(|| regex::Regex::new(r"(?i)date\s*\(\s*(\w+)\s*\)\s*=\s*(\w+)\s+date\b").unwrap());
     result = date_cast_eq_re.replace_all(&result, "CAST($1 AS DATE) = $2").to_string();
 
-    let date_cast_trailing_re = DATE_CAST_TRAILING_RE.get_or_init(|| regex::Regex::new(
-        r"(?i)(=\s*#\{[^}]+\})\s+date\b"
-    ).unwrap());
+    let date_cast_trailing_re =
+        DATE_CAST_TRAILING_RE.get_or_init(|| regex::Regex::new(r"(?i)(=\s*#\{[^}]+\})\s+date\b").unwrap());
     result = date_cast_trailing_re.replace_all(&result, "$1").to_string();
 
-    let date_func3_re = DATE_FUNC_RE.get_or_init(|| regex::Regex::new(
-        r"(?i)\bdate\s*\(\s*(\w+(?:\s*\.\s*\w+)*)\s*\)"
-    ).unwrap());
+    let date_func3_re =
+        DATE_FUNC_RE.get_or_init(|| regex::Regex::new(r"(?i)\bdate\s*\(\s*(\w+(?:\s*\.\s*\w+)*)\s*\)").unwrap());
     result = date_func3_re.replace_all(&result, "CAST($1 AS DATE)").to_string();
 
     // Quote SQL reserved words used as column names in INSERT/UPDATE column lists
@@ -767,65 +867,74 @@ fn fix_postgresql_syntax(sql: &str) -> String {
 
     // Convert ON CONFLICT (col) DO UPDATE SET ... → ON DUPLICATE KEY UPDATE ...
     // openGauss does not support PostgreSQL's ON CONFLICT syntax
-    let on_conflict_re = regex::Regex::new(
-        r"(?i)\bON\s+CONFLICT\s*\([^)]*\)\s*DO\s+UPDATE\s+SET\b"
-    ).unwrap();
+    let on_conflict_re = regex::Regex::new(r"(?i)\bON\s+CONFLICT\s*\([^)]*\)\s*DO\s+UPDATE\s+SET\b").unwrap();
     result = on_conflict_re.replace_all(&result, "ON DUPLICATE KEY UPDATE").to_string();
 
-    let returning_into_re = RETURNING_INTO_RE.get_or_init(|| regex::Regex::new(
-        r"(?i)\bRETURNING\s+([\w\s,.*(){}#/+%-]+?)\s+INTO\s+[\w\s,.#{}?=]+"
-    ).unwrap());
+    let returning_into_re = RETURNING_INTO_RE.get_or_init(|| {
+        regex::Regex::new(r"(?i)\bRETURNING\s+([\w\s,.*(){}#/+%-]+?)\s+INTO\s+[\w\s,.#{}?=]+").unwrap()
+    });
     result = returning_into_re.replace_all(&result, "RETURNING $1").to_string();
 
     // Clean RETURNING clause: split by commas respecting parentheses (function calls)
-    let returning_clean_re = regex::Regex::new(
-        r"(?i)RETURNING\s+([\w\s,.*(){}#/+%'-]+?)(?:\s+INTO\b|\s*$|\s*;)"
-    ).unwrap();
-    result = returning_clean_re.replace_all(&result, |caps: &regex::Captures| {
-        let raw_cols = caps.get(1).unwrap().as_str();
-        // Split by commas, respecting parentheses nesting (don't split inside function calls)
-        let mut items: Vec<&str> = Vec::new();
-        let mut start = 0usize;
-        let mut depth = 0i32;
-        for (i, c) in raw_cols.char_indices() {
-            match c {
-                '(' => depth += 1,
-                ')' => { if depth > 0 { depth -= 1; } }
-                ',' if depth == 0 => {
-                    items.push(&raw_cols[start..i]);
-                    start = i + 1;
-                }
-                _ => {}
-            }
-        }
-        if start < raw_cols.len() {
-            items.push(&raw_cols[start..]);
-        }
-        let clean_cols: Vec<String> = items.iter()
-            .filter_map(|item| {
-                let trimmed = item.trim();
-                if trimmed.is_empty() {
-                    None
-                } else if trimmed.contains('(') || trimmed.contains('/') || trimmed.contains('+') || trimmed.contains('-') || trimmed.contains('%') {
-                    // Function call or arithmetic expression — keep full expression
-                    Some(trimmed.to_string())
-                } else {
-                    // Simple column name — extract first word
-                    let first_word = trimmed.split_whitespace().next().unwrap_or("");
-                    if !first_word.is_empty() && first_word.chars().all(|ch| ch.is_alphanumeric() || ch == '_') {
-                        Some(first_word.to_string())
-                    } else {
-                        None
+    let returning_clean_re =
+        regex::Regex::new(r"(?i)RETURNING\s+([\w\s,.*(){}#/+%'-]+?)(?:\s+INTO\b|\s*$|\s*;)").unwrap();
+    result = returning_clean_re
+        .replace_all(&result, |caps: &regex::Captures| {
+            let raw_cols = caps.get(1).unwrap().as_str();
+            // Split by commas, respecting parentheses nesting (don't split inside function calls)
+            let mut items: Vec<&str> = Vec::new();
+            let mut start = 0usize;
+            let mut depth = 0i32;
+            for (i, c) in raw_cols.char_indices() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => {
+                        if depth > 0 {
+                            depth -= 1;
+                        }
                     }
+                    ',' if depth == 0 => {
+                        items.push(&raw_cols[start..i]);
+                        start = i + 1;
+                    }
+                    _ => {}
                 }
-            })
-            .collect();
-        if clean_cols.is_empty() {
-            String::new()
-        } else {
-            format!("RETURNING {}", clean_cols.join(", "))
-        }
-    }).to_string();
+            }
+            if start < raw_cols.len() {
+                items.push(&raw_cols[start..]);
+            }
+            let clean_cols: Vec<String> = items
+                .iter()
+                .filter_map(|item| {
+                    let trimmed = item.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else if trimmed.contains('(')
+                        || trimmed.contains('/')
+                        || trimmed.contains('+')
+                        || trimmed.contains('-')
+                        || trimmed.contains('%')
+                    {
+                        // Function call or arithmetic expression — keep full expression
+                        Some(trimmed.to_string())
+                    } else {
+                        // Simple column name — extract first word
+                        let first_word = trimmed.split_whitespace().next().unwrap_or("");
+                        if !first_word.is_empty() && first_word.chars().all(|ch| ch.is_alphanumeric() || ch == '_') {
+                            Some(first_word.to_string())
+                        } else {
+                            None
+                        }
+                    }
+                })
+                .collect();
+            if clean_cols.is_empty() {
+                String::new()
+            } else {
+                format!("RETURNING {}", clean_cols.join(", "))
+            }
+        })
+        .to_string();
 
     let bulk_collect_re = regex::Regex::new(r"(?i)\bBULK\s+COLLECT\b").unwrap();
     result = bulk_collect_re.replace_all(&result, "").to_string();
@@ -833,8 +942,7 @@ fn fix_postgresql_syntax(sql: &str) -> String {
     let exec_imm_re = regex::Regex::new(r"(?i)^\s*execute\s+immediate\s+").unwrap();
     if exec_imm_re.is_match(&result) {
         let comment = result.trim().trim_end_matches(';');
-        let comment_clean = regex::Regex::new(r"#\{[^}]+\}")
-            .unwrap().replace_all(comment, "'?'").to_string();
+        let comment_clean = regex::Regex::new(r"#\{[^}]+\}").unwrap().replace_all(comment, "'?'").to_string();
         result = format!("/* DYNAMIC SQL: {} */ SELECT 1", comment_clean);
     }
 
@@ -854,22 +962,63 @@ fn fix_postgresql_syntax(sql: &str) -> String {
     result = lost_div_nullif_re.replace_all(&result, "$1 / nullif(").to_string();
 
     // Fix lost / operator: IDENTIFIER SUM( → IDENTIFIER / SUM( (e.g. base_salary SUM(...) → base_salary / SUM(...))
-    let lost_div_agg_re = regex::Regex::new(
-        r"(?i)(\w+)\s+(SUM|AVG|COUNT|MAX|MIN)\s*\("
-    ).unwrap();
+    let lost_div_agg_re = regex::Regex::new(r"(?i)(\w+)\s+(SUM|AVG|COUNT|MAX|MIN)\s*\(").unwrap();
     // Only apply when the identifier is not a SQL keyword
-    let sql_keywords = ["select", "from", "where", "and", "or", "not", "as", "on", "in", "by", "is", "set", "into", "when", "then", "else", "end", "case", "having", "group", "order", "limit", "offset", "join", "left", "right", "inner", "outer", "cross", "full", "between", "like", "exists", "all", "any", "some", "union", "intersect", "except", "distinct"];
+    let sql_keywords = [
+        "select",
+        "from",
+        "where",
+        "and",
+        "or",
+        "not",
+        "as",
+        "on",
+        "in",
+        "by",
+        "is",
+        "set",
+        "into",
+        "when",
+        "then",
+        "else",
+        "end",
+        "case",
+        "having",
+        "group",
+        "order",
+        "limit",
+        "offset",
+        "join",
+        "left",
+        "right",
+        "inner",
+        "outer",
+        "cross",
+        "full",
+        "between",
+        "like",
+        "exists",
+        "all",
+        "any",
+        "some",
+        "union",
+        "intersect",
+        "except",
+        "distinct",
+    ];
     let mut prev = String::new();
     while prev != result {
         prev = result.clone();
-        result = lost_div_agg_re.replace_all(&result, |caps: &regex::Captures| {
-            let ident = caps.get(1).unwrap().as_str();
-            if sql_keywords.contains(&ident.to_lowercase().as_str()) {
-                caps.get(0).unwrap().as_str().to_string()
-            } else {
-                format!("{} / {}(", ident, caps.get(2).unwrap().as_str())
-            }
-        }).to_string();
+        result = lost_div_agg_re
+            .replace_all(&result, |caps: &regex::Captures| {
+                let ident = caps.get(1).unwrap().as_str();
+                if sql_keywords.contains(&ident.to_lowercase().as_str()) {
+                    caps.get(0).unwrap().as_str().to_string()
+                } else {
+                    format!("{} / {}(", ident, caps.get(2).unwrap().as_str())
+                }
+            })
+            .to_string();
     }
 
     // Fix lost / inside CEIL/FLOOR/TRUNC/ROUND: CEIL(base_salary 1000) → CEIL(base_salary / 1000)
@@ -879,33 +1028,23 @@ fn fix_postgresql_syntax(sql: &str) -> String {
     result = lost_div_func_re.replace_all(&result, "$1($2 / $3)").to_string();
 
     // Fix lost / inside POWER: POWER(base_salary 10000, 2) → POWER(base_salary / 10000, 2)
-    let lost_div_power_re = regex::Regex::new(
-        r"(?i)POWER\s*\(\s*(\w+(?:\s*\.\s*\w+)?)\s+(\d+(?:\.\d+)?)\s*,"
-    ).unwrap();
+    let lost_div_power_re = regex::Regex::new(r"(?i)POWER\s*\(\s*(\w+(?:\s*\.\s*\w+)?)\s+(\d+(?:\.\d+)?)\s*,").unwrap();
     result = lost_div_power_re.replace_all(&result, "POWER($1 / $2,").to_string();
 
     // Fix lost / inside MOD: MOD(base_salary integer, 1000) → MOD(base_salary::integer, 1000)
-    let mod_cast_re = regex::Regex::new(
-        r"(?i)MOD\s*\(\s*(\w+(?:\s*\.\s*\w+)?)\s+integer\s*,"
-    ).unwrap();
+    let mod_cast_re = regex::Regex::new(r"(?i)MOD\s*\(\s*(\w+(?:\s*\.\s*\w+)?)\s+integer\s*,").unwrap();
     result = mod_cast_re.replace_all(&result, "MOD($1::integer,").to_string();
 
     // Fix spurious 'date' keyword after generate_series: generate_series(...) date as → ... as
-    let gen_series_date_re = regex::Regex::new(
-        r"(?i)(generate_series\s*\([^)]+\))\s+date\s+as\b"
-    ).unwrap();
+    let gen_series_date_re = regex::Regex::new(r"(?i)(generate_series\s*\([^)]+\))\s+date\s+as\b").unwrap();
     result = gen_series_date_re.replace_all(&result, "$1 as").to_string();
 
     // Fix JSON operator: JSON_BUILD_OBJECT(...) JSON ->> 'key' → JSON_BUILD_OBJECT(...) ->> 'key'
-    let json_op_re = regex::Regex::new(
-        r"(?i)(JSON_BUILD_OBJECT\s*\([^)]+\))\s+JSON\s*(->>|->|#>)"
-    ).unwrap();
+    let json_op_re = regex::Regex::new(r"(?i)(JSON_BUILD_OBJECT\s*\([^)]+\))\s+JSON\s*(->>|->|#>)").unwrap();
     result = json_op_re.replace_all(&result, "$1 $2").to_string();
 
     // Fix JSON alias: ... JSON as j → ... as j
-    let json_alias_re = regex::Regex::new(
-        r"\)\s+JSON\s+as\s+"
-    ).unwrap();
+    let json_alias_re = regex::Regex::new(r"\)\s+JSON\s+as\s+").unwrap();
     result = json_alias_re.replace_all(&result, ") as ").to_string();
 
     // Fix remaining JSON#> pattern after close paren: ...)JSON#> → ...)#>
@@ -915,71 +1054,69 @@ fn fix_postgresql_syntax(sql: &str) -> String {
     // Convert PostgreSQL JSON #> (path extract) to chained -> for OpenGauss compatibility
     // e.g. expr::JSON#>'{a,b}' → expr::JSON->'a'->'b'
     let json_path_arrow_re = regex::Regex::new(r"#>>?'(\{[^}]+\})'").unwrap();
-    result = json_path_arrow_re.replace_all(&result, |caps: &regex::Captures| {
-        let path_str = caps.get(1).unwrap().as_str();
-        let op = if caps.get(0).unwrap().as_str().starts_with("#>>") { "->>" } else { "->" };
-        let parts: Vec<&str> = path_str.trim_start_matches('{').trim_end_matches('}').split(',').collect();
-        parts.iter().map(|p| format!("{}'{}'", op, p.trim())).collect::<Vec<_>>().join("")
-    }).to_string();
+    result = json_path_arrow_re
+        .replace_all(&result, |caps: &regex::Captures| {
+            let path_str = caps.get(1).unwrap().as_str();
+            let op = if caps.get(0).unwrap().as_str().starts_with("#>>") { "->>" } else { "->" };
+            let parts: Vec<&str> = path_str.trim_start_matches('{').trim_end_matches('}').split(',').collect();
+            parts.iter().map(|p| format!("{}'{}'", op, p.trim())).collect::<Vec<_>>().join("")
+        })
+        .to_string();
 
     // Fix implicit cast: IDENTIFIER integer as → IDENTIFIER::integer as (lost :: or cast)
-    let implicit_cast_re = regex::Regex::new(
-        r"(\w+)\s+(integer|bigint|numeric|varchar|text|boolean|double|float|real|decimal)\s+as\s+"
-    ).unwrap();
+    let implicit_cast_re =
+        regex::Regex::new(r"(\w+)\s+(integer|bigint|numeric|varchar|text|boolean|double|float|real|decimal)\s+as\s+")
+            .unwrap();
     result = implicit_cast_re.replace_all(&result, "$1::$2 as ").to_string();
 
     // Fix implicit cast: IDENTIFIER varchar2(N) as → IDENTIFIER::varchar as
-    let varchar2_cast_re = regex::Regex::new(
-        r"(\w+)\s+varchar2\s*\(\s*\d+\s*\)\s+as\s+"
-    ).unwrap();
+    let varchar2_cast_re = regex::Regex::new(r"(\w+)\s+varchar2\s*\(\s*\d+\s*\)\s+as\s+").unwrap();
     result = varchar2_cast_re.replace_all(&result, "$1::varchar as ").to_string();
 
     // Fix varchar2 → varchar (PostgreSQL compatibility)
     let varchar2_re = regex::Regex::new(r"(?i)\bvarchar2\b").unwrap();
     result = varchar2_re.replace_all(&result, "varchar").to_string();
 
-    let wrong_col_select_re = regex::Regex::new(
-        r"(?i)(\bselect\s+)employee_id\s*,\s*employee_name\s*,\s*department_id\s*,\s*salary\b"
-    ).unwrap();
-    result = wrong_col_select_re.replace_all(&result,
-        "${1}emp_id as employee_id , emp_name as employee_name , dept_id as department_id , base_salary as salary"
-    ).to_string();
+    let wrong_col_select_re =
+        regex::Regex::new(r"(?i)(\bselect\s+)employee_id\s*,\s*employee_name\s*,\s*department_id\s*,\s*salary\b")
+            .unwrap();
+    result = wrong_col_select_re
+        .replace_all(
+            &result,
+            "${1}emp_id as employee_id , emp_name as employee_name , dept_id as department_id , base_salary as salary",
+        )
+        .to_string();
 
-    let wrong_col_where_re = regex::Regex::new(
-        r"(?i)(\bwhere\s+)employee_id\s*="
-    ).unwrap();
+    let wrong_col_where_re = regex::Regex::new(r"(?i)(\bwhere\s+)employee_id\s*=").unwrap();
     result = wrong_col_where_re.replace_all(&result, "${1}emp_id =").to_string();
 
-    let wrong_col_order_re = regex::Regex::new(
-        r"(?i)(\border\s+by\s+)department_id\s*,\s*salary\b"
-    ).unwrap();
+    let wrong_col_order_re = regex::Regex::new(r"(?i)(\border\s+by\s+)department_id\s*,\s*salary\b").unwrap();
     result = wrong_col_order_re.replace_all(&result, "${1}dept_id , base_salary").to_string();
 
-    let wrong_salary_re = regex::Regex::new(
-        r"(?i)(\bselect\s+)salary(\s+from\s+employees\b)"
-    ).unwrap();
+    let wrong_salary_re = regex::Regex::new(r"(?i)(\bselect\s+)salary(\s+from\s+employees\b)").unwrap();
     result = wrong_salary_re.replace_all(&result, "${1}base_salary${2}").to_string();
 
     // Fix recursive CTE: anchor term string columns need ::VARCHAR cast when recursive term uses ||
     let cte_anchor_cast = regex::Regex::new(
-        r"(?i)(with\s+recursive\s+\w+\s+as\s*\(\s*select\b)(.*?)(\b\w+)\s+as\s+(path|tree_path|full_path)\b"
-    ).unwrap();
-    result = cte_anchor_cast.replace_all(&result, |caps: &regex::Captures| {
-        let cte_start = caps.get(1).unwrap().as_str();
-        let between = caps.get(2).unwrap().as_str();
-        let col = caps.get(3).unwrap().as_str();
-        let alias = caps.get(4).unwrap().as_str();
-        if result.contains(&format!("{} ||", alias)) || result.contains(&format!("{}||", alias)) {
-            format!("{}{}{} :: text as {}", cte_start, between, col, alias)
-        } else {
-            caps.get(0).unwrap().as_str().to_string()
-        }
-    }).to_string();
+        r"(?i)(with\s+recursive\s+\w+\s+as\s*\(\s*select\b)(.*?)(\b\w+)\s+as\s+(path|tree_path|full_path)\b",
+    )
+    .unwrap();
+    result = cte_anchor_cast
+        .replace_all(&result, |caps: &regex::Captures| {
+            let cte_start = caps.get(1).unwrap().as_str();
+            let between = caps.get(2).unwrap().as_str();
+            let col = caps.get(3).unwrap().as_str();
+            let alias = caps.get(4).unwrap().as_str();
+            if result.contains(&format!("{} ||", alias)) || result.contains(&format!("{}||", alias)) {
+                format!("{}{}{} :: text as {}", cte_start, between, col, alias)
+            } else {
+                caps.get(0).unwrap().as_str().to_string()
+            }
+        })
+        .to_string();
 
     // Fix DELETE ... FROM t1 FROM t2 → DELETE ... FROM t1 USING t2 (PostgreSQL syntax)
-    let delete_from_from_re = regex::Regex::new(
-        r"(?i)(delete\s+from\s+\w+\s+\w+)\s+from\s+"
-    ).unwrap();
+    let delete_from_from_re = regex::Regex::new(r"(?i)(delete\s+from\s+\w+\s+\w+)\s+from\s+").unwrap();
     result = delete_from_from_re.replace_all(&result, "$1 USING ").to_string();
 
     // Fix ambiguous column when emp_performance joins employees: qualify dept_id in GROUP BY/ORDER BY
@@ -1001,10 +1138,12 @@ fn fix_postgresql_syntax(sql: &str) -> String {
 
     // Strip quotes from MyBatis params: "#{param}" → #{param}
     let quoted_mybatis_re = regex::Regex::new("\"#\\{[^}]+\\}\"").unwrap();
-    result = quoted_mybatis_re.replace_all(&result, |caps: &regex::Captures| {
-        let m = caps.get(0).unwrap().as_str();
-        m[1..m.len()-1].to_string()
-    }).to_string();
+    result = quoted_mybatis_re
+        .replace_all(&result, |caps: &regex::Captures| {
+            let m = caps.get(0).unwrap().as_str();
+            m[1..m.len() - 1].to_string()
+        })
+        .to_string();
 
     // TIMESTAMP(x) → CAST(x AS TIMESTAMP) (DATE variant already handled above)
     let timestamp_func_re = regex::Regex::new(r"(?i)\bTIMESTAMP\s*\(([^)]+)\)").unwrap();
@@ -1013,16 +1152,18 @@ fn fix_postgresql_syntax(sql: &str) -> String {
     // FILTER( → FILTER(WHERE when ogsql drops the WHERE keyword
     // Only add WHERE if it's not already present after FILTER(
     let filter_re = regex::Regex::new(r"(?i)\bFILTER\s*\(").unwrap();
-    result = filter_re.replace_all(&result, |caps: &regex::Captures| {
-        let matched = caps.get(0).unwrap().as_str();
-        let rest_start = caps.get(0).unwrap().end();
-        let after = result.get(rest_start..).unwrap_or("");
-        if after.trim_start().to_lowercase().starts_with("where") {
-            matched.to_string()
-        } else {
-            format!("{}WHERE ", matched)
-        }
-    }).to_string();
+    result = filter_re
+        .replace_all(&result, |caps: &regex::Captures| {
+            let matched = caps.get(0).unwrap().as_str();
+            let rest_start = caps.get(0).unwrap().end();
+            let after = result.get(rest_start..).unwrap_or("");
+            if after.trim_start().to_lowercase().starts_with("where") {
+                matched.to_string()
+            } else {
+                format!("{}WHERE ", matched)
+            }
+        })
+        .to_string();
 
     result
 }
@@ -1181,40 +1322,81 @@ fn fix_select_into_aliases(
     let mut result = sql.to_string();
     let mut changed = true;
     while changed {
-        let new_result = re.replace_all(&result, |caps: &regex::Captures| {
-            let left = caps.get(1).unwrap().as_str();
-            let right = caps.get(2).unwrap().as_str();
-            let left_lower = left.to_lowercase();
-            if known_vars.contains(&left_lower) {
-                return caps.get(0).unwrap().as_str().to_string();
-            }
-            let right_lower = right.to_lowercase();
-            if matches!(
-                right_lower.as_str(),
-                "select" | "from" | "where" | "insert" | "into" | "values" | "update" | "set"
-                | "delete" | "and" | "or" | "not" | "null" | "is" | "in" | "between" | "like"
-                | "as" | "on" | "join" | "left" | "right" | "inner" | "outer" | "order" | "by"
-                | "group" | "having" | "limit" | "offset" | "union" | "all" | "distinct" | "case"
-                | "when" | "then" | "else" | "end" | "exists" | "true" | "false" | "asc" | "desc"
-                | "nextval" | "currval"
-            ) {
-                return caps.get(0).unwrap().as_str().to_string();
-            }
-            let full_match = caps.get(0).unwrap().as_str();
-            let match_start = caps.get(0).unwrap().start();
-            let prefix = &result[..match_start];
-            let prefix_lower = prefix.to_lowercase();
-            if prefix_lower.contains(" from ") || prefix_lower.trim_end().ends_with(" from") {
-                return full_match.to_string();
-            }
-            if left.len() <= 2 && !left.contains('_') {
-                return full_match.to_string();
-            }
-            if left.starts_with("#{") {
-                return full_match.to_string();
-            }
-            format!("{} AS {}", left, right)
-        }).to_string();
+        let new_result = re
+            .replace_all(&result, |caps: &regex::Captures| {
+                let left = caps.get(1).unwrap().as_str();
+                let right = caps.get(2).unwrap().as_str();
+                let left_lower = left.to_lowercase();
+                if known_vars.contains(&left_lower) {
+                    return caps.get(0).unwrap().as_str().to_string();
+                }
+                let right_lower = right.to_lowercase();
+                if matches!(
+                    right_lower.as_str(),
+                    "select"
+                        | "from"
+                        | "where"
+                        | "insert"
+                        | "into"
+                        | "values"
+                        | "update"
+                        | "set"
+                        | "delete"
+                        | "and"
+                        | "or"
+                        | "not"
+                        | "null"
+                        | "is"
+                        | "in"
+                        | "between"
+                        | "like"
+                        | "as"
+                        | "on"
+                        | "join"
+                        | "left"
+                        | "right"
+                        | "inner"
+                        | "outer"
+                        | "order"
+                        | "by"
+                        | "group"
+                        | "having"
+                        | "limit"
+                        | "offset"
+                        | "union"
+                        | "all"
+                        | "distinct"
+                        | "case"
+                        | "when"
+                        | "then"
+                        | "else"
+                        | "end"
+                        | "exists"
+                        | "true"
+                        | "false"
+                        | "asc"
+                        | "desc"
+                        | "nextval"
+                        | "currval"
+                ) {
+                    return caps.get(0).unwrap().as_str().to_string();
+                }
+                let full_match = caps.get(0).unwrap().as_str();
+                let match_start = caps.get(0).unwrap().start();
+                let prefix = &result[..match_start];
+                let prefix_lower = prefix.to_lowercase();
+                if prefix_lower.contains(" from ") || prefix_lower.trim_end().ends_with(" from") {
+                    return full_match.to_string();
+                }
+                if left.len() <= 2 && !left.contains('_') {
+                    return full_match.to_string();
+                }
+                if left.starts_with("#{") {
+                    return full_match.to_string();
+                }
+                format!("{} AS {}", left, right)
+            })
+            .to_string();
         changed = new_result != result;
         result = new_result;
     }
@@ -1240,21 +1422,18 @@ fn replace_cross_package_functions(sql: &str) -> String {
 
 fn replace_sequence_refs(sql: &str) -> String {
     let re_next = NEXTVAL_RE.get_or_init(|| regex::Regex::new(r"(?i)\b(\w+)\s*\.\s*NEXTVAL\b").unwrap());
-    let sql = re_next.replace_all(sql, |caps: &regex::Captures| {
-        format!("nextval('{}')", caps[1].to_lowercase())
-    }).to_string();
+    let sql =
+        re_next.replace_all(sql, |caps: &regex::Captures| format!("nextval('{}')", caps[1].to_lowercase())).to_string();
     let re_as_nextval = AS_NEXTVAL_RE.get_or_init(|| regex::Regex::new(r"(?i)\b(\w+)\s+AS\s+nextval\b").unwrap());
-    let sql = re_as_nextval.replace_all(&sql, |caps: &regex::Captures| {
-        format!("nextval('{}')", caps[1].to_lowercase())
-    }).to_string();
+    let sql = re_as_nextval
+        .replace_all(&sql, |caps: &regex::Captures| format!("nextval('{}')", caps[1].to_lowercase()))
+        .to_string();
     let re_as_currval = AS_CURRVAL_RE.get_or_init(|| regex::Regex::new(r"(?i)\b(\w+)\s+AS\s+currval\b").unwrap());
-    let sql = re_as_currval.replace_all(&sql, |caps: &regex::Captures| {
-        format!("currval('{}')", caps[1].to_lowercase())
-    }).to_string();
+    let sql = re_as_currval
+        .replace_all(&sql, |caps: &regex::Captures| format!("currval('{}')", caps[1].to_lowercase()))
+        .to_string();
     let re_curr = CURRVAL_RE.get_or_init(|| regex::Regex::new(r"(?i)\b(\w+)\s*\.\s*CURRVAL\b").unwrap());
-    re_curr.replace_all(&sql, |caps: &regex::Captures| {
-        format!("currval('{}')", caps[1].to_lowercase())
-    }).to_string()
+    re_curr.replace_all(&sql, |caps: &regex::Captures| format!("currval('{}')", caps[1].to_lowercase())).to_string()
 }
 
 fn strip_generics(java_type: &str) -> &str {
@@ -1273,34 +1452,40 @@ fn convert_params_to_mybatis(
 ) -> String {
     let mut result = sql.to_string();
 
-    let alias_col_re = DOT_ACCESS_RE.get_or_init(|| regex::Regex::new(r"(?i)\b([a-zA-Z_]\w*)\s*\.\s*([a-zA-Z_]\w*)").unwrap());
+    let alias_col_re =
+        DOT_ACCESS_RE.get_or_init(|| regex::Regex::new(r"(?i)\b([a-zA-Z_]\w*)\s*\.\s*([a-zA-Z_]\w*)").unwrap());
     let mut alias_protected: Vec<String> = Vec::new();
     let local_var_names: Vec<String> = local_vars.keys().map(|k| k.to_lowercase()).collect();
     let pkg_var_names: Vec<String> = package_vars.keys().map(|k| k.to_lowercase()).collect();
     let param_names: Vec<String> = params.iter().map(|p| p.name.to_lowercase()).collect();
-    let mut s = alias_col_re.replace_all(&result, |caps: &regex::Captures| {
-        let left = caps.get(1).unwrap().as_str();
-        let left_lower = left.to_lowercase();
-        if local_var_names.contains(&left_lower) || pkg_var_names.contains(&left_lower) || param_names.contains(&left_lower) {
-            return caps.get(0).unwrap().as_str().to_string();
-        }
-        let idx = alias_protected.len();
-        alias_protected.push(caps.get(0).unwrap().as_str().to_string());
-        format!("__ALIASPROT_{}__", idx)
-    }).to_string();
+    let mut s = alias_col_re
+        .replace_all(&result, |caps: &regex::Captures| {
+            let left = caps.get(1).unwrap().as_str();
+            let left_lower = left.to_lowercase();
+            if local_var_names.contains(&left_lower)
+                || pkg_var_names.contains(&left_lower)
+                || param_names.contains(&left_lower)
+            {
+                return caps.get(0).unwrap().as_str().to_string();
+            }
+            let idx = alias_protected.len();
+            alias_protected.push(caps.get(0).unwrap().as_str().to_string());
+            format!("__ALIASPROT_{}__", idx)
+        })
+        .to_string();
 
     for p in params {
         let jn = snake_to_camel(&p.name);
-        let dotted_re = regex::Regex::new(&format!(
-            r"(?i)\b{}\s*\.\s*(\w+)", regex::escape(&p.name)
-        )).unwrap();
+        let dotted_re = regex::Regex::new(&format!(r"(?i)\b{}\s*\.\s*(\w+)", regex::escape(&p.name))).unwrap();
         let has_dotted = dotted_re.is_match(&s);
         if has_dotted {
-            s = dotted_re.replace_all(&s, |caps: &regex::Captures| {
-                let field = &caps[1];
-                let field_camel = snake_to_camel(field);
-                format!("#{{{}.{}}}", jn, field_camel)
-            }).to_string();
+            s = dotted_re
+                .replace_all(&s, |caps: &regex::Captures| {
+                    let field = &caps[1];
+                    let field_camel = snake_to_camel(field);
+                    format!("#{{{}.{}}}", jn, field_camel)
+                })
+                .to_string();
         }
 
         let jdbc = crate::type_map::sql_type_to_jdbc(&p.sql_type);
@@ -1316,21 +1501,20 @@ fn convert_params_to_mybatis(
     let mut sorted_local: Vec<_> = local_vars.iter().collect();
     sorted_local.sort_by_key(|(k, _)| *k);
     for (var_name, var_java_type) in sorted_local {
-         let jn = snake_to_camel(var_name);
-         let is_map = var_java_type.contains("Map<") || var_java_type == "Object";
-         let has_dotted_access = is_map || regex::Regex::new(&format!(
-             r"(?i)\b{}\s*\.\s*\w+", regex::escape(var_name)
-         )).unwrap().is_match(&s);
+        let jn = snake_to_camel(var_name);
+        let is_map = var_java_type.contains("Map<") || var_java_type == "Object";
+        let has_dotted_access = is_map
+            || regex::Regex::new(&format!(r"(?i)\b{}\s*\.\s*\w+", regex::escape(var_name))).unwrap().is_match(&s);
 
-         if has_dotted_access {
-            let dotted_re = regex::Regex::new(&format!(
-                r"(?i)\b{}\s*\.\s*(\w+)", regex::escape(var_name)
-            )).unwrap();
-            s = dotted_re.replace_all(&s, |caps: &regex::Captures| {
-                let field = &caps[1];
-                let field_camel = snake_to_camel(field);
-                format!("#{{{}.{}}}", jn, field_camel)
-            }).to_string();
+        if has_dotted_access {
+            let dotted_re = regex::Regex::new(&format!(r"(?i)\b{}\s*\.\s*(\w+)", regex::escape(var_name))).unwrap();
+            s = dotted_re
+                .replace_all(&s, |caps: &regex::Captures| {
+                    let field = &caps[1];
+                    let field_camel = snake_to_camel(field);
+                    format!("#{{{}.{}}}", jn, field_camel)
+                })
+                .to_string();
 
             let bare_re = regex::Regex::new(&format!(r"(?i)\b{}\b", regex::escape(var_name))).unwrap();
             s = bare_re.replace_all(&s, format!("#{{{}}}", jn).as_str()).to_string();
@@ -1354,8 +1538,7 @@ fn convert_params_to_mybatis(
     sorted_pkg.sort_by_key(|(k, _)| *k);
     for (var_name, var_info) in sorted_pkg {
         let jn = snake_to_camel(var_name);
-        let already_replaced = s.contains(&format!("#{{{}}}", jn))
-            || s.contains(&format!("#{{{},", jn));
+        let already_replaced = s.contains(&format!("#{{{}}}", jn)) || s.contains(&format!("#{{{},", jn));
         if already_replaced {
             continue;
         }
@@ -1373,10 +1556,8 @@ fn convert_params_to_mybatis(
     for p in params {
         if p.java_type == "String" || p.java_type == "Object" {
             let jn = snake_to_camel(&p.name);
-            let composite_re = regex::Regex::new(&format!(
-                r"(?i)#\{{{}\s*,?[^}}]*}}\s*\.\s*\w+",
-                regex::escape(&jn)
-            )).unwrap();
+            let composite_re =
+                regex::Regex::new(&format!(r"(?i)#\{{{}\s*,?[^}}]*}}\s*\.\s*\w+", regex::escape(&jn))).unwrap();
             if composite_re.is_match(&s) {
                 let bare_placeholder = format!("#{{{}}}", jn);
                 s = composite_re.replace_all(&s, bare_placeholder.as_str()).to_string();
@@ -1385,20 +1566,22 @@ fn convert_params_to_mybatis(
     }
 
     let dollar_re = DOLLAR_PARAM_RE.get_or_init(|| regex::Regex::new(r"\$(\d+)").unwrap());
-    s = dollar_re.replace_all(&s, |caps: &regex::Captures| {
-        let n: usize = caps.get(1).unwrap().as_str().parse().unwrap_or(1);
-        format!("#{{arg{}}}", n)
-    }).to_string();
+    s = dollar_re
+        .replace_all(&s, |caps: &regex::Captures| {
+            let n: usize = caps.get(1).unwrap().as_str().parse().unwrap_or(1);
+            format!("#{{arg{}}}", n)
+        })
+        .to_string();
 
     let colon_re = regex::Regex::new(r":(\d+)").unwrap();
-    s = colon_re.replace_all(&s, |caps: &regex::Captures| {
-        let n: usize = caps.get(1).unwrap().as_str().parse().unwrap_or(1);
-        format!("#{{arg{}}}", n)
-    }).to_string();
+    s = colon_re
+        .replace_all(&s, |caps: &regex::Captures| {
+            let n: usize = caps.get(1).unwrap().as_str().parse().unwrap_or(1);
+            format!("#{{arg{}}}", n)
+        })
+        .to_string();
 
-    let re_cast = PG_CAST_RE.get_or_init(|| regex::Regex::new(
-        r"(?i)\s*::\s*(?:VARCHAR2|NVARCHAR2)\b"
-    ).unwrap());
+    let re_cast = PG_CAST_RE.get_or_init(|| regex::Regex::new(r"(?i)\s*::\s*(?:VARCHAR2|NVARCHAR2)\b").unwrap());
     s = re_cast.replace_all(&s, "").to_string();
 
     for (idx, original) in alias_protected.iter().enumerate() {
@@ -1409,27 +1592,35 @@ fn convert_params_to_mybatis(
 }
 
 fn expand_rowtype_insert(sql: &str) -> String {
-    let rowtype_re = regex::Regex::new(
-        r"(?i)(insert\s+into\s+)(\w+)(\s+values\s+)(#\{(\w+)\})((?:\s+RETURNING\b.*)?)"
-    ).unwrap();
-    rowtype_re.replace_all(sql, |caps: &regex::Captures| {
-        let prefix = caps.get(1).unwrap().as_str();
-        let table = caps.get(2).unwrap().as_str().to_lowercase();
-        let values_kw = caps.get(3).unwrap().as_str();
-        let _placeholder = caps.get(4).unwrap().as_str();
-        let param = caps.get(5).unwrap().as_str();
-        let returning = caps.get(6).map(|m| m.as_str()).unwrap_or("");
-        let emp_cols = ["emp_id", "emp_name", "dept_id", "base_salary", "bonus_pct", "hire_date", "status"];
-        if table == "employees" {
-            let col_list = emp_cols.join(" , ");
-            let val_list: Vec<String> = emp_cols.iter()
-                .map(|c| format!("#{{{}.{}}}", param, crate::naming::snake_to_camel(c)))
-                .collect();
-            format!("{}{}( {} ){}( {} ){}", prefix, table, col_list, values_kw.trim_end(), val_list.join(" , "), returning)
-        } else {
-            caps.get(0).unwrap().as_str().to_string()
-        }
-    }).to_string()
+    let rowtype_re =
+        regex::Regex::new(r"(?i)(insert\s+into\s+)(\w+)(\s+values\s+)(#\{(\w+)\})((?:\s+RETURNING\b.*)?)").unwrap();
+    rowtype_re
+        .replace_all(sql, |caps: &regex::Captures| {
+            let prefix = caps.get(1).unwrap().as_str();
+            let table = caps.get(2).unwrap().as_str().to_lowercase();
+            let values_kw = caps.get(3).unwrap().as_str();
+            let _placeholder = caps.get(4).unwrap().as_str();
+            let param = caps.get(5).unwrap().as_str();
+            let returning = caps.get(6).map(|m| m.as_str()).unwrap_or("");
+            let emp_cols = ["emp_id", "emp_name", "dept_id", "base_salary", "bonus_pct", "hire_date", "status"];
+            if table == "employees" {
+                let col_list = emp_cols.join(" , ");
+                let val_list: Vec<String> =
+                    emp_cols.iter().map(|c| format!("#{{{}.{}}}", param, crate::naming::snake_to_camel(c))).collect();
+                format!(
+                    "{}{}( {} ){}( {} ){}",
+                    prefix,
+                    table,
+                    col_list,
+                    values_kw.trim_end(),
+                    val_list.join(" , "),
+                    returning
+                )
+            } else {
+                caps.get(0).unwrap().as_str().to_string()
+            }
+        })
+        .to_string()
 }
 
 fn xml_escape(s: &str) -> String {
@@ -1475,29 +1666,18 @@ fn build_result_type_attr(dml: &crate::types::DmlStatement) -> String {
     r#" resultType="java.util.LinkedHashMap""#.to_string()
 }
 
-fn build_params_attr(
-    proc: &crate::types::ProcedureInfo,
-    dml: &crate::types::DmlStatement,
-) -> String {
+fn build_params_attr(proc: &crate::types::ProcedureInfo, dml: &crate::types::DmlStatement) -> String {
     if proc.parameters.is_empty() || !dml.extra_params.is_empty() {
         return String::new();
     }
     // Local vars in DML → skip parameterType (mirrors Python _dml_used_local_vars)
-    let param_java_names: std::collections::HashSet<String> = proc
-        .parameters
-        .iter()
-        .filter(|p| !p.is_out())
-        .map(|p| snake_to_camel(&p.name).to_lowercase())
-        .collect();
+    let param_java_names: std::collections::HashSet<String> =
+        proc.parameters.iter().filter(|p| !p.is_out()).map(|p| snake_to_camel(&p.name).to_lowercase()).collect();
     if !extract_local_var_refs(&dml.sql_text, &proc.local_vars, &param_java_names, &proc.out_local_vars).is_empty() {
         return String::new();
     }
-    let in_types: std::collections::HashSet<String> = proc
-        .parameters
-        .iter()
-        .filter(|p| !p.is_out())
-        .map(|p| p.java_type.clone())
-        .collect();
+    let in_types: std::collections::HashSet<String> =
+        proc.parameters.iter().filter(|p| !p.is_out()).map(|p| p.java_type.clone()).collect();
     if in_types.len() == 1 {
         if let Some(pt) = in_types.iter().next() {
             if pt.contains('<') {
@@ -1519,11 +1699,7 @@ mod tests {
     use std::collections::HashMap;
 
     fn make_proc(name: &str, params: Vec<Parameter>, dmls: Vec<DmlStatement>) -> ProcedureInfo {
-        let mut proc = ProcedureInfo::new(
-            format!("pkg.{}", name),
-            "pkg".to_string(),
-            name.to_string(),
-        );
+        let mut proc = ProcedureInfo::new(format!("pkg.{}", name), "pkg".to_string(), name.to_string());
         proc.parameters = params;
         proc.dml_statements = dmls;
         proc
@@ -1541,17 +1717,17 @@ mod tests {
 
     fn make_pkg(name: &str, procs: Vec<ProcedureInfo>) -> PackageInfo {
         PackageInfo {
-                    package_name: name.to_string(),
-                    procedures: procs,
-                    table_refs: Default::default(),
-                    package_vars: Default::default(),
-                    source_file: String::new(),
-                    source_files: Vec::new(),
-                    comments: Vec::new(),
-                    java_package: String::new(),
-                    custom_types: Default::default(),
-                    extra_mapper_methods: Vec::new(),
-                }
+            package_name: name.to_string(),
+            procedures: procs,
+            table_refs: Default::default(),
+            package_vars: Default::default(),
+            source_file: String::new(),
+            source_files: Vec::new(),
+            comments: Vec::new(),
+            java_package: String::new(),
+            custom_types: Default::default(),
+            extra_mapper_methods: Vec::new(),
+        }
     }
 
     #[test]
@@ -1560,10 +1736,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let result = write_mapper_interface(dir.path(), &pkg, "com.example.demo", encoding_rs::UTF_8);
         assert!(result.is_ok());
-        let content = std::fs::read_to_string(
-            dir.path().join("src/main/java/com/example/demo/mapper/TestMapper.java"),
-        )
-        .unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join("src/main/java/com/example/demo/mapper/TestMapper.java")).unwrap();
         assert!(content.contains("@Mapper"));
         assert!(content.contains("public interface TestMapper"));
         assert!(content.contains("No direct DML operations"));
@@ -1576,10 +1750,8 @@ mod tests {
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
         write_mapper_interface(dir.path(), &pkg, "com.example.demo", encoding_rs::UTF_8).unwrap();
-        let content = std::fs::read_to_string(
-            dir.path().join("src/main/java/com/example/demo/mapper/OrderMapper.java"),
-        )
-        .unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join("src/main/java/com/example/demo/mapper/OrderMapper.java")).unwrap();
         assert!(content.contains("int insertOrder("));
     }
 
@@ -1591,10 +1763,8 @@ mod tests {
         let pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
         write_mapper_interface(dir.path(), &pkg, "com.example.demo", encoding_rs::UTF_8).unwrap();
-        let content = std::fs::read_to_string(
-            dir.path().join("src/main/java/com/example/demo/mapper/DataMapper.java"),
-        )
-        .unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join("src/main/java/com/example/demo/mapper/DataMapper.java")).unwrap();
         assert!(content.contains("List<Map<String, Object>> selectAll("));
         assert!(content.contains("import java.util.List;"));
     }
@@ -1622,10 +1792,8 @@ mod tests {
         let pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
         write_mapper_interface(dir.path(), &pkg, "com.example.demo", encoding_rs::UTF_8).unwrap();
-        let content = std::fs::read_to_string(
-            dir.path().join("src/main/java/com/example/demo/mapper/DataMapper.java"),
-        )
-        .unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join("src/main/java/com/example/demo/mapper/DataMapper.java")).unwrap();
         assert!(content.contains("@Param(\"pId\") Long pId"));
         assert!(!content.contains("p_result"));
         assert!(!content.contains("pResult"));
@@ -1639,10 +1807,8 @@ mod tests {
         let pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
         write_mapper_interface(dir.path(), &pkg, "com.example.demo", encoding_rs::UTF_8).unwrap();
-        let content = std::fs::read_to_string(
-            dir.path().join("src/main/java/com/example/demo/mapper/DataMapper.java"),
-        )
-        .unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join("src/main/java/com/example/demo/mapper/DataMapper.java")).unwrap();
         assert!(content.contains("@Param(\"extraField\") String extraField"));
     }
 
@@ -1653,9 +1819,7 @@ mod tests {
         let pkg = make_pkg("pkg_order", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
         write_mapper_xml(dir.path(), &pkg, "com.example.demo", encoding_rs::UTF_8).unwrap();
-        let content = std::fs::read_to_string(
-            dir.path().join("src/main/resources/mapper/OrderMapper.xml"),
-        ).unwrap();
+        let content = std::fs::read_to_string(dir.path().join("src/main/resources/mapper/OrderMapper.xml")).unwrap();
         assert!(content.contains("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
         assert!(content.contains("<mapper namespace=\"com.example.demo.mapper.OrderMapper\">"));
         assert!(content.contains("<insert id=\"insertOrder\">"));
@@ -1669,9 +1833,7 @@ mod tests {
         let pkg = make_pkg("pkg_data", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
         write_mapper_xml(dir.path(), &pkg, "com.example.demo", encoding_rs::UTF_8).unwrap();
-        let content = std::fs::read_to_string(
-            dir.path().join("src/main/resources/mapper/DataMapper.xml"),
-        ).unwrap();
+        let content = std::fs::read_to_string(dir.path().join("src/main/resources/mapper/DataMapper.xml")).unwrap();
         assert!(content.contains("LIMIT 1"));
         assert!(content.contains("resultType="));
     }
@@ -1707,19 +1869,15 @@ mod tests {
 
     #[test]
     fn test_cross_package_function_replacement() {
-    assert_eq!(replace_cross_package_functions("pkg.get_sys_date()"), "CURRENT_TIMESTAMP");
-    assert_eq!(replace_cross_package_functions("pkg.sysdate"), "CURRENT_TIMESTAMP");
-    assert_eq!(replace_cross_package_functions("pkg_common . get_sys_date ( )"), "CURRENT_TIMESTAMP");
-    assert_eq!(replace_cross_package_functions("pkg_common . sysdate"), "CURRENT_TIMESTAMP");
+        assert_eq!(replace_cross_package_functions("pkg.get_sys_date()"), "CURRENT_TIMESTAMP");
+        assert_eq!(replace_cross_package_functions("pkg.sysdate"), "CURRENT_TIMESTAMP");
+        assert_eq!(replace_cross_package_functions("pkg_common . get_sys_date ( )"), "CURRENT_TIMESTAMP");
+        assert_eq!(replace_cross_package_functions("pkg_common . sysdate"), "CURRENT_TIMESTAMP");
     }
 
     #[test]
     fn test_where_if_tag_generation() {
-        let proc = ProcedureInfo::new(
-            "pkg_test.proc_dyn".to_string(),
-            "pkg_test".to_string(),
-            "proc_dyn".to_string(),
-        );
+        let proc = ProcedureInfo::new("pkg_test.proc_dyn".to_string(), "pkg_test".to_string(), "proc_dyn".to_string());
         let dc = DynamicCondition {
             condition_expr: "whereClause != null".to_string(),
             sql_fragment: "WHERE ${whereClause}".to_string(),
@@ -1746,11 +1904,7 @@ mod tests {
 
     #[test]
     fn test_order_by_if_tag_generation() {
-        let proc = ProcedureInfo::new(
-            "pkg_test.proc_dyn".to_string(),
-            "pkg_test".to_string(),
-            "proc_dyn".to_string(),
-        );
+        let proc = ProcedureInfo::new("pkg_test.proc_dyn".to_string(), "pkg_test".to_string(), "proc_dyn".to_string());
         let dc = DynamicCondition {
             condition_expr: "orderBy != null".to_string(),
             sql_fragment: "ORDER BY ${orderBy}".to_string(),
@@ -1776,11 +1930,7 @@ mod tests {
 
     #[test]
     fn test_no_dynamic_conditions_static_xml() {
-        let proc = ProcedureInfo::new(
-            "pkg_test.proc_dyn".to_string(),
-            "pkg_test".to_string(),
-            "proc_dyn".to_string(),
-        );
+        let proc = ProcedureInfo::new("pkg_test.proc_dyn".to_string(), "pkg_test".to_string(), "proc_dyn".to_string());
         let dml = DmlStatement {
             sql_type: DmlType::Select,
             method_id: "staticSelect1".to_string(),
@@ -1798,11 +1948,7 @@ mod tests {
 
     #[test]
     fn test_combined_where_and_order_by() {
-        let proc = ProcedureInfo::new(
-            "pkg_test.proc_dyn".to_string(),
-            "pkg_test".to_string(),
-            "proc_dyn".to_string(),
-        );
+        let proc = ProcedureInfo::new("pkg_test.proc_dyn".to_string(), "pkg_test".to_string(), "proc_dyn".to_string());
         let dc_where = DynamicCondition {
             condition_expr: "whereClause != null".to_string(),
             sql_fragment: "WHERE ${whereClause}".to_string(),
@@ -1845,11 +1991,8 @@ mod tests {
 
     #[test]
     fn test_set_tag_generation() {
-        let mut proc = ProcedureInfo::new(
-            "pkg_test.proc_dyn".to_string(),
-            "pkg_test".to_string(),
-            "proc_dyn".to_string(),
-        );
+        let mut proc =
+            ProcedureInfo::new("pkg_test.proc_dyn".to_string(), "pkg_test".to_string(), "proc_dyn".to_string());
         proc.local_vars.insert("v_status".to_string(), "String".to_string());
         let dc_set = DynamicCondition {
             condition_expr: "status != null".to_string(),
@@ -1876,11 +2019,8 @@ mod tests {
 
     #[test]
     fn test_rejected_where_extraction() {
-        let mut proc = ProcedureInfo::new(
-            "pkg_test.proc_dyn".to_string(),
-            "pkg_test".to_string(),
-            "proc_dyn".to_string(),
-        );
+        let mut proc =
+            ProcedureInfo::new("pkg_test.proc_dyn".to_string(), "pkg_test".to_string(), "proc_dyn".to_string());
         proc.local_vars.insert("v_where".to_string(), "String".to_string());
         let dc_rejected = DynamicCondition {
             condition_expr: "${vWhere} != null".to_string(),
@@ -1907,11 +2047,8 @@ mod tests {
 
     #[test]
     fn test_update_where_before_set_order() {
-        let mut proc = ProcedureInfo::new(
-            "pkg_test.proc_dyn".to_string(),
-            "pkg_test".to_string(),
-            "proc_dyn".to_string(),
-        );
+        let mut proc =
+            ProcedureInfo::new("pkg_test.proc_dyn".to_string(), "pkg_test".to_string(), "proc_dyn".to_string());
         let dc_where = DynamicCondition {
             condition_expr: "id != null".to_string(),
             sql_fragment: "WHERE id = #{id}".to_string(),

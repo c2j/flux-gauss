@@ -90,28 +90,27 @@ pub fn sql_type_to_java(sql_type: &str) -> Option<&'static str> {
         return Some("java.util.List<String>");
     }
 
-    SQL_TO_JAVA
-        .iter()
-        .find(|(k, _)| *k == base)
-        .map(|(_, v)| *v)
+    SQL_TO_JAVA.iter().find(|(k, _)| *k == base).map(|(_, v)| *v)
 }
 
 /// Look up JDBC type from SQL type name (case-insensitive)
 pub fn sql_type_to_jdbc(sql_type: &str) -> Option<&'static str> {
     let normalized = sql_type.to_lowercase();
-    SQL_TO_JDBC_TYPE
-        .iter()
-        .find(|(k, _)| *k == normalized)
-        .map(|(_, v)| *v)
+    SQL_TO_JDBC_TYPE.iter().find(|(k, _)| *k == normalized).map(|(_, v)| *v)
 }
 
 /// Infer SQL type from a column name (heuristic, mirrors Python _infer_type_from_column_name).
 /// Used as fallback when %TYPE anchoring can't resolve the actual column type.
 pub fn infer_sql_type_from_column_name(column_name: &str) -> &'static str {
     let col = column_name.to_lowercase();
-    if col.contains("name") || col.contains("txt") || col.contains("text")
-        || col.contains("info") || col.contains("desc") || col.contains("msg")
-        || col.contains("remark") || col.contains("comment")
+    if col.contains("name")
+        || col.contains("txt")
+        || col.contains("text")
+        || col.contains("info")
+        || col.contains("desc")
+        || col.contains("msg")
+        || col.contains("remark")
+        || col.contains("comment")
     {
         return "varchar";
     }
@@ -121,18 +120,29 @@ pub fn infer_sql_type_from_column_name(column_name: &str) -> &'static str {
         }
         return "bigint";
     }
-    if col.contains("amount") || col.contains("balance") || col.contains("price")
-        || col.contains("qty") || col.contains("quantity") || col.contains("total")
-        || col.contains("salary") || col.contains("pmll") || col.contains("rate")
-        || col.contains("digits") || col.contains("scale") || col.contains("days")
+    if col.contains("amount")
+        || col.contains("balance")
+        || col.contains("price")
+        || col.contains("qty")
+        || col.contains("quantity")
+        || col.contains("total")
+        || col.contains("salary")
+        || col.contains("pmll")
+        || col.contains("rate")
+        || col.contains("digits")
+        || col.contains("scale")
+        || col.contains("days")
     {
         return "numeric";
     }
     if col.contains("date") || col.contains("time") || col.contains("stamp") {
         return "timestamp";
     }
-    if col.contains("flag") || col.contains("status") || col.contains("level")
-        || col.contains("type") || col.contains("code")
+    if col.contains("flag")
+        || col.contains("status")
+        || col.contains("level")
+        || col.contains("type")
+        || col.contains("code")
     {
         return "varchar";
     }

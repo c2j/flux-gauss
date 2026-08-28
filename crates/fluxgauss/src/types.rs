@@ -238,10 +238,7 @@ pub struct ProcedureInfo {
 
 impl ProcedureInfo {
     pub fn new(name: String, package: String, proc_name: String) -> Self {
-        debug_assert!(
-            !name.is_empty() && !proc_name.is_empty(),
-            "ProcedureInfo name and proc_name must not be empty"
-        );
+        debug_assert!(!name.is_empty() && !proc_name.is_empty(), "ProcedureInfo name and proc_name must not be empty");
         Self {
             name,
             package,
@@ -274,10 +271,10 @@ impl ProcedureInfo {
             goto_analysis: None,
             package_proc_params: HashMap::new(),
             all_proc_params: HashMap::new(),
-        select_counter: 0,
-        for_loop_counter: 0,
-        plain_loop_counter: 0,
-        catch_counter: 0,
+            select_counter: 0,
+            for_loop_counter: 0,
+            plain_loop_counter: 0,
+            catch_counter: 0,
             source_file: String::new(),
             source_path: String::new(),
             source_start_line: 0,
@@ -290,9 +287,7 @@ impl ProcedureInfo {
     }
 
     pub fn is_stub(&self) -> bool {
-        self.java_logic_lines.len() == 1
-            && self.java_logic_lines[0].contains("TODO")
-            && self.dml_statements.is_empty()
+        self.java_logic_lines.len() == 1 && self.java_logic_lines[0].contains("TODO") && self.dml_statements.is_empty()
     }
 }
 
@@ -352,11 +347,7 @@ impl PackageSummary {
         Self {
             name: pkg.package_name.clone(),
             java_package: pkg.java_package.clone(),
-            procedures: pkg
-                .procedures
-                .iter()
-                .map(ProcedureSummary::from_procedure)
-                .collect(),
+            procedures: pkg.procedures.iter().map(ProcedureSummary::from_procedure).collect(),
             package_vars: pkg.package_vars.clone(),
         }
     }
@@ -510,11 +501,7 @@ mod tests {
 
     #[test]
     fn test_procedure_info_new() {
-        let proc = ProcedureInfo::new(
-            "pkg_order.create_order".into(),
-            "pkg_order".into(),
-            "create_order".into(),
-        );
+        let proc = ProcedureInfo::new("pkg_order.create_order".into(), "pkg_order".into(), "create_order".into());
         assert_eq!(proc.name, "pkg_order.create_order");
         assert_eq!(proc.package, "pkg_order");
         assert_eq!(proc.proc_name, "create_order");
@@ -534,33 +521,27 @@ mod tests {
     #[test]
     fn test_procedure_info_is_stub_with_todo() {
         let mut proc = ProcedureInfo::new("a.b".into(), "a".into(), "b".into());
-        proc.java_logic_lines
-            .push("// TODO: unhandled statement".into());
+        proc.java_logic_lines.push("// TODO: unhandled statement".into());
         assert!(proc.is_stub());
     }
 
     #[test]
     fn test_procedure_info_is_stub_with_dml_not_stub() {
         let mut proc = ProcedureInfo::new("a.b".into(), "a".into(), "b".into());
-        proc.java_logic_lines
-            .push("// TODO: unhandled statement".into());
+        proc.java_logic_lines.push("// TODO: unhandled statement".into());
         proc.dml_statements.push(DmlStatement {
-                    sql_type: DmlType::Select,
-                    method_id: "selectOrder".into(),
-                    sql_text: "SELECT * FROM orders".into(),
-                    result_type: None,
-                    ..Default::default()
-                });
+            sql_type: DmlType::Select,
+            method_id: "selectOrder".into(),
+            sql_text: "SELECT * FROM orders".into(),
+            result_type: None,
+            ..Default::default()
+        });
         assert!(!proc.is_stub());
     }
 
     #[test]
     fn test_procedure_summary_from_procedure() {
-        let mut proc = ProcedureInfo::new(
-            "pkg_order.create_order".into(),
-            "pkg_order".into(),
-            "create_order".into(),
-        );
+        let mut proc = ProcedureInfo::new("pkg_order.create_order".into(), "pkg_order".into(), "create_order".into());
         proc.is_function = false;
         proc.parameters.push(Parameter {
             name: "p_status".into(),
@@ -580,20 +561,20 @@ mod tests {
     #[test]
     fn test_package_summary_find_procedure() {
         let pkg = PackageInfo {
-                    package_name: "pkg_order".into(),
-                    procedures: vec![
-                        ProcedureInfo::new("pkg_order.create".into(), "pkg_order".into(), "create".into()),
-                        ProcedureInfo::new("pkg_order.cancel".into(), "pkg_order".into(), "cancel".into()),
-                    ],
-                    table_refs: HashSet::new(),
-                    package_vars: HashMap::new(),
-                    source_file: "pkg_order.sql".into(),
-                    source_files: vec!["pkg_order.sql".into()],
-                    comments: Vec::new(),
-                    java_package: "com.example".into(),
-                    custom_types: HashMap::new(),
-                    extra_mapper_methods: Vec::new(),
-                };
+            package_name: "pkg_order".into(),
+            procedures: vec![
+                ProcedureInfo::new("pkg_order.create".into(), "pkg_order".into(), "create".into()),
+                ProcedureInfo::new("pkg_order.cancel".into(), "pkg_order".into(), "cancel".into()),
+            ],
+            table_refs: HashSet::new(),
+            package_vars: HashMap::new(),
+            source_file: "pkg_order.sql".into(),
+            source_files: vec!["pkg_order.sql".into()],
+            comments: Vec::new(),
+            java_package: "com.example".into(),
+            custom_types: HashMap::new(),
+            extra_mapper_methods: Vec::new(),
+        };
 
         let summary = PackageSummary::from_package(&pkg);
         assert!(summary.find_procedure("create").is_some());
@@ -603,15 +584,10 @@ mod tests {
 
     #[test]
     fn test_conversion_error_display() {
-        let err = ConversionError::Parse {
-            path: "test.sql".into(),
-            message: "unexpected token".into(),
-        };
+        let err = ConversionError::Parse { path: "test.sql".into(), message: "unexpected token".into() };
         assert_eq!(format!("{}", err), "Parse error [test.sql]: unexpected token");
 
-        let err = ConversionError::Config {
-            message: "missing output_dir".into(),
-        };
+        let err = ConversionError::Config { message: "missing output_dir".into() };
         assert_eq!(format!("{}", err), "Config error: missing output_dir");
     }
 
@@ -624,10 +600,7 @@ mod tests {
     #[test]
     fn test_custom_type_info() {
         let ct = CustomTypeInfo {
-            fields: vec![
-                ("id".into(), "Long".into()),
-                ("name".into(), "String".into()),
-            ],
+            fields: vec![("id".into(), "Long".into()), ("name".into(), "String".into())],
             is_record: false,
         };
         assert_eq!(ct.fields.len(), 2);
