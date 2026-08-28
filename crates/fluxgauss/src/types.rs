@@ -67,7 +67,8 @@ impl Parameter {
 /// arity and/or originating package.
 #[derive(Debug, Clone)]
 pub struct GlobalFnEntry {
-    /// Service field/variable name to call, e.g. "simplifiedFncComGetdayService".
+    /// Service field/variable name to call. Derived from the defining package name only,
+    /// e.g. package `issue_79_unqualified_fn_callee` → svc_var "issue79UnqualifiedFnCalleeService".
     pub svc_var: String,
     /// Package name the candidate is defined in (compare via `to_lowercase()`).
     pub package: String,

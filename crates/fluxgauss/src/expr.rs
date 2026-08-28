@@ -718,9 +718,9 @@ fn is_out_param(name: &str, proc: &ProcedureInfo) -> bool {
 /// with `.get()` since they are passed as `AtomicReference<T>` on this side.
 fn emit_cross_pkg_call(cross_pkg_svc: &str, method: &str, jargs: Vec<String>, proc: &ProcedureInfo) -> String {
     let x_args: Vec<String> = jargs
-        .iter()
+        .into_iter()
         .map(|a| {
-            if is_out_param(a, proc)
+            if is_out_param(&a, proc)
                 || proc
                     .out_local_vars
                     .iter()
@@ -728,7 +728,7 @@ fn emit_cross_pkg_call(cross_pkg_svc: &str, method: &str, jargs: Vec<String>, pr
             {
                 format!("{}.get()", a)
             } else {
-                a.clone()
+                a
             }
         })
         .collect();
@@ -1004,11 +1004,12 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
                     // Check if it exists in another package (cross-package call)
                     if let Some(candidates) = proc.all_proc_params.get(&method_name) {
                         let proc_pkg_lower = proc.package.to_lowercase();
-                        if let Some(entry) = candidates
+                        let cross: Vec<&GlobalFnEntry> = candidates
                             .iter()
-                            .find(|e| e.params.is_empty() && e.package.to_lowercase() != proc_pkg_lower)
-                        {
-                            return format!("{}.{}()", entry.svc_var, method_name);
+                            .filter(|e| e.params.is_empty() && e.package.to_lowercase() != proc_pkg_lower)
+                            .collect();
+                        if cross.len() == 1 {
+                            return format!("{}.{}()", cross[0].svc_var, method_name);
                         }
                     }
                     let (pkg_hint, func_short) = if let Some(dot_pos) = name.rfind('.') {
@@ -2139,6 +2140,8 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                     let cross: Vec<&GlobalFnEntry> = candidates
                         .iter()
                         .filter(|e| e.package.to_lowercase() != proc_pkg_lower)
+                        // 已知限制：跨包解析使用严格 arity 相等（不支持默认参数省略实参）；
+                        // 同包重载（is_self_call 分支）支持 len>=jargs.len() 的宽松匹配
                         .filter(|e| e.params.len() == jargs.len())
                         .collect();
                     match cross.len() {
