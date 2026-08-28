@@ -185,6 +185,62 @@ fn run_multi_file_conversion(sql_files: &[PathBuf], out_dir: &Path) -> Generated
     }
 }
 
+/// Runs a multi-file conversion and returns *all* generated `*Service.java`
+/// files, keyed by filename (including the `.java` extension). Unlike
+/// `run_multi_file_conversion` (which hardcodes reading `BigfundService.java`
+/// for the issue_70 same-package-merge scenario), this scans the service
+/// output directory and collects every service file, so it works for
+/// fixtures that produce multiple distinct packages/services.
+fn run_multi_file_services(sql_files: &[PathBuf], out_dir: &Path) -> HashMap<String, String> {
+    let config = AppConfig {
+        output_dir: Some(out_dir.to_string_lossy().into()),
+        base_package: Some(BASE_PACKAGE.to_string()),
+        sources: Some(sql_files.iter().map(|path| path.to_string_lossy().into()).collect()),
+        ..Default::default()
+    };
+
+    let mut inc = IncrementalState::new(out_dir.to_string_lossy().into_owned(), false);
+    inc.initialize().expect("Failed to initialize incremental state");
+    let _result = run_pipeline(sql_files, &config, &mut inc, false);
+
+    let pkg_path = BASE_PACKAGE.replace('.', "/");
+    let service_dir = out_dir.join("src/main/java").join(&pkg_path).join("service");
+    let mut files: Vec<(String, String)> = fs::read_dir(&service_dir)
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.file_name().map_or(false, |n| n.to_string_lossy().ends_with("Service.java")))
+                .filter_map(|p| {
+                    let name = p.file_name().unwrap().to_string_lossy().to_string();
+                    fs::read_to_string(&p).ok().map(|content| (name, content))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    files.into_iter().collect()
+}
+
+#[test]
+fn issue_79_unqualified_cross_pkg_fn_resolves() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURES_REL);
+    let sql_files = vec![
+        fixtures.join("issue_79_unqualified_fn_callee.sql"),
+        fixtures.join("issue_79_unqualified_fn_caller.sql"),
+    ];
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let files = run_multi_file_services(&sql_files, &tmp.path().join("dest"));
+    let caller = files.get("Issue79UnqualifiedFnCallerService.java").expect("caller service");
+    assert!(
+        caller.contains("issue79UnqualifiedFnCalleeService.fncComGetday("),
+        "unqualified fn must resolve to cross-pkg service call, got:\n{}",
+        caller
+    );
+    assert!(caller.contains("issue79UnqualifiedFnCalleeService"), "service must be injected");
+    assert!(!caller.contains("TOBEFIX"), "resolved call must not carry TOBEFIX marker");
+}
+
 #[test]
 fn issue_70_same_schema_routines_share_one_service() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURES_REL);
