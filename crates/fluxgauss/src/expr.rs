@@ -1,5 +1,5 @@
 use crate::naming::snake_to_camel;
-use crate::types::ProcedureInfo;
+use crate::types::{GlobalFnEntry, ProcedureInfo};
 
 fn flatten_comment(text: &str) -> String {
     text.replace("/*", "").replace("*/", "")
@@ -712,6 +712,27 @@ fn is_out_param(name: &str, proc: &ProcedureInfo) -> bool {
     let base_name = if name.contains('.') { name.split('.').next().unwrap() } else { name };
     let bn = base_name.to_lowercase().replace("_", "");
     proc.parameters.iter().any(|p| p.name.to_lowercase().replace("_", "") == bn && p.is_out())
+}
+
+/// Render a cross-package service call, wrapping any OUT/local-out arguments
+/// with `.get()` since they are passed as `AtomicReference<T>` on this side.
+fn emit_cross_pkg_call(cross_pkg_svc: &str, method: &str, jargs: Vec<String>, proc: &ProcedureInfo) -> String {
+    let x_args: Vec<String> = jargs
+        .iter()
+        .map(|a| {
+            if is_out_param(a, proc)
+                || proc
+                    .out_local_vars
+                    .iter()
+                    .any(|(k, _)| k.to_lowercase().replace("_", "") == a.to_lowercase().replace("_", ""))
+            {
+                format!("{}.get()", a)
+            } else {
+                a.clone()
+            }
+        })
+        .collect();
+    format!("{}.{}({})", cross_pkg_svc, method, x_args.join(", "))
 }
 
 fn might_be_long(expr: &str, proc: &ProcedureInfo) -> bool {
@@ -2113,6 +2134,17 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                 let method_name = crate::naming::java_method_name(name_parts[0]);
                 if proc.package_proc_params.contains_key(&method_name) {
                     (method_name, true, String::new())
+                } else if let Some(candidates) = proc.all_proc_params.get(&method_name) {
+                    let proc_pkg_lower = proc.package.to_lowercase();
+                    let cross: Vec<&GlobalFnEntry> = candidates
+                        .iter()
+                        .filter(|e| e.package.to_lowercase() != proc_pkg_lower)
+                        .filter(|e| e.params.len() == jargs.len())
+                        .collect();
+                    match cross.len() {
+                        1 => (method_name, false, cross[0].svc_var.clone()),
+                        _ => (String::new(), false, String::new()),
+                    }
                 } else {
                     (String::new(), false, String::new())
                 }
@@ -2158,16 +2190,7 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                 return format!("this.{}({})", method, coerced_args.join(", "));
             }
             if !cross_pkg_svc.is_empty() && !method.is_empty() {
-                let x_args: Vec<String> = jargs.iter().map(|a| {
-                    if is_out_param(a, proc) || proc.out_local_vars.iter().any(|(k,_)|
-                        k.to_lowercase().replace("_", "") == a.to_lowercase().replace("_", ""))
-                    {
-                        format!("{}.get()", a)
-                    } else {
-                        a.clone()
-                    }
-                }).collect();
-                return format!("{}.{}({})", cross_pkg_svc, method, x_args.join(", "));
+                return emit_cross_pkg_call(&cross_pkg_svc, &method, jargs, proc);
             }
             let func_short = name_parts.last().unwrap_or(&name);
             let pkg_hint = if name_parts.len() >= 2 { name_parts[0] } else { "?" };
