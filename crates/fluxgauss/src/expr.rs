@@ -981,8 +981,14 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
                         return format!("this.{}()", method_name);
                     }
                     // Check if it exists in another package (cross-package call)
-                    if let Some(svc_var) = proc.all_proc_params.get(&method_name) {
-                        return format!("{}.{}()", svc_var, method_name);
+                    if let Some(candidates) = proc.all_proc_params.get(&method_name) {
+                        let proc_pkg_lower = proc.package.to_lowercase();
+                        if let Some(entry) = candidates
+                            .iter()
+                            .find(|e| e.params.is_empty() && e.package.to_lowercase() != proc_pkg_lower)
+                        {
+                            return format!("{}.{}()", entry.svc_var, method_name);
+                        }
                     }
                     let (pkg_hint, func_short) = if let Some(dot_pos) = name.rfind('.') {
                         (Some(&name[..dot_pos]), &name[dot_pos + 1..])
