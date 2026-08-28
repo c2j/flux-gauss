@@ -1,0 +1,27 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue79UnqualifiedFnCallerMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_79_unqualified_fn_caller.sql
+public class Issue79UnqualifiedFnCallerService {
+    private static final Logger log = LoggerFactory.getLogger(Issue79UnqualifiedFnCallerService.class);
+
+    private final Issue79UnqualifiedFnCallerMapper issue79UnqualifiedFnCallerMapper;
+
+    public Issue79UnqualifiedFnCallerService(Issue79UnqualifiedFnCallerMapper issue79UnqualifiedFnCallerMapper) {
+        this.issue79UnqualifiedFnCallerMapper = issue79UnqualifiedFnCallerMapper;
+    }
+
+    // Source: FNC_GET_PURCHASE_JS_DAYS (FUNCTION) — {FIXTURES_ROOT}/issue_79_unqualified_fn_caller.sql:1-8
+    public String fncGetPurchaseJsDays(String pIDate, String pISecurityId) {
+        String vPurchaseJsDate = null;
+        vPurchaseJsDate = null;
+        return String.valueOf(vPurchaseJsDate);
+    }
+}
