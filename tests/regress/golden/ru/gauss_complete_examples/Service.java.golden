@@ -202,10 +202,10 @@ public class CursorLifecycleService {
         int _loopGuard1 = 0;
         while (true) {
             if (++_loopGuard1 > 1000) { break; }
-            // CALL map_object.ad_item(pMap.get(), date, /* TODO: implement func_get_frame_date() - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ "")
-            // CALL map_object.ad_item(pMap.get(), date-1, String.valueOf(/* TODO: implement func_get_frame_date() - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ "").concat(String.valueOf("-sss")))
-            vLevel = String.valueOf(/* TODO: implement func_get_frame_date() - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ "");
-            vLevel = String.valueOf(/* TODO: implement func_get_frame_date() - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ "").concat(String.valueOf("-sss"));
+            // CALL map_object.ad_item(pMap.get(), date, funcGetFrameDate)
+            // CALL map_object.ad_item(pMap.get(), date-1, String.valueOf(funcGetFrameDate).concat(String.valueOf("-sss")))
+            vLevel = String.valueOf(funcGetFrameDate);
+            vLevel = String.valueOf(funcGetFrameDate).concat(String.valueOf("-sss"));
             found = false; // FETCH pCursor — cursor not materialized
             if (!found) { break; }
             vCount = vCount + 1;

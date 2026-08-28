@@ -994,11 +994,24 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
                     }
                     return param_camel;
                 }
-                let name_lower_raw = name.to_lowercase();
-                if name_lower_raw.starts_with("func_") || name_lower_raw.starts_with("fn_") {
+                // Local variable / package variable declarations always shadow a same-named
+                // function (PL/SQL scoping semantics): if the bare name is a declared
+                // variable, never divert into function resolution below — no name-prefix
+                // heuristic (func_/fn_) is consulted anywhere in this branch (Task 5).
+                let name_key = name.to_lowercase().replace('_', "");
+                let is_declared_var = proc.local_vars.contains_key(&name.to_lowercase())
+                    || proc.local_vars.keys().any(|k| k.to_lowercase().replace('_', "") == name_key)
+                    || proc.package_vars.keys().any(|k| k.to_lowercase().replace('_', "") == name_key);
+                if !is_declared_var {
+                    // 函数注册表判定（无前缀启发式，Task 5）：同包零参兄弟 → this.fn()；
+                    // 跨包零参且候选唯一 → svcVar.fn()；否则按变量兜底 camel
+                    // （不区分"注册表未命中"与"命中但歧义"——两者都不是可安全生成的函数调用）。
                     let method_name = crate::naming::java_method_name(name);
-                    // Check if this function exists as a sibling procedure in the same package
-                    if proc.package_proc_params.contains_key(&method_name) {
+                    if proc
+                        .package_proc_params
+                        .get(&method_name)
+                        .is_some_and(|overloads| overloads.iter().any(|ps| ps.is_empty()))
+                    {
                         return format!("this.{}()", method_name);
                     }
                     // Check if it exists in another package (cross-package call)
@@ -1012,22 +1025,6 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
                             return format!("{}.{}()", cross[0].svc_var, method_name);
                         }
                     }
-                    let (pkg_hint, func_short) = if let Some(dot_pos) = name.rfind('.') {
-                        (Some(&name[..dot_pos]), &name[dot_pos + 1..])
-                    } else {
-                        (None, name)
-                    };
-                    let hint = match pkg_hint {
-                        Some(p) => format!("pkg={}", p),
-                        None => "pkg=?".to_string(),
-                    };
-                    return format!(
-                        "/* TODO: implement {}() - {}, caller={}:{} */ \"\"",
-                        flatten_comment(func_short),
-                        flatten_comment(&hint),
-                        flatten_comment(&proc.source_file),
-                        flatten_comment(&proc.proc_name)
-                    );
                 }
                 camel
             }
@@ -2726,5 +2723,46 @@ mod tests {
             ogsql_parser::ast::Literal::Integer(1),
         )));
         assert_eq!(expr_to_java(&expr, &proc), "(1)");
+    }
+
+    #[test]
+    fn test_column_ref_bare_prefixed_function_resolves_via_registry_not_prefix() {
+        // Task 5: fnc_/fn_ prefixed bare zero-arg names resolve through the
+        // cross-package function registry — no name-prefix heuristic is consulted.
+        let mut proc = empty_proc();
+        proc.all_proc_params.insert(
+            "fncComGetday".into(),
+            vec![GlobalFnEntry {
+                svc_var: "issue79UnqualifiedFnCalleeService".into(),
+                package: "issue_79_unqualified_fn_callee".into(),
+                params: vec![],
+            }],
+        );
+        assert_eq!(
+            expr_to_java(&ogsql_parser::ast::Expr::ColumnRef(vec!["fnc_com_getday".into()]), &proc),
+            "issue79UnqualifiedFnCalleeService.fncComGetday()"
+        );
+    }
+
+    #[test]
+    fn test_column_ref_local_var_shadows_same_name_zero_arg_function() {
+        // PL/SQL shadowing: a declared local variable always wins over a
+        // same-named sibling zero-arg procedure — variable lookup runs first.
+        let mut proc = empty_proc();
+        proc.local_vars.insert("fn_get_day".into(), "String".into());
+        proc.package_proc_params.insert("fnGetDay".into(), vec![vec![]]);
+        assert_eq!(expr_to_java(&ogsql_parser::ast::Expr::ColumnRef(vec!["fn_get_day".into()]), &proc), "fnGetDay");
+    }
+
+    #[test]
+    fn test_column_ref_unknown_bare_name_falls_back_to_camel() {
+        // Unknown bare identifier — absent from parameters/local vars/package vars
+        // and from both function registries — still falls back to camelCase,
+        // matching pre-Task-5 behavior for names with no prefix.
+        let proc = empty_proc();
+        assert_eq!(
+            expr_to_java(&ogsql_parser::ast::Expr::ColumnRef(vec!["some_unknown_thing".into()]), &proc),
+            "someUnknownThing"
+        );
     }
 }
