@@ -251,7 +251,7 @@ ogsql validate → 转换 → mvn compile → mvn test → DB_PASSWORD=... mvn v
 ### 7. 集成测试要求
 
 - **只对可丢弃数据库跑**：生成 fixture 含 `DELETE FROM ...`，会清空真实表。pagila 容器可 `docker-compose down -v` 重建；fastaas 需 `BIGFUND` schema（已建于 pagila 库，JDBC 用 `currentSchema=BIGFUND`）
-- **Rust itest-schema 缺陷（#78，未修复）**：remote 模式仍生成 `DROP TABLE ... CASCADE` 且未过滤 `pg_index`/`pg_partition`/`public`/`dw`，集成测试 43/43 在 setup 失败。已知 workaround：删 DROP 行 + `CREATE TABLE` → `CREATE TABLE IF NOT EXISTS`。修复合入前，报告须同时给出原始/修正后两个数字
+- **Rust itest-schema（#78，已修复并验证 2026-08-28）**：remote 模式现生成 0 条 DROP + `CREATE TABLE IF NOT EXISTS`，系统对象（`pg_index`/`pg_partition`/`public`/`dw`）已过滤，集成测试 schema setup 零失败。回归检查点：任一引擎改动后 `grep -c "DROP TABLE" dest_*/src/test/resources/itest-schema.sql` 必须为 0
 - 非交互模式校验失败会直接退出；已知良性错误（Warning 级、语句级降级）用 `--skip-validate`
 
 ### 8. Issue 工作流
