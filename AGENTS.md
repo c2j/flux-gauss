@@ -165,6 +165,110 @@ java_packages:                    # optional: map SQL files to different Java pa
 | Integration tests | 13811–16223 | `_itest_*()` functions — schema extraction, test data inference, fixture generation, itest class writing |
 | Report & CLI | 16224–17306 | `write_conversion_report()`, `_parse_config()`, `_save_gen_checkpoint()`, `_build_arg_parser()`, `main()` |
 
+## 开发守则（双引擎验证沉淀，2026-08 增补）
+
+> 来源：ogagila / fastaas 双项目 × 双引擎多轮验证与修复（报告见 `docs/reports/`）。
+> 改动生成逻辑、解析器依赖、或执行验证前必读。
+
+### 0. 改动定位（先读再改）
+
+确认改动落在哪一侧，用对应的命令与门禁，不混用：
+
+| 改动面 | 位置 | 门禁 |
+|--------|------|------|
+| Python 转换器 | `converter/flux_gauss.py` | ruff + pytest |
+| Rust 转换器 | `crates/fluxgauss` | cargo fmt + clippy（无新增 warning）+ cargo test |
+| 解析器依赖 | `Cargo.toml` 中 ogsql-parser rev | 问题路由上游 `c2j/ogsql-parser` |
+| 生成物质量 | `dest_*` | 完整验证链（见 §3） |
+
+### 1. 测试纪律
+
+**Never：**
+- 删除、注释、跳过已有测试（`@pytest.mark.skip`、无 ticket 的 `xfail`、`#[ignore]`、注释 `#[test]`）
+- 修改人类已有测试的断言来迁就实现
+- 写永真测试：无断言、只检查 `is not None`、只 verify 调用次数不查参数
+- 先提交无测试的业务行为再「回头补」
+
+**Ask first：** 改人类已有测试（断言/夹具/golden）；新增运行时依赖、新 workspace crate；接受 golden file 更新且行为含义变化（必须解释 diff）；放宽 ruff/mypy/clippy。
+
+**Always：** 改遗留路径前先写特征测试锁定当前行为（golden 形态，允许丑必须可重复）；现有测试因改动失败——修实现，不修测试。
+
+| 测试来源 | 权限 |
+|---|---|
+| 人类已有测试 | 只读 |
+| 本任务新建测试 | 可改，直到该行为稳定 |
+| 过时/偶发失败 | 只报告，不擅自跳过 |
+
+### 2. 工作流：回归先行（底线）→ TDD（方向）
+
+Bug fix 标准循环：
+1. 先写能复现 bug 的**失败测试**（golden/regression 形态；Rust 侧允许「引用尚不存在 API 导致编译失败」作为合法 Red）
+2. 最小修复让它变绿——禁止删测试、加宽断言、吞异常换绿
+3. 跑该侧全部回归 + 对应 golden/parity
+
+方向性要求：向严格 Red→Green→Refactor 演进，一次循环只锁定一个行为。探索草稿一律放 /tmp 不进仓库。
+
+### 3. 生成物验证链（改生成逻辑后必经）
+
+```
+ogsql validate → 转换 → mvn compile → mvn test → DB_PASSWORD=... mvn verify -Pintegration
+```
+
+- **解析器升级后必须重跑双项目回归**：parser 修复会让此前「静默丢弃」的语句进入生成管线，暴露转换器新缺口（实例：0.10.1 升级暴露 AtTimeZone dict 直写 #90）。仅 pytest 绿不等于验证完成。
+- **回归基线双集**（配置 `demo-project/fluxgauss_*_v2.yaml` / `fluxgauss_fastaas_*.yaml`）：
+  - fastaas `collected_sql`：标准 Oracle 风格 PL/SQL，当前双引擎 100%——防回归黄金集
+  - ogagila：openGauss 特性压测集（列存/动态 SQL/分区/AT TIME ZONE/自治事务）
+- 编译错误数按唯一 `file:[line,col]` 位置统计（maven 每条错误打印两遍）。
+
+### 4. 调试守则
+
+- **javac 语法错误中止语义分析**：1 条「需要<标识符>」会掩盖几十条类型错误。先修语法错再重编译，错误面稳定后才能评估生成质量（实例：Rust 输出先报 1 错，修复后暴露 52 处）。首轮编译错误数 ≠ 缺陷数。
+- **ogsql 二进制解析顺序陷阱**：`_resolve_ogsql_bin()` 候选顺序为 `os.getcwd()/ogsql` → `OGSQL_BIN` → PATH。在仓库根目录运行转换会静默命中旧二进制；测试新二进制须从中性 CWD（如 /tmp）运行，或先移开旧 `./ogsql`。
+- **双引擎版本对齐**：对比前确认两侧解析器版本一致（Rust 看 `Cargo.lock` rev；Python 看实际命中的 `ogsql --version`）。
+- cargo 构建报 `InvalidArchive("Could not find EOCD")`：utoipa-swagger-ui 构建缓存 zip 损坏。用 `unzip -t` 定位 `target/release/build/utoipa-swagger-ui-*/out/v*.zip` 损坏条目，删除后重建。
+
+### 5. Python 侧规范（工具链维持现状）
+
+- pip + pyproject.toml + requirements.txt；禁止引入并行的 Poetry/Pipenv/uv
+- **待修正**：`pyproject.toml` requires-python 为 `>=3.9`，但代码用 PEP 604 实际需 3.10+（#73），应改为 `>=3.10`
+- 格式/lint：ruff（`ruff.toml`）；类型：mypy（`mypy.ini`）；测试：pytest（`pyproject.toml [tool.pytest.ini_options]`）
+- mock 只打进程边界：外部 ogsql 二进制用 `OGSQL_BIN` 指向 fixture；禁止 patch 被测对象内部实现
+
+**迁移对象准备：**
+- psql 客户端指令（`\set`、`\echo`）不是 SQL，ogsql 无法解析：迁移前 `sed '/^\\set /d'` 清洗；validate 报 `expected statement, got Op("\\")` 即此因
+- DDL 必须列入 sources：类型推断（TYPE_OVERRIDES / `parse_table_ddl`）只扫 sources 内的 `CREATE TABLE`
+- 排除非迁移对象：init_data（纯数据 COPY/INSERT）、QA 测试脚本不进 sources
+- 编码：`_read_sql_file` 自动探测 gb18030/gbk/big5（fastaas 为 GB18030），无需预处理
+- Oracle `(+)` 外连接：ogsql 报 Suggestion 级 Warning（非错误），转换器按 warning 过滤，不阻断
+
+### 6. Rust 侧规范
+
+- workspace 根执行 cargo；依赖变更用 `cargo add` / `cargo update -p <crate>`（禁止一次性 update 整个 lockfile；ogsql-parser 以 rev/tag 精确固定）
+- **clippy 债务策略**：存量告警（build 43 条 / clippy 口径 188 条）由独立任务清零；**新增代码零新增 warning**——改动涉及文件不允许引入新告警
+- 上游 ogsql-parser 仓库保持全量门禁（fmt + clippy -D warnings + test，CI 已生效），向其提交 PR 须全绿
+- 禁止把 clippy/测试失败说成「main 原来就红」
+
+### 7. 集成测试要求
+
+- **只对可丢弃数据库跑**：生成 fixture 含 `DELETE FROM ...`，会清空真实表。pagila 容器可 `docker-compose down -v` 重建；fastaas 需 `BIGFUND` schema（已建于 pagila 库，JDBC 用 `currentSchema=BIGFUND`）
+- **Rust itest-schema 缺陷（#78，未修复）**：remote 模式仍生成 `DROP TABLE ... CASCADE` 且未过滤 `pg_index`/`pg_partition`/`public`/`dw`，集成测试 43/43 在 setup 失败。已知 workaround：删 DROP 行 + `CREATE TABLE` → `CREATE TABLE IF NOT EXISTS`。修复合入前，报告须同时给出原始/修正后两个数字
+- 非交互模式校验失败会直接退出；已知良性错误（Warning 级、语句级降级）用 `--skip-validate`
+
+### 8. Issue 工作流
+
+- **路由**：ogsql 语法/解析问题 → `c2j/ogsql-parser`；转换/代码生成问题 → 本仓库。提报前 search 查重并交叉引用关联 issue（如 Map 返回类型 ↔ #34）
+- **上游修复验证链**：fetch PR 分支 → 本地构建 → 最小复现逐条验证 → 端到端重迁移（对比解析错误数与 DML 数，实例：ogagila 10→0 / DML 91→94）→ 验证通过再关上游 issue；下游跟踪 issue 保留至二进制依赖实际升级
+- **统计口径**：passed = total − failures − errors − skipped；skipped 多为 `assumeTrue(false)` 的领域数据测试，报告单列、不计入失败
+
+### 9. 完成标准（提交/交还前自检）
+
+- [ ] 新行为/修复有失败→通过的测试（golden/regression）
+- [ ] 未删除、跳过、改写人类已有测试
+- [ ] 门禁已跑：Python 改动 → ruff + pytest；Rust 改动 → fmt + clippy（无新增）+ cargo test；生成逻辑改动 → §3 完整验证链
+- [ ] 跨引擎契约改动（JSON AST 消费 / YAML schema / 生成物）：`golden/py` 与 `golden/ru` parity 都要跑
+- [ ] 无草稿、调试输出、无主 lockfile 变更被带入
+- [ ] 汇报含具体证据：改动文件清单 + 实际执行的命令与结果（不写「测过了」）
+
 ## Notes
 
 - `ogsql.broken` at root is a broken binary — ignore it.
