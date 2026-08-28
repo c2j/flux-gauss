@@ -609,6 +609,7 @@ fn phase2_analyze(
             crate::analyze::promote_out_local_vars(proc);
         }
         crate::analyze::discover_cross_service_refs(pkg, &all_pkg_names);
+        crate::analyze::collect_tobefix_warnings(pkg, &mut ctx);
     }
 
     crate::progress::progress_done("Analyze", total);

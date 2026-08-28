@@ -272,4 +272,20 @@ mod tests {
         assert_eq!(report.total_procedures, 1);
         assert_eq!(report.mappings.len(), 1);
     }
+
+    #[test]
+    fn test_report_markdown_warns_on_tobefix_unresolved_call() {
+        let mut report = ConversionReport::new();
+        report.unresolved_calls.push(UnresolvedCall {
+            caller: "pkg_a.do_thing".into(),
+            callee: "funcGetFrameDate".into(),
+            caller_file: "pkg_a.sql".into(),
+            args: "no args".into(),
+            hint: "TOBEFIX: 函数/名称未解析（定义包不在 sources 或跨包同名冲突），需人工确认".into(),
+        });
+        let md = report.to_markdown();
+        assert!(md.contains("## ⚠️ 未解析的跨包调用"));
+        assert!(md.contains("TOBEFIX"));
+        assert!(md.contains("funcGetFrameDate"));
+    }
 }

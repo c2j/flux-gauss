@@ -21,7 +21,7 @@ public interface WarpdriverStressTestMapper {
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:138 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator
     int insertErrorLog(@Param("pBizDate") String pBizDate, @Param("pMode") String pMode, @Param("pLogId") Long pLogId, @Param("vRec") Map<String, Object> vRec);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:138 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator
-    int insertOrderItemSnapshot(@Param("pBizDate") String pBizDate, @Param("pMode") String pMode, @Param("pLogId") Long pLogId, @Param("vItemTab") List<String> vItemTab);
+    int insertOrderItemSnapshot(@Param("pBizDate") String pBizDate, @Param("pMode") String pMode, @Param("pLogId") Long pLogId, @Param("i") int i, @Param("vItemTab") List<String> vItemTab);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master
     int insertDistributedLocks(@Param("pOrderId") Long pOrderId, @Param("vConnId") Long vConnId, @Param("vLockKey") String vLockKey);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master

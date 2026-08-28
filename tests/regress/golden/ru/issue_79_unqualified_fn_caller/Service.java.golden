@@ -21,7 +21,7 @@ public class Issue79UnqualifiedFnCallerService {
     // Source: FNC_GET_PURCHASE_JS_DAYS (FUNCTION) — {FIXTURES_ROOT}/issue_79_unqualified_fn_caller.sql:1-8
     public String fncGetPurchaseJsDays(String pIDate, String pISecurityId) {
         String vPurchaseJsDate = null;
-        vPurchaseJsDate = null;
+        vPurchaseJsDate = /* TOBEFIX: unresolved fn fnc_com_getday(String.valueOf(pISecurityId).substring(Math.min(String.valueOf(pISecurityId).length(), Math.max(0, (3) - 1)), Math.min(String.valueOf(pISecurityId).length(), Math.max(0, (3) - 1) + (3))), pIDate, 1) - pkg=?, caller={FIXTURES_ROOT}/issue_79_unqualified_fn_caller.sql:FNC_GET_PURCHASE_JS_DAYS */ null;
         return String.valueOf(vPurchaseJsDate);
     }
 }

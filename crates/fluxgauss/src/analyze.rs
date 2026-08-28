@@ -1,5 +1,5 @@
 use crate::context::{AnalysisContext, ScanContext};
-use crate::types::{ConversionError, PackageInfo, ProcedureInfo};
+use crate::types::{ConversionError, PackageInfo, ProcedureInfo, UnresolvedCall};
 use ogsql_parser::ast::plpgsql::PlStatement;
 
 pub fn analyze_procedure(
@@ -351,6 +351,28 @@ pub fn discover_cross_service_refs(pkg: &mut crate::types::PackageInfo, known_pa
                         package_name: pkg_name.clone(),
                     });
                 }
+            }
+        }
+    }
+}
+
+// Scans generated Java lines for `/* TOBEFIX: unresolved fn|name ... */` markers
+// (injected by expr.rs when a bare call/identifier can't be resolved) and records
+// each occurrence as an UnresolvedCall so it surfaces in the conversion report's
+// existing "未解析的跨包调用" section — mirrors the discover_cross_service_refs
+// post-scan pattern above (expr.rs is a pure fn with no ctx access).
+pub fn collect_tobefix_warnings(pkg: &PackageInfo, ctx: &mut AnalysisContext) {
+    let re = regex::Regex::new(r"TOBEFIX: unresolved (?:fn|name) ([a-zA-Z0-9_]+)\((.*?)\) - ").unwrap();
+    for proc in &pkg.procedures {
+        for line in &proc.java_logic_lines {
+            for cap in re.captures_iter(line) {
+                ctx.unresolved_calls.push(UnresolvedCall {
+                    caller: format!("{}.{}", proc.package, proc.proc_name),
+                    callee: cap[1].to_string(),
+                    caller_file: proc.source_file.clone(),
+                    args: cap[2].to_string(),
+                    hint: "TOBEFIX: 函数/名称未解析（定义包不在 sources 或跨包同名冲突），需人工确认".into(),
+                });
             }
         }
     }

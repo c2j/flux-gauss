@@ -354,33 +354,35 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
         }
     }
     if is_nullish_java_expr(trimmed) {
+        let mut default: Option<String> = None;
         if let Some(t) = target_type {
             if t.contains("BigDecimal") {
-                return "java.math.BigDecimal.ZERO".to_string();
-            }
-            if t == "Double" || t == "double" {
-                return "0.0d".to_string();
-            }
-            if t == "Float" || t == "float" {
-                return "0.0f".to_string();
-            }
-            if t == "Integer" || t == "int" {
-                return "0".to_string();
-            }
-            if t == "Long" || t == "long" {
-                return "0L".to_string();
-            }
-            if t == "Boolean" || t == "boolean" {
-                return "false".to_string();
-            }
-            if t == "String" {
-                return "null".to_string();
+                default = Some("java.math.BigDecimal.ZERO".to_string());
+            } else if t == "Double" || t == "double" {
+                default = Some("0.0d".to_string());
+            } else if t == "Float" || t == "float" {
+                default = Some("0.0f".to_string());
+            } else if t == "Integer" || t == "int" {
+                default = Some("0".to_string());
+            } else if t == "Long" || t == "long" {
+                default = Some("0L".to_string());
+            } else if t == "Boolean" || t == "boolean" {
+                default = Some("false".to_string());
+            } else if t == "String" {
+                default = Some("null".to_string());
             }
         }
-        if trimmed == "null" {
-            return "null".to_string();
+        let default = default.unwrap_or_else(|| if trimmed == "null" { "null".to_string() } else { "0".to_string() });
+        // TOBEFIX marker must survive coercion to a type default, otherwise the
+        // unresolved-name warning silently disappears from generated code (Task 6).
+        if trimmed.contains("/* TOBEFIX") {
+            if let Some(end) = trimmed.find("*/") {
+                // find() returns the index of `*`; `*/` is 2 bytes wide, so the
+                // slice must extend past the trailing `/` (…[..=end] would drop it).
+                return format!("{} {}", &trimmed[..end + 2], default);
+            }
         }
-        return "0".to_string();
+        return default;
     }
     if trimmed == "\"\"" || trimmed == "''" {
         if let Some(t) = target_type {
@@ -753,7 +755,7 @@ fn might_be_long(expr: &str, proc: &ProcedureInfo) -> bool {
     false
 }
 
-fn get_column_ref_name(expr: &ogsql_parser::ast::Expr) -> Option<String> {
+pub(crate) fn get_column_ref_name(expr: &ogsql_parser::ast::Expr) -> Option<String> {
     use ogsql_parser::ast::Expr;
     match expr {
         Expr::ColumnRef(name) | Expr::PlVariable(name) => Some(name.join(".")),
@@ -1004,7 +1006,7 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
                     || proc.package_vars.keys().any(|k| k.to_lowercase().replace('_', "") == name_key);
                 if !is_declared_var {
                     // 函数注册表判定（无前缀启发式，Task 5）：同包零参兄弟 → this.fn()；
-                    // 跨包零参且候选唯一 → svcVar.fn()；否则按变量兜底 camel
+                    // 跨包零参且候选唯一 → svcVar.fn()；否则 TOBEFIX + null（Task 6）
                     // （不区分"注册表未命中"与"命中但歧义"——两者都不是可安全生成的函数调用）。
                     let method_name = crate::naming::java_method_name(name);
                     if proc
@@ -1025,6 +1027,13 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
                             return format!("{}.{}()", cross[0].svc_var, method_name);
                         }
                     }
+                    // 裸名既不是参数/局部变量/包变量，也不是任何已知函数 → TOBEFIX + null（编译安全）
+                    return format!(
+                        "/* TOBEFIX: unresolved name {}(no args) - pkg=?, caller={}:{} */ null",
+                        flatten_comment(name),
+                        flatten_comment(&proc.source_file),
+                        flatten_comment(&proc.proc_name)
+                    );
                 }
                 camel
             }
@@ -1476,8 +1485,23 @@ fn binary_op_to_java(
 
     match op {
         "||" => {
-            let l_sv = if is_nullish_java_expr(&l) { "\"\"".to_string() } else { format!("String.valueOf({})", l) };
-            let r_sv = if is_nullish_java_expr(&r) { "\"\"".to_string() } else { format!("String.valueOf({})", r) };
+            // TOBEFIX-marked operands must keep their marker (and null value)
+            // so unresolved-name warnings stay visible; plain nullish operands
+            // concat as the empty string as before.
+            let l_sv = if l.contains("/* TOBEFIX") {
+                format!("String.valueOf({})", l)
+            } else if is_nullish_java_expr(&l) {
+                "\"\"".to_string()
+            } else {
+                format!("String.valueOf({})", l)
+            };
+            let r_sv = if r.contains("/* TOBEFIX") {
+                format!("String.valueOf({})", r)
+            } else if is_nullish_java_expr(&r) {
+                "\"\"".to_string()
+            } else {
+                format!("String.valueOf({})", r)
+            };
             format!("{}.concat({})", l_sv, r_sv)
         }
         "<@" | "@>" => format!("((Object) {}) != null", l),
@@ -2103,6 +2127,7 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         }
         _ => {
             let name_parts: Vec<&str> = name.split('.').collect();
+            let mut ambig_candidates: Vec<String> = Vec::new();
             let (method, is_self_call, cross_pkg_svc) = if name_parts.len() >= 2 {
                 let pkg_hint = if name_parts.len() >= 3 {
                     name_parts[name_parts.len() - 2]
@@ -2143,7 +2168,11 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                         .collect();
                     match cross.len() {
                         1 => (method_name, false, cross[0].svc_var.clone()),
-                        _ => (String::new(), false, String::new()),
+                        0 => (String::new(), false, String::new()),
+                        _ => {
+                            ambig_candidates = cross.iter().map(|e| e.svc_var.clone()).collect();
+                            (String::new(), false, String::new())
+                        }
                     }
                 } else {
                     (String::new(), false, String::new())
@@ -2194,13 +2223,19 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             }
             let func_short = name_parts.last().unwrap_or(&name);
             let pkg_hint = if name_parts.len() >= 2 { name_parts[0] } else { "?" };
+            let ambig_suffix = if ambig_candidates.is_empty() {
+                String::new()
+            } else {
+                format!(", candidates=[{}]", ambig_candidates.join(", "))
+            };
             format!(
-                "/* TODO: implement {}({}) - pkg={}, caller={}:{} */ null",
+                "/* TOBEFIX: unresolved fn {}({}) - pkg={}, caller={}:{}{} */ null",
                 flatten_comment(func_short),
                 flatten_comment(&jargs.join(", ")),
                 flatten_comment(pkg_hint),
                 flatten_comment(&proc.source_file),
-                flatten_comment(&proc.proc_name)
+                flatten_comment(&proc.proc_name),
+                ambig_suffix,
             )
         }
     }
@@ -2659,7 +2694,11 @@ mod tests {
 
     #[test]
     fn test_column_ref_simple() {
-        let proc = empty_proc();
+        // v_status is declared as a local var: Task 6 removes the compile-unsafe
+        // "any bare name → camel" fallback, so this must resolve via a known
+        // variable, not merely rely on being an unresolved-name coincidence.
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_status".into(), "String".into());
         assert_eq!(expr_to_java(&ogsql_parser::ast::Expr::ColumnRef(vec!["v_status".into()]), &proc), "vStatus");
     }
 
@@ -2677,7 +2716,8 @@ mod tests {
 
     #[test]
     fn test_is_null() {
-        let proc = empty_proc();
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_status".into(), "String".into());
         let expr = ogsql_parser::ast::Expr::IsNull {
             expr: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["v_status".into()])),
             negated: false,
@@ -2687,7 +2727,8 @@ mod tests {
 
     #[test]
     fn test_is_not_null() {
-        let proc = empty_proc();
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_status".into(), "String".into());
         let expr = ogsql_parser::ast::Expr::IsNull {
             expr: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["v_status".into()])),
             negated: true,
@@ -2755,14 +2796,59 @@ mod tests {
     }
 
     #[test]
-    fn test_column_ref_unknown_bare_name_falls_back_to_camel() {
-        // Unknown bare identifier — absent from parameters/local vars/package vars
-        // and from both function registries — still falls back to camelCase,
-        // matching pre-Task-5 behavior for names with no prefix.
+    fn test_column_ref_unknown_bare_name_falls_back_to_tobefix_null() {
+        // Task 6: unknown bare identifier — absent from parameters/local vars/package
+        // vars and from both function registries — must not emit a bare, undeclared
+        // camelCase identifier (that doesn't compile). It emits a compile-safe
+        // TOBEFIX-marked `null` instead, and the marker text carries enough info
+        // (name + source file + proc) for the report scan (analyze::collect_tobefix_warnings).
         let proc = empty_proc();
-        assert_eq!(
-            expr_to_java(&ogsql_parser::ast::Expr::ColumnRef(vec!["some_unknown_thing".into()]), &proc),
-            "someUnknownThing"
+        let out = expr_to_java(&ogsql_parser::ast::Expr::ColumnRef(vec!["some_unknown_thing".into()]), &proc);
+        assert!(out.contains("/* TOBEFIX: unresolved name some_unknown_thing(no args)"), "got: {}", out);
+        assert!(out.trim_end().ends_with("null"), "got: {}", out);
+    }
+
+    #[test]
+    fn test_column_ref_package_var_shadows_same_name_zero_arg_function() {
+        // PL/SQL shadowing: a declared package variable (not just local var) also
+        // wins over a same-named sibling zero-arg procedure — package var lookup
+        // must run before function registry lookup (Task 5 review 🟡 follow-up).
+        let mut proc = empty_proc();
+        proc.package_vars.insert(
+            "fn_get_day".into(),
+            crate::types::VarInfo {
+                name: "fn_get_day".into(),
+                java_type: "String".into(),
+                sql_type: "varchar".into(),
+                default_value: None,
+                is_constant: false,
+            },
         );
+        proc.package_proc_params.insert("fnGetDay".into(), vec![vec![]]);
+        assert_eq!(expr_to_java(&ogsql_parser::ast::Expr::ColumnRef(vec!["fn_get_day".into()]), &proc), "fnGetDay");
+    }
+
+    #[test]
+    fn test_column_ref_underscore_normalization_prefers_declared_camel_var() {
+        // A local var declared under its camelCase key ("fnGetDay") must still
+        // shadow a same-named (snake_case-referenced) sibling zero-arg function
+        // via the underscore-insensitive variable lookup (Task 5 review 🟡 follow-up).
+        let mut proc = empty_proc();
+        proc.local_vars.insert("fnGetDay".into(), "String".into());
+        proc.package_proc_params.insert("fnGetDay".into(), vec![vec![]]);
+        assert_eq!(expr_to_java(&ogsql_parser::ast::Expr::ColumnRef(vec!["fn_get_day".into()]), &proc), "fnGetDay");
+    }
+
+    #[test]
+    fn test_coerce_for_type_preserves_tobefix_marker_terminator() {
+        // Task 6 regression: an unresolved bare-name TOBEFIX marker must survive
+        // coerce_for_type with its `*/` terminator intact. A dropped `/` leaves an
+        // unterminated block comment that swallows the rest of the line (and the
+        // null literal), producing non-compiling Java.
+        let proc = empty_proc();
+        let input = "/* TOBEFIX: unresolved name some_unknown_thing(no args) - pkg=?, caller=tests/regress/fixtures/x.sql:some_proc */ null";
+        let out = coerce_for_type(input, Some("String"), &proc);
+        assert!(out.contains("*/"), "TOBEFIX comment lost its `*/` terminator: {}", out);
+        assert!(out.ends_with("null"), "TOBEFIX value must remain null: {}", out);
     }
 }

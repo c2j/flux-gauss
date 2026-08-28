@@ -66,6 +66,7 @@ public class WarpdriverStressTestService {
     // Source: PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator (PROCEDURE) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:138-289
     @Transactional
     public void spMainOrchestrator(String pBizDate, String pMode, AtomicReference<java.math.BigDecimal> pTotalAmt, AtomicReference<Long> pLogId) {
+        int i = 0;
         Integer vCleaned = 0;
         java.util.List<Object> vCurOrders = null;
         java.sql.Date vDate = java.sql.Date.valueOf(java.time.LocalDate.parse(String.valueOf(pBizDate), java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd]")));
@@ -167,10 +168,10 @@ public class WarpdriverStressTestService {
                     currentState = SpMainOrchestratorState.FetchLoop;
                     break;
                     case CloseCursor:
-                    // CLOSE vCurOrders;
+                    // CLOSE v_cur_orders;
                     if (vIdx > 0) {
-                        for (int i = 1; i <= vIdx; i++) {
-                            __ROWCOUNT__ = warpdriverStressTestMapper.insertOrderItemSnapshot(pBizDate, pMode, pLogId.get(), vItemTab);
+                        for (i = 1; i <= vIdx; i++) {
+                            __ROWCOUNT__ = warpdriverStressTestMapper.insertOrderItemSnapshot(pBizDate, pMode, pLogId.get(), i, vItemTab);
                         }
                     }
                     pTotalAmt.set(vSum);
@@ -503,7 +504,7 @@ public class WarpdriverStressTestService {
             warpdriverStressTestMapper.deleteTreeNodes(pParentId, pDepth, vChildId);
             vCount = vCount + 1;
         }
-        // CLOSE vCur;
+        // CLOSE v_cur;
         return vCount;
     }
 

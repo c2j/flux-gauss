@@ -665,7 +665,16 @@ fn build_service_method(
                     let t = l.trim_start();
                     t.starts_with("for (Map<String, Object>") && l.contains(&format!(" {} : ", var_java))
                 });
-                if is_loop_iter {
+                // Numeric range FOR loops (e.g. `for (int i = 1; i <= n; i++)`) declare
+                // their own counter inline in the loop header; proc.local_vars still
+                // tracks the var so resolve_column_ref resolves body references to it
+                // (Task 6), but re-declaring it here too would be a duplicate-variable
+                // Java compile error.
+                let is_range_loop_iter = proc.java_logic_lines.iter().any(|l| {
+                    let t = l.trim_start();
+                    t.starts_with("for (int ") && l.contains(&format!("int {} = ", var_java))
+                });
+                if is_loop_iter || is_range_loop_iter {
                     continue;
                 }
                 // Check if this local var was promoted to AtomicReference for OUT param usage

@@ -2636,6 +2636,15 @@ pub fn process_statement(
                     let hi_safe = if crate::expr::is_nullish_java_expr(&hi) { "0".to_string() } else { hi };
                     let iter_var = var.clone();
                     let already_declared = proc.local_vars.contains_key(&for_stmt.node.variable.to_lowercase());
+                    if !already_declared {
+                        // Register the implicit range-loop counter so body references resolve
+                        // through the declared-variable path (Task 6): previously this bare
+                        // name fell through resolve_column_ref's unresolved-name fallback and
+                        // only "worked" by coincidence (camelCase("i") == "i"); now that the
+                        // fallback emits a compile-safe TOBEFIX marker, an unregistered loop
+                        // counter would silently lose its value in string concatenation.
+                        proc.local_vars.insert(for_stmt.node.variable.to_lowercase(), "int".into());
+                    }
                     let step_code = match step {
                         Some(s) => {
                             let s_val = crate::expr::expr_to_java(s, proc);
@@ -2733,7 +2742,10 @@ pub fn process_statement(
                     push_logic_line(proc, format!("for (Map<String, Object> {} : {}) {{", var, list_var));
                 }
                 ogsql_parser::ast::plpgsql::PlForKind::Cursor { cursor_name, .. } => {
-                    let cursor_java = crate::expr::expr_to_java(cursor_name, proc);
+                    // Source cursor name in the stub comment, not a resolved
+                    // expression — keeps the comment readable for untracked cursors.
+                    let cursor_java = crate::expr::get_column_ref_name(cursor_name)
+                        .unwrap_or_else(|| crate::expr::expr_to_java(cursor_name, proc));
                     push_logic_line(proc, format!("// for {} in cursor {}", var, cursor_java));
                     proc.local_vars.remove(&for_stmt.node.variable);
                     proc.local_var_defaults.remove(&for_stmt.node.variable);
@@ -3055,7 +3067,10 @@ pub fn process_statement(
             Ok(())
         }
         PlStatement::Close { cursor } => {
-            let cur = crate::expr::expr_to_java(cursor, proc);
+            // Render the source cursor name (not the resolved expression) so the
+            // stub comment stays readable even when the cursor isn't tracked.
+            let cur = crate::expr::get_column_ref_name(cursor)
+                .unwrap_or_else(|| crate::expr::expr_to_java(cursor, proc));
             push_logic_line(proc, format!("// CLOSE {};", cur));
             Ok(())
         }
