@@ -225,10 +225,8 @@ fn run_multi_file_services(sql_files: &[PathBuf], out_dir: &Path) -> HashMap<Str
 #[test]
 fn issue_79_unqualified_cross_pkg_fn_resolves() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURES_REL);
-    let sql_files = vec![
-        fixtures.join("issue_79_unqualified_fn_callee.sql"),
-        fixtures.join("issue_79_unqualified_fn_caller.sql"),
-    ];
+    let sql_files =
+        vec![fixtures.join("issue_79_unqualified_fn_callee.sql"), fixtures.join("issue_79_unqualified_fn_caller.sql")];
     let tmp = tempfile::tempdir().expect("tempdir");
     let files = run_multi_file_services(&sql_files, &tmp.path().join("dest"));
     let caller = files.get("Issue79UnqualifiedFnCallerService.java").expect("caller service");

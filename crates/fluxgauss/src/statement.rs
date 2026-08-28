@@ -3069,8 +3069,8 @@ pub fn process_statement(
         PlStatement::Close { cursor } => {
             // Render the source cursor name (not the resolved expression) so the
             // stub comment stays readable even when the cursor isn't tracked.
-            let cur = crate::expr::get_column_ref_name(cursor)
-                .unwrap_or_else(|| crate::expr::expr_to_java(cursor, proc));
+            let cur =
+                crate::expr::get_column_ref_name(cursor).unwrap_or_else(|| crate::expr::expr_to_java(cursor, proc));
             push_logic_line(proc, format!("// CLOSE {};", cur));
             Ok(())
         }
