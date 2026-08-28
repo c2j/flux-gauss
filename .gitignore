@@ -5,6 +5,7 @@ dest_py/
 dest_tu/
 dest_itest/
 dest_itest_remote/
+dest_*/
 demo-project/dest
 # Proprietary/large SQL files kept out of public repo
 demo-project/sql/PKG_DEPOSIT_ACNT_INFO_INQUIRY.sql
@@ -28,3 +29,10 @@ tests/regress/.ast_cache/
 build/
 dist/
 *.spec.bak
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Machine-local tooling state
+.github/hooks/workmux-status/
