@@ -1531,6 +1531,37 @@ fn binary_op_to_java(
     }
 
     let is_arith = matches!(op, "*" | "+" | "-" | "/");
+    // Unwrap AtomicReference vars (OUT-arg promoted locals / OUT params) used in
+    // arithmetic: they hold primitive values, not AtomicReference objects (issue
+    // #109 fastaas: `... * vReturnRateOrg` where vReturnRateOrg is AtomicReference<Long>).
+    if is_arith {
+        let unwrap_ar = |e: &str| -> String {
+            let lower = e.trim().to_lowercase().replace("_", "");
+            // out_local_vars is only drained at the END of analyze_procedure, so during
+            // expression rendering a promoted var lives in the pending queue instead.
+            let pending_promoted = PENDING_OUT_PROMOTIONS.with(|q| {
+                q.borrow().iter().any(|(k, _)| k.to_lowercase().replace("_", "") == lower)
+            });
+            let is_ar = proc.out_local_vars.keys().any(|k| k.to_lowercase().replace("_", "") == lower)
+                || proc.parameters.iter().any(|p| p.is_out() && p.name.to_lowercase().replace("_", "") == lower)
+                || proc
+                    .local_vars
+                    .get(e.trim().to_lowercase().as_str())
+                    .is_some_and(|t| t.contains("AtomicReference"))
+                || proc
+                    .local_vars
+                    .iter()
+                    .any(|(k, t)| k.to_lowercase().replace("_", "") == lower && t.contains("AtomicReference"))
+                || pending_promoted;
+            if is_ar && !e.contains(".get()") {
+                format!("{}.get()", e)
+            } else {
+                e.to_string()
+            }
+        };
+        l = unwrap_ar(&l);
+        r = unwrap_ar(&r);
+    }
     let l_trim = l.trim();
     let r_trim = r.trim();
     let l_is_ts = is_timestamp_or_date_var(&l, proc)
@@ -2817,6 +2848,10 @@ mod tests {
     fn empty_proc() -> ProcedureInfo {
         ProcedureInfo::new("pkg.test".into(), "pkg".into(), "test".into())
     }
+
+
+
+
 
     #[test]
     fn test_resolve_var_java_type_maps_rendered_camel_case_to_snake_case() {
