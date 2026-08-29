@@ -1,0 +1,9 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue109CounterDualUseMapper {
+
+    // No direct DML operations for issue_109_counter_dual_use
+}

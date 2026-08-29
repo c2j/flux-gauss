@@ -750,3 +750,33 @@ fn issue_70_distinct_paths_do_not_share_one_ast_cache_entry() {
     let b = state.cached_ast_path_for_test(&root.join("x_a.sql"));
     assert_ne!(a, b, "distinct source paths must not share one AST cache file: {:?}", a);
 }
+
+#[test]
+fn issue_109_declared_counter_reused_not_inlined() {
+    // #109 regression: a declare-section variable (i INTEGER) used both as a WHILE
+    // manual counter and a range-loop counter must keep its method-level declaration;
+    // the range loop must reuse it (`for (i = ...)`) instead of inlining `int i`
+    // (which would shadow-and-conflict with the method-level Integer in Java).
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURES_REL);
+    let sql_file = fixtures.join("issue_109_counter_dual_use.sql");
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let generated = run_conversion(&sql_file, &tmp.path().join("dest"));
+    let service = generated.files.get("Service.java").expect("Service.java not generated");
+
+    assert!(
+        service.contains("Integer i = null;"),
+        "declare-section counter must keep method-level declaration:\n{}",
+        service
+    );
+    assert!(
+        service.contains("i = 1;") && service.contains("i = i + 1;"),
+        "WHILE manual counter assignments must reference the declared var:\n{}",
+        service
+    );
+    assert!(
+        service.contains("for (i = 1; i <= 5; i++)"),
+        "range loop must reuse the declared counter, not inline `int i`:\n{}",
+        service
+    );
+    assert!(!service.contains("for (int i = 1; i <= 5"), "must not inline a shadowing int declaration:\n{}", service);
+}

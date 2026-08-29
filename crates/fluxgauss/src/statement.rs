@@ -2635,11 +2635,19 @@ pub fn process_statement(
                     let lo_safe = if crate::expr::is_nullish_java_expr(&lo) { "0".to_string() } else { lo };
                     let hi_safe = if crate::expr::is_nullish_java_expr(&hi) { "0".to_string() } else { hi };
                     let iter_var = var.clone();
-                    // Track the counter so body references resolve via the declared-variable
-                    // path. Always insert unconditionally: sibling FOR loops reusing the same
-                    // counter name are each independently scoped by their own `for (int i = ...)`
-                    // header in Java, so this must not gate the inline declaration below.
-                    proc.local_vars.insert(for_stmt.node.variable.to_lowercase(), "int".into());
+                    let var_lower = for_stmt.node.variable.to_lowercase();
+                    // A declare-section variable (e.g. `i INTEGER`) that ALSO appears as a
+                    // range-loop counter must be reused by the loop header (`for (i = ...)`)
+                    // rather than re-declared inline — Java forbids a method-level `Integer i`
+                    // and a loop-header `int i` in the same scope (issue #109). Purely
+                    // implicit counters (not in the declare section) get the inline
+                    // `for (int i = ...)` declaration; sibling loops reusing such a counter
+                    // each scope their own `int` independently.
+                    let declared_type = proc.local_vars.get(&var_lower).cloned();
+                    let reuse_declared = matches!(&declared_type, Some(t) if t != "int");
+                    if declared_type.is_none() {
+                        proc.local_vars.insert(var_lower, "int".into());
+                    }
                     let step_code = match step {
                         Some(s) => {
                             let s_val = crate::expr::expr_to_java(s, proc);
@@ -2648,12 +2656,27 @@ pub fn process_statement(
                         None => format!("{}++", iter_var),
                     };
                     if *reverse {
+                        if reuse_declared {
+                            push_logic_line(
+                                proc,
+                                format!(
+                                    "for ({} = {}; {} >= {}; {}--) {{",
+                                    iter_var, hi_safe, iter_var, lo_safe, iter_var
+                                ),
+                            );
+                        } else {
+                            push_logic_line(
+                                proc,
+                                format!(
+                                    "for (int {} = {}; {} >= {}; {}--) {{",
+                                    iter_var, hi_safe, iter_var, lo_safe, iter_var
+                                ),
+                            );
+                        }
+                    } else if reuse_declared {
                         push_logic_line(
                             proc,
-                            format!(
-                                "for (int {} = {}; {} >= {}; {}--) {{",
-                                iter_var, hi_safe, iter_var, lo_safe, iter_var
-                            ),
+                            format!("for ({} = {}; {} <= {}; {}) {{", iter_var, lo_safe, iter_var, hi_safe, step_code),
                         );
                     } else {
                         push_logic_line(
