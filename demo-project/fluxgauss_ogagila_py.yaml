@@ -1,5 +1,5 @@
 # ogagila migration — Python engine
-# Prepared sources: lib/ogagila/sqls (psql \set meta-commands stripped)
+# Sources: lib/ogagila/sqls — \set 元指令由 test_fastaas_migration.py harness 运行时剥离，勿直接转换
 output_dir: ./dest_ogagila_py
 base_package: com.ogagila
 

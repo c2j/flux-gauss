@@ -819,7 +819,7 @@ fn is_date_consumed_call(pkg: &PackageInfo, svc_var: &str, method: &str) -> bool
         if line.contains(&call_pat) {
             if let Some(eq) = line.find('=') {
                 let lhs = line[..eq].trim();
-                if let Some(open) = lhs.rfind(|c: char| c == ' ' || c == '(') {
+                if let Some(open) = lhs.rfind([' ', '(']) {
                     let var = lhs[open + 1..].trim().trim_end_matches(';');
                     if !var.is_empty() && !var.contains('.') {
                         consumed_vars.insert(var.to_string());

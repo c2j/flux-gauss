@@ -1533,7 +1533,7 @@ fn interval_month_count(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) ->
 /// `toLocalDate().plusMonths(...)` instead of `toLocalDateTime()` for `date + interval`.
 fn is_date_only_var(expr_str: &str, proc: &ProcedureInfo) -> bool {
     let name = expr_str.trim();
-    let base = name.split(|c: char| c == '.' || c == '(').next().unwrap_or(name);
+    let base = name.split(['.', '(']).next().unwrap_or(name);
     if let Some(ty) = proc.local_vars.get(&base.to_lowercase()) {
         return ty.contains("java.sql.Date") || ty == "Date";
     }

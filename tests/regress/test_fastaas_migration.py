@@ -44,11 +44,12 @@ DATASET_CONFIGS = [
 
 REQUIRES_OGSQL = {"py"}
 
-# DML floor per dataset (mapper method count sanity). Measured from a green run.
+# DML floor per dataset (mapper method count sanity). Calibrated from green ru runs:
+# exam=179, fastaas=331, ogagila=68 (ogagila measured with 6 known compile errors).
 DML_FLOOR = {
-    "exam": {"py": 200, "ru": 200},
-    "fastaas": {"py": 100, "ru": 100},
-    "ogagila": {"py": 100, "ru": 100},
+    "exam": {"py": 150, "ru": 150},
+    "fastaas": {"py": 250, "ru": 250},
+    "ogagila": {"py": 50, "ru": 50},
 }
 
 # ogagila sources live in lib/ogagila/sqls which still contains psql \set
@@ -205,3 +206,17 @@ def test_dataset_no_exception_stubs(dataset, engine, dataset_results):
     if "skipped" in r:
         pytest.skip(r["skipped"])
     assert r.get("exception_stub_count", 1) == 0, f"{dataset}/{engine} has exception-stub artifacts"
+
+
+@pytest.mark.fastaas_migration
+@pytest.mark.parametrize("dataset,engine", [(d, e) for d, e, _, _ in DATASET_CONFIGS])
+def test_dataset_dml_floor(dataset, engine, dataset_results):
+    """Mapper-method sanity: a conversion that silently produced ~no DML (e.g. wrong
+    sources path resolving to empty) must fail even if mvn compile/test pass."""
+    r = dataset_results[f"{dataset}/{engine}"]
+    if "skipped" in r:
+        pytest.skip(r["skipped"])
+    floor = DML_FLOOR.get(dataset, {}).get(engine, 0)
+    assert r.get("mapper_method_count", 0) >= floor, (
+        f"{dataset}/{engine} mapper methods {r.get('mapper_method_count')} < floor {floor}"
+    )

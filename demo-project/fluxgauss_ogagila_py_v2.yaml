@@ -1,5 +1,5 @@
 # ogagila v2 validation — Python engine (ogsql-parser 0.10.1)
-# Prepared sources: lib/ogagila/sqls (psql \set meta-commands stripped)
+# Sources: lib/ogagila/sqls — \set 元指令由 test_fastaas_migration.py harness 运行时剥离，勿直接转换
 output_dir: ./dest_ogagila_py_v2
 base_package: com.ogagila
 

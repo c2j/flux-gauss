@@ -42,22 +42,26 @@ for ds in "${DATASETS[@]}"; do
     sed "s#^output_dir:.*#output_dir: $dest#" "$yaml" > "$probe_cfg"
     yaml="$probe_cfg"
 
-    # ogagila: 清洗 sources → 生成临时配置
+    # ogagila: 剥离 psql \set 元指令到临时目录，配置 sources 指向清洗副本
+    # （与 test_fastaas_migration.py::_prepare_ogagila 同逻辑；勿直接转换原始 submodule SQL）
     if [[ "$ds" == "ogagila" ]]; then
       tmp_cfg="$(mktemp /tmp/ogagila_cfg.XXXXXX)"
       python3 - "$yaml" "$tmp_cfg" << 'PYEOF'
-import re, sys
-src, dst = sys.argv[1], sys.argv[2]
-text = open(src, encoding='utf-8').read()
-# sources 指向的 /tmp/ogagila_src → 清洗后写入的临时目录，逐文件 sed 等价
-# 简单实现：把 /tmp/ogagila_src 路径替换为 /tmp/ogagila_src_clean（脚本调用方需先建好）
-text = text.replace('/tmp/ogagila_src', '/tmp/ogagila_src_clean')
-open(dst, 'w', encoding='utf-8').write(text)
+import shutil, sys, tempfile
+from pathlib import Path
+src_cfg, dst_cfg = sys.argv[1], sys.argv[2]
+src_root = Path("lib/ogagila/sqls")
+clean = Path(tempfile.mkdtemp(prefix="ogagila_clean_"))
+shutil.copytree(src_root, clean, dirs_exist_ok=True)
+for sql in clean.rglob("*.sql"):
+    stripped = b"\n".join(
+        ln for ln in sql.read_bytes().split(b"\n") if not ln.lstrip().startswith(b"\\set ")
+    )
+    sql.write_bytes(stripped)
+text = open(src_cfg, encoding="utf-8").read()
+text = text.replace(str(src_root), str(clean))
+open(dst_cfg, "w", encoding="utf-8").write(text)
 PYEOF
-      # 建清洗副本
-      rm -rf /tmp/ogagila_src_clean && mkdir -p /tmp/ogagila_src_clean
-      cp -r /tmp/ogagila_src/* /tmp/ogagila_src_clean/
-      find /tmp/ogagila_src_clean -name "*.sql" -exec sed -i '' '/^\\set /d' {} \; 2>/dev/null
       yaml="$tmp_cfg"
     fi
 
