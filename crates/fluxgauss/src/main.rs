@@ -320,7 +320,8 @@ fn resolve_inputs(cli: &Cli) -> Result<(config::AppConfig, Vec<PathBuf>, String)
     } else if cli.output.is_some() || !cli.sources.is_empty() {
         let output = cli.output.clone().ok_or("Missing --output directory. Use -o <dir> with -s <sql_files>")?;
         let sql_files = cli.sources.clone();
-        let config = config::AppConfig::default();
+        let mut config = config::AppConfig::default();
+        config.output_dir = Some(output.to_string_lossy().to_string());
         Ok((config, sql_files, output.to_string_lossy().to_string()))
     } else {
         Err("Missing --config or --output/--sources. Use -c <config.yaml> or -o <dir> -s <sql> [...]".into())
