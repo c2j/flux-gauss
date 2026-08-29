@@ -2155,11 +2155,84 @@ def _promote_out_local_vars(proc: ProcedureInfo, all_packages: dict):
                         if 'String' in m_ar.group(1) and not rhs.strip().startswith('"') and rhs.strip() != 'null':
                             rhs = f'String.valueOf({rhs})'
                         line = f'{m_assign.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<>({rhs});'
-                patched.append(_patch_promoted_var_reads(line, var_java, string_inner=_string_inner))
+                patched.append(_patch_promoted_var_reads(line, var_java, string_inner=_string_inner,
+                                                          proc=proc, all_packages=all_packages))
             proc.java_logic_lines = patched
 
 
-def _patch_promoted_var_reads(line: str, var_java: str, string_inner: bool = False) -> str:
+def _split_call_args(args_str: str) -> list:
+    """Split a Java call argument string on top-level commas, honoring nesting."""
+    parts, depth_p, depth_b, depth_br, quote = [], 0, 0, 0, None
+    current = []
+    i = 0
+    while i < len(args_str):
+        ch = args_str[i]
+        if quote:
+            current.append(ch)
+            if ch == quote and args_str[i - 1] != "\\":
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+            current.append(ch)
+        elif ch == "(":
+            depth_p += 1
+            current.append(ch)
+        elif ch == ")":
+            depth_p -= 1
+            current.append(ch)
+        elif ch == "[":
+            depth_b += 1
+            current.append(ch)
+        elif ch == "]":
+            depth_b -= 1
+            current.append(ch)
+        elif ch == "{":
+            depth_br += 1
+            current.append(ch)
+        elif ch == "}":
+            depth_br -= 1
+            current.append(ch)
+        elif ch == "," and depth_p == 0 and depth_b == 0 and depth_br == 0:
+            parts.append("".join(current).strip())
+            current = []
+        else:
+            current.append(ch)
+        i += 1
+    if current:
+        parts.append("".join(current).strip())
+    return parts
+
+
+def _strip_get_for_cross_pkg_out_args(line: str, var_java: str, proc: ProcedureInfo, all_packages: dict) -> str:
+    """Undo the generic .get() rewrite for promoted vars passed as OUT args to
+    cross-package service calls (the callee expects the AtomicReference itself)."""
+    m = re.search(r"(\w+Service)\.(\w+)\s*\((.*)\)\s*;?\s*$", line)
+    if not m:
+        return line
+    svc_var, method, args_str = m.group(1), m.group(2), m.group(3)
+    pkg_name = next((sc.package_name for sc in proc.service_calls if sc.service_name == svc_var), None)
+    if not pkg_name:
+        return line
+    pkg = all_packages.get(pkg_name)
+    if not pkg:
+        return line
+    args = _split_call_args(args_str)
+    candidates = [p for p in pkg.procedures if java_method_name(p.proc_name) == method]
+    if not candidates:
+        return line
+    exact = [p for p in candidates if len(p.parameters) == len(args)]
+    target = exact[0] if exact else candidates[0]
+    var_get = f"{var_java}.get()"
+    for pos, arg in enumerate(args):
+        if pos >= len(target.parameters):
+            break
+        if target.parameters[pos].is_out and var_get in arg:
+            line = line.replace(var_get, var_java)
+    return line
+
+
+def _patch_promoted_var_reads(line: str, var_java: str, string_inner: bool = False,
+                              proc: ProcedureInfo = None, all_packages: dict = None) -> str:
     import re
     # Remove .get() from promoted vars passed as OUT args to method/mapper calls
     if f'{var_java}.get()' in line and (re.search(rf'\bthis\.\w+\(', line) or 'Mapper.' in line):
@@ -2178,6 +2251,8 @@ def _patch_promoted_var_reads(line: str, var_java: str, string_inner: bool = Fal
         f'{var_java}.get()',
         line,
     )
+    if proc is not None and all_packages:
+        line = _strip_get_for_cross_pkg_out_args(line, var_java, proc, all_packages)
     if string_inner:
         _vget = f'{var_java}.get()'
         line = line.replace(f'((Number) ({_vget})).doubleValue()', f'Double.parseDouble(String.valueOf({_vget}))')

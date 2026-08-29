@@ -1,0 +1,21 @@
+// ===== FILE: CalleeMapper.java =====
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface CalleeMapper {
+
+    // No direct DML operations for pkg_callee
+}
+
+// ===== FILE: CallerMapper.java =====
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface CallerMapper {
+
+    // No direct DML operations for pkg_caller
+}

@@ -1288,6 +1288,29 @@ class TestStringTargetHelperCoercion:
 
 # ── Meta: Verify all issue fixtures parse correctly ──────────────
 
+class TestIssue83_OutCrossPkgCall:
+    """OUT 局部变量提升为 AtomicReference 后，跨包调用必须传引用本体
+    （vRows 而非 vRows.get()）——见 ogagila OrchService/DwdService 编译错误。
+
+    需走真实 CLI 管线：_promote_out_local_vars 在 analyze 之后（Phase 2.5）运行，
+    _run_pipeline 单测 harness 不触发。"""
+
+    SQL_FILE = "issue_83_out_cross_pkg.sql"
+
+    def test_cross_pkg_out_args_pass_reference_not_get(self, tmp_path):
+        out_dir = _run_cli_pipeline([self.SQL_FILE], tmp_path)
+        # 同文件同 schema 包合并为 1 个 Service（#70 行为），caller 过程落入 CalleeService
+        svc = _read_generated(out_dir, "src/main/java/com/example/demo/service/CalleeService.java")
+        assert "calleeService.buildIncremental(pRunId, vRows, vMonths);" in svc, (
+            f"OUT args must pass the AtomicReference itself, got:\n{svc[:1500]}"
+        )
+        assert "calleeService.planIncrement(\"x\", vRows, vMonths);" in svc, (
+            f"OUT args must pass the AtomicReference itself, got:\n{svc[:1500]}"
+        )
+
+
+# ── Meta: Verify all issue fixtures parse correctly ──────────────
+
 class TestIssue99_DuplicateParamNames:
     """PG catalog-style signatures reuse the type name as the parameter name
     (`_group_concat(text, text)`). Both engines must dedupe (text, text2) in

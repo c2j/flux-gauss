@@ -1,0 +1,41 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue83OutCrossPkgMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue83OutCrossPkgService {
+    private static final Logger log = LoggerFactory.getLogger(Issue83OutCrossPkgService.class);
+
+    private final Issue83OutCrossPkgMapper issue83OutCrossPkgMapper;
+
+    public Issue83OutCrossPkgService(Issue83OutCrossPkgMapper issue83OutCrossPkgMapper) {
+        this.issue83OutCrossPkgMapper = issue83OutCrossPkgMapper;
+    }
+    // Source: pkg_callee.plan_increment (PROCEDURE) — issue_83_out_cross_pkg.sql:8-11
+    public void planIncrement(String pSource, AtomicReference<Long> pIdFrom, AtomicReference<Long> pIdTo) {
+        pIdFrom.set(null);
+        pIdTo.set(null);
+    }
+
+    // Source: pkg_callee.build_incremental (PROCEDURE) — issue_83_out_cross_pkg.sql:13-16
+    public void buildIncremental(String pRunId, AtomicReference<Long> pRows, AtomicReference<Long> pMonths) {
+        pRows.set(null);
+        pMonths.set(null);
+    }
+
+    // Source: pkg_caller.run_daily (PROCEDURE) — issue_83_out_cross_pkg.sql:26-35
+    public void runDaily(String pRunId) {
+        Long vRows = 0L;
+        Long vMonths = 0L;
+        // CALL pkg_callee.build_incremental(...)
+        if (vRows.compareTo(Long.valueOf(0)) > 0) {
+        }
+        // CALL pkg_callee.plan_increment(...)
+    }
+}

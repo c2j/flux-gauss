@@ -1,0 +1,85 @@
+// ===== FILE: CalleeServiceTest.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.CalleeMapper;
+import com.example.demo.service.CalleeService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_83_out_cross_pkg.sql
+class CalleeServiceTest {
+
+    @Mock
+    private CalleeMapper calleeMapper;
+
+    @InjectMocks
+    private CalleeService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_planIncrement_success() {
+        String pSource = "test_pSource";
+        AtomicReference<Long> pIdFromRef = new AtomicReference<>(1L);
+        AtomicReference<Long> pIdToRef = new AtomicReference<>(1L);
+        service.planIncrement(pSource, pIdFromRef, pIdToRef);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_buildIncremental_success() {
+        String pRunId = "test_pRunId";
+        AtomicReference<Long> pRowsRef = new AtomicReference<>(1L);
+        AtomicReference<Long> pMonthsRef = new AtomicReference<>(1L);
+        service.buildIncremental(pRunId, pRowsRef, pMonthsRef);
+    }
+}
+
+// ===== FILE: CallerServiceTest.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.CallerMapper;
+import com.example.demo.service.CalleeService;
+import com.example.demo.service.CallerService;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_83_out_cross_pkg.sql
+class CallerServiceTest {
+
+    @Mock
+    private CallerMapper callerMapper;
+
+    @Mock
+    private CalleeService calleeService;
+
+    @InjectMocks
+    private CallerService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_runDaily_success() {
+        String pRunId = "test_pRunId";
+        service.runDaily(pRunId);
+    }
+}
