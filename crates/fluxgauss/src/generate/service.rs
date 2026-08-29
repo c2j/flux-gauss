@@ -669,12 +669,28 @@ fn build_service_method(
                 // their own counter inline in the loop header; proc.local_vars still
                 // tracks the var so resolve_column_ref resolves body references to it
                 // (Task 6), but re-declaring it here too would be a duplicate-variable
-                // Java compile error.
+                // Java compile error. However, if the same variable is ALSO used
+                // outside a range-loop header (e.g. a manual `i := 1` + `i := i + 1`
+                // WHILE counter, or an array subscript), the method-level declaration
+                // must be kept — the inline `for (int i = ...)` scopes to its own loop
+                // and cannot serve those uses (issue #109).
                 let is_range_loop_iter = proc.java_logic_lines.iter().any(|l| {
                     let t = l.trim_start();
                     t.starts_with("for (int ") && l.contains(&format!("int {} = ", var_java))
                 });
-                if is_loop_iter || is_range_loop_iter {
+                let used_outside_loop_header = proc.java_logic_lines.iter().any(|l| {
+                    let t = l.trim_start();
+                    if t.starts_with("for (int ") || t.starts_with("for (") {
+                        return false;
+                    }
+                    // Only an ASSIGNMENT to the variable outside a loop header requires
+                    // the method-level declaration (e.g. `i = 1;` or `i = i + 1;` in a
+                    // WHILE counter). Plain reads inside a range loop body (e.g.
+                    // `tRes.get(i)`) are served by the inline `for (int i ...)` and must
+                    // NOT force a redundant method-level declaration.
+                    l.contains(&format!("{} =", var_java)) || l.contains(&format!("= {}", var_java))
+                });
+                if is_loop_iter || (is_range_loop_iter && !used_outside_loop_header) {
                     continue;
                 }
                 // Check if this local var was promoted to AtomicReference for OUT param usage

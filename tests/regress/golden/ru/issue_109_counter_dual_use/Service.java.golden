@@ -1,0 +1,40 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue109CounterDualUseMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_109_counter_dual_use.sql
+public class Issue109CounterDualUseService {
+    private static final Logger log = LoggerFactory.getLogger(Issue109CounterDualUseService.class);
+
+    private final Issue109CounterDualUseMapper issue109CounterDualUseMapper;
+
+    public Issue109CounterDualUseService(Issue109CounterDualUseMapper issue109CounterDualUseMapper) {
+        this.issue109CounterDualUseMapper = issue109CounterDualUseMapper;
+    }
+
+    // Source: fn_split_counter (FUNCTION) — {FIXTURES_ROOT}/issue_109_counter_dual_use.sql:1-22
+    public String fnSplitCounter(String pIStr) {
+        Integer i = null;
+        String tRes = null;
+        Integer vOldpos = null;
+        Integer vPos = null;
+        vOldpos = 1;
+        i = 1;
+        vPos = String.valueOf(pIStr).indexOf(",") + 1;
+        while (vPos > 0) {
+            tRes = String.valueOf(pIStr).substring(Math.min(String.valueOf(pIStr).length(), Math.max(0, (vOldpos) - 1)), Math.min(String.valueOf(pIStr).length(), Math.max(0, (vOldpos) - 1) + (vPos - vOldpos)));
+            i = i + 1;
+            vOldpos = vPos + 1;
+            vPos = String.valueOf(pIStr).indexOf(",", Math.max(0, (1) - 1)) + 1;
+        }
+        for (i = 1; i <= 5; i++) {
+        }
+        return String.valueOf(tRes);
+    }
+}

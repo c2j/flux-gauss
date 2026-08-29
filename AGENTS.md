@@ -223,6 +223,10 @@ ogsql validate → 转换 → mvn compile → mvn test → DB_PASSWORD=... mvn v
 - **回归基线双集**（配置 `demo-project/fluxgauss_*_v2.yaml` / `fluxgauss_fastaas_*.yaml`）：
   - fastaas `collected_sql`：标准 Oracle 风格 PL/SQL，当前双引擎 100%——防回归黄金集
   - ogagila：openGauss 特性压测集（列存/动态 SQL/分区/AT TIME ZONE/自治事务）
+- **外部数据集检查项（submodule 化，仓内可复现）**：`pytest tests/regress/test_fastaas_migration.py -m fastaas_migration`
+  - 数据集来源：`lib/fastaas`（`https://github.com/NO3623/fastaas.git`）的 `exam/清算拆分优化考题/基线代码`（136 文件）与 `exam/all_sq/collected_sql/collected_sql`（49 文件）、`lib/ogagila`（`git@github.com:c2j/ogagila.git`）的 `sqls/`（22 文件）
+  - ogagila SQL 含 psql `\set` 元指令，harness 运行时剥离（`_prepare_ogagila`）后喂转换器；fastaas `collected_sql` 为 GB18030，引擎自动探测编码
+  - 覆盖三数据集 × 双引擎（6 项）convert → `mvn compile` 0 错 → `mvn test` 0 错 → 语义健康；CI 拉 submodule 需 checkout `submodules: recursive`（fastaas 若转 PRIVATE 需 deploy key）
 - 编译错误数按唯一 `file:[line,col]` 位置统计（maven 每条错误打印两遍）。
 
 ### 4. 调试守则
@@ -271,6 +275,7 @@ ogsql validate → 转换 → mvn compile → mvn test → DB_PASSWORD=... mvn v
 - [ ] 未删除、跳过、改写人类已有测试
 - [ ] 门禁已跑：Python 改动 → ruff + pytest；Rust 改动 → fmt + clippy（无新增）+ cargo test；生成逻辑改动 → §3 完整验证链
 - [ ] **生成逻辑改动（必过）**：`python3 -m pytest tests/regress/test_demo_migration.py -v --tb=short -m demo_migration` 通过（Rust 引擎需先 `cargo build --release --bin fluxgauss`）；且 demo 全流程 `mvn compile` 唯一错误位置数为 **0**、`mvn test` **0 failures/0 errors**
+- [ ] **外部数据集改动（若涉及）**：`python3 -m pytest tests/regress/test_fastaas_migration.py -v --tb=short -m fastaas_migration` 通过（三数据集 × 双引擎；ogagila 已知缺陷见专项跟踪前不得声明全绿）
 - [ ] 跨引擎契约改动（JSON AST 消费 / YAML schema / 生成物）：`golden/py` 与 `golden/ru` parity 都要跑
 - [ ] 无草稿、调试输出、无主 lockfile 变更被带入
 - [ ] 汇报含具体证据：改动文件清单 + 实际执行的命令与结果（不写「测过了」）
@@ -298,6 +303,9 @@ python3 -m pytest tests/regress/ -v --tb=short -m "not demo_migration"
 
 # 慢 e2e（CI 第 3 条：~4min，需 ogsql + Java + Maven）
 python3 -m pytest tests/regress/test_demo_migration.py -v --tb=short -m demo_migration
+
+# 外部数据集（fastaas/exam/ogagila，submodule 化；先 git submodule update --init）
+python3 -m pytest tests/regress/test_fastaas_migration.py -v --tb=short -m fastaas_migration
 
 # 双引擎 parity（需 ogsql + target/release/fluxgauss）
 python3 -m pytest tests/regress/test_parity.py -m parity -v
