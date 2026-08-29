@@ -165,6 +165,13 @@ pub fn analyze_procedure(
         }
         ctx.unresolved_calls.extend(stmt_ctx.unresolved_calls.drain(..));
     }
+    // Apply any bare-local-var promotions queued by emit_cross_pkg_call (see
+    // crate::expr::take_pending_out_promotions) while generating this procedure's
+    // statements above — expr.rs only has `&ProcedureInfo`, so it can't write
+    // proc.out_local_vars directly.
+    for (var_lower, java_type) in crate::expr::take_pending_out_promotions() {
+        proc.out_local_vars.insert(var_lower, java_type);
+    }
     proc.body = body;
     result
 }

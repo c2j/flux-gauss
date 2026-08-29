@@ -726,11 +726,35 @@ fn is_out_param(name: &str, proc: &ProcedureInfo) -> bool {
     proc.parameters.iter().any(|p| p.name.to_lowercase().replace("_", "") == bn && p.is_out())
 }
 
+thread_local! {
+    // Bare local vars queued by `emit_cross_pkg_call` for promotion to
+    // `AtomicReference<T>`. Expr-generation code only has `&ProcedureInfo` (read-only)
+    // available, so it can't write `proc.out_local_vars` directly; the caller further
+    // up the stack (which holds `&mut ProcedureInfo`) drains this via
+    // `take_pending_out_promotions` and applies it once statement processing settles.
+    static PENDING_OUT_PROMOTIONS: std::cell::RefCell<Vec<(String, String)>> = std::cell::RefCell::new(Vec::new());
+}
+
+fn queue_out_promotion(var_name_lower: String, java_type: String) {
+    PENDING_OUT_PROMOTIONS.with(|q| q.borrow_mut().push((var_name_lower, java_type)));
+}
+
+/// Drains all pending OUT-arg promotions queued by `emit_cross_pkg_call` since the
+/// last drain. Called from `analyze_procedure` once a procedure's statements are done
+/// generating, to apply them onto `proc.out_local_vars`.
+pub fn take_pending_out_promotions() -> Vec<(String, String)> {
+    PENDING_OUT_PROMOTIONS.with(|q| q.borrow_mut().drain(..).collect())
+}
+
 /// Render a cross-package service call: IN arguments are coerced to the callee's
-/// declared param type (mirrors the is_self_call branch), and any OUT/local-out
-/// arguments are wrapped with `.get()` since they are passed as `AtomicReference<T>`
-/// on this side. `target_params` is `None` when the callee's params couldn't be
-/// resolved, which falls back to `.get()`-only unwrapping (no coercion).
+/// declared param type (mirrors the is_self_call branch); OUT/IN-OUT arguments are
+/// either passed through unchanged (already `AtomicReference<T>` on this side — the
+/// caller's own OUT param, or a local var already promoted) or, if they're a bare
+/// local variable declared with a plain type (e.g. `String vName = null;`), queued
+/// for promotion to `AtomicReference<T>` via `queue_out_promotion` (see below) so the
+/// callee's `AtomicReference<T>` signature type-checks. `target_params` is `None`
+/// when the callee's params couldn't be resolved, which falls back to `.get()`-only
+/// unwrapping (no coercion, no promotion — can't know the callee's OUT-ness).
 fn emit_cross_pkg_call(
     cross_pkg_svc: &str,
     method: &str,
@@ -751,13 +775,36 @@ fn emit_cross_pkg_call(
         }
     };
 
+    // Handle an OUT/IN-OUT argument of the callee. Already-AtomicReference args
+    // (caller's own OUT param, or already-promoted local) pass through unchanged.
+    // A bare local variable (no `.`, no `(`) that isn't yet an AtomicReference gets
+    // queued for promotion (see `queue_out_promotion`) and is passed by reference
+    // as-is — no `.get()`, since after promotion it *is* an AtomicReference.
+    // Anything else (expressions, Map access, etc.) is left untouched — we can't
+    // safely rewrite it here.
+    let promote_or_pass_through = |a: &str, java_type: &str| -> String {
+        if is_out_param(a, proc)
+            || proc
+                .out_local_vars
+                .iter()
+                .any(|(k, _)| k.to_lowercase().replace("_", "") == a.to_lowercase().replace("_", ""))
+        {
+            return a.to_string();
+        }
+        let trimmed = a.trim();
+        if !trimmed.contains('.') && !trimmed.contains('(') {
+            if let Some(vname) = proc.local_vars.keys().find(|v| snake_to_camel(v) == trimmed) {
+                queue_out_promotion(vname.to_lowercase(), java_type.to_string());
+            }
+        }
+        a.to_string()
+    };
+
     let mut x_args: Vec<String> = jargs
         .iter()
         .enumerate()
         .map(|(i, a)| match target_params.and_then(|params| params.get(i)) {
-            // OUT-param semantics are Task 3's territory — keep the existing
-            // .get()-unwrap-only behavior unchanged here.
-            Some(param) if param.is_out() => unwrap_if_out(a),
+            Some(param) if param.is_out() => promote_or_pass_through(a, &param.java_type),
             Some(param) => coerce_arg_to_type(a, &param.java_type, proc),
             None => unwrap_if_out(a),
         })
