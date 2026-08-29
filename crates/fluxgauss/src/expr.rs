@@ -2851,4 +2851,41 @@ mod tests {
         assert!(out.contains("*/"), "TOBEFIX comment lost its `*/` terminator: {}", out);
         assert!(out.ends_with("null"), "TOBEFIX value must remain null: {}", out);
     }
+
+    #[test]
+    fn test_cross_pkg_ambiguity_falls_back_to_tobefix_with_candidates() {
+        // Task 4/6: two packages defining the same method with the same arity is
+        // genuinely ambiguous — the converter must NOT pick one silently
+        // (first-wins). It falls back to a TOBEFIX marker that lists candidates.
+        let mut proc = empty_proc();
+        let entry = |svc: &str, pkg: &str| GlobalFnEntry {
+            svc_var: svc.into(),
+            package: pkg.into(),
+            params: vec![crate::types::Parameter {
+                name: "x".into(),
+                java_type: "String".into(),
+                sql_type: "varchar2".into(),
+                mode: None,
+                default_value: None,
+            }],
+        };
+        proc.all_proc_params
+            .insert("getVal".into(), vec![entry("pkgAService", "pkg_a"), entry("pkgBService", "pkg_b")]);
+        let expr = ogsql_parser::ast::Expr::FunctionCall {
+            name: vec!["get_val".into()],
+            args: vec![ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String("s".into()))],
+            distinct: false,
+            over: None,
+            filter: None,
+            within_group: Vec::new(),
+            separator: None,
+            default: None,
+            conversion_format: None,
+            agg_from: None,
+            builtin: None,
+        };
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains("TOBEFIX"), "ambiguous call must not resolve silently: {}", out);
+        assert!(out.contains("candidates=[pkgAService, pkgBService]"), "candidates must be listed: {}", out);
+    }
 }
