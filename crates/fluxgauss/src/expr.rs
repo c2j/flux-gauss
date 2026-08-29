@@ -1014,7 +1014,7 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
         "true" => "true".into(),
         "false" => "false".into(),
         "null" => "null".into(),
-        "sysdate" | "current_timestamp" | "systimestamp" | "localtimestamp" => {
+        "sysdate" | "current_timestamp" | "systimestamp" | "localtimestamp" | "now" => {
             "new java.sql.Timestamp(System.currentTimeMillis())".into()
         }
         "current_date" => "new java.sql.Date(System.currentTimeMillis())".into(),
@@ -1529,6 +1529,24 @@ fn interval_month_count(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) ->
     }
 }
 
+/// True if the variable is a `java.sql.Date` (not Timestamp) — used to pick
+/// `toLocalDate().plusMonths(...)` instead of `toLocalDateTime()` for `date + interval`.
+fn is_date_only_var(expr_str: &str, proc: &ProcedureInfo) -> bool {
+    let name = expr_str.trim();
+    let base = name.split(|c: char| c == '.' || c == '(').next().unwrap_or(name);
+    if let Some(ty) = proc.local_vars.get(&base.to_lowercase()) {
+        return ty.contains("java.sql.Date") || ty == "Date";
+    }
+    let base_lower = base.to_lowercase().replace("_", "");
+    proc.local_vars
+        .iter()
+        .any(|(k, t)| k.to_lowercase().replace("_", "") == base_lower && (t.contains("java.sql.Date") || t == "Date"))
+        || proc.parameters.iter().any(|p| {
+            p.name.to_lowercase().replace("_", "") == base_lower
+                && (p.java_type.contains("java.sql.Date") || p.java_type == "Date")
+        })
+}
+
 fn binary_op_to_java(
     left: &ogsql_parser::ast::Expr,
     op: &str,
@@ -1619,6 +1637,12 @@ fn binary_op_to_java(
         if op == "+" && (l_is_ts || r_is_ts) {
             if l_is_ts && !r_is_ts {
                 if let Some(months) = interval_month_count(right, proc) {
+                    if is_date_only_var(&l, proc) {
+                        return format!(
+                            "java.sql.Date.valueOf({}.toLocalDate().plusMonths((long)({})))",
+                            l, months
+                        );
+                    }
                     return format!(
                         "java.sql.Timestamp.valueOf({}.toLocalDateTime().plusMonths((long)({})))",
                         l, months
@@ -2779,8 +2803,19 @@ fn type_cast_to_java(expr: &ogsql_parser::ast::Expr, type_name: &str, proc: &Pro
             }
         }
         s if s.contains("date") => {
-            if inner.starts_with('"') {
+            let inner_trim = inner.trim();
+            let inner_unparenthesized = inner_trim
+                .strip_prefix('(')
+                .and_then(|t| t.strip_suffix(')'))
+                .unwrap_or(inner_trim)
+                .trim();
+            if inner_trim.starts_with('"') {
                 format!("java.sql.Date.valueOf({})", inner)
+            } else if inner_unparenthesized.starts_with("java.sql.Date.valueOf(")
+                || inner_unparenthesized.starts_with("new java.sql.Date(")
+            {
+                // Already a java.sql.Date expression — `::date` is idempotent here.
+                inner
             } else if inner.contains("Timestamp") {
                 format!("new java.sql.Date(({}).getTime())", inner)
             } else if inner.contains("java.time.LocalDate") || inner.contains(".toLocalDate()") {
