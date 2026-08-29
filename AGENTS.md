@@ -269,6 +269,100 @@ ogsql validate → 转换 → mvn compile → mvn test → DB_PASSWORD=... mvn v
 - [ ] 无草稿、调试输出、无主 lockfile 变更被带入
 - [ ] 汇报含具体证据：改动文件清单 + 实际执行的命令与结果（不写「测过了」）
 
+### 10. 命令（唯一来源）
+
+门禁命令此前散落在 §0 / §9 的描述里，没有可直接复制的清单。以下命令均已对照
+`.github/workflows/ci.yml`、`pyproject.toml`、`Cargo.toml` 逐条核对。
+
+```bash
+# ---------- Python 侧 ----------
+# 开发依赖（注意：ruff / mypy 不在 extras 里，必须单独装）
+pip install -e ".[dev,mcp]"
+pip install ruff mypy
+
+# 单测（按文件 / 按名字过滤）
+python3 -m pytest tests/test_type_conversion.py -v
+python3 -m pytest tests -k <pattern> -v
+
+# 快测（CI 第 1 条：排除 regress）
+python3 -m pytest tests/ -v --tb=short --ignore=tests/regress
+
+# 回归（CI 第 2 条：排除慢 e2e）
+python3 -m pytest tests/regress/ -v --tb=short -m "not demo_migration"
+
+# 慢 e2e（CI 第 3 条：~4min，需 ogsql + Java + Maven）
+python3 -m pytest tests/regress/test_demo_migration.py -v --tb=short -m demo_migration
+
+# 双引擎 parity（需 ogsql + target/release/fluxgauss）
+python3 -m pytest tests/regress/test_parity.py -m parity -v
+
+# Python lint / 类型（CI 不跑，本地必跑）
+ruff format --check converter tests
+ruff check converter tests
+mypy converter
+
+# ---------- Rust 侧 ----------
+# 单测
+cargo test -p fluxgauss <test_name>
+
+# 全量（CI 第 1 条）
+cargo test --workspace
+
+# 回归 harness（CI 第 2 条）
+cargo test --test regress
+
+# Rust lint（CI 不跑，本地必跑；按 §6「新增代码零新增 warning」）
+cargo fmt --all -- --check
+cargo clippy --all --all-targets
+```
+
+> ⚠️ **CI 只有 3 个 job**：`Build ogsql (Linux)` / `Rust tests` / `Python tests`。
+> **没有 fmt / clippy / ruff / mypy 任何一项。** §0 门禁表里的 ruff 与 clippy 完全依赖本地自觉——
+> CI 绿不代表门禁过。
+>
+> ⚠️ `ruff` 与 `mypy` **没有**写进 `pyproject.toml` 的 `[project.optional-dependencies]`
+> （`dev` 只有 `pytest>=7.0`），也不在 `requirements.txt` 里；但 `ruff.toml` / `mypy.ini` 存在，
+> §0 又拿 ruff 当门禁。必须 `pip install ruff mypy` 单独安装，否则门禁根本跑不起来。
+>
+> ⚠️ 跑 Python 转换前先离开仓库根目录（见 §4 的 ogsql 二进制解析顺序陷阱），
+> 否则会静默命中根目录的旧 `./ogsql`。
+
+### 11. 接缝与测试分层
+
+§1 定了测试纪律，§2 定了循环，但没说「测不动怎么办」和「这个行为该测在哪一层」。
+
+**接缝（优先顺序，靠后的更差）**
+
+- Python：1) 函数参数 / 构造器注入 → 2) `typing.Protocol` / ABC 假实现 →
+  3) 模块级可替换依赖 → 4) 最后才 `monkeypatch` / `unittest.mock.patch`，
+  且只打进程边界（`OGSQL_BIN` 指向 fixture、文件系统、时钟），禁止 patch 被测对象内部（与 §5 一致）
+- Rust：1) trait + 泛型 / `impl Trait` 假类型 → 2) 用类型消除非法状态（enum / newtype）→
+  3) 时钟 / ID / 文件系统可注入，测试用 `tempfile` → 4) `unsafe` 不是接缝，
+  新增须 Ask first + `SAFETY` 注释
+
+只给即将修改的代码路径补测试，不要顺手「补全覆盖率」。
+
+**测试分层**
+
+| 层级 | 位置 | 测什么 |
+|---|---|---|
+| Python 单元 | `tests/test_*.py` | 表达式转换、类型推断、命名、DML 分析等纯函数 |
+| Python 回归 | `tests/regress/test_golden.py`、`test_issues.py` | golden 产物形态、已修 issue 不回归 |
+| 双引擎 parity | `tests/regress/test_parity.py`（`parity` marker） | Python 与 Rust 产物一致性 |
+| 慢 e2e | `tests/regress/test_demo_migration.py`（`demo_migration` marker） | 端到端 demo yaml + mvn，~4min |
+| Rust 单元 | `crates/*/src` 内 `#[cfg(test)] mod tests` | 模块不变量、错误类型、状态转换 |
+| Rust 回归 | `crates/fluxgauss/tests/regress.rs` | 生成物契约 |
+
+新行为的循环：先写会失败的行为断言（Rust 侧允许「引用尚不存在的 API 导致编译失败」作为合法
+Red），再写最少实现，最后在该层测试全绿后重构——一次只锁定一个行为。这是把 §2 的
+「方向性要求」落到具体层级。
+
+**自我检查**
+- 这条测试在实现写错时会失败吗？
+- 我是否在测行为，而不是私有实现细节？
+- 我是否用 skip、更宽断言、吞异常、golden 盲收换绿？
+- 命令是否来自 §10，而不是我编的？
+
 ## Notes
 
 - `ogsql.broken` at root is a broken binary — ignore it.
