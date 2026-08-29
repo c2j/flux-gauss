@@ -29,7 +29,7 @@ public class Issue108CrossPkgCallerService {
         for (int i = 1; i <= 10; i++) {
             vSum = vSum + i;
         }
-        for (i = 1; i <= 20; i++) {
+        for (int i = 1; i <= 20; i++) {
             vSum = vSum + i;
         }
     }
