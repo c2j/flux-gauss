@@ -1,3 +1,6 @@
 [submodule "lib/ogagila"]
 	path = lib/ogagila
 	url = git@github.com:c2j/ogagila.git
+[submodule "lib/fastaas"]
+	path = lib/fastaas
+	url = https://github.com/NO3623/fastaas.git
