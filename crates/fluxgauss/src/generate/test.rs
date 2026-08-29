@@ -39,6 +39,7 @@ pub fn write_service_test(
 ) -> std::io::Result<String> {
     let mut sorted_injections: Vec<(&String, &String)> = service_injections.iter().collect();
     sorted_injections.sort_by_key(|(k, _)| k.as_str());
+    let cross_service_lines = mock_cross_service_calls(pkg, &sorted_injections);
     let java_pkg = format!("{}.service", base_package);
     let test_dir = base_path.join(format!("src/test/java/{}/service", base_package.replace('.', "/")));
     let class_name = format!("{}Service", package_to_classname(&pkg.package_name));
@@ -69,7 +70,9 @@ pub fn write_service_test(
         imports.insert(format!("import {}.service.{};", base_package, svc_class));
     }
 
-    if pkg.procedures.iter().any(|p| p.parameters.iter().any(|p| p.is_out())) {
+    if pkg.procedures.iter().any(|p| p.parameters.iter().any(|p| p.is_out()))
+        || cross_service_lines.iter().any(|l| l.contains("AtomicReference"))
+    {
         imports.insert("import java.util.concurrent.atomic.AtomicReference;".to_string());
     }
 
@@ -134,7 +137,7 @@ pub fn write_service_test(
         } else {
             String::new()
         };
-        let test_method = build_success_test(proc, &mapper_var, pkg, &suffix);
+        let test_method = build_success_test(proc, &mapper_var, pkg, &suffix, &cross_service_lines);
         for line in test_method.split('\n') {
             w.raw_line(line);
         }
@@ -214,6 +217,7 @@ fn build_success_test(
     mapper_name: &str,
     pkg: &PackageInfo,
     overload_suffix: &str,
+    cross_service_lines: &[String],
 ) -> String {
     let method_name = java_method_name(&proc.proc_name);
     let mut lines = Vec::new();
@@ -267,6 +271,10 @@ fn build_success_test(
     let all_mock_lines = mock_all_mapper_methods(mapper_name, pkg);
     for ml in &all_mock_lines {
         lines.push(ml.clone());
+    }
+
+    for sl in cross_service_lines {
+        lines.push(sl.clone());
     }
 
     let args_str = param_args.join(", ");
@@ -506,6 +514,94 @@ fn extract_map_access_keys(pkg: &PackageInfo) -> Vec<String> {
     let mut result: Vec<String> = keys.into_iter().collect();
     result.sort();
     result
+}
+
+/// Root cause G (#107 follow-up): the test generator only stubbed the
+/// package's own mapper, never the injected cross-package `*Service` fields
+/// that `@InjectMocks` wires in. Mockito returns `null` for any unstubbed
+/// method, so a call site like `gaussFunctionCallsService.fnDeptAvgSalary(x)`
+/// whose result feeds straight into `.multiply(...)` NPEs at test run time.
+///
+/// Scans every procedure's `java_logic_lines` + `local_var_defaults` for
+/// `<svcVar>.<method>(` call sites where `svcVar` is one of the package's
+/// injected services (`sorted_injections`), resolves the callee's declared
+/// return type + parameter types via `proc.all_proc_params` (the global
+/// cross-package function registry built in `pipeline.rs`), and emits a
+/// `when(...).thenReturn(...)` stub. Void, unknown, or unmappable-default
+/// return types are skipped — Mockito's default null/no-op stub already
+/// covers those without producing a misleading fake value.
+fn mock_cross_service_calls(pkg: &PackageInfo, sorted_injections: &[(&String, &String)]) -> Vec<String> {
+    let injected_vars: std::collections::HashSet<&str> =
+        sorted_injections.iter().map(|(svc_var, _)| svc_var.as_str()).collect();
+    if injected_vars.is_empty() {
+        return Vec::new();
+    }
+    let re = regex::Regex::new(r"\b(\w+Service)\.(\w+)\(").unwrap_or_else(|_| regex::Regex::new(r#""#).unwrap());
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut stubs: Vec<(String, String)> = Vec::new();
+    for proc in &pkg.procedures {
+        for line in proc.java_logic_lines.iter().chain(proc.local_var_defaults.values()) {
+            for cap in re.captures_iter(line) {
+                let svc_var = cap.get(1).unwrap().as_str();
+                let method = cap.get(2).unwrap().as_str();
+                if !injected_vars.contains(svc_var) {
+                    continue;
+                }
+                let sig = format!("{}|{}", svc_var, method);
+                if !seen.insert(sig.clone()) {
+                    continue;
+                }
+                let Some(candidates) = proc.all_proc_params.get(method) else {
+                    continue;
+                };
+                let Some(entry) = candidates.iter().find(|e| e.svc_var == svc_var) else {
+                    continue;
+                };
+                let Some(ret) = entry.return_type.as_deref().filter(|rt| *rt != "void") else {
+                    continue;
+                };
+                let default_val = scalar_mock_value(ret);
+                if default_val == "null" {
+                    continue;
+                }
+                let matchers: Vec<String> = entry
+                    .params
+                    .iter()
+                    .map(|p| {
+                        if p.is_out() {
+                            any_matcher_expr(&format!("AtomicReference<{}>", p.java_type))
+                        } else {
+                            // Mirror `service.rs::build_service_method`'s IN-param typing rule
+                            // exactly: any boxed-numeric/boolean param without an explicit
+                            // `default null` is declared primitive in the *actual* callee
+                            // method signature, so the matcher must use `anyInt()`/`anyLong()`
+                            // (not `(Integer) any()`) or Mockito's null unboxes and NPEs.
+                            let is_null_default =
+                                p.default_value.as_ref().map_or(false, |dv| dv.to_lowercase() == "null");
+                            let t = if is_null_default {
+                                p.java_type.as_str()
+                            } else {
+                                crate::generate::service::boxed_to_primitive(&p.java_type)
+                            };
+                            any_matcher_expr(t)
+                        }
+                    })
+                    .collect();
+                stubs.push((
+                    sig,
+                    format!(
+                        "        when({}.{}({})).thenReturn({});",
+                        svc_var,
+                        method,
+                        matchers.join(", "),
+                        default_val
+                    ),
+                ));
+            }
+        }
+    }
+    stubs.sort_by(|a, b| a.0.cmp(&b.0));
+    stubs.into_iter().map(|(_, line)| line).collect()
 }
 
 fn mock_all_mapper_methods(mapper_name: &str, pkg: &PackageInfo) -> Vec<String> {

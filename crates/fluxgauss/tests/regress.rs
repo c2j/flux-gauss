@@ -222,6 +222,41 @@ fn run_multi_file_services(sql_files: &[PathBuf], out_dir: &Path) -> HashMap<Str
     files.into_iter().collect()
 }
 
+/// Runs a multi-file conversion and returns *all* generated `*ServiceTest.java`
+/// files, keyed by filename (including the `.java` extension). Sibling of
+/// `run_multi_file_services` — same pipeline invocation, but scans the test
+/// output directory instead of the main service directory.
+fn run_multi_file_service_tests(sql_files: &[PathBuf], out_dir: &Path) -> HashMap<String, String> {
+    let config = AppConfig {
+        output_dir: Some(out_dir.to_string_lossy().into()),
+        base_package: Some(BASE_PACKAGE.to_string()),
+        sources: Some(sql_files.iter().map(|path| path.to_string_lossy().into()).collect()),
+        ..Default::default()
+    };
+
+    let mut inc = IncrementalState::new(out_dir.to_string_lossy().into_owned(), false);
+    inc.initialize().expect("Failed to initialize incremental state");
+    let _result = run_pipeline(sql_files, &config, &mut inc, false);
+
+    let pkg_path = BASE_PACKAGE.replace('.', "/");
+    let test_dir = out_dir.join("src/test/java").join(&pkg_path).join("service");
+    let mut files: Vec<(String, String)> = fs::read_dir(&test_dir)
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.file_name().map_or(false, |n| n.to_string_lossy().ends_with("ServiceTest.java")))
+                .filter_map(|p| {
+                    let name = p.file_name().unwrap().to_string_lossy().to_string();
+                    fs::read_to_string(&p).ok().map(|content| (name, content))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    files.into_iter().collect()
+}
+
 #[test]
 fn issue_79_unqualified_cross_pkg_fn_resolves() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURES_REL);
@@ -428,6 +463,36 @@ fn issue_108c_cross_pkg_call_return_value_bigdecimal_arithmetic() {
         "B3: the callee's BigDecimal return type must route the multiplication through \
          BigDecimal.multiply(...), not raw `*`:\n{}",
         caller
+    );
+}
+
+/// Root cause G (#107 follow-up): the generated unit test never stubs an
+/// injected cross-package service call, so Mockito returns `null` for e.g.
+/// `issue108cBdReturnArithCalleeService.fnAvgAmount(pIId)`, and the caller's
+/// `.multiply(...)` on that `null` throws NPE at test run time.
+#[test]
+fn issue_g_cross_service_call_is_stubbed_in_generated_test() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURES_REL);
+    let sql_files = vec![
+        fixtures.join("issue_108c_bd_return_arith_callee.sql"),
+        fixtures.join("issue_108c_bd_return_arith_caller.sql"),
+    ];
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let files = run_multi_file_service_tests(&sql_files, &tmp.path().join("dest"));
+    let caller_test = files.get("Issue108cBdReturnArithCallerServiceTest.java").expect("caller test");
+
+    assert!(
+        caller_test.contains("when(issue108cBdReturnArithCalleeService.fnAvgAmount("),
+        "G: the generated test must stub the injected cross-package service call \
+         `issue108cBdReturnArithCalleeService.fnAvgAmount(...)` so Mockito does not \
+         return null for it (the caller calls `.multiply(...)` directly on the result):\n{}",
+        caller_test
+    );
+    assert!(
+        caller_test.contains(".thenReturn(new java.math.BigDecimal("),
+        "G: the stub must return a non-null BigDecimal value matching the callee's \
+         declared return type:\n{}",
+        caller_test
     );
 }
 
