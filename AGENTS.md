@@ -214,7 +214,12 @@ Bug fix 标准循环：
 ogsql validate → 转换 → mvn compile → mvn test → DB_PASSWORD=... mvn verify -Pintegration
 ```
 
-- **解析器升级后必须重跑双项目回归**：parser 修复会让此前「静默丢弃」的语句进入生成管线，暴露转换器新缺口（实例：0.10.1 升级暴露 AtTimeZone dict 直写 #90）。仅 pytest 绿不等于验证完成。
+**门禁数据集（强制，仓内可复现，双引擎）**：`pytest tests/regress/test_demo_migration.py -m demo_migration`
+（Layer 0 权威门禁，convert → `mvn compile` → `mvn test` → 语义健康检查，覆盖 `demo-project/sql/` 41 个 SQL 文件的全量迁移）。**通过标准：demo 全流程 `mvn compile` 唯一错误位置数为 0，且 `mvn test` 0 failures/0 errors**——不接受「与基线持平」「有所减少」。
+
+> ⚠️ **教训（#107/#108 实例）**：golden 回归是**逐 fixture 单文件**转换（`tests/regress/fixtures/`），与 demo-project 的 41 文件**全量迁移**是两套不同数据。前者全绿不代表后者可编译：PR #107 的 cargo test 199+10 全绿、golden 无 diff，但 demo 迁移从基线 0 错误退化到 21 处；修编译后 `mvn test` 又暴露 36 个 Mockito 错误（test-rust job 的 `mvn compile || true` 吞掉失败）。**生成逻辑改动必须以 `test_demo_migration` 通过为最终判据。**
+
+- **解析器升级后必须重跑双项目回归**：parser 修复会让此前「静默丢弃」的语句进入生成管线，暴露转换器新缺口（实例：0.10.1 升级暴露 AtTimeZone dict 直写 #90；#107 跨包解析暴露实参强转/OUT 提升/返回类型/测试打桩等 8 类下游缺口）。仅 pytest 绿不等于验证完成。
 - **回归基线双集**（配置 `demo-project/fluxgauss_*_v2.yaml` / `fluxgauss_fastaas_*.yaml`）：
   - fastaas `collected_sql`：标准 Oracle 风格 PL/SQL，当前双引擎 100%——防回归黄金集
   - ogagila：openGauss 特性压测集（列存/动态 SQL/分区/AT TIME ZONE/自治事务）
@@ -265,6 +270,7 @@ ogsql validate → 转换 → mvn compile → mvn test → DB_PASSWORD=... mvn v
 - [ ] 新行为/修复有失败→通过的测试（golden/regression）
 - [ ] 未删除、跳过、改写人类已有测试
 - [ ] 门禁已跑：Python 改动 → ruff + pytest；Rust 改动 → fmt + clippy（无新增）+ cargo test；生成逻辑改动 → §3 完整验证链
+- [ ] **生成逻辑改动（必过）**：`python3 -m pytest tests/regress/test_demo_migration.py -v --tb=short -m demo_migration` 通过（Rust 引擎需先 `cargo build --release --bin fluxgauss`）；且 demo 全流程 `mvn compile` 唯一错误位置数为 **0**、`mvn test` **0 failures/0 errors**
 - [ ] 跨引擎契约改动（JSON AST 消费 / YAML schema / 生成物）：`golden/py` 与 `golden/ru` parity 都要跑
 - [ ] 无草稿、调试输出、无主 lockfile 变更被带入
 - [ ] 汇报含具体证据：改动文件清单 + 实际执行的命令与结果（不写「测过了」）
