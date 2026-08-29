@@ -560,7 +560,17 @@ fn mock_cross_service_calls(pkg: &PackageInfo, sorted_injections: &[(&String, &S
                 let Some(ret) = entry.return_type.as_deref().filter(|rt| *rt != "void") else {
                     continue;
                 };
-                let default_val = scalar_mock_value(ret);
+                // Issue #109 (exam): a cross-package String return that is consumed by a
+                // date parser (LocalDate.parse / Date.valueOf / SimpleDateFormat /
+                // Timestamp.valueOf) must be mocked with an ISO date string — the generic
+                // "1" would throw DateTimeParseException at test runtime.
+                let default_val = if ret.eq_ignore_ascii_case("string")
+                    && is_date_consumed_call(pkg, svc_var, method)
+                {
+                    "\"2024-01-01\"".to_string()
+                } else {
+                    scalar_mock_value(ret)
+                };
                 if default_val == "null" {
                     continue;
                 }
@@ -789,6 +799,52 @@ fn default_test_value(java_type: &str, param_name: &str) -> String {
         }
     }
     format!("\"test_{}\"", param_name)
+}
+
+/// True if any generated line assigns this cross-package call's result to a variable
+/// that is later consumed by a date/time parser (LocalDate.parse, Date.valueOf,
+/// SimpleDateFormat, Timestamp.valueOf). Used to pick an ISO date mock value instead
+/// of the generic "1" so generated unit tests don't throw DateTimeParseException.
+fn is_date_consumed_call(pkg: &PackageInfo, svc_var: &str, method: &str) -> bool {
+    let call_pat = format!("{}.{}(", svc_var, method);
+    let date_parsers = ["LocalDate.parse(", "Date.valueOf(", "SimpleDateFormat(", "Timestamp.valueOf(", "LocalDateTime.parse("];
+    let mut consumed_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut all_lines: Vec<&String> = Vec::new();
+    for proc in &pkg.procedures {
+        all_lines.extend(proc.java_logic_lines.iter());
+        all_lines.extend(proc.local_var_defaults.values());
+    }
+    // Pass 1: collect LHS vars assigned from this call, and direct in-parse usages.
+    for line in &all_lines {
+        if line.contains(&call_pat) {
+            if let Some(eq) = line.find('=') {
+                let lhs = line[..eq].trim();
+                if let Some(open) = lhs.rfind(|c: char| c == ' ' || c == '(') {
+                    let var = lhs[open + 1..].trim().trim_end_matches(';');
+                    if !var.is_empty() && !var.contains('.') {
+                        consumed_vars.insert(var.to_string());
+                    }
+                } else if !lhs.is_empty() && !lhs.contains('.') {
+                    consumed_vars.insert(lhs.trim_end_matches(';').to_string());
+                }
+            }
+            // Direct nesting in a date parser (e.g. LocalDate.parse(String.valueOf(svc.method(...)))).
+            if date_parsers.iter().any(|p| line.contains(p)) {
+                return true;
+            }
+        }
+    }
+    // Pass 2: any consumed var flowing into a date parser.
+    for line in &all_lines {
+        if date_parsers.iter().any(|p| line.contains(p)) {
+            for var in &consumed_vars {
+                if line.contains(var.as_str()) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 fn scalar_mock_value(java_type: &str) -> String {
