@@ -409,4 +409,19 @@ mod tests {
         let ctx = ScanContext::new();
         assert!(ctx.type_overrides.is_empty());
     }
+
+    #[test]
+    fn test_out_promotion_queue_drained_after_analyze() {
+        // Task 3 (#108) uses a thread_local side-channel (expr.rs's
+        // PENDING_OUT_PROMOTIONS) because expr rendering only holds
+        // &ProcedureInfo. analyze_procedure must drain it fully; a leftover
+        // entry would leak into the NEXT procedure's promotion set. This guard
+        // exists so a future parallelization (rayon etc.) fails loudly instead
+        // of silently cross-contaminating procedures.
+        assert!(
+            crate::expr::take_pending_out_promotions().is_empty(),
+            "PENDING_OUT_PROMOTIONS must be empty between procedure analyses \
+             (thread_local side-channel leak)"
+        );
+    }
 }
