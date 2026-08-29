@@ -1288,6 +1288,41 @@ class TestStringTargetHelperCoercion:
 
 # ── Meta: Verify all issue fixtures parse correctly ──────────────
 
+class TestIssue99_DuplicateParamNames:
+    """PG catalog-style signatures reuse the type name as the parameter name
+    (`_group_concat(text, text)`). Both engines must dedupe (text, text2) in
+    Service, unit test and integration test consistently."""
+
+    SQL_FILE = "issue_99_duplicate_param_names.sql"
+
+    def test_param_names_deduped(self, cached_ast):
+        ast = cached_ast[self.SQL_FILE]
+        procs, _, _ = fg.extract_procedures(ast, self.SQL_FILE)
+        assert len(procs) == 1
+        names = [p.name for p in procs[0].parameters]
+        assert names == ["text", "text2"], f"params must be deduped, got {names}"
+
+    def test_service_and_test_use_deduped_names(self, cached_ast, tmp_path):
+        out_dir, pkg, cls = _run_pipeline(self.SQL_FILE, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert "Object text, Object text2" in svc, (
+            f"Service signature must use deduped params, got:\n{svc[:1200]}"
+        )
+        test_file = _read_generated(
+            out_dir,
+            str(
+                Path(out_dir)
+                / f"src/test/java/{fg.BASE_PACKAGE.replace('.', '/')}/service/{cls}ServiceTest.java"
+            ),
+        )
+        assert "Object text2 = " in test_file, (
+            f"ServiceTest must declare deduped params, got:\n{test_file[:1200]}"
+        )
+        assert "service.GroupConcat(text, text2)" in test_file, (
+            f"ServiceTest call must use deduped params, got:\n{test_file[:1200]}"
+        )
+
+
 class TestIssueFixturesParse:
     """Ensure all issue-specific fixtures can be parsed and analyzed."""
 

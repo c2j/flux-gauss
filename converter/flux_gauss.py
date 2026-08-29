@@ -1610,6 +1610,17 @@ def extract_parameters(params_list: list) -> list:
             mode=mode,
             default_value=p.get("default_value"),
         ))
+    # Deduplicate parameter names: PG catalog-style signatures reuse the type
+    # name as the parameter name (e.g. `_group_concat(text, text)`), which would
+    # otherwise generate duplicate Java identifiers in Service/Test/ITest.
+    # Mirrors the Rust engine's `convert_params` dedup (text, text2, ...).
+    seen_names: dict = {}
+    for param in result:
+        base = param.name or "arg"
+        count = seen_names.get(base.lower(), 0) + 1
+        seen_names[base.lower()] = count
+        if count > 1:
+            param.name = f"{base}{count}"
     return result
 
 

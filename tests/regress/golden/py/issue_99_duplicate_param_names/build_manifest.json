@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_99_duplicate_param_names.sql",
+  "package_name": "issue_99_duplicate_param_names",
+  "files": {
+    "Service.java": "001d6e64cabf8b63",
+    "Mapper.java": "8065cb163ba8697e",
+    "Mapper.xml": "df40f273eb1c31d7",
+    "ServiceTest.java": "9d933613ab276176"
+  }
+}
