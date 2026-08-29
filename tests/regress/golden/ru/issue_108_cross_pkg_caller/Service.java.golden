@@ -1,0 +1,36 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue108CrossPkgCallerMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_108_cross_pkg_caller.sql
+public class Issue108CrossPkgCallerService {
+    private static final Logger log = LoggerFactory.getLogger(Issue108CrossPkgCallerService.class);
+
+    private final Issue108CrossPkgCallerMapper issue108CrossPkgCallerMapper;
+
+    public Issue108CrossPkgCallerService(Issue108CrossPkgCallerMapper issue108CrossPkgCallerMapper) {
+        this.issue108CrossPkgCallerMapper = issue108CrossPkgCallerMapper;
+    }
+
+    // Source: prc_call_cross_pkg (PROCEDURE) — {FIXTURES_ROOT}/issue_108_cross_pkg_caller.sql:1-17
+    public void prcCallCrossPkg(String pIDate) {
+        Long vBonus = 0L;
+        Long vDeclBonus = /* TOBEFIX: unresolved fn fn_calc_bonus(12000, 0.10, 2) - pkg=?, caller={FIXTURES_ROOT}/issue_108_cross_pkg_caller.sql:prc_call_cross_pkg */ null;
+        String vName = null;
+        Long vSum = 0L;
+        vBonus = /* TOBEFIX: unresolved fn fn_calc_bonus(15000, 0.15, 3) - pkg=?, caller={FIXTURES_ROOT}/issue_108_cross_pkg_caller.sql:prc_call_cross_pkg */ 0L;
+        // CALL prc_get_emp_name(1002, vName)
+        for (int i = 1; i <= 10; i++) {
+            vSum = vSum + i;
+        }
+        for (i = 1; i <= 20; i++) {
+            vSum = vSum + i;
+        }
+    }
+}

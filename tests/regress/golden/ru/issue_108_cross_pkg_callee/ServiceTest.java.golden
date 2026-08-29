@@ -1,0 +1,44 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue108CrossPkgCalleeMapper;
+import com.example.demo.service.Issue108CrossPkgCalleeService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_108_cross_pkg_callee.sql
+class Issue108CrossPkgCalleeServiceTest {
+
+    @Mock
+    private Issue108CrossPkgCalleeMapper issue108CrossPkgCalleeMapper;
+
+    @InjectMocks
+    private Issue108CrossPkgCalleeService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_fnCalcBonus_success() {
+        Long pBase = 100L;
+        Long pPct = 100L;
+        Long pYears = 100L;
+        var result = service.fnCalcBonus(pBase, pPct, pYears);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_prcGetEmpName_success() {
+        Long pIId = 1L;
+        AtomicReference<String> pONameRef = new AtomicReference<>(null);
+        service.prcGetEmpName(pIId, pONameRef);
+    }
+}
