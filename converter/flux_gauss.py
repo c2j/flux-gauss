@@ -16579,26 +16579,33 @@ def _build_arg_parser():
     return parser
 
 
-def _read_version_from_cargo_toml():
+def _read_version_from_cargo_toml(base_dir: str | None = None) -> str | None:
     """Read version from Cargo.toml (single source of truth).
 
-    Looks for crates/fluxgauss/Cargo.toml relative to this script.
-    Returns None if not found (e.g. PyInstaller bundle without source).
+    Crate Cargo.toml may declare `version.workspace = true` (no literal);
+    when that indirection is detected the search continues to the workspace
+    root Cargo.toml (`[workspace.package] version`). Returns None if not
+    found (e.g. PyInstaller bundle without source).
     """
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    script_dir = base_dir or os.path.dirname(os.path.abspath(__file__))
     for rel in [os.path.join('..', 'crates', 'fluxgauss', 'Cargo.toml'),
                 os.path.join('..', 'Cargo.toml'),
                 'Cargo.toml']:
         cargo_toml = os.path.normpath(os.path.join(script_dir, rel))
-        if os.path.isfile(cargo_toml):
-            try:
-                with open(cargo_toml, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        s = line.strip()
-                        if s.startswith('version = '):
-                            return s.split('"')[1]
-            except Exception:
-                pass
+        if not os.path.isfile(cargo_toml):
+            continue
+        uses_workspace_version = False
+        try:
+            with open(cargo_toml, 'r', encoding='utf-8') as f:
+                for line in f:
+                    s = line.strip()
+                    if s.startswith('version = '):
+                        return s.split('"')[1]
+                    if s.startswith('version.workspace'):
+                        uses_workspace_version = True
+        except Exception:
+            pass
+        if not uses_workspace_version:
             break
     return None
 

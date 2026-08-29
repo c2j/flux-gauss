@@ -6,7 +6,7 @@ build-backend = "setuptools.backends._legacy:_Backend"
 name = "fluxgauss"
 version = "0.6.24"
 description = "PL/pgSQL → Spring Boot/MyBatis Java converter"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "pyyaml>=6.0",
 ]

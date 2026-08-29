@@ -235,7 +235,7 @@ ogsql validate → 转换 → mvn compile → mvn test → DB_PASSWORD=... mvn v
 ### 5. Python 侧规范（工具链维持现状）
 
 - pip + pyproject.toml + requirements.txt；禁止引入并行的 Poetry/Pipenv/uv
-- **待修正**：`pyproject.toml` requires-python 为 `>=3.9`，但代码用 PEP 604 实际需 3.10+（#73），应改为 `>=3.10`
+- **已修正（#73）**：`pyproject.toml` requires-python 已为 `>=3.10`（代码用 PEP 604 需 3.10+）
 - 格式/lint：ruff（`ruff.toml`）；类型：mypy（`mypy.ini`）；测试：pytest（`pyproject.toml [tool.pytest.ini_options]`）
 - mock 只打进程边界：外部 ogsql 二进制用 `OGSQL_BIN` 指向 fixture；禁止 patch 被测对象内部实现
 
