@@ -220,9 +220,9 @@ ogsql validate → 转换 → mvn compile → mvn test → DB_PASSWORD=... mvn v
 > ⚠️ **教训（#107/#108 实例）**：golden 回归是**逐 fixture 单文件**转换（`tests/regress/fixtures/`），与 demo-project 的 41 文件**全量迁移**是两套不同数据。前者全绿不代表后者可编译：PR #107 的 cargo test 199+10 全绿、golden 无 diff，但 demo 迁移从基线 0 错误退化到 21 处；修编译后 `mvn test` 又暴露 36 个 Mockito 错误（test-rust job 的 `mvn compile || true` 吞掉失败）。**生成逻辑改动必须以 `test_demo_migration` 通过为最终判据。**
 
 - **解析器升级后必须重跑双项目回归**：parser 修复会让此前「静默丢弃」的语句进入生成管线，暴露转换器新缺口（实例：0.10.1 升级暴露 AtTimeZone dict 直写 #90；#107 跨包解析暴露实参强转/OUT 提升/返回类型/测试打桩等 8 类下游缺口）。仅 pytest 绿不等于验证完成。
-- **回归基线双集**（配置 `demo-project/fluxgauss_*_v2.yaml` / `fluxgauss_fastaas_*.yaml`）：
-  - fastaas `collected_sql`：标准 Oracle 风格 PL/SQL，当前双引擎 100%——防回归黄金集
-  - ogagila：openGauss 特性压测集（列存/动态 SQL/分区/AT TIME ZONE/自治事务）
+- **回归基线双集**（配置 `demo-project/fluxgauss_*_v2.yaml` / `fluxgauss_fastaas_*.yaml`，**已入库**，语料守卫见 `tests/regress/test_baseline_guards.py`）：
+  - fastaas `collected_sql`：标准 Oracle 风格 PL/SQL，当前双引擎 100%——防回归黄金集。**注意**：`lib/fastaas` 为本地未跟踪目录（上游仓库 `c2j/fastaas` 不存在），干净 clone 上该语料缺失 → 守卫脚本显式 SKIP（AGENTS.md §8 口径，不计入失败）；有语料的机器全量校验
+  - ogagila：openGauss 特性压测集（列存/动态 SQL/分区/AT TIME ZONE/自治事务），`lib/ogagila` 子模块已注册，sources 缺失视为门禁缺陷（FAIL）
 - 编译错误数按唯一 `file:[line,col]` 位置统计（maven 每条错误打印两遍）。
 
 ### 4. 调试守则
