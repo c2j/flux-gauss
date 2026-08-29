@@ -60,6 +60,22 @@ impl Parameter {
     }
 }
 
+/// A single candidate for a globally-visible (cross-package) procedure/function
+/// reachable by its java method name. Multiple entries may share the same method
+/// name when several packages define a procedure with the same name (overloads
+/// across packages) — all candidates are retained so callers can disambiguate by
+/// arity and/or originating package.
+#[derive(Debug, Clone)]
+pub struct GlobalFnEntry {
+    /// Service field/variable name to call. Derived from the defining package name only,
+    /// e.g. package `issue_79_unqualified_fn_callee` → svc_var "issue79UnqualifiedFnCalleeService".
+    pub svc_var: String,
+    /// Package name the candidate is defined in (compare via `to_lowercase()`).
+    pub package: String,
+    /// Parameter list of the candidate, used for arity/type matching against call sites.
+    pub params: Vec<Parameter>,
+}
+
 // ── DML ──
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,11 +228,11 @@ pub struct ProcedureInfo {
     /// Populated before analysis phase so function_call_to_java can coerce args.
     pub package_proc_params: HashMap<String, Vec<Vec<Parameter>>>,
 
-    /// Maps java method name → service variable name for ALL procedures across ALL packages.
+    /// Maps java method name → all candidate procedures across ALL packages sharing that name.
     /// Used during expression resolution to find cross-package function references.
     /// Populated during analysis phase from proc_summaries.
-    /// Example: "funcGetFrameDate" → "boyfriendService"
-    pub all_proc_params: HashMap<String, String>,
+    /// Example: "funcGetFrameDate" → [GlobalFnEntry { svc_var: "boyfriendService", .. }]
+    pub all_proc_params: HashMap<String, Vec<GlobalFnEntry>>,
 
     pub select_counter: usize,
     pub for_loop_counter: usize,

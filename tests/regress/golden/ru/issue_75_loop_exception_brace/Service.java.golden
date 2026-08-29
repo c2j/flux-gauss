@@ -28,7 +28,7 @@ public class Issue75Service {
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
         try {
-            // for r2 in cursor cInner
+            // for r2 in cursor c_inner
             List<Map<String, Object>> r2List = issue75Mapper.selectProcNestedBlockBodyFails();
             if (r2List == null) r2List = new ArrayList<>();
             for (Map<String, Object> r2 : r2List) {
@@ -47,7 +47,7 @@ public class Issue75Service {
         String vTmp = null;
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
-        // for rec in cursor cOuter
+        // for rec in cursor c_outer
         List<Map<String, Object>> recList = issue75Mapper.selectProcLoopExcHandler();
         if (recList == null) recList = new ArrayList<>();
         for (Map<String, Object> rec : recList) {
@@ -56,7 +56,7 @@ public class Issue75Service {
             } catch (Exception __e1) {
                 __SQLERRM__ = __e1.getMessage();
                 __SQLCODE__ = -1;
-                // for r2 in cursor cInner
+                // for r2 in cursor c_inner
                 List<Map<String, Object>> r2List2 = issue75Mapper.selectProcLoopExcHandler_1();
                 if (r2List2 == null) r2List2 = new ArrayList<>();
                 for (Map<String, Object> r2 : r2List2) {

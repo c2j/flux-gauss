@@ -184,7 +184,7 @@ public class CursorLifecycleService {
             if (!found) { break; }
             cursorLifecycleMapper.insertProcEnhanceCursor(pInCursor, vTemp, vId, vName, vSalary, vDeptId, vHireDate);
         }
-        // CLOSE pInCursor;
+        // CLOSE p_in_cursor;
         /* OPEN pOutCursor.get() FOR 'SELECT * FROM ' || v_temp || ' ORDER BY salary DESC' — dynamic SQL, not materializable */
     }
 
@@ -202,10 +202,10 @@ public class CursorLifecycleService {
         int _loopGuard1 = 0;
         while (true) {
             if (++_loopGuard1 > 1000) { break; }
-            // CALL map_object.ad_item(pMap.get(), date, /* TODO: implement func_get_frame_date() - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ "")
-            // CALL map_object.ad_item(pMap.get(), date-1, String.valueOf(/* TODO: implement func_get_frame_date() - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ "").concat(String.valueOf("-sss")))
-            vLevel = String.valueOf(/* TODO: implement func_get_frame_date() - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ "");
-            vLevel = String.valueOf(/* TODO: implement func_get_frame_date() - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ "").concat(String.valueOf("-sss"));
+            // CALL map_object.ad_item(pMap.get(), /* TOBEFIX: unresolved name Date(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ null, /* TOBEFIX: unresolved name func_get_frame_date(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ null)
+            // CALL map_object.ad_item(pMap.get(), /* TOBEFIX: unresolved name Date-1(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ null, String.valueOf(/* TOBEFIX: unresolved name func_get_frame_date(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ null).concat(String.valueOf("-sss")))
+            vLevel = /* TOBEFIX: unresolved name func_get_frame_date(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ null;
+            vLevel = String.valueOf(/* TOBEFIX: unresolved name func_get_frame_date(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ null).concat(String.valueOf("-sss"));
             found = false; // FETCH pCursor — cursor not materialized
             if (!found) { break; }
             vCount = vCount + 1;
@@ -214,7 +214,7 @@ public class CursorLifecycleService {
                 vSeniorCount = vSeniorCount + 1;
             }
         }
-        // CLOSE pCursor;
+        // CLOSE p_cursor;
         pSummary.set(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf("Total: ").concat(String.valueOf(vCount))).concat(String.valueOf(", Senior: "))).concat(String.valueOf(vSeniorCount))).concat(String.valueOf(", Avg Salary: "))).concat(String.valueOf(vTotal.divide((java.math.BigDecimal.valueOf((java.util.Objects.equals(vCount, 0) ? 1 : vCount)).signum() != 0 ? java.math.BigDecimal.valueOf((java.util.Objects.equals(vCount, 0) ? 1 : vCount)) : java.math.BigDecimal.ONE), 10, java.math.RoundingMode.HALF_UP).setScale((int)(2), java.math.RoundingMode.HALF_UP)))));
     }
 
@@ -524,13 +524,13 @@ public class OpenCursorService {
                 }
             }
             // COMMIT;
-            // CLOSE vCursor;
+            // CLOSE v_cursor;
             openCursorMapper.insertPerformanceLog(pTableName, pWhereClause, pOrderBy, vRowCount, vStartTime);
         } catch (Exception __e2) {
             __SQLERRM__ = __e2.getMessage();
             __SQLCODE__ = -1;
             if (vCursor != null) {
-                // CLOSE vCursor;
+                // CLOSE v_cursor;
             }
             try { TransactionAspectSupport.currentTransactionStatus().setRollbackOnly(); } catch (Exception _tx) {}
             log.info("");

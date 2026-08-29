@@ -30,7 +30,7 @@
 
     <!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:138-289 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator.insertOrderItemSnapshot -->
     <insert id="insertOrderItemSnapshot">
-        INSERT INTO order_item_snapshot(log_id, item_data, created_at) VALUES(#{pLogId, jdbcType=BIGINT, javaType=Long}, to_jsonb(#{vItemTab}(i)), current_timestamp)
+        INSERT INTO order_item_snapshot(log_id, item_data, created_at) VALUES(#{pLogId, jdbcType=BIGINT, javaType=Long}, to_jsonb(#{vItemTab}(#{i, jdbcType=INTEGER, javaType=int})), current_timestamp)
     </insert>
 
     <!-- Source: {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294-351 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master.insertDistributedLocks -->

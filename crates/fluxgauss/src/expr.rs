@@ -1,5 +1,5 @@
 use crate::naming::snake_to_camel;
-use crate::types::ProcedureInfo;
+use crate::types::{GlobalFnEntry, ProcedureInfo};
 
 fn flatten_comment(text: &str) -> String {
     text.replace("/*", "").replace("*/", "")
@@ -354,33 +354,35 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
         }
     }
     if is_nullish_java_expr(trimmed) {
+        let mut default: Option<String> = None;
         if let Some(t) = target_type {
             if t.contains("BigDecimal") {
-                return "java.math.BigDecimal.ZERO".to_string();
-            }
-            if t == "Double" || t == "double" {
-                return "0.0d".to_string();
-            }
-            if t == "Float" || t == "float" {
-                return "0.0f".to_string();
-            }
-            if t == "Integer" || t == "int" {
-                return "0".to_string();
-            }
-            if t == "Long" || t == "long" {
-                return "0L".to_string();
-            }
-            if t == "Boolean" || t == "boolean" {
-                return "false".to_string();
-            }
-            if t == "String" {
-                return "null".to_string();
+                default = Some("java.math.BigDecimal.ZERO".to_string());
+            } else if t == "Double" || t == "double" {
+                default = Some("0.0d".to_string());
+            } else if t == "Float" || t == "float" {
+                default = Some("0.0f".to_string());
+            } else if t == "Integer" || t == "int" {
+                default = Some("0".to_string());
+            } else if t == "Long" || t == "long" {
+                default = Some("0L".to_string());
+            } else if t == "Boolean" || t == "boolean" {
+                default = Some("false".to_string());
+            } else if t == "String" {
+                default = Some("null".to_string());
             }
         }
-        if trimmed == "null" {
-            return "null".to_string();
+        let default = default.unwrap_or_else(|| if trimmed == "null" { "null".to_string() } else { "0".to_string() });
+        // TOBEFIX marker must survive coercion to a type default, otherwise the
+        // unresolved-name warning silently disappears from generated code (Task 6).
+        if trimmed.contains("/* TOBEFIX") {
+            if let Some(end) = trimmed.find("*/") {
+                // find() returns the index of `*`; `*/` is 2 bytes wide, so the
+                // slice must extend past the trailing `/` (…[..=end] would drop it).
+                return format!("{} {}", &trimmed[..end + 2], default);
+            }
         }
-        return "0".to_string();
+        return default;
     }
     if trimmed == "\"\"" || trimmed == "''" {
         if let Some(t) = target_type {
@@ -714,6 +716,27 @@ fn is_out_param(name: &str, proc: &ProcedureInfo) -> bool {
     proc.parameters.iter().any(|p| p.name.to_lowercase().replace("_", "") == bn && p.is_out())
 }
 
+/// Render a cross-package service call, wrapping any OUT/local-out arguments
+/// with `.get()` since they are passed as `AtomicReference<T>` on this side.
+fn emit_cross_pkg_call(cross_pkg_svc: &str, method: &str, jargs: Vec<String>, proc: &ProcedureInfo) -> String {
+    let x_args: Vec<String> = jargs
+        .into_iter()
+        .map(|a| {
+            if is_out_param(&a, proc)
+                || proc
+                    .out_local_vars
+                    .iter()
+                    .any(|(k, _)| k.to_lowercase().replace("_", "") == a.to_lowercase().replace("_", ""))
+            {
+                format!("{}.get()", a)
+            } else {
+                a
+            }
+        })
+        .collect();
+    format!("{}.{}({})", cross_pkg_svc, method, x_args.join(", "))
+}
+
 fn might_be_long(expr: &str, proc: &ProcedureInfo) -> bool {
     let stripped = expr.trim();
     for (var_name, var_type) in &proc.local_vars {
@@ -732,7 +755,7 @@ fn might_be_long(expr: &str, proc: &ProcedureInfo) -> bool {
     false
 }
 
-fn get_column_ref_name(expr: &ogsql_parser::ast::Expr) -> Option<String> {
+pub(crate) fn get_column_ref_name(expr: &ogsql_parser::ast::Expr) -> Option<String> {
     use ogsql_parser::ast::Expr;
     match expr {
         Expr::ColumnRef(name) | Expr::PlVariable(name) => Some(name.join(".")),
@@ -973,30 +996,41 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
                     }
                     return param_camel;
                 }
-                let name_lower_raw = name.to_lowercase();
-                if name_lower_raw.starts_with("func_") || name_lower_raw.starts_with("fn_") {
+                // Local variable / package variable declarations always shadow a same-named
+                // function (PL/SQL scoping semantics): if the bare name is a declared
+                // variable, never divert into function resolution below — no name-prefix
+                // heuristic (func_/fn_) is consulted anywhere in this branch (Task 5).
+                let name_key = name.to_lowercase().replace('_', "");
+                let is_declared_var = proc.local_vars.contains_key(&name.to_lowercase())
+                    || proc.local_vars.keys().any(|k| k.to_lowercase().replace('_', "") == name_key)
+                    || proc.package_vars.keys().any(|k| k.to_lowercase().replace('_', "") == name_key);
+                if !is_declared_var {
+                    // 函数注册表判定（无前缀启发式，Task 5）：同包零参兄弟 → this.fn()；
+                    // 跨包零参且候选唯一 → svcVar.fn()；否则 TOBEFIX + null（Task 6）
+                    // （不区分"注册表未命中"与"命中但歧义"——两者都不是可安全生成的函数调用）。
                     let method_name = crate::naming::java_method_name(name);
-                    // Check if this function exists as a sibling procedure in the same package
-                    if proc.package_proc_params.contains_key(&method_name) {
+                    if proc
+                        .package_proc_params
+                        .get(&method_name)
+                        .is_some_and(|overloads| overloads.iter().any(|ps| ps.is_empty()))
+                    {
                         return format!("this.{}()", method_name);
                     }
                     // Check if it exists in another package (cross-package call)
-                    if let Some(svc_var) = proc.all_proc_params.get(&method_name) {
-                        return format!("{}.{}()", svc_var, method_name);
+                    if let Some(candidates) = proc.all_proc_params.get(&method_name) {
+                        let proc_pkg_lower = proc.package.to_lowercase();
+                        let cross: Vec<&GlobalFnEntry> = candidates
+                            .iter()
+                            .filter(|e| e.params.is_empty() && e.package.to_lowercase() != proc_pkg_lower)
+                            .collect();
+                        if cross.len() == 1 {
+                            return format!("{}.{}()", cross[0].svc_var, method_name);
+                        }
                     }
-                    let (pkg_hint, func_short) = if let Some(dot_pos) = name.rfind('.') {
-                        (Some(&name[..dot_pos]), &name[dot_pos + 1..])
-                    } else {
-                        (None, name)
-                    };
-                    let hint = match pkg_hint {
-                        Some(p) => format!("pkg={}", p),
-                        None => "pkg=?".to_string(),
-                    };
+                    // 裸名既不是参数/局部变量/包变量，也不是任何已知函数 → TOBEFIX + null（编译安全）
                     return format!(
-                        "/* TODO: implement {}() - {}, caller={}:{} */ \"\"",
-                        flatten_comment(func_short),
-                        flatten_comment(&hint),
+                        "/* TOBEFIX: unresolved name {}(no args) - pkg=?, caller={}:{} */ null",
+                        flatten_comment(name),
                         flatten_comment(&proc.source_file),
                         flatten_comment(&proc.proc_name)
                     );
@@ -1451,8 +1485,23 @@ fn binary_op_to_java(
 
     match op {
         "||" => {
-            let l_sv = if is_nullish_java_expr(&l) { "\"\"".to_string() } else { format!("String.valueOf({})", l) };
-            let r_sv = if is_nullish_java_expr(&r) { "\"\"".to_string() } else { format!("String.valueOf({})", r) };
+            // TOBEFIX-marked operands must keep their marker (and null value)
+            // so unresolved-name warnings stay visible; plain nullish operands
+            // concat as the empty string as before.
+            let l_sv = if l.contains("/* TOBEFIX") {
+                format!("String.valueOf({})", l)
+            } else if is_nullish_java_expr(&l) {
+                "\"\"".to_string()
+            } else {
+                format!("String.valueOf({})", l)
+            };
+            let r_sv = if r.contains("/* TOBEFIX") {
+                format!("String.valueOf({})", r)
+            } else if is_nullish_java_expr(&r) {
+                "\"\"".to_string()
+            } else {
+                format!("String.valueOf({})", r)
+            };
             format!("{}.concat({})", l_sv, r_sv)
         }
         "<@" | "@>" => format!("((Object) {}) != null", l),
@@ -2078,6 +2127,7 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         }
         _ => {
             let name_parts: Vec<&str> = name.split('.').collect();
+            let mut ambig_candidates: Vec<String> = Vec::new();
             let (method, is_self_call, cross_pkg_svc) = if name_parts.len() >= 2 {
                 let pkg_hint = if name_parts.len() >= 3 {
                     name_parts[name_parts.len() - 2]
@@ -2107,6 +2157,23 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                 let method_name = crate::naming::java_method_name(name_parts[0]);
                 if proc.package_proc_params.contains_key(&method_name) {
                     (method_name, true, String::new())
+                } else if let Some(candidates) = proc.all_proc_params.get(&method_name) {
+                    let proc_pkg_lower = proc.package.to_lowercase();
+                    let cross: Vec<&GlobalFnEntry> = candidates
+                        .iter()
+                        .filter(|e| e.package.to_lowercase() != proc_pkg_lower)
+                        // 已知限制：跨包解析使用严格 arity 相等（不支持默认参数省略实参）；
+                        // 同包重载（is_self_call 分支）支持 len>=jargs.len() 的宽松匹配
+                        .filter(|e| e.params.len() == jargs.len())
+                        .collect();
+                    match cross.len() {
+                        1 => (method_name, false, cross[0].svc_var.clone()),
+                        0 => (String::new(), false, String::new()),
+                        _ => {
+                            ambig_candidates = cross.iter().map(|e| e.svc_var.clone()).collect();
+                            (String::new(), false, String::new())
+                        }
+                    }
                 } else {
                     (String::new(), false, String::new())
                 }
@@ -2152,26 +2219,23 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                 return format!("this.{}({})", method, coerced_args.join(", "));
             }
             if !cross_pkg_svc.is_empty() && !method.is_empty() {
-                let x_args: Vec<String> = jargs.iter().map(|a| {
-                    if is_out_param(a, proc) || proc.out_local_vars.iter().any(|(k,_)|
-                        k.to_lowercase().replace("_", "") == a.to_lowercase().replace("_", ""))
-                    {
-                        format!("{}.get()", a)
-                    } else {
-                        a.clone()
-                    }
-                }).collect();
-                return format!("{}.{}({})", cross_pkg_svc, method, x_args.join(", "));
+                return emit_cross_pkg_call(&cross_pkg_svc, &method, jargs, proc);
             }
             let func_short = name_parts.last().unwrap_or(&name);
             let pkg_hint = if name_parts.len() >= 2 { name_parts[0] } else { "?" };
+            let ambig_suffix = if ambig_candidates.is_empty() {
+                String::new()
+            } else {
+                format!(", candidates=[{}]", ambig_candidates.join(", "))
+            };
             format!(
-                "/* TODO: implement {}({}) - pkg={}, caller={}:{} */ null",
+                "/* TOBEFIX: unresolved fn {}({}) - pkg={}, caller={}:{}{} */ null",
                 flatten_comment(func_short),
                 flatten_comment(&jargs.join(", ")),
                 flatten_comment(pkg_hint),
                 flatten_comment(&proc.source_file),
-                flatten_comment(&proc.proc_name)
+                flatten_comment(&proc.proc_name),
+                ambig_suffix,
             )
         }
     }
@@ -2630,7 +2694,11 @@ mod tests {
 
     #[test]
     fn test_column_ref_simple() {
-        let proc = empty_proc();
+        // v_status is declared as a local var: Task 6 removes the compile-unsafe
+        // "any bare name → camel" fallback, so this must resolve via a known
+        // variable, not merely rely on being an unresolved-name coincidence.
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_status".into(), "String".into());
         assert_eq!(expr_to_java(&ogsql_parser::ast::Expr::ColumnRef(vec!["v_status".into()]), &proc), "vStatus");
     }
 
@@ -2648,7 +2716,8 @@ mod tests {
 
     #[test]
     fn test_is_null() {
-        let proc = empty_proc();
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_status".into(), "String".into());
         let expr = ogsql_parser::ast::Expr::IsNull {
             expr: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["v_status".into()])),
             negated: false,
@@ -2658,7 +2727,8 @@ mod tests {
 
     #[test]
     fn test_is_not_null() {
-        let proc = empty_proc();
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_status".into(), "String".into());
         let expr = ogsql_parser::ast::Expr::IsNull {
             expr: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["v_status".into()])),
             negated: true,
@@ -2694,5 +2764,128 @@ mod tests {
             ogsql_parser::ast::Literal::Integer(1),
         )));
         assert_eq!(expr_to_java(&expr, &proc), "(1)");
+    }
+
+    #[test]
+    fn test_column_ref_bare_prefixed_function_resolves_via_registry_not_prefix() {
+        // Task 5: fnc_/fn_ prefixed bare zero-arg names resolve through the
+        // cross-package function registry — no name-prefix heuristic is consulted.
+        let mut proc = empty_proc();
+        proc.all_proc_params.insert(
+            "fncComGetday".into(),
+            vec![GlobalFnEntry {
+                svc_var: "issue79UnqualifiedFnCalleeService".into(),
+                package: "issue_79_unqualified_fn_callee".into(),
+                params: vec![],
+            }],
+        );
+        assert_eq!(
+            expr_to_java(&ogsql_parser::ast::Expr::ColumnRef(vec!["fnc_com_getday".into()]), &proc),
+            "issue79UnqualifiedFnCalleeService.fncComGetday()"
+        );
+    }
+
+    #[test]
+    fn test_column_ref_local_var_shadows_same_name_zero_arg_function() {
+        // PL/SQL shadowing: a declared local variable always wins over a
+        // same-named sibling zero-arg procedure — variable lookup runs first.
+        let mut proc = empty_proc();
+        proc.local_vars.insert("fn_get_day".into(), "String".into());
+        proc.package_proc_params.insert("fnGetDay".into(), vec![vec![]]);
+        assert_eq!(expr_to_java(&ogsql_parser::ast::Expr::ColumnRef(vec!["fn_get_day".into()]), &proc), "fnGetDay");
+    }
+
+    #[test]
+    fn test_column_ref_unknown_bare_name_falls_back_to_tobefix_null() {
+        // Task 6: unknown bare identifier — absent from parameters/local vars/package
+        // vars and from both function registries — must not emit a bare, undeclared
+        // camelCase identifier (that doesn't compile). It emits a compile-safe
+        // TOBEFIX-marked `null` instead, and the marker text carries enough info
+        // (name + source file + proc) for the report scan (analyze::collect_tobefix_warnings).
+        let proc = empty_proc();
+        let out = expr_to_java(&ogsql_parser::ast::Expr::ColumnRef(vec!["some_unknown_thing".into()]), &proc);
+        assert!(out.contains("/* TOBEFIX: unresolved name some_unknown_thing(no args)"), "got: {}", out);
+        assert!(out.trim_end().ends_with("null"), "got: {}", out);
+    }
+
+    #[test]
+    fn test_column_ref_package_var_shadows_same_name_zero_arg_function() {
+        // PL/SQL shadowing: a declared package variable (not just local var) also
+        // wins over a same-named sibling zero-arg procedure — package var lookup
+        // must run before function registry lookup (Task 5 review 🟡 follow-up).
+        let mut proc = empty_proc();
+        proc.package_vars.insert(
+            "fn_get_day".into(),
+            crate::types::VarInfo {
+                name: "fn_get_day".into(),
+                java_type: "String".into(),
+                sql_type: "varchar".into(),
+                default_value: None,
+                is_constant: false,
+            },
+        );
+        proc.package_proc_params.insert("fnGetDay".into(), vec![vec![]]);
+        assert_eq!(expr_to_java(&ogsql_parser::ast::Expr::ColumnRef(vec!["fn_get_day".into()]), &proc), "fnGetDay");
+    }
+
+    #[test]
+    fn test_column_ref_underscore_normalization_prefers_declared_camel_var() {
+        // A local var declared under its camelCase key ("fnGetDay") must still
+        // shadow a same-named (snake_case-referenced) sibling zero-arg function
+        // via the underscore-insensitive variable lookup (Task 5 review 🟡 follow-up).
+        let mut proc = empty_proc();
+        proc.local_vars.insert("fnGetDay".into(), "String".into());
+        proc.package_proc_params.insert("fnGetDay".into(), vec![vec![]]);
+        assert_eq!(expr_to_java(&ogsql_parser::ast::Expr::ColumnRef(vec!["fn_get_day".into()]), &proc), "fnGetDay");
+    }
+
+    #[test]
+    fn test_coerce_for_type_preserves_tobefix_marker_terminator() {
+        // Task 6 regression: an unresolved bare-name TOBEFIX marker must survive
+        // coerce_for_type with its `*/` terminator intact. A dropped `/` leaves an
+        // unterminated block comment that swallows the rest of the line (and the
+        // null literal), producing non-compiling Java.
+        let proc = empty_proc();
+        let input = "/* TOBEFIX: unresolved name some_unknown_thing(no args) - pkg=?, caller=tests/regress/fixtures/x.sql:some_proc */ null";
+        let out = coerce_for_type(input, Some("String"), &proc);
+        assert!(out.contains("*/"), "TOBEFIX comment lost its `*/` terminator: {}", out);
+        assert!(out.ends_with("null"), "TOBEFIX value must remain null: {}", out);
+    }
+
+    #[test]
+    fn test_cross_pkg_ambiguity_falls_back_to_tobefix_with_candidates() {
+        // Task 4/6: two packages defining the same method with the same arity is
+        // genuinely ambiguous — the converter must NOT pick one silently
+        // (first-wins). It falls back to a TOBEFIX marker that lists candidates.
+        let mut proc = empty_proc();
+        let entry = |svc: &str, pkg: &str| GlobalFnEntry {
+            svc_var: svc.into(),
+            package: pkg.into(),
+            params: vec![crate::types::Parameter {
+                name: "x".into(),
+                java_type: "String".into(),
+                sql_type: "varchar2".into(),
+                mode: None,
+                default_value: None,
+            }],
+        };
+        proc.all_proc_params
+            .insert("getVal".into(), vec![entry("pkgAService", "pkg_a"), entry("pkgBService", "pkg_b")]);
+        let expr = ogsql_parser::ast::Expr::FunctionCall {
+            name: vec!["get_val".into()],
+            args: vec![ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String("s".into()))],
+            distinct: false,
+            over: None,
+            filter: None,
+            within_group: Vec::new(),
+            separator: None,
+            default: None,
+            conversion_format: None,
+            agg_from: None,
+            builtin: None,
+        };
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains("TOBEFIX"), "ambiguous call must not resolve silently: {}", out);
+        assert!(out.contains("candidates=[pkgAService, pkgBService]"), "candidates must be listed: {}", out);
     }
 }

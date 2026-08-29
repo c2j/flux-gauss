@@ -556,8 +556,8 @@ fn phase2_analyze(
 
     let all_pkg_names: Vec<String> = proc_summaries.keys().cloned().collect();
 
-    // Build a global map: java_method_name → service_variable_name for all procedures
-    let mut global_proc_map: HashMap<String, String> = HashMap::new();
+    // Build a global map: java_method_name → all candidate GlobalFnEntry across all procedures.
+    let mut global_proc_map: HashMap<String, Vec<crate::types::GlobalFnEntry>> = HashMap::new();
     for (_summary_name, summary) in &proc_summaries {
         for proc_in_summary in &summary.procedures {
             let method_name = crate::naming::java_method_name(&proc_in_summary.proc_name);
@@ -572,7 +572,11 @@ fn phase2_analyze(
                 Some(f) => f.to_ascii_lowercase().to_string() + c.as_str(),
                 None => String::new(),
             };
-            global_proc_map.entry(method_name).or_insert_with(|| format!("{}Service", svc_var));
+            global_proc_map.entry(method_name).or_default().push(crate::types::GlobalFnEntry {
+                svc_var: format!("{}Service", svc_var),
+                package: svc_pkg,
+                params: proc_in_summary.parameters.clone(),
+            });
         }
     }
 
@@ -605,6 +609,7 @@ fn phase2_analyze(
             crate::analyze::promote_out_local_vars(proc);
         }
         crate::analyze::discover_cross_service_refs(pkg, &all_pkg_names);
+        crate::analyze::collect_tobefix_warnings(pkg, &mut ctx);
     }
 
     crate::progress::progress_done("Analyze", total);
