@@ -341,7 +341,15 @@ pub fn discover_cross_service_refs(pkg: &mut crate::types::PackageInfo, known_pa
 
     let re = regex::Regex::new(r"(\w+Service)\.").unwrap();
     for proc in &mut pkg.procedures {
-        for line in &proc.java_logic_lines {
+        // Declaration-section default initializers (e.g. `v NUMBER := fn_calc(...)`) are
+        // rendered from `local_var_defaults` by generate/service.rs, not from
+        // `java_logic_lines` (that only holds body statements). A cross-pkg call appearing
+        // ONLY in a declare-section initializer would otherwise never be seen by this scan,
+        // so the callee service field/constructor param/import silently never gets injected
+        // (#107/#108 root cause A). Scan both sources with identical logic.
+        let scan_targets: Vec<String> =
+            proc.java_logic_lines.iter().cloned().chain(proc.local_var_defaults.values().cloned()).collect();
+        for line in &scan_targets {
             if line.trim().starts_with("//") {
                 continue;
             }
