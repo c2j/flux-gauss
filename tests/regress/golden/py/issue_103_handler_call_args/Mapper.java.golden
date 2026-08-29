@@ -1,0 +1,9 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue103HandlerCallArgsMapper {
+
+    // No direct DML operations for issue_103_handler_call_args
+}

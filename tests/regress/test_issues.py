@@ -1309,6 +1309,22 @@ class TestIssue83_OutCrossPkgCall:
         )
 
 
+class TestIssue103_HandlerCallArgs:
+    """EXCEPTION handler 内跨包调用实参不得被静默丢弃——site4
+    (_wrap_handler_stmts) 曾将 _resolved.append 置于 i<len(callee params)
+    门控内，callee 未精确匹配时丢参生成空参调用。"""
+
+    SQL_FILE = "issue_103_handler_call_args.sql"
+
+    def test_handler_cross_pkg_calls_keep_all_args(self, tmp_path):
+        out_dir = _run_cli_pipeline([self.SQL_FILE], tmp_path)
+        svc = _read_generated(out_dir, "src/main/java/com/example/demo/service/CalleeService.java")
+        assert "calleeService.simpleLog(pX);" in svc, f"handler 1-arg call missing:\n{svc[:1500]}"
+        assert "calleeService.simpleLog(pX, \"detail\");" in svc, (
+            f"handler 2-arg call must keep both args:\n{svc[:1500]}"
+        )
+
+
 # ── Meta: Verify all issue fixtures parse correctly ──────────────
 
 class TestIssue99_DuplicateParamNames:

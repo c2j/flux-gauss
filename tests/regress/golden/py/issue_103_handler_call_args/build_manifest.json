@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_103_handler_call_args.sql",
+  "package_name": "issue_103_handler_call_args",
+  "files": {
+    "Service.java": "0fcb5d13d77e988c",
+    "Mapper.java": "b19dfa6344a23cfc",
+    "Mapper.xml": "a8d9681803e5f272",
+    "ServiceTest.java": "56c0ecac190447eb"
+  }
+}

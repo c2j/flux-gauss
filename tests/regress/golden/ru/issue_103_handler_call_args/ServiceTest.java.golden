@@ -1,0 +1,81 @@
+// ===== FILE: CalleeServiceTest.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.CalleeMapper;
+import com.example.demo.service.CalleeService;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_103_handler_call_args.sql
+class CalleeServiceTest {
+
+    @Mock
+    private CalleeMapper calleeMapper;
+
+    @InjectMocks
+    private CalleeService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_simpleLog_success_1() {
+        String pMsg = "test_pMsg";
+        service.simpleLog(pMsg);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_simpleLog_success_2() {
+        String pMsg = "test_pMsg";
+        String pDetail = "test_pDetail";
+        service.simpleLog(pMsg, pDetail);
+    }
+}
+
+// ===== FILE: HandlerServiceTest.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.HandlerMapper;
+import com.example.demo.service.CalleeService;
+import com.example.demo.service.HandlerService;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_103_handler_call_args.sql
+class HandlerServiceTest {
+
+    @Mock
+    private HandlerMapper handlerMapper;
+
+    @Mock
+    private CalleeService calleeService;
+
+    @InjectMocks
+    private HandlerService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_guardedRun_success() {
+        String pX = "test_pX";
+        service.guardedRun(pX);
+    }
+}

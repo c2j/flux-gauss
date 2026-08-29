@@ -1,0 +1,38 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue103HandlerCallArgsMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue103HandlerCallArgsService {
+    private static final Logger log = LoggerFactory.getLogger(Issue103HandlerCallArgsService.class);
+
+    private final Issue103HandlerCallArgsMapper issue103HandlerCallArgsMapper;
+
+    public Issue103HandlerCallArgsService(Issue103HandlerCallArgsMapper issue103HandlerCallArgsMapper) {
+        this.issue103HandlerCallArgsMapper = issue103HandlerCallArgsMapper;
+    }
+    // Source: pkg_callee.simple_log (PROCEDURE) — issue_103_handler_call_args.sql:8-11
+    public void simpleLog(String pMsg) {
+        // Auto-generated from stored procedure
+    }
+
+    // Source: pkg_callee.simple_log (PROCEDURE) — issue_103_handler_call_args.sql:13-16
+    public void simpleLog(String pMsg, String pDetail) {
+        // Auto-generated from stored procedure
+    }
+
+    // Source: pkg_handler.guarded_run (PROCEDURE) — issue_103_handler_call_args.sql:26-33
+    public void guardedRun(String pX) {
+        try {
+            throw new BusinessException("boom");
+        } catch (Exception e) { // EXCEPTION handlers — src: issue_103_handler_call_args.sql:26
+            // CALL pkg_callee.simple_log(...)
+            // CALL pkg_callee.simple_log(...)
+        }
+    }
+}

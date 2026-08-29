@@ -6951,7 +6951,7 @@ def _wrap_handler_stmts(stmts, proc, all_packages,
                                                 a_java = f"String.valueOf({a_java})"
                                     else:
                                         a_java = _coerce_java_arg(a_java, tptype)
-                                    _resolved.append(a_java)
+                                _resolved.append(a_java)
                         args_java = ", ".join(_resolved)
                         is_self_call = (matched.lower() == proc.package.lower())
                         if not is_self_call:
