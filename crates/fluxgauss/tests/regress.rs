@@ -399,6 +399,38 @@ fn issue_108_cross_pkg_call_arg_and_out_handling() {
     );
 }
 
+/// Root cause B3 (#107 follow-up): a cross-package FUNCTION call's *return value*
+/// participating in a binary op must be treated according to the callee's declared
+/// return type. `looks_bd_expr` only does textual pattern-matching (`.multiply(`,
+/// literal `"BigDecimal"`, etc.) — a call expression like
+/// `gaussFunctionCallsService.fnAvgAmount(pIId)` has none of those markers even
+/// though the callee returns `java.math.BigDecimal`, so `v * 1.2` was emitted as
+/// raw `BigDecimal * double`, which javac rejects.
+#[test]
+fn issue_108c_cross_pkg_call_return_value_bigdecimal_arithmetic() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURES_REL);
+    let sql_files = vec![
+        fixtures.join("issue_108c_bd_return_arith_callee.sql"),
+        fixtures.join("issue_108c_bd_return_arith_caller.sql"),
+    ];
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let files = run_multi_file_services(&sql_files, &tmp.path().join("dest"));
+    let caller = files.get("Issue108cBdReturnArithCallerService.java").expect("caller service");
+
+    assert!(
+        !caller.contains("* 1.2)") && !caller.contains(") * 1.2"),
+        "B3: a BigDecimal-returning cross-package call must not be used as a raw operand \
+         in a `*` expression with a double literal (BigDecimal has no `*` operator):\n{}",
+        caller
+    );
+    assert!(
+        caller.contains(".multiply(java.math.BigDecimal.valueOf(1.2))"),
+        "B3: the callee's BigDecimal return type must route the multiplication through \
+         BigDecimal.multiply(...), not raw `*`:\n{}",
+        caller
+    );
+}
+
 #[test]
 fn regress_golden_compare() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));

@@ -1,0 +1,33 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue108cBdReturnArithCallerMapper;
+import com.example.demo.service.Issue108cBdReturnArithCallerService;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_108c_bd_return_arith_caller.sql
+class Issue108cBdReturnArithCallerServiceTest {
+
+    @Mock
+    private Issue108cBdReturnArithCallerMapper issue108cBdReturnArithCallerMapper;
+
+    @InjectMocks
+    private Issue108cBdReturnArithCallerService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_prcBdReturnArith_success() {
+        Integer pIId = 1;
+        service.prcBdReturnArith(pIId);
+    }
+}

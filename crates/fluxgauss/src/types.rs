@@ -74,6 +74,11 @@ pub struct GlobalFnEntry {
     pub package: String,
     /// Parameter list of the candidate, used for arity/type matching against call sites.
     pub params: Vec<Parameter>,
+    /// Declared Java return type of the candidate (`None` for procedures / unknown).
+    /// Used by `expr.rs::call_expr_return_type` to detect that a call expression's
+    /// *result* is BigDecimal even when the call site itself has no textual
+    /// BigDecimal markers (see root cause B3, issue #107 follow-up).
+    pub return_type: Option<String>,
 }
 
 // ── DML ──

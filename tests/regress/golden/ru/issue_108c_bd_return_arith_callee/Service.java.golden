@@ -1,0 +1,28 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue108cBdReturnArithCalleeMapper;
+import java.math.BigDecimal;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_108c_bd_return_arith_callee.sql
+public class Issue108cBdReturnArithCalleeService {
+    private static final Logger log = LoggerFactory.getLogger(Issue108cBdReturnArithCalleeService.class);
+
+    private final Issue108cBdReturnArithCalleeMapper issue108cBdReturnArithCalleeMapper;
+
+    public Issue108cBdReturnArithCalleeService(Issue108cBdReturnArithCalleeMapper issue108cBdReturnArithCalleeMapper) {
+        this.issue108cBdReturnArithCalleeMapper = issue108cBdReturnArithCalleeMapper;
+    }
+
+    // Source: fn_avg_amount (FUNCTION) — {FIXTURES_ROOT}/issue_108c_bd_return_arith_callee.sql:1-8
+    public java.math.BigDecimal fnAvgAmount(int pId) {
+        java.math.BigDecimal vAvg = java.math.BigDecimal.ZERO;
+        vAvg = java.math.BigDecimal.valueOf(100.5);
+        return vAvg;
+    }
+}

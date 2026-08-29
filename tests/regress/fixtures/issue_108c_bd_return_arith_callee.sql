@@ -1,0 +1,8 @@
+CREATE OR REPLACE FUNCTION fn_avg_amount(p_id IN INTEGER)
+RETURN NUMERIC IS
+  v_avg NUMERIC(18,2);
+BEGIN
+  v_avg := 100.5;
+  RETURN v_avg;
+END;
+/

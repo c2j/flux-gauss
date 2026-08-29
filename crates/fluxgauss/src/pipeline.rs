@@ -576,6 +576,7 @@ fn phase2_analyze(
                 svc_var: format!("{}Service", svc_var),
                 package: svc_pkg,
                 params: proc_in_summary.parameters.clone(),
+                return_type: proc_in_summary.return_type.clone(),
             });
         }
     }

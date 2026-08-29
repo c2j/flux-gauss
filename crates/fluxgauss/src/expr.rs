@@ -1213,6 +1213,9 @@ fn wrap_bigdecimal(expr: &str, already_bd: bool, proc: &ProcedureInfo) -> String
     if looks_bd_expr(trimmed) {
         return trimmed.to_string();
     }
+    if call_expr_return_type(trimmed, proc).is_some_and(|t| t.contains("BigDecimal")) {
+        return trimmed.to_string();
+    }
     // Unwrap AtomicReference vars promoted for OUT arg usage (type-aware:
     // String-typed refs hold numeric text and need Long.parseLong, not .longValue()).
     let trimmed_lower = trimmed.to_lowercase();
@@ -1365,6 +1368,60 @@ fn looks_bd_expr(s: &str) -> bool {
         || t.contains(".setScale(")
         || t.contains(".abs(")
         || t.contains(".negate(")
+}
+
+/// Root cause B3 (#107 follow-up): if `expr_str` is *entirely* a single call to a
+/// known cross-package service method (`<svcVar>.<method>(...)`), return that
+/// method's declared Java return type. `looks_bd_expr`/`is_bigdecimal_var` only
+/// recognize BigDecimal via textual markers on the call site itself (`.multiply(`,
+/// a literal `"BigDecimal"`, a known local/param type) — a call expression like
+/// `fooService.barFn(x)` carries none of those, even when `barFn`'s registered
+/// return type is BigDecimal. Same-package `this.method(...)` calls are not
+/// resolved here: `package_proc_params` (unlike `all_proc_params`) does not carry
+/// return types, and adding it is out of scope for this fix.
+fn call_expr_return_type(expr_str: &str, proc: &ProcedureInfo) -> Option<String> {
+    let t = expr_str.trim();
+    let paren_pos = t.find('(')?;
+    if !t.ends_with(')') {
+        return None;
+    }
+    // Confirm the parens starting at `paren_pos` are balanced and close exactly at
+    // the end of `t` — rejects chained calls like `svc.foo(x).bar()`, where the
+    // return type of the outer `.bar()` call (not `foo`) would be the one that
+    // matters, and this function has no way to resolve that.
+    let mut depth = 0i32;
+    let mut closes_at_end = false;
+    for (i, c) in t.char_indices().skip(paren_pos) {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    closes_at_end = i == t.len() - 1;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    if !closes_at_end {
+        return None;
+    }
+    let head = &t[..paren_pos];
+    let dot_pos = head.rfind('.')?;
+    let svc_var = &head[..dot_pos];
+    let method = &head[dot_pos + 1..];
+    if svc_var.is_empty() || method.is_empty() {
+        return None;
+    }
+    let candidates = proc.all_proc_params.get(method)?;
+    let matches: Vec<&GlobalFnEntry> = candidates.iter().filter(|e| e.svc_var == svc_var).collect();
+    let first = matches.first()?.return_type.clone()?;
+    if matches.iter().all(|e| e.return_type.as_deref() == Some(first.as_str())) {
+        Some(first)
+    } else {
+        None
+    }
 }
 
 fn is_timestamp_or_date_var(expr_str: &str, proc: &ProcedureInfo) -> bool {
@@ -1711,22 +1768,46 @@ fn binary_op_to_java(
                 format!("{} {} {}", l_out, op, r_out)
             }
         }
-        "*" if is_bigdecimal_var(&l, proc) || is_bigdecimal_var(&r, proc) || looks_bd_expr(&l) || looks_bd_expr(&r) => {
+        "*" if is_bigdecimal_var(&l, proc)
+            || is_bigdecimal_var(&r, proc)
+            || looks_bd_expr(&l)
+            || looks_bd_expr(&r)
+            || call_expr_return_type(&l, proc).is_some_and(|t| t.contains("BigDecimal"))
+            || call_expr_return_type(&r, proc).is_some_and(|t| t.contains("BigDecimal")) =>
+        {
             let l_bd = wrap_bigdecimal(&l, is_bigdecimal_var(&l, proc), proc);
             let r_bd = wrap_bigdecimal(&r, is_bigdecimal_var(&r, proc), proc);
             format!("{}.multiply({})", l_bd, r_bd)
         }
-        "+" if is_bigdecimal_var(&l, proc) || is_bigdecimal_var(&r, proc) || looks_bd_expr(&l) || looks_bd_expr(&r) => {
+        "+" if is_bigdecimal_var(&l, proc)
+            || is_bigdecimal_var(&r, proc)
+            || looks_bd_expr(&l)
+            || looks_bd_expr(&r)
+            || call_expr_return_type(&l, proc).is_some_and(|t| t.contains("BigDecimal"))
+            || call_expr_return_type(&r, proc).is_some_and(|t| t.contains("BigDecimal")) =>
+        {
             let l_bd = wrap_bigdecimal(&l, is_bigdecimal_var(&l, proc), proc);
             let r_bd = wrap_bigdecimal(&r, is_bigdecimal_var(&r, proc), proc);
             format!("{}.add({})", l_bd, r_bd)
         }
-        "-" if is_bigdecimal_var(&l, proc) || is_bigdecimal_var(&r, proc) || looks_bd_expr(&l) || looks_bd_expr(&r) => {
+        "-" if is_bigdecimal_var(&l, proc)
+            || is_bigdecimal_var(&r, proc)
+            || looks_bd_expr(&l)
+            || looks_bd_expr(&r)
+            || call_expr_return_type(&l, proc).is_some_and(|t| t.contains("BigDecimal"))
+            || call_expr_return_type(&r, proc).is_some_and(|t| t.contains("BigDecimal")) =>
+        {
             let l_bd = wrap_bigdecimal(&l, is_bigdecimal_var(&l, proc), proc);
             let r_bd = wrap_bigdecimal(&r, is_bigdecimal_var(&r, proc), proc);
             format!("{}.subtract({})", l_bd, r_bd)
         }
-        "/" if is_bigdecimal_var(&l, proc) || is_bigdecimal_var(&r, proc) || looks_bd_expr(&l) || looks_bd_expr(&r) => {
+        "/" if is_bigdecimal_var(&l, proc)
+            || is_bigdecimal_var(&r, proc)
+            || looks_bd_expr(&l)
+            || looks_bd_expr(&r)
+            || call_expr_return_type(&l, proc).is_some_and(|t| t.contains("BigDecimal"))
+            || call_expr_return_type(&r, proc).is_some_and(|t| t.contains("BigDecimal")) =>
+        {
             let l_bd = wrap_bigdecimal(&l, is_bigdecimal_var(&l, proc), proc);
             let r_bd = wrap_bigdecimal(&r, is_bigdecimal_var(&r, proc), proc);
             let r_safe = if r_bd.chars().all(|c: char| c.is_ascii_digit() || c == '.') && !r_bd.is_empty() {
@@ -1736,6 +1817,7 @@ fn binary_op_to_java(
             };
             format!("{}.divide({}, 10, java.math.RoundingMode.HALF_UP)", l_bd, r_safe)
         }
+
         "^" => {
             let l_pow = as_double_expr(&l);
             let r_pow = as_double_expr(&r);
@@ -2886,6 +2968,7 @@ mod tests {
                 svc_var: "issue79UnqualifiedFnCalleeService".into(),
                 package: "issue_79_unqualified_fn_callee".into(),
                 params: vec![],
+                return_type: None,
             }],
         );
         assert_eq!(
@@ -2977,6 +3060,7 @@ mod tests {
                 mode: None,
                 default_value: None,
             }],
+            return_type: None,
         };
         proc.all_proc_params
             .insert("getVal".into(), vec![entry("pkgAService", "pkg_a"), entry("pkgBService", "pkg_b")]);
