@@ -671,6 +671,9 @@ fn coerce_arg_to_type(arg: &str, target_type: &str, proc: &ProcedureInfo) -> Str
 
     if target_is_long {
         let arg_type = infer_arg_type_from_expr(trimmed, proc);
+        if arg_type == "BigDecimal" {
+            return format!("({}).longValue()", trimmed);
+        }
         if arg_type == "Object" {
             return format!("Long.parseLong(String.valueOf({}))", trimmed);
         }
@@ -681,6 +684,13 @@ fn coerce_arg_to_type(arg: &str, target_type: &str, proc: &ProcedureInfo) -> Str
 
     if target_type == "String" && (trimmed.contains(".get(") || infer_arg_type_from_expr(trimmed, proc) == "Object") {
         return format!("String.valueOf({})", trimmed);
+    }
+
+    let target_is_date = target_type.contains("java.sql.Date") || target_type == "Date";
+    let target_is_timestamp = target_type.contains("Timestamp");
+    if (target_is_date || target_is_timestamp) && trimmed.contains(".get(") {
+        let cast_type = if target_is_timestamp { "java.sql.Timestamp" } else { "java.sql.Date" };
+        return format!("({}) ({})", cast_type, trimmed);
     }
 
     arg.to_string()
@@ -716,24 +726,101 @@ fn is_out_param(name: &str, proc: &ProcedureInfo) -> bool {
     proc.parameters.iter().any(|p| p.name.to_lowercase().replace("_", "") == bn && p.is_out())
 }
 
-/// Render a cross-package service call, wrapping any OUT/local-out arguments
-/// with `.get()` since they are passed as `AtomicReference<T>` on this side.
-fn emit_cross_pkg_call(cross_pkg_svc: &str, method: &str, jargs: Vec<String>, proc: &ProcedureInfo) -> String {
-    let x_args: Vec<String> = jargs
-        .into_iter()
-        .map(|a| {
-            if is_out_param(&a, proc)
-                || proc
-                    .out_local_vars
-                    .iter()
-                    .any(|(k, _)| k.to_lowercase().replace("_", "") == a.to_lowercase().replace("_", ""))
-            {
-                format!("{}.get()", a)
-            } else {
-                a
+thread_local! {
+    // Bare local vars queued by `emit_cross_pkg_call` for promotion to
+    // `AtomicReference<T>`. Expr-generation code only has `&ProcedureInfo` (read-only)
+    // available, so it can't write `proc.out_local_vars` directly; the caller further
+    // up the stack (which holds `&mut ProcedureInfo`) drains this via
+    // `take_pending_out_promotions` and applies it once statement processing settles.
+    static PENDING_OUT_PROMOTIONS: std::cell::RefCell<Vec<(String, String)>> = std::cell::RefCell::new(Vec::new());
+}
+
+fn queue_out_promotion(var_name_lower: String, java_type: String) {
+    PENDING_OUT_PROMOTIONS.with(|q| q.borrow_mut().push((var_name_lower, java_type)));
+}
+
+/// Drains all pending OUT-arg promotions queued by `emit_cross_pkg_call` since the
+/// last drain. Called from `analyze_procedure` once a procedure's statements are done
+/// generating, to apply them onto `proc.out_local_vars`.
+pub fn take_pending_out_promotions() -> Vec<(String, String)> {
+    PENDING_OUT_PROMOTIONS.with(|q| q.borrow_mut().drain(..).collect())
+}
+
+/// Render a cross-package service call: IN arguments are coerced to the callee's
+/// declared param type (mirrors the is_self_call branch); OUT/IN-OUT arguments are
+/// either passed through unchanged (already `AtomicReference<T>` on this side — the
+/// caller's own OUT param, or a local var already promoted) or, if they're a bare
+/// local variable declared with a plain type (e.g. `String vName = null;`), queued
+/// for promotion to `AtomicReference<T>` via `queue_out_promotion` (see below) so the
+/// callee's `AtomicReference<T>` signature type-checks. `target_params` is `None`
+/// when the callee's params couldn't be resolved, which falls back to `.get()`-only
+/// unwrapping (no coercion, no promotion — can't know the callee's OUT-ness).
+fn emit_cross_pkg_call(
+    cross_pkg_svc: &str,
+    method: &str,
+    jargs: Vec<String>,
+    target_params: Option<&[crate::types::Parameter]>,
+    proc: &ProcedureInfo,
+) -> String {
+    let unwrap_if_out = |a: &str| -> String {
+        if is_out_param(a, proc)
+            || proc
+                .out_local_vars
+                .iter()
+                .any(|(k, _)| k.to_lowercase().replace("_", "") == a.to_lowercase().replace("_", ""))
+        {
+            format!("{}.get()", a)
+        } else {
+            a.to_string()
+        }
+    };
+
+    // Handle an OUT/IN-OUT argument of the callee. Already-AtomicReference args
+    // (caller's own OUT param, or already-promoted local) pass through unchanged.
+    // A bare local variable (no `.`, no `(`) that isn't yet an AtomicReference gets
+    // queued for promotion (see `queue_out_promotion`) and is passed by reference
+    // as-is — no `.get()`, since after promotion it *is* an AtomicReference.
+    // Anything else (expressions, Map access, etc.) is left untouched — we can't
+    // safely rewrite it here.
+    let promote_or_pass_through = |a: &str, java_type: &str| -> String {
+        if is_out_param(a, proc)
+            || proc
+                .out_local_vars
+                .iter()
+                .any(|(k, _)| k.to_lowercase().replace("_", "") == a.to_lowercase().replace("_", ""))
+        {
+            return a.to_string();
+        }
+        let trimmed = a.trim();
+        if !trimmed.contains('.') && !trimmed.contains('(') {
+            if let Some(vname) = proc.local_vars.keys().find(|v| snake_to_camel(v) == trimmed) {
+                queue_out_promotion(vname.to_lowercase(), java_type.to_string());
             }
+        }
+        a.to_string()
+    };
+
+    let mut x_args: Vec<String> = jargs
+        .iter()
+        .enumerate()
+        .map(|(i, a)| match target_params.and_then(|params| params.get(i)) {
+            Some(param) if param.is_out() => promote_or_pass_through(a, &param.java_type),
+            Some(param) => coerce_arg_to_type(a, &param.java_type, proc),
+            None => unwrap_if_out(a),
         })
         .collect();
+
+    if let Some(params) = target_params {
+        while x_args.len() < params.len() {
+            let param = &params[x_args.len()];
+            if param.is_out() {
+                x_args.push("new java.util.concurrent.atomic.AtomicReference<>(null)".into());
+            } else {
+                x_args.push("null".into());
+            }
+        }
+    }
+
     format!("{}.{}({})", cross_pkg_svc, method, x_args.join(", "))
 }
 
@@ -1126,6 +1213,9 @@ fn wrap_bigdecimal(expr: &str, already_bd: bool, proc: &ProcedureInfo) -> String
     if looks_bd_expr(trimmed) {
         return trimmed.to_string();
     }
+    if call_expr_return_type(trimmed, proc).is_some_and(|t| t.contains("BigDecimal")) {
+        return trimmed.to_string();
+    }
     // Unwrap AtomicReference vars promoted for OUT arg usage (type-aware:
     // String-typed refs hold numeric text and need Long.parseLong, not .longValue()).
     let trimmed_lower = trimmed.to_lowercase();
@@ -1278,6 +1368,60 @@ fn looks_bd_expr(s: &str) -> bool {
         || t.contains(".setScale(")
         || t.contains(".abs(")
         || t.contains(".negate(")
+}
+
+/// Root cause B3 (#107 follow-up): if `expr_str` is *entirely* a single call to a
+/// known cross-package service method (`<svcVar>.<method>(...)`), return that
+/// method's declared Java return type. `looks_bd_expr`/`is_bigdecimal_var` only
+/// recognize BigDecimal via textual markers on the call site itself (`.multiply(`,
+/// a literal `"BigDecimal"`, a known local/param type) — a call expression like
+/// `fooService.barFn(x)` carries none of those, even when `barFn`'s registered
+/// return type is BigDecimal. Same-package `this.method(...)` calls are not
+/// resolved here: `package_proc_params` (unlike `all_proc_params`) does not carry
+/// return types, and adding it is out of scope for this fix.
+fn call_expr_return_type(expr_str: &str, proc: &ProcedureInfo) -> Option<String> {
+    let t = expr_str.trim();
+    let paren_pos = t.find('(')?;
+    if !t.ends_with(')') {
+        return None;
+    }
+    // Confirm the parens starting at `paren_pos` are balanced and close exactly at
+    // the end of `t` — rejects chained calls like `svc.foo(x).bar()`, where the
+    // return type of the outer `.bar()` call (not `foo`) would be the one that
+    // matters, and this function has no way to resolve that.
+    let mut depth = 0i32;
+    let mut closes_at_end = false;
+    for (i, c) in t.char_indices().skip(paren_pos) {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    closes_at_end = i == t.len() - 1;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    if !closes_at_end {
+        return None;
+    }
+    let head = &t[..paren_pos];
+    let dot_pos = head.rfind('.')?;
+    let svc_var = &head[..dot_pos];
+    let method = &head[dot_pos + 1..];
+    if svc_var.is_empty() || method.is_empty() {
+        return None;
+    }
+    let candidates = proc.all_proc_params.get(method)?;
+    let matches: Vec<&GlobalFnEntry> = candidates.iter().filter(|e| e.svc_var == svc_var).collect();
+    let first = matches.first()?.return_type.clone()?;
+    if matches.iter().all(|e| e.return_type.as_deref() == Some(first.as_str())) {
+        Some(first)
+    } else {
+        None
+    }
 }
 
 fn is_timestamp_or_date_var(expr_str: &str, proc: &ProcedureInfo) -> bool {
@@ -1624,22 +1768,46 @@ fn binary_op_to_java(
                 format!("{} {} {}", l_out, op, r_out)
             }
         }
-        "*" if is_bigdecimal_var(&l, proc) || is_bigdecimal_var(&r, proc) || looks_bd_expr(&l) || looks_bd_expr(&r) => {
+        "*" if is_bigdecimal_var(&l, proc)
+            || is_bigdecimal_var(&r, proc)
+            || looks_bd_expr(&l)
+            || looks_bd_expr(&r)
+            || call_expr_return_type(&l, proc).is_some_and(|t| t.contains("BigDecimal"))
+            || call_expr_return_type(&r, proc).is_some_and(|t| t.contains("BigDecimal")) =>
+        {
             let l_bd = wrap_bigdecimal(&l, is_bigdecimal_var(&l, proc), proc);
             let r_bd = wrap_bigdecimal(&r, is_bigdecimal_var(&r, proc), proc);
             format!("{}.multiply({})", l_bd, r_bd)
         }
-        "+" if is_bigdecimal_var(&l, proc) || is_bigdecimal_var(&r, proc) || looks_bd_expr(&l) || looks_bd_expr(&r) => {
+        "+" if is_bigdecimal_var(&l, proc)
+            || is_bigdecimal_var(&r, proc)
+            || looks_bd_expr(&l)
+            || looks_bd_expr(&r)
+            || call_expr_return_type(&l, proc).is_some_and(|t| t.contains("BigDecimal"))
+            || call_expr_return_type(&r, proc).is_some_and(|t| t.contains("BigDecimal")) =>
+        {
             let l_bd = wrap_bigdecimal(&l, is_bigdecimal_var(&l, proc), proc);
             let r_bd = wrap_bigdecimal(&r, is_bigdecimal_var(&r, proc), proc);
             format!("{}.add({})", l_bd, r_bd)
         }
-        "-" if is_bigdecimal_var(&l, proc) || is_bigdecimal_var(&r, proc) || looks_bd_expr(&l) || looks_bd_expr(&r) => {
+        "-" if is_bigdecimal_var(&l, proc)
+            || is_bigdecimal_var(&r, proc)
+            || looks_bd_expr(&l)
+            || looks_bd_expr(&r)
+            || call_expr_return_type(&l, proc).is_some_and(|t| t.contains("BigDecimal"))
+            || call_expr_return_type(&r, proc).is_some_and(|t| t.contains("BigDecimal")) =>
+        {
             let l_bd = wrap_bigdecimal(&l, is_bigdecimal_var(&l, proc), proc);
             let r_bd = wrap_bigdecimal(&r, is_bigdecimal_var(&r, proc), proc);
             format!("{}.subtract({})", l_bd, r_bd)
         }
-        "/" if is_bigdecimal_var(&l, proc) || is_bigdecimal_var(&r, proc) || looks_bd_expr(&l) || looks_bd_expr(&r) => {
+        "/" if is_bigdecimal_var(&l, proc)
+            || is_bigdecimal_var(&r, proc)
+            || looks_bd_expr(&l)
+            || looks_bd_expr(&r)
+            || call_expr_return_type(&l, proc).is_some_and(|t| t.contains("BigDecimal"))
+            || call_expr_return_type(&r, proc).is_some_and(|t| t.contains("BigDecimal")) =>
+        {
             let l_bd = wrap_bigdecimal(&l, is_bigdecimal_var(&l, proc), proc);
             let r_bd = wrap_bigdecimal(&r, is_bigdecimal_var(&r, proc), proc);
             let r_safe = if r_bd.chars().all(|c: char| c.is_ascii_digit() || c == '.') && !r_bd.is_empty() {
@@ -1649,6 +1817,7 @@ fn binary_op_to_java(
             };
             format!("{}.divide({}, 10, java.math.RoundingMode.HALF_UP)", l_bd, r_safe)
         }
+
         "^" => {
             let l_pow = as_double_expr(&l);
             let r_pow = as_double_expr(&r);
@@ -2128,7 +2297,12 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         _ => {
             let name_parts: Vec<&str> = name.split('.').collect();
             let mut ambig_candidates: Vec<String> = Vec::new();
-            let (method, is_self_call, cross_pkg_svc) = if name_parts.len() >= 2 {
+            let (method, is_self_call, cross_pkg_svc, target_params): (
+                String,
+                bool,
+                String,
+                Option<Vec<crate::types::Parameter>>,
+            ) = if name_parts.len() >= 2 {
                 let pkg_hint = if name_parts.len() >= 3 {
                     name_parts[name_parts.len() - 2]
                 } else {
@@ -2139,9 +2313,9 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                 let hint_lower = pkg_hint.to_lowercase().replace("_", "");
                 let pkg_no_prefix = pkg_lower.trim_start_matches("pkg_").replace("_", "");
                 if hint_lower == pkg_lower || hint_lower == pkg_no_prefix || hint_lower.ends_with(&pkg_no_prefix) {
-                    (crate::naming::java_method_name(func_name), true, String::new())
+                    (crate::naming::java_method_name(func_name), true, String::new(), None)
                 } else if ["dbescheduler", "dbmsoutput", "dbmsrandom", "dbmslob", "dbeoutput", "utlfile", "dbmssql", "dbmsjob"].iter().any(|sp| hint_lower.starts_with(sp)) {
-                    (crate::naming::java_method_name(func_name), false, String::new())
+                    (crate::naming::java_method_name(func_name), false, String::new(), None)
                 } else {
                     let svc_name = format!("{}Service", {
                         let cn = crate::naming::package_to_classname(&pkg_hint.to_lowercase());
@@ -2151,12 +2325,29 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                             None => String::new(),
                         }
                     });
-                    (crate::naming::java_method_name(func_name), false, svc_name)
+                    let method_name = crate::naming::java_method_name(func_name);
+                    // Only trust a unique (pkg + arity) match; ambiguous/absent lookups
+                    // fall back to `None` (no coercion), same as unresolved single-name calls.
+                    let target_params = proc.all_proc_params.get(&method_name).and_then(|candidates| {
+                        let matches: Vec<&GlobalFnEntry> = candidates
+                            .iter()
+                            .filter(|e| {
+                                let e_pkg_lower = e.package.to_lowercase();
+                                let e_pkg_no_prefix = e_pkg_lower.trim_start_matches("pkg_").replace("_", "");
+                                (hint_lower == e_pkg_lower.replace("_", "")
+                                    || hint_lower == e_pkg_no_prefix
+                                    || hint_lower.ends_with(&e_pkg_no_prefix))
+                                    && e.params.len() == jargs.len()
+                            })
+                            .collect();
+                        if matches.len() == 1 { Some(matches[0].params.clone()) } else { None }
+                    });
+                    (method_name, false, svc_name, target_params)
                 }
             } else if name_parts.len() == 1 {
                 let method_name = crate::naming::java_method_name(name_parts[0]);
                 if proc.package_proc_params.contains_key(&method_name) {
-                    (method_name, true, String::new())
+                    (method_name, true, String::new(), None)
                 } else if let Some(candidates) = proc.all_proc_params.get(&method_name) {
                     let proc_pkg_lower = proc.package.to_lowercase();
                     let cross: Vec<&GlobalFnEntry> = candidates
@@ -2167,18 +2358,18 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                         .filter(|e| e.params.len() == jargs.len())
                         .collect();
                     match cross.len() {
-                        1 => (method_name, false, cross[0].svc_var.clone()),
-                        0 => (String::new(), false, String::new()),
+                        1 => (method_name, false, cross[0].svc_var.clone(), Some(cross[0].params.clone())),
+                        0 => (String::new(), false, String::new(), None),
                         _ => {
                             ambig_candidates = cross.iter().map(|e| e.svc_var.clone()).collect();
-                            (String::new(), false, String::new())
+                            (String::new(), false, String::new(), None)
                         }
                     }
                 } else {
-                    (String::new(), false, String::new())
+                    (String::new(), false, String::new(), None)
                 }
             } else {
-                (String::new(), false, String::new())
+                (String::new(), false, String::new(), None)
             };
 
             if is_self_call {
@@ -2219,7 +2410,7 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                 return format!("this.{}({})", method, coerced_args.join(", "));
             }
             if !cross_pkg_svc.is_empty() && !method.is_empty() {
-                return emit_cross_pkg_call(&cross_pkg_svc, &method, jargs, proc);
+                return emit_cross_pkg_call(&cross_pkg_svc, &method, jargs, target_params.as_deref(), proc);
             }
             let func_short = name_parts.last().unwrap_or(&name);
             let pkg_hint = if name_parts.len() >= 2 { name_parts[0] } else { "?" };
@@ -2777,6 +2968,7 @@ mod tests {
                 svc_var: "issue79UnqualifiedFnCalleeService".into(),
                 package: "issue_79_unqualified_fn_callee".into(),
                 params: vec![],
+                return_type: None,
             }],
         );
         assert_eq!(
@@ -2868,6 +3060,7 @@ mod tests {
                 mode: None,
                 default_value: None,
             }],
+            return_type: None,
         };
         proc.all_proc_params
             .insert("getVal".into(), vec![entry("pkgAService", "pkg_a"), entry("pkgBService", "pkg_b")]);

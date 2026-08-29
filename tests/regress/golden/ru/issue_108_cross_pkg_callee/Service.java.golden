@@ -1,0 +1,31 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue108CrossPkgCalleeMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_108_cross_pkg_callee.sql
+public class Issue108CrossPkgCalleeService {
+    private static final Logger log = LoggerFactory.getLogger(Issue108CrossPkgCalleeService.class);
+
+    private final Issue108CrossPkgCalleeMapper issue108CrossPkgCalleeMapper;
+
+    public Issue108CrossPkgCalleeService(Issue108CrossPkgCalleeMapper issue108CrossPkgCalleeMapper) {
+        this.issue108CrossPkgCalleeMapper = issue108CrossPkgCalleeMapper;
+    }
+
+    // Source: fn_calc_bonus (FUNCTION) — {FIXTURES_ROOT}/issue_108_cross_pkg_callee.sql:1-6
+    public Long fnCalcBonus(long pBase, long pPct, long pYears) {
+        return pBase * pPct * pYears;
+    }
+
+    // Source: prc_get_emp_name (PROCEDURE) — {FIXTURES_ROOT}/issue_108_cross_pkg_callee.sql:8-13
+    public void prcGetEmpName(long pIId, AtomicReference<String> pOName) {
+        pOName.set("emp");
+    }
+}

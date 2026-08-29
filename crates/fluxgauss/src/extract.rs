@@ -180,8 +180,12 @@ pub fn extract_from_parse_output(
                     if pkg_name.is_empty() { proc_name.clone() } else { format!("{}.{}", pkg_name, proc_name) };
 
                 let params = convert_params(&func_stmt.node.parameters);
-                let return_type =
-                    func_stmt.node.return_type.as_deref().and_then(|rt| sql_type_to_java(rt).map(|s| s.to_string()));
+                let return_type = func_stmt
+                    .node
+                    .return_type
+                    .as_deref()
+                    .map(strip_function_return_modifiers)
+                    .and_then(|rt| sql_type_to_java(&rt).map(|s| s.to_string()));
                 let proc_info = build_procedure_info(
                     full_name,
                     pkg_name,
@@ -303,7 +307,11 @@ fn extract_package_item(
             let proc_name = object_name_to_string(&func.name);
             let full_name = format!("{}.{}", pkg_name, proc_name);
             let params = convert_params(&func.parameters);
-            let return_type = func.return_type.as_deref().and_then(|rt| sql_type_to_java(rt).map(|s| s.to_string()));
+            let return_type = func
+                .return_type
+                .as_deref()
+                .map(strip_function_return_modifiers)
+                .and_then(|rt| sql_type_to_java(&rt).map(|s| s.to_string()));
             let proc_info = build_procedure_info(
                 full_name,
                 pkg_name.to_string(),
@@ -586,6 +594,27 @@ fn parse_param_mode(mode: Option<&str>) -> Option<ParamMode> {
     }
 }
 
+/// Oracle/PLSQL function modifiers that ogsql-parser folds into the
+/// `return_type` string of `CreateFunction`/`PackageFunction` nodes when they
+/// follow the type on the same clause (e.g. `RETURN NUMERIC DETERMINISTIC IS`
+/// parses as return_type == "numeric deterministic"). Strip them before
+/// handing the string to `sql_type_to_java`, which only does exact matches.
+const FUNCTION_RETURN_TYPE_MODIFIERS: &[&str] = &["deterministic", "parallel_enable", "result_cache", "pipelined"];
+
+fn strip_function_return_modifiers(return_type: &str) -> String {
+    let mut result = return_type.to_lowercase();
+    for modifier in FUNCTION_RETURN_TYPE_MODIFIERS {
+        if let Some(pos) = result.rfind(modifier) {
+            let before = result[..pos].trim_end();
+            let after = &result[pos + modifier.len()..];
+            if !before.is_empty() && after.trim().is_empty() {
+                result = before.to_string();
+            }
+        }
+    }
+    result.trim().to_string()
+}
+
 pub fn normalize_sql_type(sql_type: &str) -> String {
     let lower = sql_type.to_lowercase();
     let trimmed = lower.trim();
@@ -758,6 +787,15 @@ pub fn map_comments(comments: &[ogsql_parser::parser::CommentInfo], procedures: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_strip_function_return_modifiers() {
+        assert_eq!(strip_function_return_modifiers("numeric deterministic"), "numeric");
+        assert_eq!(strip_function_return_modifiers("NUMERIC DETERMINISTIC"), "numeric");
+        assert_eq!(strip_function_return_modifiers("varchar2 result_cache"), "varchar2");
+        assert_eq!(strip_function_return_modifiers("numeric"), "numeric");
+        assert_eq!(strip_function_return_modifiers("double precision"), "double precision");
+    }
 
     #[test]
     fn test_parse_param_mode() {
@@ -964,6 +1002,52 @@ mod tests {
         assert_eq!(proc.parameters.len(), 2);
         assert_eq!(proc.parameters[0].name, "a");
         assert_eq!(proc.parameters[1].name, "b");
+    }
+
+    #[test]
+    fn issue_108b_deterministic_return_type_maps_to_bigdecimal_not_object() {
+        // Root cause E: ogsql-parser folds Oracle function modifiers (DETERMINISTIC,
+        // PARALLEL_ENABLE, etc.) into the return_type string itself, e.g.
+        // "numeric deterministic" instead of plain "numeric". Feeding that straight
+        // into sql_type_to_java() fails the exact-match lookup and silently falls
+        // back to "Object", which then breaks any downstream assignment/arithmetic
+        // on the function's return value.
+        use ogsql_parser::{Parser, Tokenizer};
+        let sql = r#"
+            CREATE OR REPLACE FUNCTION fn_det(p_x IN NUMERIC)
+            RETURN NUMERIC DETERMINISTIC IS
+            BEGIN
+                RETURN 0.03;
+            END;
+        "#;
+        let tokens = Tokenizer::new(sql).tokenize().unwrap();
+        let stmts = Parser::new(tokens).parse();
+        let output = ogsql_parser::parser::ParseOutput {
+            statements: stmts
+                .into_iter()
+                .map(|s| ogsql_parser::ast::StatementInfo {
+                    sql_text: String::new(),
+                    start_line: 0,
+                    start_col: 0,
+                    end_line: 0,
+                    end_col: 0,
+                    statement: s,
+                })
+                .collect(),
+            errors: Vec::new(),
+            comments: Vec::new(),
+        };
+
+        let result = extract_from_parse_output(&output, "test.sql", "com.example");
+        assert_eq!(result.packages.len(), 1);
+        let proc = &result.packages[0].procedures[0];
+        assert!(proc.is_function);
+        assert_eq!(
+            proc.return_type.as_deref(),
+            Some("java.math.BigDecimal"),
+            "DETERMINISTIC modifier must be stripped before type lookup, got {:?}",
+            proc.return_type
+        );
     }
 
     #[test]

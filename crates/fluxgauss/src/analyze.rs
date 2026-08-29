@@ -165,6 +165,13 @@ pub fn analyze_procedure(
         }
         ctx.unresolved_calls.extend(stmt_ctx.unresolved_calls.drain(..));
     }
+    // Apply any bare-local-var promotions queued by emit_cross_pkg_call (see
+    // crate::expr::take_pending_out_promotions) while generating this procedure's
+    // statements above — expr.rs only has `&ProcedureInfo`, so it can't write
+    // proc.out_local_vars directly.
+    for (var_lower, java_type) in crate::expr::take_pending_out_promotions() {
+        proc.out_local_vars.insert(var_lower, java_type);
+    }
     proc.body = body;
     result
 }
@@ -334,7 +341,15 @@ pub fn discover_cross_service_refs(pkg: &mut crate::types::PackageInfo, known_pa
 
     let re = regex::Regex::new(r"(\w+Service)\.").unwrap();
     for proc in &mut pkg.procedures {
-        for line in &proc.java_logic_lines {
+        // Declaration-section default initializers (e.g. `v NUMBER := fn_calc(...)`) are
+        // rendered from `local_var_defaults` by generate/service.rs, not from
+        // `java_logic_lines` (that only holds body statements). A cross-pkg call appearing
+        // ONLY in a declare-section initializer would otherwise never be seen by this scan,
+        // so the callee service field/constructor param/import silently never gets injected
+        // (#107/#108 root cause A). Scan both sources with identical logic.
+        let scan_targets: Vec<String> =
+            proc.java_logic_lines.iter().cloned().chain(proc.local_var_defaults.values().cloned()).collect();
+        for line in &scan_targets {
             if line.trim().starts_with("//") {
                 continue;
             }
@@ -393,5 +408,20 @@ mod tests {
     fn test_scan_context_new() {
         let ctx = ScanContext::new();
         assert!(ctx.type_overrides.is_empty());
+    }
+
+    #[test]
+    fn test_out_promotion_queue_drained_after_analyze() {
+        // Task 3 (#108) uses a thread_local side-channel (expr.rs's
+        // PENDING_OUT_PROMOTIONS) because expr rendering only holds
+        // &ProcedureInfo. analyze_procedure must drain it fully; a leftover
+        // entry would leak into the NEXT procedure's promotion set. This guard
+        // exists so a future parallelization (rayon etc.) fails loudly instead
+        // of silently cross-contaminating procedures.
+        assert!(
+            crate::expr::take_pending_out_promotions().is_empty(),
+            "PENDING_OUT_PROMOTIONS must be empty between procedure analyses \
+             (thread_local side-channel leak)"
+        );
     }
 }

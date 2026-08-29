@@ -74,8 +74,7 @@ jobs:
           distribution: "temurin"
 
       - name: Compile generated Rust converter output
-        continue-on-error: true
-        run: cd dest_ru && mvn compile --batch-mode --quiet || true
+        run: cd dest_ru && mvn compile --batch-mode --quiet
 
   # ── Python tests ───────────────────────────────────────────────
   test-python:
@@ -123,21 +122,52 @@ jobs:
       - name: Compile generated output
         run: cd dest_py && mvn compile --batch-mode --quiet
 
-      # ── Layer 0: End-to-end demo migration guard ───────────────
-      # Runs both engines (py + ru) through real demo yaml → mvn compile → mvn test
-      # → semantic health checks. ~4 min. Catches converter regressions that
-      # mini-fixture tests miss. See tests/regress/test_demo_migration.py
-      - name: Install Rust toolchain (for Rust engine L0)
+  # ── Layer 0: End-to-end demo migration guard ───────────────────
+  # Runs both engines (py + ru) through real demo yaml → mvn compile → mvn test
+  # → semantic health checks. ~4 min. Catches converter regressions that
+  # mini-fixture tests miss — #107 regression (golden green but demo migration
+  # 0→21 compile errors, then 36 Mockito test errors) went uncaught because
+  # test-rust's `mvn compile || true` swallowed failures. See
+  # tests/regress/test_demo_migration.py. This job MUST NOT be continue-on-error.
+  demo-migration:
+    name: Demo migration guard (L0)
+    runs-on: ubuntu-22.04
+    needs: [build-ogsql-linux]
+    steps:
+      - name: Checkout flux-gauss
+        uses: actions/checkout@v4
+
+      - name: Download ogsql
+        uses: actions/download-artifact@v4
+        with:
+          name: ogsql-linux
+          path: ogsql-artifact
+
+      - name: Prepare ogsql
+        run: |
+          chmod +x ogsql-artifact/ogsql
+          echo "OGSQL_BIN=$PWD/ogsql-artifact/ogsql" >> "$GITHUB_ENV"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install pyyaml pytest
+
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
 
       - name: Build fluxgauss release binary
         run: cargo build --release --bin fluxgauss
 
-      # Runs BOTH engines over the same fixtures and compares derived facts.
-      # Per-engine goldens cannot see divergence — they lock in whatever each
-      # engine already does — which is how issue #71 (Rust 0 cross-calls vs
-      # Python 171) stayed green. Must run AFTER the release binary exists, or
-      # the parity tests skip themselves.
       - name: Run cross-engine parity guard
         run: python3 -m pytest tests/regress/test_parity.py -v --tb=short -m parity
 

@@ -39,6 +39,7 @@ pub fn write_service_test(
 ) -> std::io::Result<String> {
     let mut sorted_injections: Vec<(&String, &String)> = service_injections.iter().collect();
     sorted_injections.sort_by_key(|(k, _)| k.as_str());
+    let cross_service_lines = mock_cross_service_calls(pkg, &sorted_injections);
     let java_pkg = format!("{}.service", base_package);
     let test_dir = base_path.join(format!("src/test/java/{}/service", base_package.replace('.', "/")));
     let class_name = format!("{}Service", package_to_classname(&pkg.package_name));
@@ -69,7 +70,9 @@ pub fn write_service_test(
         imports.insert(format!("import {}.service.{};", base_package, svc_class));
     }
 
-    if pkg.procedures.iter().any(|p| p.parameters.iter().any(|p| p.is_out())) {
+    if pkg.procedures.iter().any(|p| p.parameters.iter().any(|p| p.is_out()))
+        || cross_service_lines.iter().any(|l| l.contains("AtomicReference"))
+    {
         imports.insert("import java.util.concurrent.atomic.AtomicReference;".to_string());
     }
 
@@ -134,7 +137,7 @@ pub fn write_service_test(
         } else {
             String::new()
         };
-        let test_method = build_success_test(proc, &mapper_var, pkg, &suffix);
+        let test_method = build_success_test(proc, &mapper_var, pkg, &suffix, &cross_service_lines);
         for line in test_method.split('\n') {
             w.raw_line(line);
         }
@@ -214,6 +217,7 @@ fn build_success_test(
     mapper_name: &str,
     pkg: &PackageInfo,
     overload_suffix: &str,
+    cross_service_lines: &[String],
 ) -> String {
     let method_name = java_method_name(&proc.proc_name);
     let mut lines = Vec::new();
@@ -269,6 +273,10 @@ fn build_success_test(
         lines.push(ml.clone());
     }
 
+    for sl in cross_service_lines {
+        lines.push(sl.clone());
+    }
+
     let args_str = param_args.join(", ");
     let has_refcursor_out = proc.parameters.iter().any(|p| p.is_out() && p.is_refcursor());
     if proc.is_function || has_refcursor_out {
@@ -287,7 +295,7 @@ fn build_success_test(
         let verify_args = if pts.is_empty() {
             String::new()
         } else {
-            pts.iter().map(|t| format!("({}) any()", any_matcher_type(t))).collect::<Vec<_>>().join(", ")
+            pts.iter().map(|t| any_matcher_expr(t)).collect::<Vec<_>>().join(", ")
         };
         lines.push(format!("        verify({}, atLeast(0)).{}({});", mapper_name, dml.method_id, verify_args));
     }
@@ -508,6 +516,94 @@ fn extract_map_access_keys(pkg: &PackageInfo) -> Vec<String> {
     result
 }
 
+/// Root cause G (#107 follow-up): the test generator only stubbed the
+/// package's own mapper, never the injected cross-package `*Service` fields
+/// that `@InjectMocks` wires in. Mockito returns `null` for any unstubbed
+/// method, so a call site like `gaussFunctionCallsService.fnDeptAvgSalary(x)`
+/// whose result feeds straight into `.multiply(...)` NPEs at test run time.
+///
+/// Scans every procedure's `java_logic_lines` + `local_var_defaults` for
+/// `<svcVar>.<method>(` call sites where `svcVar` is one of the package's
+/// injected services (`sorted_injections`), resolves the callee's declared
+/// return type + parameter types via `proc.all_proc_params` (the global
+/// cross-package function registry built in `pipeline.rs`), and emits a
+/// `when(...).thenReturn(...)` stub. Void, unknown, or unmappable-default
+/// return types are skipped — Mockito's default null/no-op stub already
+/// covers those without producing a misleading fake value.
+fn mock_cross_service_calls(pkg: &PackageInfo, sorted_injections: &[(&String, &String)]) -> Vec<String> {
+    let injected_vars: std::collections::HashSet<&str> =
+        sorted_injections.iter().map(|(svc_var, _)| svc_var.as_str()).collect();
+    if injected_vars.is_empty() {
+        return Vec::new();
+    }
+    let re = regex::Regex::new(r"\b(\w+Service)\.(\w+)\(").unwrap_or_else(|_| regex::Regex::new(r#""#).unwrap());
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut stubs: Vec<(String, String)> = Vec::new();
+    for proc in &pkg.procedures {
+        for line in proc.java_logic_lines.iter().chain(proc.local_var_defaults.values()) {
+            for cap in re.captures_iter(line) {
+                let svc_var = cap.get(1).unwrap().as_str();
+                let method = cap.get(2).unwrap().as_str();
+                if !injected_vars.contains(svc_var) {
+                    continue;
+                }
+                let sig = format!("{}|{}", svc_var, method);
+                if !seen.insert(sig.clone()) {
+                    continue;
+                }
+                let Some(candidates) = proc.all_proc_params.get(method) else {
+                    continue;
+                };
+                let Some(entry) = candidates.iter().find(|e| e.svc_var == svc_var) else {
+                    continue;
+                };
+                let Some(ret) = entry.return_type.as_deref().filter(|rt| *rt != "void") else {
+                    continue;
+                };
+                let default_val = scalar_mock_value(ret);
+                if default_val == "null" {
+                    continue;
+                }
+                let matchers: Vec<String> = entry
+                    .params
+                    .iter()
+                    .map(|p| {
+                        if p.is_out() {
+                            any_matcher_expr(&format!("AtomicReference<{}>", p.java_type))
+                        } else {
+                            // Mirror `service.rs::build_service_method`'s IN-param typing rule
+                            // exactly: any boxed-numeric/boolean param without an explicit
+                            // `default null` is declared primitive in the *actual* callee
+                            // method signature, so the matcher must use `anyInt()`/`anyLong()`
+                            // (not `(Integer) any()`) or Mockito's null unboxes and NPEs.
+                            let is_null_default =
+                                p.default_value.as_ref().map_or(false, |dv| dv.to_lowercase() == "null");
+                            let t = if is_null_default {
+                                p.java_type.as_str()
+                            } else {
+                                crate::generate::service::boxed_to_primitive(&p.java_type)
+                            };
+                            any_matcher_expr(t)
+                        }
+                    })
+                    .collect();
+                stubs.push((
+                    sig,
+                    format!(
+                        "        when({}.{}({})).thenReturn({});",
+                        svc_var,
+                        method,
+                        matchers.join(", "),
+                        default_val
+                    ),
+                ));
+            }
+        }
+    }
+    stubs.sort_by(|a, b| a.0.cmp(&b.0));
+    stubs.into_iter().map(|(_, line)| line).collect()
+}
+
 fn mock_all_mapper_methods(mapper_name: &str, pkg: &PackageInfo) -> Vec<String> {
     let extra_keys = extract_map_access_keys(pkg);
     let mut all_dmls: Vec<(String, DmlType, usize, bool, Option<String>, String, Vec<String>)> = Vec::new();
@@ -540,8 +636,7 @@ fn mock_all_mapper_methods(mapper_name: &str, pkg: &PackageInfo) -> Vec<String> 
             all_dmls.iter().filter(|(id, _, _, _, _, _, pts)| id == method_id && pts != param_types).count() > 0;
         let any_args = if *param_count > 0 {
             if !param_types.is_empty() {
-                let mut args: Vec<String> =
-                    param_types.iter().map(|t| format!("({}) any()", any_matcher_type(t))).collect();
+                let mut args: Vec<String> = param_types.iter().map(|t| any_matcher_expr(t)).collect();
                 while args.len() < *param_count {
                     args.push("any()".to_string());
                 }
@@ -733,6 +828,27 @@ fn lowercase_first(s: &str) -> String {
     match c.next() {
         Some(f) => f.to_ascii_lowercase().to_string() + c.as_str(),
         None => String::new(),
+    }
+}
+
+/// Full Mockito matcher expression for a mapper parameter of the given Java type.
+///
+/// Primitive types (`int`, `long`, ...) must use the dedicated `anyInt()`/`anyLong()`/...
+/// helpers from `ArgumentMatchers`/`Mockito`: `any()` always returns `null`, and casting that
+/// `null` to a boxed type only to pass it into a primitive parameter slot triggers an
+/// auto-unboxing `NullPointerException` at call time. Reference/boxed types keep the existing
+/// `({Type}) any()` cast form.
+fn any_matcher_expr(java_type: &str) -> String {
+    match java_type {
+        "int" => "anyInt()".to_string(),
+        "long" => "anyLong()".to_string(),
+        "boolean" => "anyBoolean()".to_string(),
+        "double" => "anyDouble()".to_string(),
+        "float" => "anyFloat()".to_string(),
+        "short" => "anyShort()".to_string(),
+        "byte" => "anyByte()".to_string(),
+        "char" => "anyChar()".to_string(),
+        _ => format!("({}) any()", any_matcher_type(java_type)),
     }
 }
 
@@ -991,5 +1107,48 @@ mod tests {
         assert!(joined.contains("m.put(\"id\", 1L)"));
         assert!(joined.contains("m.put(\"name\", \"test\")"));
         assert!(joined.contains("when(dataMapper.selectListData()).thenReturn(java.util.List.of(m))"));
+    }
+
+    #[test]
+    fn primitive_mapper_params_use_typed_mockito_matchers() {
+        // Mockito's any() returns null for primitive-typed matcher slots; if the generated
+        // test casts that null to a boxed type (e.g. `(Integer) any()`), Mockito auto-unboxes
+        // it when invoking a mapper method with an `int` parameter, throwing an NPE. Primitive
+        // Java types must use the dedicated ArgumentMatchers helpers (anyInt(), anyLong(), ...)
+        // instead of `(Boxed) any()`.
+        assert_eq!(any_matcher_expr("int"), "anyInt()");
+        assert_eq!(any_matcher_expr("long"), "anyLong()");
+        assert_eq!(any_matcher_expr("boolean"), "anyBoolean()");
+        assert_eq!(any_matcher_expr("double"), "anyDouble()");
+        assert_eq!(any_matcher_expr("float"), "anyFloat()");
+        assert_eq!(any_matcher_expr("short"), "anyShort()");
+        assert_eq!(any_matcher_expr("byte"), "anyByte()");
+        assert_eq!(any_matcher_expr("char"), "anyChar()");
+        // Reference/boxed types keep the existing cast-and-any() form.
+        assert_eq!(any_matcher_expr("String"), "(String) any()");
+        assert_eq!(any_matcher_expr("Integer"), "(Integer) any()");
+        assert_eq!(any_matcher_expr("Long"), "(Long) any()");
+    }
+
+    #[test]
+    fn test_mock_insert_with_primitive_param_uses_anyint_not_boxed_any() {
+        let mut proc = make_proc("do_loop");
+        proc.dml_statements.push(DmlStatement {
+            sql_type: DmlType::Insert,
+            method_id: "insertItem".to_string(),
+            sql_text: "insert into t values(:i)".to_string(),
+            result_type: None,
+            extra_params: vec![("i".to_string(), "int".to_string())],
+            ..Default::default()
+        });
+        let pkg = make_pkg("pkg_order", vec![proc]);
+        let lines = mock_all_mapper_methods("orderMapper", &pkg);
+        let joined = lines.join("\n");
+        assert!(joined.contains("anyInt()"), "expected anyInt() matcher for primitive int param, got: {}", joined);
+        assert!(
+            !joined.contains("(Integer) any()"),
+            "must not use boxed (Integer) any() for a primitive int mapper param (causes unboxing NPE): {}",
+            joined
+        );
     }
 }

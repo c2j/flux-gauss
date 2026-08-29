@@ -309,7 +309,7 @@ pub fn write_service_class(
     Ok(class_name)
 }
 
-fn boxed_to_primitive(t: &str) -> &str {
+pub(crate) fn boxed_to_primitive(t: &str) -> &str {
     match t {
         "Long" => "long",
         "Integer" => "int",

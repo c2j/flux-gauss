@@ -2635,16 +2635,11 @@ pub fn process_statement(
                     let lo_safe = if crate::expr::is_nullish_java_expr(&lo) { "0".to_string() } else { lo };
                     let hi_safe = if crate::expr::is_nullish_java_expr(&hi) { "0".to_string() } else { hi };
                     let iter_var = var.clone();
-                    let already_declared = proc.local_vars.contains_key(&for_stmt.node.variable.to_lowercase());
-                    if !already_declared {
-                        // Register the implicit range-loop counter so body references resolve
-                        // through the declared-variable path (Task 6): previously this bare
-                        // name fell through resolve_column_ref's unresolved-name fallback and
-                        // only "worked" by coincidence (camelCase("i") == "i"); now that the
-                        // fallback emits a compile-safe TOBEFIX marker, an unregistered loop
-                        // counter would silently lose its value in string concatenation.
-                        proc.local_vars.insert(for_stmt.node.variable.to_lowercase(), "int".into());
-                    }
+                    // Track the counter so body references resolve via the declared-variable
+                    // path. Always insert unconditionally: sibling FOR loops reusing the same
+                    // counter name are each independently scoped by their own `for (int i = ...)`
+                    // header in Java, so this must not gate the inline declaration below.
+                    proc.local_vars.insert(for_stmt.node.variable.to_lowercase(), "int".into());
                     let step_code = match step {
                         Some(s) => {
                             let s_val = crate::expr::expr_to_java(s, proc);
@@ -2652,25 +2647,7 @@ pub fn process_statement(
                         }
                         None => format!("{}++", iter_var),
                     };
-                    if already_declared {
-                        if *reverse {
-                            push_logic_line(
-                                proc,
-                                format!(
-                                    "for ({} = {}; {} >= {}; {}--) {{",
-                                    iter_var, hi_safe, iter_var, lo_safe, iter_var
-                                ),
-                            );
-                        } else {
-                            push_logic_line(
-                                proc,
-                                format!(
-                                    "for ({} = {}; {} <= {}; {}) {{",
-                                    iter_var, lo_safe, iter_var, hi_safe, step_code
-                                ),
-                            );
-                        }
-                    } else if *reverse {
+                    if *reverse {
                         push_logic_line(
                             proc,
                             format!(

@@ -222,6 +222,41 @@ fn run_multi_file_services(sql_files: &[PathBuf], out_dir: &Path) -> HashMap<Str
     files.into_iter().collect()
 }
 
+/// Runs a multi-file conversion and returns *all* generated `*ServiceTest.java`
+/// files, keyed by filename (including the `.java` extension). Sibling of
+/// `run_multi_file_services` — same pipeline invocation, but scans the test
+/// output directory instead of the main service directory.
+fn run_multi_file_service_tests(sql_files: &[PathBuf], out_dir: &Path) -> HashMap<String, String> {
+    let config = AppConfig {
+        output_dir: Some(out_dir.to_string_lossy().into()),
+        base_package: Some(BASE_PACKAGE.to_string()),
+        sources: Some(sql_files.iter().map(|path| path.to_string_lossy().into()).collect()),
+        ..Default::default()
+    };
+
+    let mut inc = IncrementalState::new(out_dir.to_string_lossy().into_owned(), false);
+    inc.initialize().expect("Failed to initialize incremental state");
+    let _result = run_pipeline(sql_files, &config, &mut inc, false);
+
+    let pkg_path = BASE_PACKAGE.replace('.', "/");
+    let test_dir = out_dir.join("src/test/java").join(&pkg_path).join("service");
+    let mut files: Vec<(String, String)> = fs::read_dir(&test_dir)
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.file_name().map_or(false, |n| n.to_string_lossy().ends_with("ServiceTest.java")))
+                .filter_map(|p| {
+                    let name = p.file_name().unwrap().to_string_lossy().to_string();
+                    fs::read_to_string(&p).ok().map(|content| (name, content))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    files.into_iter().collect()
+}
+
 #[test]
 fn issue_79_unqualified_cross_pkg_fn_resolves() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURES_REL);
@@ -282,6 +317,183 @@ fn issue_70_other_source_change_preserves_merged_service_incrementally() {
     let manifest: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(out_dir.join(".fluxgauss/manifest.json")).unwrap()).unwrap();
     assert_eq!(manifest["files"][sql_files[1].to_string_lossy().as_ref()]["packages"][0], "BIGFUND");
+}
+
+/// #107 引入的裸函数调用真实跨包 service 生成暴露了 4 类下游缺口（demo 全流程编译从 0 错误
+/// 退化到 21 处）。本测试用 issue_108 fixture 对 B（实参强转）与 D（同名 range loop 计数器
+/// 声明）两类直接断言；A（声明段调用触发注入）与 C（callee OUT 提升为 AtomicReference）在
+/// issue_108 的两文件组合里无法独立观察 —— `prc_get_emp_name` 是一条语句级 CALL，已经走
+/// statement.rs 里完全正确的 promote/inject 路径，其对同一 callee 包的注入会掩盖
+/// declare-only 场景下 analyze.rs 扫描缺口（A）；而它是 PROCEDURE 语句调用（非表达式内的
+/// FUNCTION 调用），也不会触发 C 的 bug（C 只在 `v := fn(...)` 这种表达式路径出现，走的是
+/// expr.rs 而非 statement.rs）。因此 A / C 各自用一个内联的最小 probe（不落盘进
+/// tests/regress/fixtures，不参与 golden 比对）单独隔离验证。
+#[test]
+fn issue_108_cross_pkg_call_arg_and_out_handling() {
+    // #107 回归四类：B 实参强转 / C callee OUT 提升 / A 声明段注入 / D 同名 range loop 计数器声明
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURES_REL);
+    let sql_files =
+        vec![fixtures.join("issue_108_cross_pkg_callee.sql"), fixtures.join("issue_108_cross_pkg_caller.sql")];
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let files = run_multi_file_services(&sql_files, &tmp.path().join("dest"));
+    let caller = files.get("Issue108CrossPkgCallerService.java").expect("caller service");
+
+    // B1: `fn_calc_bonus(12000, 0.10, 2)` — the callee's params are all `long` (plain NUMBER
+    // has no scale/precision hint here), so passing the literal `0.10` straight through is a
+    // narrowing double->long conversion that javac rejects without an explicit cast/parse.
+    // emit_cross_pkg_call (expr.rs) currently does zero arg coercion for cross-pkg calls, so
+    // the raw literal passes through unchanged. Once fixed to reuse `coerce_arg_to_type`
+    // (already used by the same-package call path), `0.10` becomes
+    // `Long.parseLong(String.valueOf(0.10))` (existing Object-fallback branch).
+    assert!(
+        caller.contains("fnCalcBonus(12000, Long.parseLong(String.valueOf(0.10)), 2)"),
+        "B1: numeric literal args to cross-pkg calls must be coerced to the callee's declared \
+         param type (bare `0.10` cannot implicitly narrow to `long`):\n{}",
+        caller
+    );
+
+    // D: two `FOR i IN ...` range loops reuse the same iterator name `i`. The first loop
+    // registers `i` into `local_vars`, so the second loop's counter-declaration is skipped —
+    // but no method-level `int i;` is emitted either, leaving `i` completely undeclared for
+    // the second loop.
+    assert!(
+        !caller.contains("for (i ="),
+        "D: every range loop must declare its counter (no bare, undeclared `for (i =`):\n{}",
+        caller
+    );
+
+    // --- A: declaration-section-only cross-pkg call must still inject the callee service ---
+    // Isolated probe: the ONLY cross-pkg reference is `v_decl_bonus`'s default initializer
+    // (no body statement references the callee at all), so field injection depends entirely
+    // on analyze.rs's `discover_cross_service_refs` scanning `local_var_defaults` — which it
+    // currently does not (it only scans `java_logic_lines`, i.e. body statements).
+    let a_dir = tmp.path().join("a_probe");
+    fs::create_dir_all(&a_dir).unwrap();
+    let a_callee = a_dir.join("a_decl_only_callee.sql");
+    let a_caller = a_dir.join("a_decl_only_caller.sql");
+    fs::copy(fixtures.join("issue_108_cross_pkg_callee.sql"), &a_callee).unwrap();
+    fs::write(
+        &a_caller,
+        "CREATE OR REPLACE PROCEDURE a_decl_only_caller(p_i_date VARCHAR2)\n\
+         IS\n\
+         \u{20}v_decl_bonus NUMBER := fn_calc_bonus(12000, 0.10, 2);\n\
+         BEGIN\n\
+         \u{20}NULL;\n\
+         END;\n/\n",
+    )
+    .unwrap();
+    let a_files = run_multi_file_services(&[a_callee, a_caller], &tmp.path().join("a_dest"));
+    let a_caller_java = a_files.get("ADeclOnlyCallerService.java").expect("A-probe caller service");
+    assert!(
+        a_caller_java.contains("private final ADeclOnlyCalleeService"),
+        "A: a cross-pkg call appearing ONLY in a declare-section default initializer must still \
+         inject the callee service (field/constructor param/import) — analyze.rs's cross-service \
+         scan must also cover `local_var_defaults`, not just `java_logic_lines`:\n{}",
+        a_caller_java
+    );
+
+    // --- C: callee OUT param must be promoted to AtomicReference, even cross-package ---
+    // Isolated probe: `fn_get_emp_details_c`'s 2nd param is OUT, called as `v_ret := fn(...)`
+    // (a FUNCTION-call-in-expression, routed through expr.rs's emit_cross_pkg_call) rather than
+    // a standalone `CALL proc(...)` statement (which statement.rs already promotes correctly —
+    // that's why `prc_get_emp_name(1002, v_name)` in the main fixture above is NOT a suitable
+    // probe for this bug).
+    let c_dir = tmp.path().join("c_probe");
+    fs::create_dir_all(&c_dir).unwrap();
+    let c_callee = c_dir.join("c_probe_callee.sql");
+    let c_caller = c_dir.join("c_probe_caller.sql");
+    fs::write(
+        &c_callee,
+        "CREATE OR REPLACE FUNCTION fn_get_emp_details_c(p_i_id NUMBER, p_o_name OUT VARCHAR2)\n\
+         RETURN NUMBER IS\n\
+         BEGIN\n\
+         \u{20}p_o_name := 'emp';\n\
+         \u{20}RETURN 1;\n\
+         END;\n/\n",
+    )
+    .unwrap();
+    fs::write(
+        &c_caller,
+        "CREATE OR REPLACE PROCEDURE c_probe_caller(p_i_date VARCHAR2)\n\
+         IS\n\
+         \u{20}v_ret  NUMBER;\n\
+         \u{20}v_name VARCHAR2(64);\n\
+         BEGIN\n\
+         \u{20}v_ret := fn_get_emp_details_c(1002, v_name);\n\
+         END;\n/\n",
+    )
+    .unwrap();
+    let c_files = run_multi_file_services(&[c_callee, c_caller], &tmp.path().join("c_dest"));
+    let c_caller_java = c_files.get("CProbeCallerService.java").expect("C-probe caller service");
+    assert!(
+        c_caller_java.contains("AtomicReference<String> vName"),
+        "C: a bare local passed to a callee's OUT (AtomicReference) parameter must be promoted \
+         to AtomicReference, not declared as a plain String — emit_cross_pkg_call must reuse the \
+         promote-to-AtomicReference logic that statement.rs's standalone-CALL path already has:\n{}",
+        c_caller_java
+    );
+}
+
+/// Root cause B3 (#107 follow-up): a cross-package FUNCTION call's *return value*
+/// participating in a binary op must be treated according to the callee's declared
+/// return type. `looks_bd_expr` only does textual pattern-matching (`.multiply(`,
+/// literal `"BigDecimal"`, etc.) — a call expression like
+/// `gaussFunctionCallsService.fnAvgAmount(pIId)` has none of those markers even
+/// though the callee returns `java.math.BigDecimal`, so `v * 1.2` was emitted as
+/// raw `BigDecimal * double`, which javac rejects.
+#[test]
+fn issue_108c_cross_pkg_call_return_value_bigdecimal_arithmetic() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURES_REL);
+    let sql_files = vec![
+        fixtures.join("issue_108c_bd_return_arith_callee.sql"),
+        fixtures.join("issue_108c_bd_return_arith_caller.sql"),
+    ];
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let files = run_multi_file_services(&sql_files, &tmp.path().join("dest"));
+    let caller = files.get("Issue108cBdReturnArithCallerService.java").expect("caller service");
+
+    assert!(
+        !caller.contains("* 1.2)") && !caller.contains(") * 1.2"),
+        "B3: a BigDecimal-returning cross-package call must not be used as a raw operand \
+         in a `*` expression with a double literal (BigDecimal has no `*` operator):\n{}",
+        caller
+    );
+    assert!(
+        caller.contains(".multiply(java.math.BigDecimal.valueOf(1.2))"),
+        "B3: the callee's BigDecimal return type must route the multiplication through \
+         BigDecimal.multiply(...), not raw `*`:\n{}",
+        caller
+    );
+}
+
+/// Root cause G (#107 follow-up): the generated unit test never stubs an
+/// injected cross-package service call, so Mockito returns `null` for e.g.
+/// `issue108cBdReturnArithCalleeService.fnAvgAmount(pIId)`, and the caller's
+/// `.multiply(...)` on that `null` throws NPE at test run time.
+#[test]
+fn issue_g_cross_service_call_is_stubbed_in_generated_test() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURES_REL);
+    let sql_files = vec![
+        fixtures.join("issue_108c_bd_return_arith_callee.sql"),
+        fixtures.join("issue_108c_bd_return_arith_caller.sql"),
+    ];
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let files = run_multi_file_service_tests(&sql_files, &tmp.path().join("dest"));
+    let caller_test = files.get("Issue108cBdReturnArithCallerServiceTest.java").expect("caller test");
+
+    assert!(
+        caller_test.contains("when(issue108cBdReturnArithCalleeService.fnAvgAmount("),
+        "G: the generated test must stub the injected cross-package service call \
+         `issue108cBdReturnArithCalleeService.fnAvgAmount(...)` so Mockito does not \
+         return null for it (the caller calls `.multiply(...)` directly on the result):\n{}",
+        caller_test
+    );
+    assert!(
+        caller_test.contains(".thenReturn(new java.math.BigDecimal("),
+        "G: the stub must return a non-null BigDecimal value matching the callee's \
+         declared return type:\n{}",
+        caller_test
+    );
 }
 
 #[test]
