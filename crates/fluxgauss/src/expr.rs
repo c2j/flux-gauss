@@ -345,6 +345,11 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
         if (t.contains("java.sql.Date") || t == "Date") && trimmed.starts_with("new java.sql.Timestamp") {
             return format!("new java.sql.Date(({}).getTime())", trimmed);
         }
+        if (t.contains("java.sql.Date") || t == "Date") && trimmed.contains("java.time.LocalDate") {
+            if !trimmed.starts_with("java.sql.Date.valueOf(") {
+                return format!("java.sql.Date.valueOf({})", trimmed);
+            }
+        }
     }
     // Early-exit: if target is BigDecimal and expr is already a BigDecimal value,
     // don't double-wrap with BigDecimal.valueOf()
@@ -2724,6 +2729,13 @@ fn type_cast_to_java(expr: &ogsql_parser::ast::Expr, type_name: &str, proc: &Pro
                 format!("new java.sql.Date(({}).getTime())", inner)
             } else if inner.contains("java.time.LocalDate") || inner.contains(".toLocalDate()") {
                 format!("java.sql.Date.valueOf({})", inner)
+            } else if resolve_var_java_type(&inner, proc)
+                .map(|t| t.contains("Timestamp"))
+                .unwrap_or(false)
+            {
+                // A Timestamp-typed variable must not be sibling-cast to
+                // java.sql.Date (Timestamp/Date both extend java.util.Date).
+                format!("new java.sql.Date(({}).getTime())", inner)
             } else {
                 format!("((java.sql.Date) {})", inner)
             }
@@ -2906,6 +2918,32 @@ mod tests {
     }
 
     #[test]
+    fn test_type_cast_timestamp_var_to_date_uses_get_time() {
+        // #103 DwdService:100/137 — `vM::date` where vM is a Timestamp local must
+        // compile as new java.sql.Date(vM.getTime()); java.sql.Timestamp and
+        // java.sql.Date are sibling classes, so ((java.sql.Date) vM) fails javac.
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_m".into(), "java.sql.Timestamp".into());
+        let cast = ogsql_parser::ast::Expr::TypeCast {
+            expr: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["v_m".into()])),
+            type_name: ogsql_parser::ast::DataType::Date,
+            default: None,
+            format: None,
+        };
+        let out = expr_to_java(&cast, &proc);
+        assert!(
+            out.starts_with("new java.sql.Date("),
+            "Timestamp var cast to date must use getTime(), got: {}",
+            out
+        );
+        assert!(
+            !out.contains("(java.sql.Date) vM"),
+            "must not sibling-cast Timestamp to Date, got: {}",
+            out
+        );
+    }
+
+    #[test]
     fn test_is_null() {
         let mut proc = empty_proc();
         proc.local_vars.insert("v_status".into(), "String".into());
@@ -3029,6 +3067,27 @@ mod tests {
         proc.local_vars.insert("fnGetDay".into(), "String".into());
         proc.package_proc_params.insert("fnGetDay".into(), vec![vec![]]);
         assert_eq!(expr_to_java(&ogsql_parser::ast::Expr::ColumnRef(vec!["fn_get_day".into()]), &proc), "fnGetDay");
+    }
+
+    #[test]
+    fn test_coerce_for_type_wraps_localdate_expr_for_sql_date_target() {
+        // #97: assigning a LocalDate-producing expression to a java.sql.Date
+        // variable must wrap with java.sql.Date.valueOf(...), otherwise javac
+        // reports 不兼容的类型.
+        let proc = empty_proc();
+        let input = "java.time.LocalDate.parse(\"2026-05-01\").withDayOfMonth(31)";
+        let out = coerce_for_type(input, Some("java.sql.Date"), &proc);
+        assert_eq!(out, format!("java.sql.Date.valueOf({})", input));
+        // A plain LocalDate.now() must also be wrapped.
+        let out2 = coerce_for_type("java.time.LocalDate.now()", Some("java.sql.Date"), &proc);
+        assert_eq!(out2, "java.sql.Date.valueOf(java.time.LocalDate.now())");
+        // An already-wrapped valueOf(...) must NOT be wrapped a second time.
+        let out3 = coerce_for_type(
+            "java.sql.Date.valueOf(java.time.LocalDate.now())",
+            Some("java.sql.Date"),
+            &proc,
+        );
+        assert_eq!(out3, "java.sql.Date.valueOf(java.time.LocalDate.now())");
     }
 
     #[test]
