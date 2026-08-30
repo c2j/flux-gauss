@@ -3,7 +3,7 @@
   "fixture": "gauss_complete_examples.sql",
   "package_name": "gauss_complete_examples",
   "files": {
-    "Service.java": "bc6c855e1e0b87c2",
+    "Service.java": "b357cb0fd9fd4140",
     "Mapper.java": "c63e86e8d51be04f",
     "Mapper.xml": "aa81d4cfa4b863c7",
     "ServiceTest.java": "e4a4388a4da4ec64"

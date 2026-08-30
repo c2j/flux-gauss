@@ -3,7 +3,7 @@
   "fixture": "issue_44_if_elsif_goto_2.sql",
   "package_name": "issue_44_if_elsif_goto_2",
   "files": {
-    "Service.java": "17cc825d3bb83e49",
+    "Service.java": "4cf14093a332a0be",
     "Mapper.java": "b1e25370cc894960",
     "Mapper.xml": "8183383bed6ecf60",
     "ServiceTest.java": "57917049c428085f"

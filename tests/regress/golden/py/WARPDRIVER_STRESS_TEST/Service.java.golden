@@ -101,7 +101,7 @@ public class WarpdriverStressTestService {
                 switch (currentState) {
                     case FetchLoop:
                     /* TODO: gSessionCounter() */ null = /* TODO: gSessionCounter() */ null + 1;
-                    pLogId.set(((Number) this.nextval("seq_log_master")).longValue());
+                    pLogId.set(((Number) (this.nextval("seq_log_master") != null ? (this.nextval("seq_log_master") instanceof Number ? ((Number) (this.nextval("seq_log_master"))).longValue() : Long.parseLong(String.valueOf(this.nextval("seq_log_master")))) : 0L)).longValue());
                     // CALL sp_autonomous_audit(...)
                     if (java.util.Objects.equals(pMode, "FAST")) {
                         vCurOrdersResult = warpdriverStressTestMapper.selectSpMainOrchestrator_2(pBizDate, pMode, vDate);
@@ -321,7 +321,7 @@ public class WarpdriverStressTestService {
                     break;
                 }
                 case StateCheck:
-                vDbState = warpdriverStressTestMapper.selectOrders_2(pOrderId, pEvent);
+                vDbState = String.valueOf(warpdriverStressTestMapper.selectOrders_2(pOrderId, pEvent));
                 vState = vDbState;
                 if (java.util.Objects.equals(vDbState, "PENDING")) {
                     currentState = SpGotoStateMachineState.StatePending;

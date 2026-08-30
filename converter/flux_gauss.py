@@ -505,6 +505,32 @@ TODO_SUMMARY = []  # Collects (category, proc_id, source_file, detail) for diagn
 _MISSING_OVERLOADS: dict[str, list[tuple[str, list[tuple[str, str]]]]] = {}  # pkg → [(method_name, [(java_type, param_name)])]
 
 
+def _param_default_java(param) -> str:
+    """Java literal for a function parameter's DEFAULT value (used to pad
+    call sites that pass fewer args than the target signature)."""
+    dv = param.default_value
+    if dv is None:
+        return _default_for_type(param.java_type)
+    if isinstance(dv, dict):
+        try:
+            return _expr_to_java(dv, None)
+        except Exception:
+            return _default_for_type(param.java_type)
+    dv_s = str(dv).strip()
+    if not dv_s or dv_s.lower() == "null":
+        return _default_for_type(param.java_type)
+    if (dv_s.startswith("'") and dv_s.endswith("'")) or (dv_s.startswith('"') and dv_s.endswith('"')):
+        inner = dv_s[1:-1]
+        if "String" in param.java_type:
+            return f'"{inner}"'
+        if inner.isdigit() or (inner.startswith("-") and inner[1:].isdigit()):
+            return inner
+        return _default_for_type(param.java_type)
+    if re.match(r'^-?\d+(\.\d+)?$', dv_s):
+        return dv_s
+    return _default_for_type(param.java_type)
+
+
 def _register_missing_overload(pkg: str, method_name: str, arg_types: list, arg_count: int):
     sig_key = (method_name, tuple(arg_types))
     existing = _MISSING_OVERLOADS.get(pkg, [])
@@ -2408,6 +2434,15 @@ def _check_call_out_promotions(call_data, proc, all_packages, local_var_names, p
                 return
         return
     target_proc_info = _find_target_proc(matched_pkg, func, all_packages, arg_count=len(args))
+    if not target_proc_info:
+        # Function may live in ANOTHER package (resolved via cross-package
+        # fallback at call generation) — promote OUT vars from the real owner.
+        for _apk in (all_packages or {}):
+            if _apk == matched_pkg:
+                continue
+            target_proc_info = _find_target_proc(_apk, func, all_packages, arg_count=len(args))
+            if target_proc_info:
+                break
     if not target_proc_info:
         return
     for i, a in enumerate(args):
@@ -4357,6 +4392,12 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                             _emit_assignment(proc, f'__MAP_PUT__{map_var}__{first_var}', f'_row.get("{col_name}")')
                         else:
                             _assign_expr = f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text, is_select=True))})'
+                            # The mapper method may return Object while the INTO
+                            # target is a concrete type (String/Long/...). Coerce
+                            # so the assignment compiles.
+                            _target_var_t = _lookup_var_type(proc, first_var)
+                            if _target_var_t not in ("Object", "Map<String, Object>"):
+                                _assign_expr = _coerce_type(_assign_expr, "Object", _target_var_t)
                             _emit_assignment(proc, var_java, _assign_expr)
 
                     if '||' in sql_text and result_type not in ("String", "Object", "Map<String, Object>"):
@@ -4861,7 +4902,8 @@ def _is_bare_long_literal(expr: str) -> bool:
 # `.longValue()`, so coercion must box via `((Number) expr)` instead.
 _PRIMITIVE_METHOD_RE = (
     r'\.(length|size|indexOf|lastIndexOf|compareTo|compareToIgnoreCase'
-    r'|hashCode|charAt|codePointAt|ordinal|getTime)\s*\([^()]*\)'
+    r'|hashCode|charAt|codePointAt|ordinal|getTime|getId|getIndex|getCount'
+    r'|getLength|currentTimeMillis|nanoTime)\s*\([^()]*\)'
 )
 
 
@@ -5348,14 +5390,19 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
     # ── General type coercion fallback ──
     # Existing ad-hoc checks above handle specific cases (BigDecimal, String, Map.get()).
     # This fallback covers remaining type mismatches using the unified coercion engine.
-    if target_type and expr_type and _needs_coercion(expr_type, target_type):
+    _obj_call = (
+        "Mapper." in java_expr or "Service." in java_expr or java_expr.strip().startswith("this.")
+    )
+    if target_type and expr_type and (_needs_coercion(expr_type, target_type) or (expr_type == "Object" and _obj_call)):
+        # Object-source call results (stub/mapper/service returning Object)
+        # reach _coerce_type's Object→concrete fallbacks. Plain `.get()`/literal
+        # exprs are already handled above — do NOT double-wrap them.
         _numeric_widen = target_type in ("Long", "long") and expr_type in ("Double", "Integer", "int")
         if _numeric_widen:
             java_expr = _coerce_type(java_expr, expr_type, target_type)
         else:
-            _already_coerced = _is_already_coerced(java_expr, target_type) or any(pattern in java_expr for pattern in (
-                "BigDecimal.valueOf(", "String.valueOf(",
-            ))
+            _ss = java_expr.strip()
+            _already_coerced = _is_already_coerced(java_expr, target_type) or _ss.startswith("BigDecimal.valueOf(") or _ss.startswith("String.valueOf(")
             if not _already_coerced and "BigDecimal" in target_type:
                 if "BigDecimal" in java_expr or java_expr.strip().startswith("new java.math."):
                     _already_coerced = True
@@ -7057,10 +7104,11 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
             out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
             indent="    ", in_catch=False)
 
-        # Find the last mapper result variable (var = mapper.xxx)
+        # Find the last mapper result variable (var = mapper.xxx). The
+        # assignment may be wrapped by coercion (e.g. String.valueOf(mapper.x)).
         null_var = None
         for line in reversed(body_lines):
-            m = re.match(r'^\s*(\w+)\s*=\s*mapper\.', line)
+            m = re.match(r'^\s*(\w+)\s*=\s*(?:\w+\.valueOf\(|\([^)]*\)\s*)*mapper\.', line)
             if m:
                 null_var = m.group(1)
                 break
@@ -7077,7 +7125,7 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
             null_block.extend(nd_lines)
             null_block.append("}")
             for i, line in enumerate(body_lines):
-                if line.strip().startswith(f"{null_var} = mapper."):
+                if re.match(rf'^\s*{re.escape(null_var)}\s*=\s*(?:\w+\.valueOf\(|\([^)]*\)\s*)*mapper\.', line):
                     body_lines = body_lines[:i+1] + null_block + body_lines[i+1:]
                     break
         elif nd_lines:
@@ -7859,6 +7907,9 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
             first_var = _extract_into_variable(into_targets)
             if first_var:
                 vn_java = snake_to_camel(first_var)
+                _dt = _lookup_var_type(proc, first_var)
+                if _dt not in ("Object", "Map<String, Object>"):
+                    _mc = _coerce_type(_mc, "Object", _dt)
                 _emit_assignment(proc, vn_java, _mc)
             else:
                 if sql_type != "select":
@@ -7911,7 +7962,11 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                     first_var = _extract_into_variable(into_targets)
                     if first_var:
                         vn_java = snake_to_camel(first_var)
-                        _emit_assignment(proc, vn_java, f"mapper.{mapper_method}({param_args_str})")
+                        _mc7959 = f"mapper.{mapper_method}({param_args_str})"
+                        _dt7959 = _lookup_var_type(proc, first_var)
+                        if _dt7959 not in ("Object", "Map<String, Object>"):
+                            _mc7959 = _coerce_type(_mc7959, "Object", _dt7959)
+                        _emit_assignment(proc, vn_java, _mc7959)
                     else:
                         _mc = f"mapper.{mapper_method}({param_args_str})"
                         _emit_dml_with_rowcount(proc, _mc)
@@ -7981,7 +8036,11 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                     _emit_row_decl(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))})')
                     _emit_assignment(proc, f'__MAP_PUT__{map_var}__{first_var}', f'_row.get("{first_var}")')
                 else:
-                    _emit_assignment(proc, var_java, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))})')
+                    _sel_expr = f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))})'
+                    _tvar_t = _lookup_var_type(proc, first_var)
+                    if _tvar_t not in ("Object", "Map<String, Object>"):
+                        _sel_expr = _coerce_type(_sel_expr, "Object", _tvar_t)
+                    _emit_assignment(proc, var_java, _sel_expr)
             _add_dml(proc, DmlStatement(
                 sql_type=sql_type,
                 method_id=mapper_method,
@@ -9538,7 +9597,9 @@ def _needs_coercion(source_type: str, target_type: str) -> bool:
     if src == tgt:
         return False
 
-    # Object / Map<String, Object> -- no coercion possible/needed
+    # Object / Map<String, Object> -- no coercion possible/needed; the
+    # Object→concrete fallbacks live inside _coerce_type (reached via the
+    # assignment gate `expr_type == "Object"`), not here.
     if src in ("Object", "Map<String, Object>", "") or tgt in ("Object", "Map<String, Object>", ""):
         return False
 
@@ -9584,6 +9645,22 @@ def _expr_is_bigdecimal_producing(expr: str) -> bool:
     return False
 
 
+def _expr_is_timestamp_producing(expr: str) -> bool:
+    """True when a Java expression is already Timestamp-typed (construction,
+    valueOf, a bare identifier assumed Timestamp from the SQL declaration, or
+    a SimpleDateFormat.parse() producing java.util.Date — left as-is)."""
+    e = expr.strip()
+    if e == "null" or e == '""':
+        return True
+    if e.startswith("new java.sql.Timestamp") or e.startswith("java.sql.Timestamp.valueOf"):
+        return True
+    if ".parse(" in e:
+        return True
+    if re.match(r'^[A-Za-z_]\w*$', e):
+        return True
+    return False
+
+
 def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
     """Coerce a Java expression from source_type to target_type.
 
@@ -9601,6 +9678,9 @@ def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
         src0 = _normalize_type(source_type)
         tgt0 = _normalize_type(target_type)
         _e0 = expr.strip()
+        if _is_primitive_producing(_e0):
+            # Primitives can't be null — skip the Object null-guard ternary.
+            return expr
         if src0 == "Object" and tgt0 == "String" and _e0 != "null":
             return f"String.valueOf({expr})"
         if src0 == "Object" and "Timestamp" in tgt0 and _e0 != "null":
@@ -9667,7 +9747,10 @@ def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
         if stripped == '""' or stripped == "''":
             return "null"
         if "Timestamp" in tgt:
-            if "Timestamp" in stripped or ".parse(" in stripped:
+            # Only skip wrapping when the expr already IS Timestamp-typed.
+            # `SimpleDateFormat(...).format(...)` merely CONTAINS "Timestamp"
+            # in its argument — it returns String and must be wrapped.
+            if _expr_is_timestamp_producing(stripped):
                 return expr
             return f"java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({expr}).trim().split(\" \")[0], java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd]\")).atStartOfDay())"
         if tgt == "java.sql.Date":
@@ -10342,6 +10425,10 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 if is_bd and op == "||":
                     return f"{left}.toString().concat({right}.toString())"
 
+                if op == "||" and (".get(" in left or ".get(" in right):
+                    # Map.get() yields Object; `Object + Object` is invalid Java.
+                    return f"String.valueOf({left}).concat(String.valueOf({right}))"
+
             if op == "^":
                 left_d = f"((Number) ({left} != null ? {left} : 0.0d)).doubleValue()" if (".get(" in left and not _is_primitive_producing(left)) else (f"({left} != null ? Double.parseDouble({left}) : 0.0d)" if left_type == "String" else f"((Number) ({left})).doubleValue()")
                 right_d = f"((Number) ({right} != null ? {right} : 0.0d)).doubleValue()" if (".get(" in right and not _is_primitive_producing(right)) else (f"({right} != null ? Double.parseDouble({right}) : 0.0d)" if right_type == "String" else f"((Number) ({right})).doubleValue()")
@@ -10667,13 +10754,18 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                                         break
                                 if _exists_elsewhere:
                                     break
+                        _actual_target = None
+                        _actual_target_pkg = None
+                        raw_args = val.get("args", [])
                         if not _exists_elsewhere:
-                            raw_args = val.get("args", [])
                             _actual_target = _find_target_proc(_resolved_pkg, self_call_func, all_packages, arg_count=len(raw_args))
+                            if _actual_target:
+                                _actual_target_pkg = _resolved_pkg
                         if not _actual_target:
                             for _apk in (all_packages or {}):
                                 _actual_target = _find_target_proc(_apk, self_call_func, all_packages, arg_count=len(raw_args))
                                 if _actual_target:
+                                    _actual_target_pkg = _apk
                                     break
                         arg_types = []
                         for i, a_java in enumerate(args_java):
@@ -10687,13 +10779,37 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                                     inferred = "boolean"
                                 arg_types.append(inferred)
                         method = java_method_name(self_call_func)
-                        _register_missing_overload(self_call_pkg, method, arg_types, len(raw_args))
                         wrapped_args = []
                         for i, a_java in enumerate(args_java):
                             if i < len(arg_types):
-                                wrapped_args.append(_coerce_java_arg(a_java, arg_types[i]))
+                                # OUT params are passed through as-is (their
+                                # carrier var is promoted to AtomicReference).
+                                if _actual_target and i < len(_actual_target.parameters) and _actual_target.parameters[i].is_out:
+                                    wrapped_args.append(a_java)
+                                else:
+                                    wrapped_args.append(_coerce_java_arg(a_java, arg_types[i]))
                             else:
                                 wrapped_args.append(a_java)
+                        # Pad missing trailing args with the target's DEFAULTs
+                        # (SQL calls may omit default-valued parameters).
+                        if _actual_target and len(wrapped_args) < len(_actual_target.parameters):
+                            for _pi in range(len(wrapped_args), len(_actual_target.parameters)):
+                                wrapped_args.append(_param_default_java(_actual_target.parameters[_pi]))
+                        # If the function actually lives in ANOTHER package, emit the
+                        # cross-package service call instead of a local missing-overload
+                        # stub (which returns Object and breaks String assignments).
+                        _same_pkg = (
+                            _actual_target is not None
+                            and (
+                                (getattr(_actual_target, "package", "") or "").lower() == (getattr(proc, "package", "") or "").lower()
+                                or getattr(_actual_target, "source_file", None) == getattr(proc, "source_file", None)
+                            )
+                        )
+                        if _actual_target_pkg is not None and not _same_pkg:
+                            svc_name = f"{package_to_classname(_actual_target_pkg).lower()}Service"
+                            proc.service_calls.append(ServiceCall(svc_name, method, [], package_name=_actual_target_pkg))
+                            return f"{svc_name}.{method}({', '.join(wrapped_args)})"
+                        _register_missing_overload(self_call_pkg, method, arg_types, len(raw_args))
                         return f"this.{method}({', '.join(wrapped_args)})"
                 # Self-call failed — try cross-package search for the function
                 if all_packages and self_call_pkg is not None:
@@ -11211,6 +11327,19 @@ def _extract_table_name_from_dml(dml_data: dict) -> str:
                             name = v.get("name", [])
                             return name[-1] if name else "unknown"
     return "unknown"
+
+
+def _lookup_var_type(proc, var_name: str) -> str:
+    """Case-insensitive local-var type lookup. Declaration keys keep the SQL's
+    original casing (e.g. `v_Account_Id1`) while INTO targets may arrive in a
+    different case (`V_ACCOUNT_ID1`), so plain dict.get() silently misses."""
+    if not var_name:
+        return "Object"
+    name_l = var_name.lower()
+    for vn, vt in (proc.local_vars.items() if proc is not None else []):
+        if vn.lower() == name_l:
+            return vt
+    return "Object"
 
 
 def _extract_into_variable(into_targets: list) -> Optional[str]:
@@ -13799,7 +13928,7 @@ def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureI
 
     if re.search(r'\bv_cursorResult\b', all_text) and "vCursorResult" not in all_text and "v_cursorResult =" not in all_text:
         failed.append("cursor 结果变量 'v_cursorResult' 未正确初始化")
-    if re.search(r'AtomicReference.*<=', all_text):
+    if any("AtomicReference" in line and "<=" in line for line in _stripped):
         failed.append("AtomicReference 使用了不支持的比较运算符 (<=)")
 
     out_java_names = {p.java_name for p in out_params}

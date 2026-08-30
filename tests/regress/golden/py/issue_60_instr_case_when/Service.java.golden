@@ -41,7 +41,7 @@ public class Issue60InstrCaseWhenService {
         pResult.set(String.valueOf(vFileName));
         vLen = (((String.valueOf(vFileName).indexOf(".") + 1)) == 0 ? 0: (String.valueOf(vFileName).indexOf(".") + 1));
         if (vLen > 0) {
-            pResult.set(String.valueOf(pResult.get() + "_ok"));
+            pResult.set(String.valueOf(String.valueOf(pResult.get()).concat(String.valueOf("_ok"))));
         }
     }
 
@@ -54,7 +54,7 @@ public class Issue60InstrCaseWhenService {
             pFound.set("Y");
         }
         if ((String.valueOf(pSrc).indexOf("_") + 1) > 0) {
-            pFound.set(String.valueOf(pFound.get() + "U"));
+            pFound.set(String.valueOf(String.valueOf(pFound.get()).concat(String.valueOf("U"))));
         }
     }
 }

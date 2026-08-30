@@ -31,11 +31,11 @@ public class Issue44IfElsifGoto2Service {
             if (vCount == null) vCount = 0;
             if (vCount > 0) {
                 try {
-                    vConfig = issue44IfElsifGoto2Mapper.selectTIssue44Config();
+                    vConfig = String.valueOf(issue44IfElsifGoto2Mapper.selectTIssue44Config());
                     if (java.util.Objects.equals(vFlag, "0")) {
                         vConfig = vConfig + ",extra";
                         try {
-                            vFlag2 = issue44IfElsifGoto2Mapper.selectTIssue44Config_1(vDate);
+                            vFlag2 = String.valueOf(issue44IfElsifGoto2Mapper.selectTIssue44Config_1(vDate));
                         } catch (Exception e) { // OTHERS
                             // WHEN OTHERS
                             vFlag2 = "0";

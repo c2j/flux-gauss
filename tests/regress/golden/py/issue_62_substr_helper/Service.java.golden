@@ -37,6 +37,6 @@ public class Issue62SubstrHelperService {
         pResult.set(null);
         vPart = _substr(String.valueOf(pId), (3), (3));
         pResult.set(String.valueOf(_substr(String.valueOf(pId), (1), (2)) + "-" + vPart));
-        pResult.set(String.valueOf(pResult.get() + _substr(String.valueOf(pId), (6))));
+        pResult.set(String.valueOf(String.valueOf(pResult.get()).concat(String.valueOf(_substr(String.valueOf(pId), (6))))));
     }
 }

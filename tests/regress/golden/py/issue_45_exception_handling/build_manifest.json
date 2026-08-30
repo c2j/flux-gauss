@@ -3,7 +3,7 @@
   "fixture": "issue_45_exception_handling.sql",
   "package_name": "issue_45_exception_handling",
   "files": {
-    "Service.java": "c5a54b5bb7e7d410",
+    "Service.java": "78ebef2147101697",
     "Mapper.java": "bc3672355cb04647",
     "Mapper.xml": "c7695b8127f056b1",
     "ServiceTest.java": "e83b0a5fa60b42e4"

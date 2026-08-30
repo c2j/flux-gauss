@@ -3,7 +3,7 @@
   "fixture": "issue_48_long_compareto_string.sql",
   "package_name": "issue_48_long_compareto_string",
   "files": {
-    "Service.java": "be718f4c7a47194b",
+    "Service.java": "6cb838028992a069",
     "Mapper.java": "73e518220f707245",
     "Mapper.xml": "a0d4df5d13ed67c3",
     "ServiceTest.java": "168e39f3dc21e4db"

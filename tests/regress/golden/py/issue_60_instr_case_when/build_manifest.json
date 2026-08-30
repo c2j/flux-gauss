@@ -3,7 +3,7 @@
   "fixture": "issue_60_instr_case_when.sql",
   "package_name": "issue_60_instr_case_when",
   "files": {
-    "Service.java": "f6d33e7e1b25ad9e",
+    "Service.java": "7e541744e303e7bd",
     "Mapper.java": "1ed772b845b01039",
     "Mapper.xml": "656088526d408de5",
     "ServiceTest.java": "a1b914e4ec9c6558"

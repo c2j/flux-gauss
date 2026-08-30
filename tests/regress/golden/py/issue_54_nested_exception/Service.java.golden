@@ -23,7 +23,7 @@ public class Issue54NestedExceptionService {
         String vData = null;
         try {
             pResult.set(null);
-            vData = issue54NestedExceptionMapper.selectTIssue54Data();
+            vData = String.valueOf(issue54NestedExceptionMapper.selectTIssue54Data());
             if (vData == null) {
                 vMsg = "no_config";
             }
@@ -46,12 +46,12 @@ public class Issue54NestedExceptionService {
             pResult.set(null);
             vVal = "start";
             try {
-                vTmp = issue54NestedExceptionMapper.selectTIssue54Data_1();
+                vTmp = String.valueOf(issue54NestedExceptionMapper.selectTIssue54Data_1());
                 vVal = vTmp;
             } catch (Exception e) { // OTHERS
                 // WHEN OTHERS
                 try {
-                    vTmp = issue54NestedExceptionMapper.selectTIssue54Data_2();
+                    vTmp = String.valueOf(issue54NestedExceptionMapper.selectTIssue54Data_2());
                     vVal = vTmp;
                 } catch (Exception e2) { // OTHERS
                     // WHEN OTHERS
