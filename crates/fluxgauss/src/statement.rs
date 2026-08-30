@@ -2636,10 +2636,20 @@ pub fn process_statement(
                     let hi_safe = if crate::expr::is_nullish_java_expr(&hi) { "0".to_string() } else { hi };
                     let iter_var = var.clone();
                     // Track the counter so body references resolve via the declared-variable
-                    // path. Always insert unconditionally: sibling FOR loops reusing the same
-                    // counter name are each independently scoped by their own `for (int i = ...)`
-                    // header in Java, so this must not gate the inline declaration below.
-                    proc.local_vars.insert(for_stmt.node.variable.to_lowercase(), "int".into());
+                    // path. When the var is ALREADY declared (e.g. `i INTEGER := NULL` driven
+                    // by an earlier WHILE), keep its type and reuse it in the loop header —
+                    // javac forbids a for-init `int i` shadowing a method-level `i`. Only
+                    // pure loop counters get the inline `int` declaration.
+                    let var_lower = for_stmt.node.variable.to_lowercase();
+                    // A real SQL-declared var (absent from range_loop_counters) is
+                    // reused in the loop header; a synthetic counter (auto-created
+                    // here) keeps its own inline `int` per loop.
+                    let pre_declared = proc.local_vars.contains_key(&var_lower)
+                        && !proc.range_loop_counters.contains(&var_lower);
+                    if !proc.local_vars.contains_key(&var_lower) {
+                        proc.local_vars.insert(var_lower.clone(), "int".into());
+                        proc.range_loop_counters.insert(var_lower);
+                    }
                     let step_code = match step {
                         Some(s) => {
                             let s_val = crate::expr::expr_to_java(s, proc);
@@ -2647,23 +2657,19 @@ pub fn process_statement(
                         }
                         None => format!("{}++", iter_var),
                     };
-                    if *reverse {
-                        push_logic_line(
-                            proc,
-                            format!(
-                                "for (int {} = {}; {} >= {}; {}--) {{",
-                                iter_var, hi_safe, iter_var, lo_safe, iter_var
-                            ),
-                        );
+                    let header = if pre_declared {
+                        // Reuse the method-level declaration; no `int` in the init.
+                        if *reverse {
+                            format!("for ({} = {}; {} >= {}; {}--) {{", iter_var, hi_safe, iter_var, lo_safe, iter_var)
+                        } else {
+                            format!("for ({} = {}; {} <= {}; {}) {{", iter_var, lo_safe, iter_var, hi_safe, step_code)
+                        }
+                    } else if *reverse {
+                        format!("for (int {} = {}; {} >= {}; {}--) {{", iter_var, hi_safe, iter_var, lo_safe, iter_var)
                     } else {
-                        push_logic_line(
-                            proc,
-                            format!(
-                                "for (int {} = {}; {} <= {}; {}) {{",
-                                iter_var, lo_safe, iter_var, hi_safe, step_code
-                            ),
-                        );
-                    }
+                        format!("for (int {} = {}; {} <= {}; {}) {{", iter_var, lo_safe, iter_var, hi_safe, step_code)
+                    };
+                    push_logic_line(proc, header);
                 }
                 ogsql_parser::ast::plpgsql::PlForKind::Query { query, .. } => {
                     let clean_sql = strip_sql_comments(query).replace('\n', " ");
@@ -3347,6 +3353,46 @@ mod tests {
             stmt_lines: Vec::new(),
             unresolved_calls: Vec::new(),
         }
+    }
+
+    #[test]
+    fn test_for_range_counter_predeclared_reuses_method_var() {
+        // fastaas ImportExcelService: `i` is declared (Integer) AND driven by a
+        // WHILE before a numeric FOR loop. The FOR header must reuse the
+        // method-level `i` (`for (i = ...)`) — javac forbids shadowing a local
+        // with the for-init variable (`for (int i = ...)` after `Integer i`).
+        let mut proc = empty_proc();
+        proc.local_vars.insert("i".into(), "Integer".into());
+        let mut ctx = empty_stmt_ctx();
+        let stmt = ogsql_parser::ast::plpgsql::PlStatement::For(ogsql_parser::ast::Spanned {
+            node: ogsql_parser::ast::plpgsql::PlForStmt {
+                label: None,
+                variable: "i".into(),
+                kind: ogsql_parser::ast::plpgsql::PlForKind::Range {
+                    low: ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Integer(1)),
+                    high: ogsql_parser::ast::Expr::ColumnRef(vec!["t_res".into(), "count".into()]),
+                    step: None,
+                    reverse: false,
+                },
+                body: vec![],
+                end_label: None,
+            },
+            span: None,
+        });
+        process_statement(&stmt, &mut proc, &mut ctx).unwrap();
+        let header = proc.java_logic_lines.iter().find(|l| l.starts_with("for ")).unwrap();
+        assert!(
+            !header.contains("for (int i = "),
+            "pre-declared counter must not redeclare in for-header, got: {}",
+            header
+        );
+        assert!(
+            header.contains("for (i = 1;"),
+            "pre-declared counter must reuse method var, got: {}",
+            header
+        );
+        // The declared type must not be clobbered to primitive int.
+        assert_eq!(proc.local_vars.get("i").map(|s| s.as_str()), Some("Integer"));
     }
 
     #[test]

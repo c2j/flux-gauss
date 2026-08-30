@@ -757,6 +757,16 @@ fn queue_out_promotion(var_name_lower: String, java_type: String) {
     PENDING_OUT_PROMOTIONS.with(|q| q.borrow_mut().push((var_name_lower, java_type)));
 }
 
+/// Peek whether a var has a queued (not yet applied) OUT promotion. Expr
+/// rendering runs before analyze drains the queue, so arithmetic/reads of a
+/// var queued by an earlier cross-package OUT-arg call must still deref it.
+/// Accepts the camelCase Java name; queue keys are snake_case lowercase.
+fn has_pending_out_promotion(var_camel: &str) -> bool {
+    let camel_lower = var_camel.to_lowercase();
+    PENDING_OUT_PROMOTIONS
+        .with(|q| q.borrow().iter().any(|(v, _)| crate::naming::snake_to_camel(v).to_lowercase() == camel_lower))
+}
+
 /// Drains all pending OUT-arg promotions queued by `emit_cross_pkg_call` since the
 /// last drain. Called from `analyze_procedure` once a procedure's statements are done
 /// generating, to apply them onto `proc.out_local_vars`.
@@ -1554,16 +1564,14 @@ fn binary_op_to_java(
     // separately (emit_cross_pkg_call), so this only affects value contexts.
     let deref_promoted = |e: &str| -> String {
         let t = e.trim();
-        if is_bare_identifier(t)
-            && proc
-                .out_local_vars
-                .keys()
-                .any(|k| crate::naming::snake_to_camel(k) == t)
-        {
-            format!("{}.get()", t)
-        } else {
-            t.to_string()
+        if is_bare_identifier(t) {
+            let is_promoted = proc.out_local_vars.keys().any(|k| crate::naming::snake_to_camel(k) == t)
+                || has_pending_out_promotion(t);
+            if is_promoted {
+                return format!("{}.get()", t);
+            }
         }
+        t.to_string()
     };
     l = deref_promoted(&l);
     r = deref_promoted(&r);
@@ -3041,6 +3049,49 @@ mod tests {
         assert!(out.contains("atZone(java.time.ZoneId.of(\"UTC\"))"), "got: {}", out);
         assert!(!out.contains("null.toInstant"), "must not emit null.toInstant, got: {}", out);
         assert!(!out.starts_with("null"), "AtTimeZone must not fall through to null, got: {}", out);
+    }
+
+    #[test]
+    fn test_binary_op_promoted_local_deref() {
+        // fastaas SplitTradeStep3Sh:4118 — `cjje * v_return_rate_org` where the
+        // RHS is a promoted local (AtomicReference) must deref to .get().
+        let mut proc = empty_proc();
+        proc.out_local_vars.insert("v_return_rate_org".into(), "AtomicReference<Long>".into());
+        proc.local_vars.insert("v_return_rate_org".into(), "Long".into());
+        let expr = ogsql_parser::ast::Expr::BinaryOp {
+            left: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Integer(5))),
+            op: "*".into(),
+            right: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["v_return_rate_org".into()])),
+        };
+        let out = expr_to_java(&expr, &proc);
+        assert!(
+            out.contains("vReturnRateOrg.get()"),
+            "promoted var must be deref'd in arithmetic, got: {}",
+            out
+        );
+    }
+
+    #[test]
+    fn test_binary_op_derefs_pending_promotion() {
+        // fastaas SplitTradeStep3Sh:4118 — promotion is queued by an earlier
+        // cross-pkg OUT call but only drained at analyze end; arithmetic
+        // processed in between must still deref via the pending queue.
+        crate::expr::queue_out_promotion("v_return_rate_org".into(), "AtomicReference<Long>".into());
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_return_rate_org".into(), "Long".into());
+        let expr = ogsql_parser::ast::Expr::BinaryOp {
+            left: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Integer(5))),
+            op: "*".into(),
+            right: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["v_return_rate_org".into()])),
+        };
+        let out = expr_to_java(&expr, &proc);
+        // Drain the queue so the test doesn't leak into other tests.
+        crate::expr::take_pending_out_promotions();
+        assert!(
+            out.contains("vReturnRateOrg.get()"),
+            "queued promotion must be deref'd in arithmetic, got: {}",
+            out
+        );
     }
 
     #[test]

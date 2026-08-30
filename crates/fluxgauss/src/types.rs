@@ -244,6 +244,13 @@ pub struct ProcedureInfo {
     pub plain_loop_counter: usize,
     pub catch_counter: usize,
 
+    /// Numeric-range FOR loop counters auto-created by the statement handler
+    /// (NOT declared in the SQL). A real SQL-declared var is absent from this
+    /// set even though it also appears in `local_vars` — distinguishing the two
+    /// matters because javac forbids a for-init `int i` shadowing a method-level
+    /// `i`, so real declarations must be reused in the loop header.
+    pub range_loop_counters: HashSet<String>,
+
     pub source_file: String,
     pub source_path: String,
     pub source_start_line: u32,
@@ -296,6 +303,7 @@ impl ProcedureInfo {
             for_loop_counter: 0,
             plain_loop_counter: 0,
             catch_counter: 0,
+            range_loop_counters: HashSet::new(),
             source_file: String::new(),
             source_path: String::new(),
             source_start_line: 0,

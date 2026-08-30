@@ -669,10 +669,19 @@ fn build_service_method(
                 // their own counter inline in the loop header; proc.local_vars still
                 // tracks the var so resolve_column_ref resolves body references to it
                 // (Task 6), but re-declaring it here too would be a duplicate-variable
-                // Java compile error.
-                let is_range_loop_iter = proc.java_logic_lines.iter().any(|l| {
+                // Java compile error. Exception: when the var is assigned OUTSIDE the
+                // loop (e.g. a WHILE loop drives `i := 1; i := i + 1;` before a later
+                // `for (int i = ...)`), the method-level declaration is required —
+                // the for-loop's `int i` then shadows it (legal Java).
+                let is_range_loop_iter = proc.java_logic_lines.iter().enumerate().any(|(idx, l)| {
                     let t = l.trim_start();
-                    t.starts_with("for (int ") && l.contains(&format!("int {} = ", var_java))
+                    if !(t.starts_with("for (int ") && l.contains(&format!("int {} = ", var_java))) {
+                        return false;
+                    }
+                    let bare_assign = format!("{} = ", var_java);
+                    !proc.java_logic_lines[..idx].iter().any(|prev| {
+                        prev.trim_start().starts_with(&bare_assign)
+                    })
                 });
                 if is_loop_iter || is_range_loop_iter {
                     continue;
@@ -1142,6 +1151,34 @@ mod tests {
 
     fn make_proc(name: &str) -> ProcedureInfo {
         ProcedureInfo::new(format!("pkg.{}", name), "pkg".to_string(), name.to_string())
+    }
+
+    #[test]
+    fn test_range_loop_counter_used_outside_is_declared() {
+        // fastaas ImportExcelService: a WHILE loop drives `i` (i := 1; i := i + 1)
+        // before a numeric `for (int i = ...)` loop. The range-loop suppression
+        // must not skip the declaration when `i` is assigned outside the loop.
+        let mut proc = make_proc("split_string");
+        proc.local_vars.insert("i".into(), "Integer".into());
+        proc.java_logic_lines = vec![
+            "i = 1;".into(),
+            "while (vPos > 0) {".into(),
+            "    i = i + 1;".into(),
+            "}".into(),
+            "for (int i = 1; i <= tRes.size(); i++) {".into(),
+            "}".into(),
+        ];
+        let mut pkg = make_pkg("pkg_test", vec![proc]);
+        let dir = tempfile::tempdir().unwrap();
+        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8, false)
+            .unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join("src/main/java/com/example/demo/service/TestService.java")).unwrap();
+        assert!(
+            content.contains("Integer i = "),
+            "i assigned by WHILE before the for-loop must be declared:\n{}",
+            content
+        );
     }
 
     #[test]
