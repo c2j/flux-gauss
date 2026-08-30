@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_108_cross_pkg_caller.sql",
+  "package_name": "issue_108_cross_pkg_caller",
+  "files": {
+    "Service.java": "c2930d32eea8d535",
+    "Mapper.java": "36757316a3102953",
+    "Mapper.xml": "292b268d40528fc0",
+    "ServiceTest.java": "e922cf269c7199b0"
+  }
+}

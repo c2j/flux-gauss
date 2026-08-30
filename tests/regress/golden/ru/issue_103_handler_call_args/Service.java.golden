@@ -1,0 +1,70 @@
+// ===== FILE: CalleeService.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.CalleeMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_103_handler_call_args.sql
+public class CalleeService {
+    private static final Logger log = LoggerFactory.getLogger(CalleeService.class);
+
+    private final CalleeMapper calleeMapper;
+
+    public CalleeService(CalleeMapper calleeMapper) {
+        this.calleeMapper = calleeMapper;
+    }
+
+    // Source: pkg_callee.simple_log (PROCEDURE) — {FIXTURES_ROOT}/issue_103_handler_call_args.sql:8-11
+    public void simpleLog(String pMsg) {
+        // Auto-generated from stored procedure
+    }
+
+    // Source: pkg_callee.simple_log (PROCEDURE) — {FIXTURES_ROOT}/issue_103_handler_call_args.sql:13-16
+    public void simpleLog(String pMsg, String pDetail) {
+        // Auto-generated from stored procedure
+    }
+}
+
+// ===== FILE: HandlerService.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.HandlerMapper;
+import com.example.demo.service.CalleeService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_103_handler_call_args.sql
+public class HandlerService {
+    private static final Logger log = LoggerFactory.getLogger(HandlerService.class);
+
+    private final HandlerMapper handlerMapper;
+    private final CalleeService calleeService;
+
+    public HandlerService(HandlerMapper handlerMapper, CalleeService calleeService) {
+        this.handlerMapper = handlerMapper;
+        this.calleeService = calleeService;
+    }
+
+    // Source: pkg_handler.guarded_run (PROCEDURE) — {FIXTURES_ROOT}/issue_103_handler_call_args.sql:26-33
+    public void guardedRun(String pX) {
+        String __SQLERRM__ = "";
+        int __SQLCODE__ = 0;
+        try {
+            throw new BusinessException("'boom'");
+        } catch (Exception __e1) {
+            __SQLERRM__ = __e1.getMessage();
+            __SQLCODE__ = -1;
+            // UNREACHABLE: calleeService.simpleLog(pX);
+            // UNREACHABLE: calleeService.simpleLog(pX, "detail");
+        }
+    }
+}

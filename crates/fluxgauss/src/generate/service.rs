@@ -3,11 +3,14 @@ use std::path::Path;
 
 use encoding_rs::Encoding;
 
-use crate::generate::mapper::{is_simple_java_type, resolve_import};
+use crate::generate::mapper::resolve_import;
 use crate::generate::writer::{indent_java_body, CodeWriter};
+
+static WORD_RE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap());
 use crate::naming::{java_method_name, package_to_classname, snake_to_camel, snake_to_pascal};
 use crate::type_map::sql_type_to_java;
-use crate::types::{DmlType, PackageInfo, ParamMode};
+use crate::types::{DmlType, PackageInfo};
 
 pub fn write_service_class(
     base_path: &Path,
@@ -62,7 +65,7 @@ pub fn write_service_class(
         pkg.procedures.iter().flat_map(|p| p.java_logic_lines.iter().cloned()).collect::<Vec<_>>().join(" ");
     let has_list_return = pkg.procedures.iter().any(|p| {
         if p.is_function {
-            p.return_type.as_ref().map_or(false, |t| t.contains("List"))
+            p.return_type.as_ref().is_some_and(|t| t.contains("List"))
         } else {
             p.parameters.iter().any(|pp| pp.is_out() && pp.is_refcursor())
         }
@@ -111,7 +114,8 @@ pub fn write_service_class(
     w.line(&format!("private static final Logger log = LoggerFactory.getLogger({}.class);", class_name));
     w.blank();
 
-    w.line(&format!("private final {} {};", format!("{}Mapper", package_to_classname(&pkg.package_name)), mapper_var));
+    let mapper_class = format!("{}Mapper", package_to_classname(&pkg.package_name));
+    w.line(&format!("private final {mapper_class} {mapper_var};"));
     for (svc_var, pkg_name) in &sorted_injections {
         let svc_class = if !pkg_name.is_empty() {
             format!("{}Service", package_to_classname(pkg_name))
@@ -279,7 +283,7 @@ pub fn write_service_class(
     }
     if all_body.contains("this.nextval(") {
         w.blank();
-        w.line(&format!("public Long nextval(String seqName) {{"));
+        w.line("public Long nextval(String seqName) {");
         w.line(&format!("    return {}.selectNextval(seqName);", mapper_var));
         w.line("}");
         pkg.extra_mapper_methods.push((
@@ -290,7 +294,7 @@ pub fn write_service_class(
     }
     if all_body.contains("this.currval(") {
         w.blank();
-        w.line(&format!("public Long currval(String seqName) {{"));
+        w.line("public Long currval(String seqName) {");
         w.line(&format!("    return {}.selectCurrval(seqName);", mapper_var));
         w.line("}");
         pkg.extra_mapper_methods.push((
@@ -307,6 +311,35 @@ pub fn write_service_class(
     let file_path = svc_dir.join(format!("{}.java", class_name));
     w.write_to_file(&file_path, encoding)?;
     Ok(class_name)
+}
+
+/// For a dynamic-SQL extra param that came from a %ROWTYPE field reference
+/// (e.g. `v_wm.src_id_col`), return the typed field-access expression so the
+/// Mapper call passes the value instead of an undeclared bare name.
+/// The dml.sql_text is already parameter-substituted (${srcIdCol}), so match
+/// by reverse lookup: extra-param camel name → rowtype var field.
+fn dynamic_sql_rowtype_field_arg(
+    _sql_text: &str,
+    java_name: &str,
+    proc: &crate::types::ProcedureInfo,
+) -> Option<String> {
+    let name_lower = java_name.to_lowercase();
+    for (var_lower, fields) in &proc.rowtype_field_types {
+        for field in fields.keys() {
+            if crate::naming::snake_to_camel(field).to_lowercase() == name_lower {
+                let var_camel = crate::naming::snake_to_camel(var_lower);
+                let raw = format!(
+                    "{}.getOrDefault(\"{}\", {}.get(\"{}\"))",
+                    var_camel,
+                    crate::naming::snake_to_camel(field),
+                    var_camel,
+                    field
+                );
+                return Some(crate::expr::typed_rowtype_field(raw, var_lower, field, proc));
+            }
+        }
+    }
+    None
 }
 
 pub(crate) fn boxed_to_primitive(t: &str) -> &str {
@@ -346,15 +379,15 @@ fn default_for_type(t: &str) -> &'static str {
     if tl.starts_with("atomicreference") {
         let inner = tl.trim_start_matches("atomicreference<").trim_end_matches('>');
         return if inner.contains("long") || inner.contains("Long") {
-            "new AtomicReference<>(1L)".into()
+            "new AtomicReference<>(1L)"
         } else if inner.contains("int") || inner.contains("Integer") {
-            "new AtomicReference<>(0)".into()
+            "new AtomicReference<>(0)"
         } else if inner.contains("BigDecimal") {
-            "new AtomicReference<>(java.math.BigDecimal.ZERO)".into()
+            "new AtomicReference<>(java.math.BigDecimal.ZERO)"
         } else if inner.contains("String") {
-            "new AtomicReference<>(\"\")".into()
+            "new AtomicReference<>(\"\")"
         } else {
-            "new AtomicReference<>(null)".into()
+            "new AtomicReference<>(null)"
         };
     }
     "null"
@@ -364,7 +397,7 @@ fn default_for_type(t: &str) -> &'static str {
 /// `return`/`throw` in the same block are compile errors. PL/pgSQL GOTO
 /// emulation keeps such trailing code, so wrap the jump in `if (true) {}`
 /// which per JLS 14.21 does NOT propagate unreachability.
-fn dead_code_guard(lines: &mut Vec<String>) {
+fn dead_code_guard(lines: &mut [String]) {
     let mut depth: i64 = 0;
     let mut depths: Vec<i64> = Vec::with_capacity(lines.len());
     for l in lines.iter() {
@@ -441,10 +474,8 @@ fn coerce_default_value(java_type: &str, default_val: &str) -> String {
         }
         return default_val.to_string();
     }
-    if tl.contains("string") {
-        if trimmed.parse::<i64>().is_ok() {
-            return format!("\"{}\"", trimmed);
-        }
+    if tl.contains("string") && trimmed.parse::<i64>().is_ok() {
+        return format!("\"{}\"", trimmed);
     }
     if tl.contains("timestamp") {
         if trimmed == "\"\"" || trimmed == "''" || trimmed.is_empty() {
@@ -454,10 +485,10 @@ fn coerce_default_value(java_type: &str, default_val: &str) -> String {
             return s;
         }
     }
-    if tl.contains("java.sql.date") || tl.ends_with("date") {
-        if trimmed == "\"\"" || trimmed == "''" || trimmed.is_empty() {
-            return "null".to_string();
-        }
+    if (tl.contains("java.sql.date") || tl.ends_with("date"))
+        && (trimmed == "\"\"" || trimmed == "''" || trimmed.is_empty())
+    {
+        return "null".to_string();
     }
     if tl.contains("long") {
         if trimmed == "\"\"" || trimmed == "''" || trimmed.is_empty() {
@@ -467,24 +498,19 @@ fn coerce_default_value(java_type: &str, default_val: &str) -> String {
             return format!("{}L", trimmed);
         }
     }
-    if tl.contains("integer") || tl == "int" {
-        if trimmed == "\"\"" || trimmed == "''" || trimmed.is_empty() {
-            return "0".to_string();
-        }
+    if (tl.contains("integer") || tl == "int") && (trimmed == "\"\"" || trimmed == "''" || trimmed.is_empty()) {
+        return "0".to_string();
     }
-    if tl.contains("double") {
-        if trimmed.parse::<f64>().is_ok()
-            && !trimmed.ends_with('d')
-            && !trimmed.ends_with('D')
-            && !trimmed.contains('.')
-        {
-            return format!("{}d", trimmed);
-        }
+    if tl.contains("double")
+        && trimmed.parse::<f64>().is_ok()
+        && !trimmed.ends_with('d')
+        && !trimmed.ends_with('D')
+        && !trimmed.contains('.')
+    {
+        return format!("{}d", trimmed);
     }
-    if tl.contains("float") {
-        if trimmed.parse::<f64>().is_ok() && !trimmed.ends_with('f') && !trimmed.ends_with('F') {
-            return format!("{}f", trimmed);
-        }
+    if tl.contains("float") && trimmed.parse::<f64>().is_ok() && !trimmed.ends_with('f') && !trimmed.ends_with('F') {
+        return format!("{}f", trimmed);
     }
     default_val.to_string()
 }
@@ -506,8 +532,8 @@ fn custom_type_classname(sql_type_name: &str) -> String {
 /// Format a SQL CommentBlock as a Java comment line.
 fn format_comment_for_java(comment: &crate::types::CommentBlock) -> String {
     let text = comment.text.trim();
-    let stripped = if text.starts_with("--") {
-        text[2..].trim().to_string()
+    let stripped = if let Some(dashes) = text.strip_prefix("--") {
+        dashes.trim().to_string()
     } else if text.starts_with("/*") && text.ends_with("*/") {
         let inner = text[2..text.len() - 2].trim();
         inner.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" ")
@@ -523,7 +549,7 @@ fn format_comment_for_java(comment: &crate::types::CommentBlock) -> String {
 
 pub(crate) fn should_stub_procedure(proc: &crate::types::ProcedureInfo, _object_pkg_var_names: &[String]) -> bool {
     if proc.is_function
-        && (proc.return_type.as_deref().map_or(false, |t| t.eq_ignore_ascii_case("trigger"))
+        && (proc.return_type.as_deref().is_some_and(|t| t.eq_ignore_ascii_case("trigger"))
             || proc.sql_text.to_ascii_lowercase().contains("returns trigger")
             || proc.java_logic_lines.iter().any(|line| line.trim() == "return new;"))
     {
@@ -550,7 +576,7 @@ pub(crate) fn should_stub_procedure(proc: &crate::types::ProcedureInfo, _object_
             || t.contains("Math.pow(null,")
             || t.contains("/* ENCODE */")
             || (t.contains(".set((-")
-                && t[t.find(".set((-").unwrap() + 7..].chars().next().map_or(false, |c| !c.is_ascii_digit()))
+                && t[t.find(".set((-").unwrap() + 7..].chars().next().is_some_and(|c| !c.is_ascii_digit()))
             || t.contains("Math.abs(") && t.contains(".compareTo(")
             || t.contains(".longValue() / 0")
             || t.contains("Timestamp(System.currentTimeMillis()) - ")
@@ -597,7 +623,7 @@ fn build_service_method(
             params.push(format!("AtomicReference<{}> {}", p.java_type, snake_to_camel(&p.name)));
             out_params.push(p);
         } else {
-            let is_null_default = p.default_value.as_ref().map_or(false, |dv| dv.to_lowercase() == "null");
+            let is_null_default = p.default_value.as_ref().is_some_and(|dv| dv.to_lowercase() == "null");
             let param_type = if is_null_default { &p.java_type } else { boxed_to_primitive(&p.java_type) };
             params.push(format!("{} {}", param_type, snake_to_camel(&p.name)));
         }
@@ -608,7 +634,7 @@ fn build_service_method(
     let mut ret_type = if proc.is_function {
         match &proc.return_type {
             Some(rt) => {
-                if rt.chars().next().map_or(false, |c| c.is_uppercase()) || rt.contains('.') {
+                if rt.chars().next().is_some_and(|c| c.is_uppercase()) || rt.contains('.') {
                     rt.clone()
                 } else {
                     sql_type_to_java(rt).map(|s| s.to_string()).unwrap_or_else(|| "Object".to_string())
@@ -669,10 +695,21 @@ fn build_service_method(
                 // their own counter inline in the loop header; proc.local_vars still
                 // tracks the var so resolve_column_ref resolves body references to it
                 // (Task 6), but re-declaring it here too would be a duplicate-variable
-                // Java compile error.
-                let is_range_loop_iter = proc.java_logic_lines.iter().any(|l| {
+                // Java compile error. Exception: when the var is assigned OUTSIDE the
+                // loop (e.g. a WHILE loop drives `i := 1; i := i + 1;` before a later
+                // `for (int i = ...)`), the method-level declaration is required.
+                // NOTE (M4, #114 review): a for-init `int i` must NOT shadow a
+                // method-level `i` — javac rejects it ("variable i is already
+                // defined"). statement.rs emits `for (i = ...` (no `int`) for
+                // pre-declared counters, so when a method-level declaration is
+                // present the loop header must reuse it rather than re-declare.
+                let is_range_loop_iter = proc.java_logic_lines.iter().enumerate().any(|(idx, l)| {
                     let t = l.trim_start();
-                    t.starts_with("for (int ") && l.contains(&format!("int {} = ", var_java))
+                    if !(t.starts_with("for (int ") && l.contains(&format!("int {} = ", var_java))) {
+                        return false;
+                    }
+                    let bare_assign = format!("{} = ", var_java);
+                    !proc.java_logic_lines[..idx].iter().any(|prev| prev.trim_start().starts_with(&bare_assign))
                 });
                 if is_loop_iter || is_range_loop_iter {
                     continue;
@@ -841,9 +878,8 @@ fn build_service_method(
                 l = l.replace(", null, String.valueOf(", ", 0, String.valueOf(");
             }
             let trimmed = l.trim().to_string();
-            if trimmed == "null;" || trimmed == "null" {
-                l = format!("// {}", trimmed);
-            } else if trimmed.starts_with("null /*") && trimmed.ends_with("*/;") {
+            if (trimmed == "null;" || trimmed == "null") || (trimmed.starts_with("null /*") && trimmed.ends_with("*/;"))
+            {
                 l = format!("// {}", trimmed);
             } else if trimmed.starts_with("/*") && trimmed.contains("null;") {
                 l = l.replace("null;", "");
@@ -1007,7 +1043,7 @@ fn append_local_vars_to_mapper_calls(
 
             let mut local_args: Vec<String> = Vec::new();
             let mut pkg_args: Vec<String> = Vec::new();
-            let word_re = regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap();
+            let word_re: &regex::Regex = &WORD_RE;
 
             for word_caps in word_re.captures_iter(&dml.sql_text) {
                 let word = word_caps.get(1).unwrap().as_str();
@@ -1026,7 +1062,7 @@ fn append_local_vars_to_mapper_calls(
 
             for word_caps in word_re.captures_iter(&dml.sql_text) {
                 let word = word_caps.get(1).unwrap().as_str();
-                if let Some(var_info) = package_vars.get(word) {
+                if let Some(_var_info) = package_vars.get(word) {
                     let jn = snake_to_camel(word);
                     let jn_lower = jn.to_lowercase();
                     if !param_java_names.iter().any(|pn| pn.to_lowercase() == jn_lower)
@@ -1053,7 +1089,8 @@ fn append_local_vars_to_mapper_calls(
                     if is_ar {
                         extra_args.push(format!("{}.get()", name));
                     } else {
-                        extra_args.push(name.clone());
+                        let rowtype_expr = dynamic_sql_rowtype_field_arg(&dml.sql_text, name, proc);
+                        extra_args.push(rowtype_expr.unwrap_or_else(|| name.clone()));
                     }
                 }
             }
@@ -1120,10 +1157,52 @@ pub fn collect_service_injections(pkg: &PackageInfo) -> std::collections::HashMa
     services
 }
 
+fn is_if_else_all_return(lines: &[String]) -> bool {
+    let lines_trimmed: Vec<&str> = lines.iter().map(|l| l.trim()).collect();
+    let n = lines_trimmed.len();
+    if n < 3 {
+        return false;
+    }
+    if lines_trimmed[n - 1] != "}" {
+        return false;
+    }
+
+    let mut depth: i32 = 0;
+    let mut found_return_in_branch = false;
+    let mut all_return = true;
+
+    for i in (0..n).rev() {
+        let line = lines_trimmed[i];
+        for ch in line.chars() {
+            match ch {
+                '}' => depth += 1,
+                '{' => depth -= 1,
+                _ => {}
+            }
+        }
+        if depth == 0 && (line.starts_with("if ") || line.starts_with("if(")) {
+            return all_return && found_return_in_branch;
+        }
+        if depth == 0 && line.starts_with("}") && !line.contains("else") {
+            break;
+        }
+        if line.starts_with("return ") || line == "return;" || line.starts_with("return;") {
+            found_return_in_branch = true;
+        }
+        if line.starts_with("}") && line.contains("else") && !line.contains("if") {
+            if !found_return_in_branch {
+                all_return = false;
+            }
+            found_return_in_branch = false;
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{DmlStatement, DmlType, Parameter, ProcedureInfo, ServiceCall};
+    use crate::types::{DmlStatement, DmlType, ParamMode, Parameter, ProcedureInfo, ServiceCall};
 
     fn make_pkg(name: &str, procs: Vec<ProcedureInfo>) -> PackageInfo {
         PackageInfo {
@@ -1142,6 +1221,44 @@ mod tests {
 
     fn make_proc(name: &str) -> ProcedureInfo {
         ProcedureInfo::new(format!("pkg.{}", name), "pkg".to_string(), name.to_string())
+    }
+
+    #[test]
+    fn test_range_loop_counter_used_outside_is_declared() {
+        // fastaas ImportExcelService: a WHILE loop drives `i` (i := 1; i := i + 1)
+        // before a numeric `for (int i = ...)` loop. The range-loop suppression
+        // must not skip the declaration when `i` is assigned outside the loop.
+        // NOTE (M4, #114 review): the loop header here is the *reachable* form —
+        // statement.rs reuses the method-level declaration (`for (i = ...`, no
+        // `int`) because a for-init `int i` shadowing a method-level `i` is a
+        // javac error, not legal Java.
+        let mut proc = make_proc("split_string");
+        proc.local_vars.insert("i".into(), "Integer".into());
+        proc.java_logic_lines = vec![
+            "i = 1;".into(),
+            "while (vPos > 0) {".into(),
+            "    i = i + 1;".into(),
+            "}".into(),
+            "for (i = 1; i <= tRes.size(); i++) {".into(),
+            "}".into(),
+        ];
+        let mut pkg = make_pkg("pkg_test", vec![proc]);
+        let dir = tempfile::tempdir().unwrap();
+        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8, false)
+            .unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join("src/main/java/com/example/demo/service/TestService.java"))
+                .unwrap();
+        assert!(
+            content.contains("Integer i = "),
+            "i assigned by WHILE before the for-loop must be declared:\n{}",
+            content
+        );
+        assert!(
+            content.contains("for (i = 1; i <= tRes.size(); i++)"),
+            "loop header must reuse method-level i (no re-declaration):\n{}",
+            content
+        );
     }
 
     #[test]
@@ -1256,46 +1373,4 @@ mod tests {
                 .unwrap();
         assert!(content.contains("String __SQLSTATE__ = \"\";"));
     }
-}
-
-fn is_if_else_all_return(lines: &[String]) -> bool {
-    let lines_trimmed: Vec<&str> = lines.iter().map(|l| l.trim()).collect();
-    let n = lines_trimmed.len();
-    if n < 3 {
-        return false;
-    }
-    if lines_trimmed[n - 1] != "}" {
-        return false;
-    }
-
-    let mut depth: i32 = 0;
-    let mut found_return_in_branch = false;
-    let mut all_return = true;
-
-    for i in (0..n).rev() {
-        let line = lines_trimmed[i];
-        for ch in line.chars() {
-            match ch {
-                '}' => depth += 1,
-                '{' => depth -= 1,
-                _ => {}
-            }
-        }
-        if depth == 0 && (line.starts_with("if ") || line.starts_with("if(")) {
-            return all_return && found_return_in_branch;
-        }
-        if depth == 0 && line.starts_with("}") && !line.contains("else") {
-            break;
-        }
-        if line.starts_with("return ") || line == "return;" || line.starts_with("return;") {
-            found_return_in_branch = true;
-        }
-        if line.starts_with("}") && line.contains("else") && !line.contains("if") {
-            if !found_return_in_branch {
-                all_return = false;
-            }
-            found_return_in_branch = false;
-        }
-    }
-    false
 }

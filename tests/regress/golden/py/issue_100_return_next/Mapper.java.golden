@@ -1,0 +1,13 @@
+        package com.example.demo.mapper;
+
+        import java.util.List;
+import java.util.Map;
+
+        import org.apache.ibatis.annotations.*;
+
+        @Mapper
+        public interface Issue100ReturnNextMapper {
+
+                // issue_100_return_next.sql:3 — f_issue100_collect_rows
+        List<Map<String, Object>> selectFIssue100CollectRows();
+        }

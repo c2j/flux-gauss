@@ -1,0 +1,59 @@
+# fastaas 回归基线（Python 引擎）— 标准 Oracle 风格 PL/SQL 黄金集（49 个 collected_sql）
+#
+# $ cd ~/Projects/Desktop_Projects/DB/flux-gauss/ && rm -rf dest_fastaas_py && OGSQL_BIN=../ogsql-parser/target/release/ogsql python3 converter/flux_gauss.py -c demo-project/fluxgauss_fastaas_py.yaml --skip-validate && cd dest_fastaas_py/ && mvn compile && mvn test
+output_dir: ./dest_fastaas_py
+base_package: ced
+
+integration_test:
+  enabled: false
+
+sources:
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/1_FNC_COM_GET_BETWEEN_DAYS_BOND.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/1_FNC_COM_GET_BETWEEN_DAYS.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/1_FNC_COM_GET_BETWEEN_JXDAYS.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/1_FNC_COM_GET_FUND_CODE.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/1_FNC_COM_GET_MAIN_XWDM.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/1_FNC_COM_GET_SEAT_PARA.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/1_FNC_COM_GETDAY.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/1_FNC_COM_IF_DEAL_DATE.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/1_FNC_GET_FUND_DATA_MODE.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/1_FNC_GET_RATE_INFO2.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/1_PRC_COM_GET_JXDAYS_QDII.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/1_PRC_COM_GET_JXDAYS.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/1_V_PAR_BOND_SECTION.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/1_V_PAR_BOND.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/1_V_PAR_FUND_CHECK_PARA.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/1_V_PAR_FUND_RATE_INFO.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/2_FNC_GET_BOND_YJLX.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/2_FNC_GET_PURCHASE_JS_DAYS.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/DAT_FUND_CJQS.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/DAT_FUND_XW_VENTURE.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/DAT_TRD_REPURCHASE.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/DIC_STOCK_KIND_SUB.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/JYFY_TEMP.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/MID_YJQS_DETAIL.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/PAR_DRV_CONFIG.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/PAR_FUND_ACCOUNT_MEMBER.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/PAR_FUND_BOND_ACCRUAL_TYPE.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/PAR_FUND_CHECK_PARA.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/PAR_FUND_INFO.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/PAR_FUND_PARTNER.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/PAR_FUND_RATE_INFO.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/PAR_FUND_SEAT_PARA.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/PAR_FUND_SEAT.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/PAR_OPER_ACCOUNT_MEMBER.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/PAR_OPER_CLOSE_DATE.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/PAR_OPER_VENTURE.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/PAR_PPM_STOCK_BMTX.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/PAR_SYS_BOND_SECTION.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/PAR_SYS_BOND.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/PAR_SYS_MARKET_SETTLEDAY.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/PAR_SYS_PURCHASE.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/PAR_SYS_SECURITIES.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/PAR_SYS_STOCK_BMTX.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/PKG_IMPORT_EXCEL.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/PKG_SPLIT_TRADE_LOG.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/PKG_SPLIT_TRADE_STEP3_SH.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/QFQSCJHBRBB_TEMP.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/SPLIT_LOG_INFO.sql
+  - lib/fastaas/exam/all_sq/collected_sql/collected_sql/SWH_ALL_KIND.sql

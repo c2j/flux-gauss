@@ -28,8 +28,8 @@ class Issue39ConfigServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procSetSession_success() {
-        String pUser = "test_pUser";
-        String pSession = "test_pSession";
+        String pUser = "test_p_user";
+        String pSession = "test_p_session";
         service.procSetSession(pUser, pSession);
     }
 
@@ -42,7 +42,7 @@ class Issue39ConfigServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procRunBatch_success() {
-        String pBatchName = "test_pBatchName";
+        String pBatchName = "test_p_batch_name";
         AtomicReference<String> pStatusRef = new AtomicReference<>(null);
         service.procRunBatch(pBatchName, pStatusRef);
     }

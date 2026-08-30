@@ -23,6 +23,200 @@ from tests.regress.conftest import (
 )
 
 
+class TestIssue75_DeadReturnBraceBalance:
+    """#75: a bare top-level RETURN; followed by unreachable blocks must not
+    leave orphan `}` closers (brace imbalance) that force the procedure to
+    be stubbed."""
+
+    @staticmethod
+    def _convert(tmp_path):
+        import yaml
+
+        cfg = {
+            "output_dir": str(tmp_path / "dest"),
+            "base_package": "com.example.demo",
+            "sources": [os.path.join(FIXTURES_DIR, "issue_75_exception_in_loop.sql")],
+        }
+        cfg_path = tmp_path / "issue75.yaml"
+        cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(Path(fg.__file__).resolve()),
+                "-c",
+                str(cfg_path),
+                "--skip-validate",
+                "--full",
+            ],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "OGSQL_BIN": fg.OGSQL_BIN},
+            timeout=120,
+        )
+        assert result.returncode == 0, (
+            f"conversion failed:\n{result.stdout[-800:]}\n{result.stderr[-800:]}"
+        )
+        service = next((tmp_path / "dest" / "src/main/java").rglob("*Service.java"), None)
+        assert service is not None, "no Service.java generated"
+        return service.read_text(encoding="utf-8")
+
+    def test_dead_return_not_stubbed_and_balanced(self, tmp_path):
+        content = self._convert(tmp_path)
+        assert "Auto-generated stub" not in content, (
+            "bare top-level RETURN must not force the procedure into a stub"
+        )
+        m = re.search(r"public void pIssue75DeadReturn.*?\n    \}", content, re.DOTALL)
+        assert m is not None, "pIssue75DeadReturn method not found"
+        body = m.group(0)
+        assert body.count("{") - body.count("}") == 0, (
+            "method must have balanced braces (no orphan closers after dead code strip)"
+        )
+        assert re.search(r"return;", body), "the bare top-level RETURN must be preserved"
+
+
+class TestIssue100_SetofReturnNext:
+    """#100: SETOF functions with RETURN NEXT must accumulate rows into a
+    result list and return it at method end — not a TODO stub."""
+
+    @staticmethod
+    def _convert_fixture(tmp_path):
+        import yaml
+
+        cfg = {
+            "output_dir": str(tmp_path / "dest"),
+            "base_package": "com.example.demo",
+            "sources": [os.path.join(FIXTURES_DIR, "issue_100_return_next.sql")],
+        }
+        cfg_path = tmp_path / "setof.yaml"
+        cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(Path(fg.__file__).resolve()),
+                "-c",
+                str(cfg_path),
+                "--skip-validate",
+                "--full",
+            ],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "OGSQL_BIN": fg.OGSQL_BIN},
+            timeout=120,
+        )
+        assert result.returncode == 0, (
+            f"conversion failed:\n{result.stdout[-800:]}\n{result.stderr[-800:]}"
+        )
+        return tmp_path / "dest"
+
+    @staticmethod
+    def _service_content(out):
+        service = next((out / "src/main/java").rglob("*Service.java"), None)
+        assert service is not None, "no Service.java generated"
+        return service.read_text(encoding="utf-8")
+
+    def test_setof_return_type_is_list(self, tmp_path):
+        content = self._service_content(self._convert_fixture(tmp_path))
+        assert "List<Map<String, Object>> fIssue100CollectRows" in content, (
+            "SETOF function must map to List<Map<String, Object>> return type"
+        )
+
+    def test_return_next_accumulates_and_returns(self, tmp_path):
+        content = self._service_content(self._convert_fixture(tmp_path))
+        assert "_returnRows.add(" in content, "RETURN NEXT must accumulate into _returnRows"
+        assert "return _returnRows;" in content, "method must end by returning _returnRows"
+        assert "unhandled PL/pgSQL statement type: ReturnNext" not in content, (
+            "RETURN NEXT must not fall through to the unhandled-statement stub"
+        )
+
+
+class TestIssue101_ItestFixtureConstraints:
+    """#101: itest fixtures must not violate FK constraints.
+
+    INSERT parents-first, DELETE children-first, and remote-mode
+    itest-schema must contain zero DROP TABLE (AGENTS.md section 7
+    checkpoint)."""
+
+    @staticmethod
+    def _convert_with_itest(tmp_path):
+        import yaml
+
+        cfg = {
+            "output_dir": str(tmp_path / "dest"),
+            "base_package": "com.example.demo",
+            "integration_test": {
+                "enabled": True,
+                "mode": "remote",
+                "url": "jdbc:postgresql://localhost:5432/x",
+                "username": "x",
+                "password": "x",
+            },
+            "sources": [
+                "demo-project/sql/ddl/01_core_demo_tables.sql",
+                "demo-project/sql/gauss_complete_examples.sql",
+            ],
+        }
+        cfg_path = tmp_path / "itest.yaml"
+        cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(Path(fg.__file__).resolve()),
+                "-c",
+                str(cfg_path),
+                "--skip-validate",
+                "--full",
+            ],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "OGSQL_BIN": fg.OGSQL_BIN},
+            timeout=180,
+        )
+        assert result.returncode == 0, (
+            f"conversion failed:\n{result.stdout[-800:]}\n{result.stderr[-800:]}"
+        )
+        return tmp_path / "dest"
+
+    def test_fixture_fk_topology_orders_inserts_and_deletes(self, tmp_path):
+        out = self._convert_with_itest(tmp_path)
+        fixture = (
+            out
+            / "src/test/resources/itest-fixtures/gauss_complete_examples_proc_sync_employee_bonus.sql"
+        )
+        content = fixture.read_text(encoding="utf-8")
+        del_positions = {
+            t: content.index(f"DELETE FROM {t};") for t in ("employee_bonus", "departments")
+        }
+        assert del_positions["employee_bonus"] < del_positions["departments"], (
+            "DELETE must remove children (employee_bonus) before parents (departments)"
+        )
+        ins_positions = {
+            t: content.index(f"INSERT INTO {t}") for t in ("departments", "employee_bonus")
+        }
+        assert ins_positions["departments"] < ins_positions["employee_bonus"], (
+            "INSERT must add parents (departments) before children (employee_bonus)"
+        )
+
+    def test_itest_schema_has_no_drop_table(self, tmp_path):
+        out = self._convert_with_itest(tmp_path)
+        schema = (out / "src/test/resources/itest-schema.sql").read_text(encoding="utf-8")
+        assert "DROP TABLE" not in schema.upper(), (
+            "remote-mode itest-schema must not emit DROP TABLE (AGENTS.md section 7)"
+        )
+
+    def test_fixtures_idempotent_delete_then_insert(self, tmp_path):
+        out = self._convert_with_itest(tmp_path)
+        fixtures_dir = out / "src/test/resources/itest-fixtures"
+        for fixture in fixtures_dir.glob("*.sql"):
+            content = fixture.read_text(encoding="utf-8")
+            inserts = [l for l in content.splitlines() if l.startswith("INSERT INTO")]
+            if inserts:
+                first_insert = content.index(inserts[0])
+                assert "DELETE FROM" in content[:first_insert], (
+                    f"fixture must delete-then-insert for idempotency: {fixture.name}"
+                )
+
+
+
 # ── Helpers ──────────────────────────────────────────────────────
 
 def _run_pipeline(sql_file, cached_ast, tmp_path):
@@ -1287,6 +1481,80 @@ class TestStringTargetHelperCoercion:
 
 
 # ── Meta: Verify all issue fixtures parse correctly ──────────────
+
+class TestIssue83_OutCrossPkgCall:
+    """OUT 局部变量提升为 AtomicReference 后，跨包调用必须传引用本体
+    （vRows 而非 vRows.get()）——见 ogagila OrchService/DwdService 编译错误。
+
+    需走真实 CLI 管线：_promote_out_local_vars 在 analyze 之后（Phase 2.5）运行，
+    _run_pipeline 单测 harness 不触发。"""
+
+    SQL_FILE = "issue_83_out_cross_pkg.sql"
+
+    def test_cross_pkg_out_args_pass_reference_not_get(self, tmp_path):
+        out_dir = _run_cli_pipeline([self.SQL_FILE], tmp_path)
+        # 同文件同 schema 包合并为 1 个 Service（#70 行为），caller 过程落入 CalleeService
+        svc = _read_generated(out_dir, "src/main/java/com/example/demo/service/CalleeService.java")
+        assert "calleeService.buildIncremental(pRunId, vRows, vMonths);" in svc, (
+            f"OUT args must pass the AtomicReference itself, got:\n{svc[:1500]}"
+        )
+        assert "calleeService.planIncrement(\"x\", vRows, vMonths);" in svc, (
+            f"OUT args must pass the AtomicReference itself, got:\n{svc[:1500]}"
+        )
+
+
+class TestIssue103_HandlerCallArgs:
+    """EXCEPTION handler 内跨包调用实参不得被静默丢弃——site4
+    (_wrap_handler_stmts) 曾将 _resolved.append 置于 i<len(callee params)
+    门控内，callee 未精确匹配时丢参生成空参调用。"""
+
+    SQL_FILE = "issue_103_handler_call_args.sql"
+
+    def test_handler_cross_pkg_calls_keep_all_args(self, tmp_path):
+        out_dir = _run_cli_pipeline([self.SQL_FILE], tmp_path)
+        svc = _read_generated(out_dir, "src/main/java/com/example/demo/service/CalleeService.java")
+        assert "calleeService.simpleLog(pX);" in svc, f"handler 1-arg call missing:\n{svc[:1500]}"
+        assert "calleeService.simpleLog(pX, \"detail\");" in svc, (
+            f"handler 2-arg call must keep both args:\n{svc[:1500]}"
+        )
+
+
+# ── Meta: Verify all issue fixtures parse correctly ──────────────
+
+class TestIssue99_DuplicateParamNames:
+    """PG catalog-style signatures reuse the type name as the parameter name
+    (`_group_concat(text, text)`). Both engines must dedupe (text, text2) in
+    Service, unit test and integration test consistently."""
+
+    SQL_FILE = "issue_99_duplicate_param_names.sql"
+
+    def test_param_names_deduped(self, cached_ast):
+        ast = cached_ast[self.SQL_FILE]
+        procs, _, _ = fg.extract_procedures(ast, self.SQL_FILE)
+        assert len(procs) == 1
+        names = [p.name for p in procs[0].parameters]
+        assert names == ["text", "text2"], f"params must be deduped, got {names}"
+
+    def test_service_and_test_use_deduped_names(self, cached_ast, tmp_path):
+        out_dir, pkg, cls = _run_pipeline(self.SQL_FILE, cached_ast, tmp_path)
+        svc = _read_generated(out_dir, _service_path(out_dir, cls))
+        assert "Object text, Object text2" in svc, (
+            f"Service signature must use deduped params, got:\n{svc[:1200]}"
+        )
+        test_file = _read_generated(
+            out_dir,
+            str(
+                Path(out_dir)
+                / f"src/test/java/{fg.BASE_PACKAGE.replace('.', '/')}/service/{cls}ServiceTest.java"
+            ),
+        )
+        assert "Object text2 = " in test_file, (
+            f"ServiceTest must declare deduped params, got:\n{test_file[:1200]}"
+        )
+        assert "service.GroupConcat(text, text2)" in test_file, (
+            f"ServiceTest call must use deduped params, got:\n{test_file[:1200]}"
+        )
+
 
 class TestIssueFixturesParse:
     """Ensure all issue-specific fixtures can be parsed and analyzed."""

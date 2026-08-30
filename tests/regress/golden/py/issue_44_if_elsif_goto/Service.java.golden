@@ -33,7 +33,7 @@ public class Issue44IfElsifGotoService {
         vCount = issue44IfElsifGotoMapper.selectTIssue44OrdersCount(pStatus, pDate);
         if (vCount == null) vCount = 0;
         if (vCount > 0) {
-            vName = issue44IfElsifGotoMapper.selectTIssue44Orders(pStatus, pDate);
+            vName = String.valueOf(issue44IfElsifGotoMapper.selectTIssue44Orders(pStatus, pDate));
             pResult.set(String.valueOf(vName));
         } else {
             if (java.util.Objects.equals(pStatus, "ACTIVE")) {
@@ -102,7 +102,7 @@ public class Issue44IfElsifGotoService {
         String vName = null;
         pResult.set(null);
         if (java.util.Objects.equals(pFlag, "1")) {
-            vName = issue44IfElsifGotoMapper.selectTIssue44Orders_1(pFlag);
+            vName = String.valueOf(issue44IfElsifGotoMapper.selectTIssue44Orders_1(pFlag));
             pResult.set(String.valueOf(vName));
         } else if (java.util.Objects.equals(pFlag, "2")) {
             if (vName == null) {

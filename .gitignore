@@ -1,4 +1,7 @@
 lib/ogsql-parser
+# Local-only fastaas corpus (untracked; upstream c2j/fastaas does not exist).
+# Prevents `git add -A` from staging a gitlink with no .gitmodules entry.
+lib/fastaas/
 dest/
 dest_ru/
 dest_py/

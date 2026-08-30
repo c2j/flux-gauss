@@ -27,7 +27,7 @@ class BigfundServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_fncA_success() {
-        String pIX = "test_pIX";
+        String pIX = "test_p_i_x";
         var result = service.fncA(pIX);
     }
 }

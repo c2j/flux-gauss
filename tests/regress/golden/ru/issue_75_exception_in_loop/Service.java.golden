@@ -1,0 +1,43 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue75ExceptionInLoopMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_75_exception_in_loop.sql
+public class Issue75ExceptionInLoopService {
+    private static final Logger log = LoggerFactory.getLogger(Issue75ExceptionInLoopService.class);
+
+    private final Issue75ExceptionInLoopMapper issue75ExceptionInLoopMapper;
+
+    public Issue75ExceptionInLoopService(Issue75ExceptionInLoopMapper issue75ExceptionInLoopMapper) {
+        this.issue75ExceptionInLoopMapper = issue75ExceptionInLoopMapper;
+    }
+
+    // Source: p_issue75_dead_return (PROCEDURE) — {FIXTURES_ROOT}/issue_75_exception_in_loop.sql:4-24
+    @Transactional
+    public void issue75DeadReturn(AtomicReference<String> pOSucceed) {
+        String vStepNo = "";
+        String __SQLERRM__ = "";
+        int __SQLCODE__ = 0;
+        pOSucceed.set("0");
+        vStepNo = "1";
+        if (true) { return; }
+        // UNREACHABLE: try {
+            // UNREACHABLE: issue75ExceptionInLoopMapper.deleteTIssue75();
+            // UNREACHABLE: // COMMIT;
+        } catch (Exception __e1) {
+            // UNREACHABLE:     __SQLERRM__ = __e1.getMessage();
+            // UNREACHABLE:     __SQLCODE__ = -1;
+            // UNREACHABLE: pOSucceed.set("删除失败");
+        }
+        for (int i = 1; i <= 3; i++) {
+            issue75ExceptionInLoopMapper.insertTIssue75(i);
+        }
+    }
+}

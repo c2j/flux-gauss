@@ -68,7 +68,7 @@ public class WarpdriverStressTestService {
     public void spMainOrchestrator(String pBizDate, String pMode, AtomicReference<java.math.BigDecimal> pTotalAmt, AtomicReference<Long> pLogId) {
         Integer vCleaned = 0;
         java.util.List<Object> vCurOrders = null;
-        java.sql.Date vDate = java.sql.Date.valueOf(java.time.LocalDate.parse(String.valueOf(pBizDate), java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd]")));
+        java.sql.Date vDate = java.sql.Date.valueOf(java.time.LocalDate.parse(String.valueOf(pBizDate), java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd][yyyy-M-d]")));
         Boolean vHasError = false;
         Integer vIdx = 0;
         List<String> vItemTab = null;
@@ -250,7 +250,7 @@ public class WarpdriverStressTestService {
         Integer vDeleted = 0;
         Integer vRowcount = 0;
         int __ROWCOUNT__ = 0;
-        vCutoff = new java.sql.Timestamp(new java.sql.Timestamp(System.currentTimeMillis()).getTime() - (long)(Long.parseLong(String.valueOf(String.valueOf((String.valueOf(pRetentionDays)))))) * 24 * 60 * 60 * 1000);
+        vCutoff = new java.sql.Timestamp(new java.sql.Timestamp(System.currentTimeMillis()).getTime() - (long)(pRetentionDays) * 24 * 60 * 60 * 1000);
         do {
             __ROWCOUNT__ = warpdriverStressTestMapper.deleteOperationLogs(pRetentionDays, vBatch, vCutoff);
             vRowcount = Integer.valueOf(__ROWCOUNT__);
@@ -266,7 +266,7 @@ public class WarpdriverStressTestService {
 
     // Source: PKG_WARPDRIVER_STRESS_TEST.sp_goto_skip_logic (PROCEDURE) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:397-437
     public void spGotoSkipLogic(String pReportType, String pBizDate, AtomicReference<String> pContent) {
-        java.sql.Date vDate = java.sql.Date.valueOf(java.time.LocalDate.parse(String.valueOf(pBizDate), java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd]")));
+        java.sql.Date vDate = java.sql.Date.valueOf(java.time.LocalDate.parse(String.valueOf(pBizDate), java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd][yyyy-M-d]")));
         String vDetail = "";
         String vHeader = null;
         vHeader = String.valueOf(String.valueOf(String.valueOf("=== 清算报告 (").concat(String.valueOf(pBizDate))).concat(String.valueOf(") ==="))).concat(String.valueOf(String.valueOf((char)(10))));
@@ -510,13 +510,14 @@ public class WarpdriverStressTestService {
     // Source: PKG_WARPDRIVER_STRESS_TEST.fn_array_jsonb_processor (FUNCTION) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:730-764
     public String fnArrayJsonbProcessor(String pItems, java.math.BigDecimal pDiscount) {
         String vArr = String.valueOf(pItems);
+        Integer vIdx = 0;
         String vItem = null;
         java.math.BigDecimal vNewPrice = java.math.BigDecimal.ZERO;
         String vResult = String.valueOf("[]");
         if (java.util.Objects.equals(this.jsonbArrayLength(vArr), 0)) {
             return String.valueOf("{\"error\":\"empty_array\"}");
         }
-        for (int vIdx = 0; vIdx <= this.jsonbArrayLength(vArr) - 1; vIdx++) {
+        for (vIdx = 0; vIdx <= this.jsonbArrayLength(vArr) - 1; vIdx++) {
             vItem = String.valueOf(this.jsonbGet(vArr, vIdx));
             vNewPrice = java.math.BigDecimal.valueOf(((Number) java.util.Objects.requireNonNullElse((this.jsonbGetText(vItem, "price")), 0L)).longValue()).multiply((java.math.BigDecimal.valueOf(1).subtract(pDiscount)));
             vResult = String.valueOf(String.valueOf(vResult).concat(String.valueOf(this.jsonbBuildObject(String.valueOf("product_id"), this.jsonbGetText(vItem, "product_id"), String.valueOf("original_price"), java.math.BigDecimal.valueOf(((Number) java.util.Objects.requireNonNullElse((this.jsonbGetText(vItem, "price")), 0L)).longValue()), String.valueOf("discount_rate"), pDiscount, String.valueOf("final_price"), vNewPrice.setScale((int)(2), java.math.RoundingMode.HALF_UP), String.valueOf("processed_at"), new java.sql.Timestamp(System.currentTimeMillis())))));

@@ -241,7 +241,7 @@ public class GaussCompleteExamplesService {
             List<Map<String, Object>> vRecList = gaussCompleteExamplesMapper.selectProcDynamicForProcessing_5(pTableName, pSelectColumns, pWhereClause, pOrderBy, pProcessType);
             for (Map<String, Object> vRec : vRecList) {
                 vRowCount = vRowCount + 1;
-                vPkId = (vRec.get("id") != null ? (vRec.get("id") instanceof Number ? ((Number) vRec.get("id")).intValue() : Integer.parseInt(String.valueOf(vRec.get("id")))) : 0);
+                vPkId = ((Number) ((vRec.get("id") != null ? (vRec.get("id") instanceof Number ? ((Number) vRec.get("id")).intValue() : Integer.parseInt(String.valueOf(vRec.get("id")))) : 0))).intValue();
                 vStatus = String.valueOf(vRec.get("status"));
                 vAmount = new java.math.BigDecimal(String.valueOf(vRec.get("amount") != null ? vRec.get("amount") : 0));
                 vName = String.valueOf(vRec.get("name"));

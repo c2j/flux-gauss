@@ -33,8 +33,8 @@ pub fn find_body_stmt_lines(proc: &ProcedureInfo, ctx: &mut AnalysisContext) -> 
     let end = (proc.source_end_line as usize).min(lines.len());
 
     let mut body_start: Option<usize> = None;
-    for i in start..end {
-        let trimmed = lines[i].trim();
+    for (i, line) in lines.iter().enumerate().take(end).skip(start) {
+        let trimmed = line.trim();
         if trimmed.eq_ignore_ascii_case("begin") || trimmed.to_uppercase() == "BEGIN" {
             body_start = Some(i);
             break;
@@ -46,9 +46,8 @@ pub fn find_body_stmt_lines(proc: &ProcedureInfo, ctx: &mut AnalysisContext) -> 
     };
 
     let mut body_end = end;
-    for i in (body_start + 1)..end {
-        let trimmed = lines[i].trim();
-        let up = trimmed.to_uppercase();
+    for (i, line) in lines.iter().enumerate().take(end).skip(body_start + 1) {
+        let up = line.trim().to_uppercase();
         if up == "END" || up == "END;" || up.starts_with("END;") || up.starts_with("END ") {
             body_end = i;
             break;
@@ -57,8 +56,8 @@ pub fn find_body_stmt_lines(proc: &ProcedureInfo, ctx: &mut AnalysisContext) -> 
 
     let mut stmt_lines: Vec<u32> = Vec::new();
     let mut blk_depth: i32 = 0;
-    for i in body_start..body_end {
-        let up = lines[i].trim().to_uppercase();
+    for (i, line) in lines.iter().enumerate().take(body_end).skip(body_start) {
+        let up = line.trim().to_uppercase();
         let has_loop = up.contains("LOOP") && (up.contains("FOR ") || up.contains("WHILE ") || up == "LOOP");
         let is_if = up.contains("IF ") && up.contains("THEN");
         let is_case = up.starts_with("CASE ") || up == "CASE" || up.starts_with("CASE;");
@@ -136,20 +135,20 @@ pub fn find_var_decl_line(proc: &ProcedureInfo, var_name: &str, ctx: &mut Analys
     let end = (proc.source_end_line as usize).min(lines.len());
     let target = var_name.trim_matches('"').to_lowercase();
 
-    for i in start..end {
-        let stripped = lines[i].trim();
+    for (i, stripped_line) in lines.iter().enumerate().take(end).skip(start) {
+        let stripped = stripped_line.trim();
         let up = stripped.to_uppercase();
         if up == "BEGIN" || up.starts_with("BEGIN ") {
             break;
         }
         let lower = stripped.to_lowercase();
-        if lower.contains(&target) {
-            if lower.split_whitespace().any(|w| {
+        if lower.contains(&target)
+            && lower.split_whitespace().any(|w| {
                 let clean: String = w.chars().filter(|c| c.is_alphanumeric() || *c == '_').collect();
                 clean == target
-            }) {
-                return Some((i + 1) as u32);
-            }
+            })
+        {
+            return Some((i + 1) as u32);
         }
     }
     None

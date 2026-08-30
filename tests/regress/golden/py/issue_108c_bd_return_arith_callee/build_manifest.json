@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_108c_bd_return_arith_callee.sql",
+  "package_name": "issue_108c_bd_return_arith_callee",
+  "files": {
+    "Service.java": "7633429c01a318f5",
+    "Mapper.java": "54e65e2f8c305435",
+    "Mapper.xml": "a251e38a76c39cf7",
+    "ServiceTest.java": "6854ed86062dc868"
+  }
+}

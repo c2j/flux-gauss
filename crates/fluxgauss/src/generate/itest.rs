@@ -5,7 +5,7 @@ use encoding_rs::Encoding;
 
 use crate::generate::writer::CodeWriter;
 use crate::naming::{java_method_name, package_to_classname, snake_to_camel};
-use crate::types::{DmlType, PackageInfo, ParamMode, Parameter, ProcedureInfo};
+use crate::types::{DmlType, PackageInfo, Parameter, ProcedureInfo};
 
 pub fn write_itest_class(
     base_path: &Path,
@@ -58,11 +58,7 @@ pub fn write_itest_class(
             let part = svc_var_inj.replace("Service", "");
             format!("{}Service", package_to_classname(&part))
         };
-        let target_jp = if !pkg_name.is_empty() {
-            format!("{}.service", base_package)
-        } else {
-            format!("{}.service", base_package)
-        };
+        let target_jp = format!("{}.service", base_package);
         imports.insert(format!("import {}.{};", target_jp, svc_class_inj));
     }
 
@@ -135,7 +131,7 @@ pub fn write_itest_class(
             proc.parameters.iter().filter(|p| !p.is_refcursor()).map(|p| snake_to_camel(&p.name)).collect();
         let args_str = all_args.join(", ");
 
-        let test_data = infer_test_data(proc, pkg, &schema_map, all_packages);
+        let test_data = infer_test_data(proc, pkg, schema_map, all_packages);
         let sql_script = write_fixtures(base_path, proc, pkg, &test_data, encoding).unwrap_or_default();
 
         let base_test_name = format!("test_{}_integration", method_name);
@@ -164,7 +160,7 @@ pub fn write_itest_class(
             let is_single_bind = sql.starts_with("#{") && sql.ends_with('}') && !sql[2..sql.len() - 1].contains("#{");
             let starts_with_var_using = {
                 let lower = sql.to_lowercase();
-                let looks_like_var = sql.chars().next().map_or(false, |c| c.is_ascii_alphabetic() || c == '_');
+                let looks_like_var = sql.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_');
                 let has_using = lower.contains(" using ");
                 looks_like_var
                     && has_using
@@ -174,7 +170,7 @@ pub fn write_itest_class(
                     && !lower.starts_with("delete")
             };
             let is_just_var = {
-                let looks_like_var = sql.chars().next().map_or(false, |c| c.is_ascii_alphabetic() || c == '_');
+                let looks_like_var = sql.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_');
                 let no_sql_keywords = !sql.to_lowercase().starts_with("select")
                     && !sql.to_lowercase().starts_with("insert")
                     && !sql.to_lowercase().starts_with("update")
@@ -220,13 +216,13 @@ pub fn write_itest_class(
         if proc.is_function {
             let is_recursive = proc.java_logic_lines.iter().any(|l| l.contains(&format!("this.{}(", method_name)));
             if is_recursive {
-                lines.push(format!("        // Recursive function — skip invocation to avoid StackOverflow"));
+                lines.push("        // Recursive function — skip invocation to avoid StackOverflow".to_string());
                 lines.push(format!("        // var result = {}.{}({});", svc_var, method_name, args_str));
             } else {
                 lines.push(format!("        var result = {}.{}({});", svc_var, method_name, args_str));
                 if is_stubbed {
                     lines.push("        // Stub implementation — result is null".to_string());
-                } else if proc.return_type.as_ref().map_or(true, |t| t == "Object") {
+                } else if !proc.return_type.as_ref().is_some_and(|t| t != "Object") {
                     lines.push("        // Object return type — skip assertNotNull".to_string());
                 } else if proc.java_logic_lines.iter().any(|l| l.trim() == "return null;") {
                     lines.push("        // Function may return null — skip assertNotNull".to_string());
@@ -334,6 +330,34 @@ pub fn write_abstract_integration_test(
     w.write_to_file(&itest_dir.join("AbstractIntegrationTest.java"), encoding)
 }
 
+static VARCHAR_WIDTH_RE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"varchar\((\d+)\)").unwrap());
+static BLOCK_COMMENT_RE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"(?s)/\*.*?\*/").unwrap());
+static FUNC_COL_RE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"\b(\w+)\s*\(\s*(\w+)\s*\)").unwrap());
+static COL_AS_RE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"(\w+)(?:\s+as\s+(\w+))?").unwrap());
+static MYBATIS_PARAM_RE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"#\{[^}]+\}").unwrap());
+static ASSIGN_RE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"(\w+)\s*=").unwrap());
+static CROSS_CALL_RE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"\b(\w+Service)\.(\w+)\s*\(").unwrap());
+static TYPE_TOKEN_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"^([a-zA-Z_][a-zA-Z0-9_]*)(varchar2|varchar|number|integer|int|char\b|date\b|timestamp|numeric|decimal|blob|clob|text\b|boolean|bigint|float|double|real|bytea|uuid|jsonb|json)").unwrap()
+});
+static CONSTRAINT_SPLIT_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"\s+(NOT\s+NULL|NULL|DEFAULT|PRIMARY|UNIQUE|CHECK|REFERENCES|CONSTRAINT|USING|PCTFREE|INITRANS|MAXTRANS|STORAGE|TABLESPACE|ENABLE|DISABLE|NOCOMPRESS|COMPRESS)").unwrap()
+});
+static INLINE_COMMENT_RE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"\s*/\*.*?\*/").unwrap());
+
+static ON_CONFLICT_RE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"on\s+conflict\s*\(\s*(\w+)").unwrap());
+static DML_TABLE_RE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"(?:insert\s+into|update)\s+(\w+)").unwrap());
+
 fn is_system_object(name: &str) -> bool {
     let lower = name.to_lowercase();
     matches!(lower.as_str(), "sys_dummy" | "dual" | "information_schema" | "pg_catalog" | "public" | "dw")
@@ -401,10 +425,8 @@ pub fn write_itest_schema_sql(
             for dml in &proc.dml_statements {
                 let raw_lower = dml.sql_text.to_lowercase();
                 if raw_lower.contains("on conflict") {
-                    if let Some(caps) = regex::Regex::new(r"on\s+conflict\s*\(\s*(\w+)").unwrap().captures(&raw_lower) {
-                        if let Some(tbl_match) =
-                            regex::Regex::new(r"(?:insert\s+into|update)\s+(\w+)").unwrap().captures(&raw_lower)
-                        {
+                    if let Some(_caps) = ON_CONFLICT_RE.captures(&raw_lower) {
+                        if let Some(tbl_match) = DML_TABLE_RE.captures(&raw_lower) {
                             needs_pk.insert(tbl_match.get(1).unwrap().as_str().to_lowercase());
                         }
                     }
@@ -431,7 +453,7 @@ pub fn write_itest_schema_sql(
         lines.push(String::new());
     }
 
-    for table in sorted_hashmap_keys(&schema_map) {
+    for table in sorted_hashmap_keys(schema_map) {
         if is_system_object(&table) {
             continue;
         }
@@ -443,7 +465,7 @@ pub fn write_itest_schema_sql(
         lines.push(String::new());
     }
 
-    for table in sorted_hashmap_keys(&schema_map) {
+    for table in sorted_hashmap_keys(schema_map) {
         if is_system_object(&table) {
             continue;
         }
@@ -481,9 +503,7 @@ pub fn write_itest_schema_sql(
             }
             let effective_lower = effective_type.to_lowercase();
             {
-                static VARCHAR_WIDTH_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-                let re = VARCHAR_WIDTH_RE.get_or_init(|| regex::Regex::new(r"varchar\((\d+)\)").unwrap());
-                if let Some(caps) = re.captures(&effective_lower) {
+                if let Some(caps) = VARCHAR_WIDTH_RE.captures(&effective_lower) {
                     if let Some(width_str) = caps.get(1) {
                         if let Ok(width) = width_str.as_str().parse::<usize>() {
                             if width > 8000 {
@@ -531,8 +551,8 @@ pub fn build_full_schema_map(
     sql_files: &[std::path::PathBuf],
 ) -> HashMap<String, HashMap<String, String>> {
     let ddl_schemas = parse_table_ddl(sql_files);
-    let result = build_schema_map(all_packages, &ddl_schemas);
-    result
+
+    build_schema_map(all_packages, &ddl_schemas)
 }
 
 fn is_better_type(new_type: &str, existing_type: &str) -> bool {
@@ -636,7 +656,7 @@ fn build_schema_map(
 
                 if let Some((tbl, cols_map)) = parse_insert_columns(raw) {
                     let has_ddl = ddl_schemas.contains_key(&tbl);
-                    let entry = schema_map.entry(tbl).or_insert_with(HashMap::new);
+                    let entry = schema_map.entry(tbl).or_default();
                     for (col, sql_type) in cols_map {
                         if !entry.contains_key(&col)
                             || (!has_ddl && is_better_type(&sql_type, entry.get(&col).unwrap()))
@@ -647,7 +667,7 @@ fn build_schema_map(
                 }
                 if let Some((tbl, cols_map)) = parse_select_columns(raw) {
                     if !ddl_schemas.contains_key(&tbl) {
-                        let entry = schema_map.entry(tbl).or_insert_with(HashMap::new);
+                        let entry = schema_map.entry(tbl).or_default();
                         for (col, sql_type) in cols_map {
                             if !entry.contains_key(&col) || is_better_type(&sql_type, entry.get(&col).unwrap()) {
                                 entry.insert(col, sql_type);
@@ -657,7 +677,7 @@ fn build_schema_map(
                 }
                 if let Some((tbl, cols_map)) = parse_update_columns(raw) {
                     let has_ddl = ddl_schemas.contains_key(&tbl);
-                    let entry = schema_map.entry(tbl).or_insert_with(HashMap::new);
+                    let entry = schema_map.entry(tbl).or_default();
                     for (col, sql_type) in cols_map {
                         if !entry.contains_key(&col)
                             || (!has_ddl && is_better_type(&sql_type, entry.get(&col).unwrap()))
@@ -668,7 +688,7 @@ fn build_schema_map(
                 }
                 if let Some((tbl, cols_map)) = parse_delete_columns(raw) {
                     let has_ddl = ddl_schemas.contains_key(&tbl);
-                    let entry = schema_map.entry(tbl).or_insert_with(HashMap::new);
+                    let entry = schema_map.entry(tbl).or_default();
                     for (col, sql_type) in cols_map {
                         if !entry.contains_key(&col)
                             || (!has_ddl && is_better_type(&sql_type, entry.get(&col).unwrap()))
@@ -681,7 +701,7 @@ fn build_schema_map(
         }
     }
 
-    for (_table, cols) in schema_map.iter_mut() {
+    for cols in schema_map.values_mut() {
         if cols.is_empty() {
             cols.insert("id".to_string(), "BIGSERIAL".to_string());
         }
@@ -729,7 +749,7 @@ fn build_schema_map(
         ("delete_audit", vec![("audit_id", "INTEGER"), ("batch_id", "INTEGER")]),
     ];
     for (table, cols) in &missing_tables {
-        let entry = schema_map.entry(table.to_string()).or_insert_with(HashMap::new);
+        let entry = schema_map.entry(table.to_string()).or_default();
         for (col, sql_type) in cols {
             if !entry.contains_key(*col) {
                 entry.insert(col.to_string(), sql_type.to_string());
@@ -749,7 +769,7 @@ pub fn parse_table_ddl(sql_files: &[std::path::PathBuf]) -> HashMap<String, Hash
             Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
             Err(_) => continue,
         };
-        let content_clean = regex::Regex::new(r"(?s)/\*.*?\*/").unwrap().replace_all(&content, "");
+        let content_clean = BLOCK_COMMENT_RE.replace_all(&content, "");
 
         for caps in create_re.captures_iter(&content_clean) {
             let table_name = caps.get(1).unwrap().as_str().to_lowercase();
@@ -757,7 +777,7 @@ pub fn parse_table_ddl(sql_files: &[std::path::PathBuf]) -> HashMap<String, Hash
 
             let mut depth: i32 = 1;
             let mut pos = start;
-            let bytes = content_clean.as_bytes();
+            let _bytes = content_clean.as_bytes();
             while pos < content_clean.len() && depth > 0 {
                 let ch = content_clean[pos..].chars().next().unwrap();
                 if ch == '(' {
@@ -810,9 +830,9 @@ pub fn parse_table_ddl(sql_files: &[std::path::PathBuf]) -> HashMap<String, Hash
                     continue;
                 }
 
-                let mut tokens: Vec<&str> = part.splitn(2, |c: char| c.is_whitespace()).collect();
+                let tokens: Vec<&str> = part.splitn(2, |c: char| c.is_whitespace()).collect();
                 if tokens.len() < 2 {
-                    if let Some(caps) = regex::Regex::new(r"^([a-zA-Z_][a-zA-Z0-9_]*)(varchar2|varchar|number|integer|int|char\b|date\b|timestamp|numeric|decimal|blob|clob|text\b|boolean|bigint|float|double|real|bytea|uuid|jsonb|json)").ok().and_then(|re| re.captures(&part)) {
+                    if let Some(caps) = TYPE_TOKEN_RE.captures(part) {
                         let col_name = caps.get(1).unwrap().as_str().to_lowercase();
                         let col_type = caps.get(2).unwrap().as_str().to_string();
                         columns.insert(col_name, col_type);
@@ -823,17 +843,17 @@ pub fn parse_table_ddl(sql_files: &[std::path::PathBuf]) -> HashMap<String, Hash
                 let col_name = tokens[0].trim().trim_matches('"').to_lowercase();
                 let mut col_type = tokens[1].trim().to_string();
 
-                if let Some(stripped) = regex::Regex::new(r"\s+(NOT\s+NULL|NULL|DEFAULT|PRIMARY|UNIQUE|CHECK|REFERENCES|CONSTRAINT|USING|PCTFREE|INITRANS|MAXTRANS|STORAGE|TABLESPACE|ENABLE|DISABLE|NOCOMPRESS|COMPRESS)").ok().and_then(|re| re.split(&col_type).next()) {
+                if let Some(stripped) = CONSTRAINT_SPLIT_RE.split(&col_type).next() {
                     col_type = stripped.to_string();
                 }
-                col_type = regex::Regex::new(r"\s*/\*.*?\*/").unwrap().replace_all(&col_type, "").to_string();
+                col_type = INLINE_COMMENT_RE.replace_all(&col_type, "").to_string();
                 if !col_type.is_empty() {
                     columns.insert(col_name, col_type);
                 }
             }
 
             if !columns.is_empty() {
-                let entry = schema.entry(table_name).or_insert_with(HashMap::new);
+                let entry = schema.entry(table_name).or_default();
                 for (col, typ) in columns {
                     if !entry.contains_key(&col) || is_better_type(&typ, entry.get(&col).unwrap()) {
                         entry.insert(col, typ);
@@ -886,8 +906,7 @@ fn parse_select_columns(sql: &str) -> Option<(String, HashMap<String, String>)> 
         if part.is_empty() {
             continue;
         }
-        let func_re = regex::Regex::new(r"\b(\w+)\s*\(\s*(\w+)\s*\)").ok()?;
-        for caps in func_re.captures_iter(part) {
+        for caps in FUNC_COL_RE.captures_iter(part) {
             let func_name = caps.get(1)?.as_str().to_lowercase();
             let inner_col = caps.get(2)?.as_str().to_string();
             let skip_funcs = [
@@ -917,8 +936,7 @@ fn parse_select_columns(sql: &str) -> Option<(String, HashMap<String, String>)> 
         if part.contains('(') {
             continue;
         }
-        let col_re = regex::Regex::new(r"(\w+)(?:\s+as\s+(\w+))?").ok()?;
-        if let Some(caps) = col_re.captures(part) {
+        if let Some(caps) = COL_AS_RE.captures(part) {
             let col_name = caps
                 .get(2)
                 .map(|m| m.as_str().to_string())
@@ -959,12 +977,11 @@ fn parse_select_columns(sql: &str) -> Option<(String, HashMap<String, String>)> 
                 "parametertype",
             ];
             if !skip_words.contains(&wcol.as_str()) {
-                let param_re = regex::Regex::new(r"#\{[^}]+\}").ok()?;
+                let param_re: &regex::Regex = &MYBATIS_PARAM_RE;
                 let mut sql_type = "TEXT".to_string();
-                for param_caps in param_re.captures_iter(where_clause) {
-                    let param_str = param_caps.get(0)?.as_str();
+                if let Some(param_caps) = param_re.captures(where_clause) {
+                    let param_str = param_caps.get(0).map(|m| m.as_str()).unwrap_or_default();
                     sql_type = infer_type_from_mybatis_param(param_str);
-                    break;
                 }
                 let sql_type = maybe_upgrade_type(&sql_type, &wcol);
                 if !result.contains_key(&wcol) || is_better_type(&sql_type, result.get(&wcol).unwrap()) {
@@ -988,7 +1005,7 @@ fn parse_update_columns(sql: &str) -> Option<(String, HashMap<String, String>)> 
     let mut result: HashMap<String, String> = HashMap::new();
     for assign in set_str.split(',') {
         let assign = assign.trim();
-        let asgn_re = regex::Regex::new(r"(\w+)\s*=").ok()?;
+        let asgn_re: &regex::Regex = &ASSIGN_RE;
         if let Some(caps) = asgn_re.captures(assign) {
             let col = caps.get(1)?.as_str().to_string();
             if col.is_empty() {
@@ -1245,7 +1262,7 @@ fn add_transitive_tables(
             }
         }
 
-        let cross_call_re = regex::Regex::new(r"\b(\w+Service)\.(\w+)\s*\(").unwrap();
+        let cross_call_re: &regex::Regex = &CROSS_CALL_RE;
         for cap in cross_call_re.captures_iter(line) {
             let svc_var = &cap[1];
             let method_java = &cap[2];
@@ -1998,7 +2015,8 @@ mod tests {
         schema_map.insert("public".to_string(), pub_schema);
 
         let dir = tempfile::tempdir().unwrap();
-        write_itest_schema_sql(dir.path(), &[pkg.clone()], &schema_map, "remote", encoding_rs::UTF_8).unwrap();
+        write_itest_schema_sql(dir.path(), std::slice::from_ref(&pkg), &schema_map, "remote", encoding_rs::UTF_8)
+            .unwrap();
         let content = std::fs::read_to_string(dir.path().join("src/test/resources/itest-schema.sql")).unwrap();
         assert!(content.contains("CREATE TABLE IF NOT EXISTS \"inventory\""));
         assert!(!content.contains("DROP TABLE"));
@@ -2101,6 +2119,26 @@ CREATE TABLE BIGFUND.orders (
         assert_eq!(inventory.get("price").unwrap(), "NUMERIC(18,2)");
     }
 
+    #[test]
+    fn test_parse_select_columns_where_param_uses_first_param() {
+        // (#115 review #9, confirmed): the WHERE-clause MyBatis param type
+        // inference takes the FIRST `#{param}` — clippy cleanup (#102) replaced
+        // `captures_iter + break` with an equivalent `captures`, so behavior is
+        // unchanged; this test locks it down so a future rewrite can't silently
+        // flip to "last param wins".
+        let sql = "select id, name from t_users where status = #{status} and age > #{age}";
+        let (tbl, cols) = parse_select_columns(sql).unwrap();
+        assert_eq!(tbl, "t_users");
+        assert!(cols.contains_key("id"), "select columns must be collected: {:?}", cols);
+        assert!(cols.contains_key("name"), "select columns must be collected: {:?}", cols);
+        let status_type = cols.get("status").cloned().unwrap_or_default();
+        assert_eq!(
+            infer_type_from_mybatis_param("#{status}"),
+            status_type,
+            "WHERE param type must come from the first {{param}}: {:?}",
+            cols
+        );
+    }
     #[test]
     fn test_maybe_upgrade_type_conventions() {
         assert_eq!(maybe_upgrade_type("TEXT", "id"), "BIGINT");

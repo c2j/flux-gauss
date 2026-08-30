@@ -6,7 +6,7 @@ build-backend = "setuptools.backends._legacy:_Backend"
 name = "fluxgauss"
 version = "0.6.24"
 description = "PL/pgSQL → Spring Boot/MyBatis Java converter"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "pyyaml>=6.0",
 ]
@@ -28,4 +28,5 @@ testpaths = ["tests"]
 markers = [
     "demo_migration: slow end-to-end demo yaml + mvn guard (~4 min, needs ogsql/Java/Maven)",
     "parity: cross-engine Python/Rust parity guard (needs ogsql + target/release/fluxgauss)",
+    "baseline: ogagila/fastaas 回归基线配置语料守卫（fastaas 缺语料时 SKIP）",
 ]

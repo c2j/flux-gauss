@@ -1,0 +1,9 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue79UnqualifiedFnCallerMapper {
+
+    // No direct DML operations for issue_79_unqualified_fn_caller
+}

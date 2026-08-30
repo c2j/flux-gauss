@@ -29,10 +29,10 @@ class DynamicXmlServiceTest {
         String pTableName = "test_pTableName";
         String pWhereClause = "test_pWhereClause";
         String pOrderBy = "test_pOrderBy";
-        Integer pLimit = 5;
+        Integer pLimit = 100;
         var _rowTmpl = new java.util.HashMap<String,Object>();
-        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("created_at", "20240101"); m.putAll(_rowTmpl); when(dynamicXmlMapper.selectProcConditionalQuery(any(), any(), any())).thenReturn(m).thenReturn(null); }
-        when(dynamicXmlMapper.selectAuditLogCount(any(), any(), any(), any())).thenReturn(999);
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("created_at", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(dynamicXmlMapper.selectProcConditionalQuery(any(), any(), any())).thenReturn(m).thenReturn(null); }
+        when(dynamicXmlMapper.selectAuditLogCount(any(), any(), any(), any())).thenReturn(0);
         when(dynamicXmlMapper.updateProcConditionalUpdate(any(), any(), any(), any(), any())).thenReturn(1);
         when(dynamicXmlMapper.insertProcMixedLogic(any())).thenReturn(1);
         when(dynamicXmlMapper.insertAuditLog(any(), any(), any())).thenReturn(1);
@@ -50,8 +50,8 @@ class DynamicXmlServiceTest {
         Long pAmount = 100L;
         String pRemark = "test_pRemark";
         var _rowTmpl = new java.util.HashMap<String,Object>();
-        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("created_at", "20240101"); m.putAll(_rowTmpl); when(dynamicXmlMapper.selectProcConditionalQuery(any(), any(), any())).thenReturn(m).thenReturn(null); }
-        when(dynamicXmlMapper.selectAuditLogCount(any(), any(), any(), any())).thenReturn(999);
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("created_at", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(dynamicXmlMapper.selectProcConditionalQuery(any(), any(), any())).thenReturn(m).thenReturn(null); }
+        when(dynamicXmlMapper.selectAuditLogCount(any(), any(), any(), any())).thenReturn(0);
         when(dynamicXmlMapper.updateProcConditionalUpdate(any(), any(), any(), any(), any())).thenReturn(1);
         when(dynamicXmlMapper.insertProcMixedLogic(any())).thenReturn(1);
         when(dynamicXmlMapper.insertAuditLog(any(), any(), any())).thenReturn(1);
@@ -67,8 +67,8 @@ class DynamicXmlServiceTest {
         String pTableName = "test_pTableName";
         String pMode = "test_pMode";
         var _rowTmpl = new java.util.HashMap<String,Object>();
-        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("created_at", "20240101"); m.putAll(_rowTmpl); when(dynamicXmlMapper.selectProcConditionalQuery(any(), any(), any())).thenReturn(m).thenReturn(null); }
-        when(dynamicXmlMapper.selectAuditLogCount(any(), any(), any(), any())).thenReturn(999);
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("created_at", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(dynamicXmlMapper.selectProcConditionalQuery(any(), any(), any())).thenReturn(m).thenReturn(null); }
+        when(dynamicXmlMapper.selectAuditLogCount(any(), any(), any(), any())).thenReturn(0);
         when(dynamicXmlMapper.updateProcConditionalUpdate(any(), any(), any(), any(), any())).thenReturn(1);
         when(dynamicXmlMapper.insertProcMixedLogic(any())).thenReturn(1);
         when(dynamicXmlMapper.insertAuditLog(any(), any(), any())).thenReturn(1);

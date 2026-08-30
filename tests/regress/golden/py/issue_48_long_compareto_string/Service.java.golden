@@ -34,7 +34,7 @@ public class Issue48LongComparetoStringService {
         vCount = issue48LongComparetoStringMapper.selectDualCount(pProId);
         if (vCount == null) vCount = 0;
         if (vCount == 0) {
-            pResult.set(String.valueOf(pResult.get() + "_ZERO"));
+            pResult.set(String.valueOf(String.valueOf(pResult.get()).concat(String.valueOf("_ZERO"))));
         }
     }
 

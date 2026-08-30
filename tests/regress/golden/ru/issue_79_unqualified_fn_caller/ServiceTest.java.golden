@@ -28,7 +28,7 @@ class Issue79UnqualifiedFnCallerServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_fncGetPurchaseJsDays_success() {
         String pIDate = "20240101";
-        String pISecurityId = "test_pISecurityId";
+        String pISecurityId = "test_p_i_security_id";
         var result = service.fncGetPurchaseJsDays(pIDate, pISecurityId);
     }
 }

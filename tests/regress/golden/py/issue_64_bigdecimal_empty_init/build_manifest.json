@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_64_bigdecimal_empty_init.sql",
+  "package_name": "issue_64_bigdecimal_empty_init",
+  "files": {
+    "Service.java": "0cdb179260f54a02",
+    "Mapper.java": "f76ae8c50680528e",
+    "Mapper.xml": "b5bdf98a2e9db617",
+    "ServiceTest.java": "5921f19ac40f4db7"
+  }
+}

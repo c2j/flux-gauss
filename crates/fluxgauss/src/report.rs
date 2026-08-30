@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::Path;
 
 use crate::types::{PackageInfo, ProcedureMapping, SkippedItem, UnresolvedCall};
@@ -19,6 +18,12 @@ pub struct ConversionReport {
     pub errors: Vec<String>,
     pub unresolved_calls: Vec<UnresolvedCall>,
     pub stub_count: usize,
+}
+
+impl Default for ConversionReport {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ConversionReport {
@@ -166,6 +171,7 @@ impl ConversionReport {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_report(
     packages: &[PackageInfo],
     skipped: Vec<SkippedItem>,

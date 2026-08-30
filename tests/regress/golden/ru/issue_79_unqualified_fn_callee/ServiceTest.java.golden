@@ -27,7 +27,7 @@ class Issue79UnqualifiedFnCalleeServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_fncComGetday_success() {
-        String pIScdm = "test_pIScdm";
+        String pIScdm = "test_p_i_scdm";
         String pIDate = "20240101";
         Long pIOffset = 100L;
         var result = service.fncComGetday(pIScdm, pIDate, pIOffset);

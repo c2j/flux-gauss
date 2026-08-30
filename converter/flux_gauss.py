@@ -505,6 +505,35 @@ TODO_SUMMARY = []  # Collects (category, proc_id, source_file, detail) for diagn
 _MISSING_OVERLOADS: dict[str, list[tuple[str, list[tuple[str, str]]]]] = {}  # pkg → [(method_name, [(java_type, param_name)])]
 
 
+def _param_default_java(param) -> str:
+    """Java literal for a function parameter's DEFAULT value (used to pad
+    call sites that pass fewer args than the target signature)."""
+    dv = param.default_value
+    if dv is None:
+        return _default_for_type(param.java_type)
+    if isinstance(dv, dict):
+        try:
+            return _expr_to_java(dv, None)
+        except Exception:
+            return _default_for_type(param.java_type)
+    dv_s = str(dv).strip()
+    if not dv_s or dv_s.lower() == "null":
+        return _default_for_type(param.java_type)
+    if (dv_s.startswith("'") and dv_s.endswith("'")) or (dv_s.startswith('"') and dv_s.endswith('"')):
+        inner = dv_s[1:-1]
+        if "String" in param.java_type:
+            # (#115 review #6): SQL doubles single quotes to escape them
+            # (`DEFAULT 'it''s'`); Java string literals need the raw quote,
+            # plus standard backslash/quote escaping for the literal.
+            return f'"{_escape_java_string(inner.replace("''", "\'"))}"'
+        if inner.isdigit() or (inner.startswith("-") and inner[1:].isdigit()):
+            return inner
+        return _default_for_type(param.java_type)
+    if re.match(r'^-?\d+(\.\d+)?$', dv_s):
+        return dv_s
+    return _default_for_type(param.java_type)
+
+
 def _register_missing_overload(pkg: str, method_name: str, arg_types: list, arg_count: int):
     sig_key = (method_name, tuple(arg_types))
     existing = _MISSING_OVERLOADS.get(pkg, [])
@@ -676,6 +705,9 @@ def sql_type_to_java(sql_type) -> str:
     normalized = re.sub(r"\(.*\)", "", normalized).strip()
     if normalized.startswith("table"):
         return "java.util.List<java.util.Map<String, Object>>"
+    if normalized.startswith("setof"):
+        inner = normalized[5:].strip()
+        return f"java.util.List<{sql_type_to_java(inner)}>"
     # Handle SQL array types: FLOAT8[] → List<Double>, TEXT[] → List<String>, etc.
     if normalized.endswith("[]"):
         base = normalized[:-2].strip()
@@ -980,6 +1012,7 @@ class ProcedureInfo:
     imports: set = field(default_factory=set)
     local_vars: dict = field(default_factory=dict)
     local_var_defaults: dict = field(default_factory=dict)
+    rowtype_field_types: dict = field(default_factory=dict)
     table_refs: set = field(default_factory=set)
     var_assignments: dict = field(default_factory=dict)
     dynamic_sql_templates: dict = field(default_factory=dict)  # var_name -> (sql_template, param_list)
@@ -1610,6 +1643,17 @@ def extract_parameters(params_list: list) -> list:
             mode=mode,
             default_value=p.get("default_value"),
         ))
+    # Deduplicate parameter names: PG catalog-style signatures reuse the type
+    # name as the parameter name (e.g. `_group_concat(text, text)`), which would
+    # otherwise generate duplicate Java identifiers in Service/Test/ITest.
+    # Mirrors the Rust engine's `convert_params` dedup (text, text2, ...).
+    seen_names: dict = {}
+    for param in result:
+        base = param.name or "arg"
+        count = seen_names.get(base.lower(), 0) + 1
+        seen_names[base.lower()] = count
+        if count > 1:
+            param.name = f"{base}{count}"
     return result
 
 
@@ -2144,11 +2188,99 @@ def _promote_out_local_vars(proc: ProcedureInfo, all_packages: dict):
                         if 'String' in m_ar.group(1) and not rhs.strip().startswith('"') and rhs.strip() != 'null':
                             rhs = f'String.valueOf({rhs})'
                         line = f'{m_assign.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<>({rhs});'
-                patched.append(_patch_promoted_var_reads(line, var_java, string_inner=_string_inner))
+                patched.append(_patch_promoted_var_reads(line, var_java, string_inner=_string_inner,
+                                                          proc=proc, all_packages=all_packages))
             proc.java_logic_lines = patched
 
 
-def _patch_promoted_var_reads(line: str, var_java: str, string_inner: bool = False) -> str:
+def _split_call_args(args_str: str) -> list:
+    """Split a Java call argument string on top-level commas, honoring nesting."""
+    parts, depth_p, depth_b, depth_br, quote = [], 0, 0, 0, None
+    current = []
+    i = 0
+    while i < len(args_str):
+        ch = args_str[i]
+        if quote:
+            current.append(ch)
+            if ch == quote and args_str[i - 1] != "\\":
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+            current.append(ch)
+        elif ch == "(":
+            depth_p += 1
+            current.append(ch)
+        elif ch == ")":
+            depth_p -= 1
+            current.append(ch)
+        elif ch == "[":
+            depth_b += 1
+            current.append(ch)
+        elif ch == "]":
+            depth_b -= 1
+            current.append(ch)
+        elif ch == "{":
+            depth_br += 1
+            current.append(ch)
+        elif ch == "}":
+            depth_br -= 1
+            current.append(ch)
+        elif ch == "," and depth_p == 0 and depth_b == 0 and depth_br == 0:
+            parts.append("".join(current).strip())
+            current = []
+        else:
+            current.append(ch)
+        i += 1
+    if current:
+        parts.append("".join(current).strip())
+    return parts
+
+
+def _strip_get_for_cross_pkg_out_args(line: str, var_java: str, proc: ProcedureInfo, all_packages: dict) -> str:
+    """Undo the generic .get() rewrite for promoted vars passed as OUT args to
+    cross-package service calls (the callee expects the AtomicReference itself)."""
+    m = re.search(r"(\w+Service)\.(\w+)\s*\((.*)\)\s*;?\s*$", line)
+    if not m:
+        return line
+    svc_var, method, args_str = m.group(1), m.group(2), m.group(3)
+    pkg_name = next((sc.package_name for sc in proc.service_calls if sc.service_name == svc_var), None)
+    if not pkg_name:
+        return line
+    pkg = all_packages.get(pkg_name)
+    if not pkg:
+        return line
+    args = _split_call_args(args_str)
+    candidates = [p for p in pkg.procedures if java_method_name(p.proc_name) == method]
+    if not candidates:
+        return line
+    exact = [p for p in candidates if len(p.parameters) == len(args)]
+    if not exact:
+        # M3 (#114 review): ambiguous overload — no exact arity match. Do not
+        # silently pick candidates[0] (may strip the wrong arg positions);
+        # keep the caller's .get() form and record a degradation note.
+        _record_todo("cross-pkg OUT arg strip skipped",
+                     proc,
+                     f"{svc_var}.{method} has no exact arity match for {len(args)} args "
+                     f"(candidates: {[len(p.parameters) for p in candidates]})")
+        return line
+    target = exact[0]
+    var_get = f"{var_java}.get()"
+    for pos, arg in enumerate(args):
+        if pos >= len(target.parameters):
+            break
+        if target.parameters[pos].is_out and var_get in arg:
+            # M3 (#114 review): only rewrite this OUT-position argument token, not
+            # every `.get()` occurrence in the line — the same var may appear as an
+            # IN arg elsewhere in this call and must keep its deref.
+            args[pos] = arg.replace(var_get, var_java)
+    # Splice the reconstructed args back into the original line so leading
+    # indentation and any prefix (e.g. `return `, `vX = `) are preserved.
+    new_args_str = ", ".join(args)
+    return line[: m.start(3)] + new_args_str + line[m.end(3):]
+
+
+def _patch_promoted_var_reads(line: str, var_java: str, string_inner: bool = False,
+                              proc: ProcedureInfo = None, all_packages: dict = None) -> str:
     import re
     # Remove .get() from promoted vars passed as OUT args to method/mapper calls
     if f'{var_java}.get()' in line and (re.search(rf'\bthis\.\w+\(', line) or 'Mapper.' in line):
@@ -2167,6 +2299,15 @@ def _patch_promoted_var_reads(line: str, var_java: str, string_inner: bool = Fal
         f'{var_java}.get()',
         line,
     )
+    # Null-guard dereferenced promoted refs in numeric coercion: a cross-service
+    # OUT ref left unset (e.g. by a mock) would NPE on .longValue()/.intValue().
+    _vget = f'{var_java}.get()'
+    for _accessor in ("longValue", "intValue", "doubleValue"):
+        _guarded = f"({_vget} == null ? null : ((Number) ({_vget})).{_accessor}())"
+        line = line.replace(f"((Number) ({_vget})).{_accessor}()", _guarded)
+        line = line.replace(f"((Number) {_vget}).{_accessor}()", _guarded)
+    if proc is not None and all_packages:
+        line = _strip_get_for_cross_pkg_out_args(line, var_java, proc, all_packages)
     if string_inner:
         _vget = f'{var_java}.get()'
         line = line.replace(f'((Number) ({_vget})).doubleValue()', f'Double.parseDouble(String.valueOf({_vget}))')
@@ -2312,6 +2453,15 @@ def _check_call_out_promotions(call_data, proc, all_packages, local_var_names, p
         return
     target_proc_info = _find_target_proc(matched_pkg, func, all_packages, arg_count=len(args))
     if not target_proc_info:
+        # Function may live in ANOTHER package (resolved via cross-package
+        # fallback at call generation) — promote OUT vars from the real owner.
+        for _apk in (all_packages or {}):
+            if _apk == matched_pkg:
+                continue
+            target_proc_info = _find_target_proc(_apk, func, all_packages, arg_count=len(args))
+            if target_proc_info:
+                break
+    if not target_proc_info:
         return
     for i, a in enumerate(args):
         if i < len(target_proc_info.parameters) and target_proc_info.parameters[i].is_out:
@@ -2415,6 +2565,22 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
                 else:
                     java_type = sql_type_to_java(raw_type)
                 proc.local_vars[var_name] = java_type
+                # %ROWTYPE: capture the table name to resolve field types from DDL
+                _rt_table = None
+                if isinstance(raw_type, dict) and "PercentRowType" in raw_type:
+                    _rt = raw_type["PercentRowType"]
+                    _rt_table = _rt if isinstance(_rt, str) else (_rt.get("table") or _rt.get("type_name") or "")
+                elif isinstance(raw_type, str) and "%rowtype" in raw_type.lower():
+                    _m = re.match(r'^([\w.]+)\s*%rowtype', raw_type, re.IGNORECASE)
+                    if _m:
+                        _rt_table = _m.group(1)
+                if _rt_table:
+                    _rt_tbl_lower = str(_rt_table).split('.')[-1].lower()
+                    _field_types = {}
+                    for (_tbl, _col), _sql_type in list(TYPE_OVERRIDES.items()):
+                        if _tbl.lower() == _rt_tbl_lower:
+                            _field_types[_col] = sql_type_to_java(_sql_type)
+                    proc.rowtype_field_types[var_name] = _field_types
                 if DEBUG_MODE:
                     _decl_line = _find_var_decl_line(proc, var_name)
                     if _decl_line:
@@ -3047,6 +3213,8 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
             proc.imports.add("import java.sql.Savepoint;")
         elif stmt_type == "ReturnQuery":
             _process_return_query(stmt_data, proc, all_packages, dml_counter)
+        elif stmt_type == "ReturnNext":
+            _process_return_next(stmt_data, proc, all_packages)
         elif stmt_type == "GetDiagnostics":
             _process_get_diagnostics(stmt_data, proc)
         elif stmt_type == "ForAll":
@@ -4242,6 +4410,12 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                             _emit_assignment(proc, f'__MAP_PUT__{map_var}__{first_var}', f'_row.get("{col_name}")')
                         else:
                             _assign_expr = f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text, is_select=True))})'
+                            # The mapper method may return Object while the INTO
+                            # target is a concrete type (String/Long/...). Coerce
+                            # so the assignment compiles.
+                            _target_var_t = _lookup_var_type(proc, first_var)
+                            if _target_var_t not in ("Object", "Map<String, Object>"):
+                                _assign_expr = _coerce_type(_assign_expr, "Object", _target_var_t)
                             _emit_assignment(proc, var_java, _assign_expr)
 
                     if '||' in sql_text and result_type not in ("String", "Object", "Map<String, Object>"):
@@ -4702,6 +4876,8 @@ def _process_return(return_data: dict, proc: ProcedureInfo, all_packages: dict =
             if _needs_coercion(_et, ret_java):
                 java_expr = _coerce_type(java_expr, _et, ret_java)
         proc.java_logic_lines.append(f"return {java_expr};")
+    elif getattr(proc, '_setof_accumulate', False):
+        proc.java_logic_lines.append("return _returnRows;")
     else:
         proc.java_logic_lines.append("return;")
 
@@ -4744,7 +4920,8 @@ def _is_bare_long_literal(expr: str) -> bool:
 # `.longValue()`, so coercion must box via `((Number) expr)` instead.
 _PRIMITIVE_METHOD_RE = (
     r'\.(length|size|indexOf|lastIndexOf|compareTo|compareToIgnoreCase'
-    r'|hashCode|charAt|codePointAt|ordinal|getTime)\s*\([^()]*\)'
+    r'|hashCode|charAt|codePointAt|ordinal|getTime|getId|getIndex|getCount'
+    r'|getLength|currentTimeMillis|nanoTime)\s*\([^()]*\)'
 )
 
 
@@ -4782,12 +4959,21 @@ def _next_catch_var(proc) -> str:
 
 
 def _safe_map_cast(var_type: str, expr: str) -> str:
+    # A bare `.get()` result (AtomicReference/Map) may be null — guard before
+    # dereferencing so cross-service OUT refs left unset by mocks don't NPE.
+    _bare_get = re.match(r'^[\w.]+\.get\(\)$', expr.strip())
     if _is_primitive_producing(expr):
         if var_type == "Long":
+            if _bare_get:
+                return f"({expr} == null ? null : ((Number) ({expr})).longValue())"
             return f"((Number) ({expr})).longValue()"
         if var_type in ("Integer", "int"):
+            if _bare_get:
+                return f"({expr} == null ? null : ((Number) ({expr})).intValue())"
             return f"((Number) ({expr})).intValue()"
         if var_type == "Double":
+            if _bare_get:
+                return f"({expr} == null ? null : ((Number) ({expr})).doubleValue())"
             return f"((Number) ({expr})).doubleValue()"
         if "BigDecimal" in var_type:
             return f"java.math.BigDecimal.valueOf({expr})"
@@ -4881,7 +5067,10 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
         elif target in out_long_names and _is_bare_int_literal(expr):
             expr = f"Long.valueOf({expr})"
         elif target in out_long_names and not _is_long_expr(expr):
-            expr = f"((Number) {expr}).longValue()"
+            if re.match(r'^[\w.]+\.get\(\)$', expr.strip()):
+                expr = f"({expr} == null ? null : ((Number) {expr}).longValue())"
+            else:
+                expr = f"((Number) {expr}).longValue()"
         elif target in out_integer_names:
             if _is_bare_int_literal(expr):
                 expr = f"Integer.valueOf({expr})"
@@ -5219,14 +5408,19 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
     # ── General type coercion fallback ──
     # Existing ad-hoc checks above handle specific cases (BigDecimal, String, Map.get()).
     # This fallback covers remaining type mismatches using the unified coercion engine.
-    if target_type and expr_type and _needs_coercion(expr_type, target_type):
+    _obj_call = (
+        "Mapper." in java_expr or "Service." in java_expr or java_expr.strip().startswith("this.")
+    )
+    if target_type and expr_type and (_needs_coercion(expr_type, target_type) or (expr_type == "Object" and _obj_call)):
+        # Object-source call results (stub/mapper/service returning Object)
+        # reach _coerce_type's Object→concrete fallbacks. Plain `.get()`/literal
+        # exprs are already handled above — do NOT double-wrap them.
         _numeric_widen = target_type in ("Long", "long") and expr_type in ("Double", "Integer", "int")
         if _numeric_widen:
             java_expr = _coerce_type(java_expr, expr_type, target_type)
         else:
-            _already_coerced = _is_already_coerced(java_expr, target_type) or any(pattern in java_expr for pattern in (
-                "BigDecimal.valueOf(", "String.valueOf(",
-            ))
+            _ss = java_expr.strip()
+            _already_coerced = _is_already_coerced(java_expr, target_type) or _ss.startswith("BigDecimal.valueOf(") or _ss.startswith("String.valueOf(")
             if not _already_coerced and "BigDecimal" in target_type:
                 if "BigDecimal" in java_expr or java_expr.strip().startswith("new java.math."):
                     _already_coerced = True
@@ -6865,7 +7059,7 @@ def _wrap_handler_stmts(stmts, proc, all_packages,
                                                 a_java = f"String.valueOf({a_java})"
                                     else:
                                         a_java = _coerce_java_arg(a_java, tptype)
-                                    _resolved.append(a_java)
+                                _resolved.append(a_java)
                         args_java = ", ".join(_resolved)
                         is_self_call = (matched.lower() == proc.package.lower())
                         if not is_self_call:
@@ -6928,10 +7122,11 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
             out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
             indent="    ", in_catch=False)
 
-        # Find the last mapper result variable (var = mapper.xxx)
+        # Find the last mapper result variable (var = mapper.xxx). The
+        # assignment may be wrapped by coercion (e.g. String.valueOf(mapper.x)).
         null_var = None
         for line in reversed(body_lines):
-            m = re.match(r'^\s*(\w+)\s*=\s*mapper\.', line)
+            m = re.match(r'^\s*(\w+)\s*=\s*(?:\w+\.valueOf\(|\([^)]*\)\s*)*mapper\.', line)
             if m:
                 null_var = m.group(1)
                 break
@@ -6948,7 +7143,7 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
             null_block.extend(nd_lines)
             null_block.append("}")
             for i, line in enumerate(body_lines):
-                if line.strip().startswith(f"{null_var} = mapper."):
+                if re.match(rf'^\s*{re.escape(null_var)}\s*=\s*(?:\w+\.valueOf\(|\([^)]*\)\s*)*mapper\.', line):
                     body_lines = body_lines[:i+1] + null_block + body_lines[i+1:]
                     break
         elif nd_lines:
@@ -7068,6 +7263,31 @@ def _process_return_query(rq_data: dict, proc: ProcedureInfo, all_packages: dict
         proc.java_logic_lines.append(f"// TODO: RETURN QUERY EXECUTE — dynamic SQL variable: {var_name}")
         proc.java_logic_lines.append(f"//       This function returns a dynamic query result. Consider using mapper.selectXxx() with the resolved SQL.")
         _record_todo("RETURN_QUERY_DYNAMIC", proc, f"var={var_name}")
+
+
+def _process_return_next(rn_data: dict, proc: ProcedureInfo, all_packages: dict = None):
+    expr = rn_data.get("expression")
+    if not proc.is_function or not proc.return_type:
+        proc.java_logic_lines.append("// TODO: RETURN NEXT in non-function context")
+        _record_todo("RETURN_NEXT_NON_FUNC", proc, "")
+        return
+    rt = str(proc.return_type).strip().lower()
+    if not rt.startswith("setof"):
+        proc.java_logic_lines.append("// TODO: RETURN NEXT outside SETOF function")
+        _record_todo("RETURN_NEXT_NON_SETOF", proc, "")
+        return
+    if not expr:
+        proc.java_logic_lines.append("// TODO: RETURN NEXT without expression")
+        _record_todo("RETURN_NEXT_EMPTY", proc, "")
+        return
+    inner_java = sql_type_to_java(rt[len("setof"):].strip())
+    if "Map" not in inner_java:
+        proc.java_logic_lines.append(f"// TODO: RETURN NEXT of scalar SETOF ({inner_java}) not supported")
+        _record_todo("RETURN_NEXT_SCALAR", proc, inner_java)
+        return
+    java_expr = _expr_to_java(expr, proc, all_packages=all_packages)
+    proc._setof_accumulate = True
+    proc.java_logic_lines.append(f"_returnRows.add({java_expr});")
 
 
 def _extract_var_name_from_expr(expr: dict) -> str:
@@ -7705,6 +7925,9 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
             first_var = _extract_into_variable(into_targets)
             if first_var:
                 vn_java = snake_to_camel(first_var)
+                _dt = _lookup_var_type(proc, first_var)
+                if _dt not in ("Object", "Map<String, Object>"):
+                    _mc = _coerce_type(_mc, "Object", _dt)
                 _emit_assignment(proc, vn_java, _mc)
             else:
                 if sql_type != "select":
@@ -7757,7 +7980,11 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                     first_var = _extract_into_variable(into_targets)
                     if first_var:
                         vn_java = snake_to_camel(first_var)
-                        _emit_assignment(proc, vn_java, f"mapper.{mapper_method}({param_args_str})")
+                        _mc7959 = f"mapper.{mapper_method}({param_args_str})"
+                        _dt7959 = _lookup_var_type(proc, first_var)
+                        if _dt7959 not in ("Object", "Map<String, Object>"):
+                            _mc7959 = _coerce_type(_mc7959, "Object", _dt7959)
+                        _emit_assignment(proc, vn_java, _mc7959)
                     else:
                         _mc = f"mapper.{mapper_method}({param_args_str})"
                         _emit_dml_with_rowcount(proc, _mc)
@@ -7827,7 +8054,11 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                     _emit_row_decl(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))})')
                     _emit_assignment(proc, f'__MAP_PUT__{map_var}__{first_var}', f'_row.get("{first_var}")')
                 else:
-                    _emit_assignment(proc, var_java, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))})')
+                    _sel_expr = f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))})'
+                    _tvar_t = _lookup_var_type(proc, first_var)
+                    if _tvar_t not in ("Object", "Map<String, Object>"):
+                        _sel_expr = _coerce_type(_sel_expr, "Object", _tvar_t)
+                    _emit_assignment(proc, var_java, _sel_expr)
             _add_dml(proc, DmlStatement(
                 sql_type=sql_type,
                 method_id=mapper_method,
@@ -8804,9 +9035,20 @@ def _handle_function(func_name, args_java, proc):
         unit = _DATE_TRUNC_UNIT_MAP.get(field_raw, "ChronoUnit.DAYS")
         ts_expr = args_java[1]
         if not (ts_expr.startswith("new java.sql.Timestamp") or ts_expr.startswith("java.sql.Timestamp.valueOf") or ts_expr.startswith("new java.sql.Date")):
-            ts_expr = f"java.sql.Timestamp.valueOf(String.valueOf({args_java[1]}))"
+            # Date-typed source: String.valueOf(date) lacks the time part
+            _arg_t = _infer_target_type(args_java[1], proc) if proc else ""
+            if "Date" in _arg_t and "Timestamp" not in _arg_t:
+                ts_expr = f"new java.sql.Timestamp({args_java[1]}.getTime())"
+            else:
+                ts_expr = f"java.sql.Timestamp.valueOf(String.valueOf({args_java[1]}))"
         if "MONTHS" in unit and field_raw == "quarter":
             return f"java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({ts_expr}.toInstant(), java.time.ZoneId.systemDefault()).truncatedTo(java.time.temporal.ChronoUnit.DAYS).withMonth(((java.time.LocalDateTime.ofInstant({ts_expr}.toInstant(), java.time.ZoneId.systemDefault()).getMonthValue() - 1) / 3) * 3 + 1).withDayOfMonth(1))"
+        if "MONTHS" in unit:
+            return f"java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({ts_expr}.toInstant(), java.time.ZoneId.systemDefault()).withDayOfMonth(1).truncatedTo(java.time.temporal.ChronoUnit.DAYS))"
+        if "YEARS" in unit:
+            return f"java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({ts_expr}.toInstant(), java.time.ZoneId.systemDefault()).withDayOfYear(1).truncatedTo(java.time.temporal.ChronoUnit.DAYS))"
+        if "WEEKS" in unit:
+            return f"java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({ts_expr}.toInstant(), java.time.ZoneId.systemDefault()).with(java.time.DayOfWeek.MONDAY).truncatedTo(java.time.temporal.ChronoUnit.DAYS))"
         return f"java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({ts_expr}.toInstant(), java.time.ZoneId.systemDefault()).truncatedTo(java.time.temporal.{unit}))"
 
     elif func_name == "translate":
@@ -9373,7 +9615,9 @@ def _needs_coercion(source_type: str, target_type: str) -> bool:
     if src == tgt:
         return False
 
-    # Object / Map<String, Object> -- no coercion possible/needed
+    # Object / Map<String, Object> -- no coercion possible/needed; the
+    # Object→concrete fallbacks live inside _coerce_type (reached via the
+    # assignment gate `expr_type == "Object"`), not here.
     if src in ("Object", "Map<String, Object>", "") or tgt in ("Object", "Map<String, Object>", ""):
         return False
 
@@ -9419,6 +9663,22 @@ def _expr_is_bigdecimal_producing(expr: str) -> bool:
     return False
 
 
+def _expr_is_timestamp_producing(expr: str) -> bool:
+    """True when a Java expression is already Timestamp-typed (construction,
+    valueOf, a bare identifier assumed Timestamp from the SQL declaration, or
+    a SimpleDateFormat.parse() producing java.util.Date — left as-is)."""
+    e = expr.strip()
+    if e == "null" or e == '""':
+        return True
+    if e.startswith("new java.sql.Timestamp") or e.startswith("java.sql.Timestamp.valueOf"):
+        return True
+    if ".parse(" in e:
+        return True
+    if re.match(r'^[A-Za-z_]\w*$', e):
+        return True
+    return False
+
+
 def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
     """Coerce a Java expression from source_type to target_type.
 
@@ -9436,6 +9696,9 @@ def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
         src0 = _normalize_type(source_type)
         tgt0 = _normalize_type(target_type)
         _e0 = expr.strip()
+        if _is_primitive_producing(_e0):
+            # Primitives can't be null — skip the Object null-guard ternary.
+            return expr
         if src0 == "Object" and tgt0 == "String" and _e0 != "null":
             return f"String.valueOf({expr})"
         if src0 == "Object" and "Timestamp" in tgt0 and _e0 != "null":
@@ -9502,7 +9765,10 @@ def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
         if stripped == '""' or stripped == "''":
             return "null"
         if "Timestamp" in tgt:
-            if "Timestamp" in stripped or ".parse(" in stripped:
+            # Only skip wrapping when the expr already IS Timestamp-typed.
+            # `SimpleDateFormat(...).format(...)` merely CONTAINS "Timestamp"
+            # in its argument — it returns String and must be wrapped.
+            if _expr_is_timestamp_producing(stripped):
                 return expr
             return f"java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({expr}).trim().split(\" \")[0], java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd]\")).atStartOfDay())"
         if tgt == "java.sql.Date":
@@ -9834,7 +10100,19 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     field_key = field_name.lower()
                     if not as_read:
                         return f'__MAP_PUT__{var_java}__{field_key}'
-                    return f'{var_java}.get("{field_key}")'
+                    raw_get = f'{var_java}.get("{field_key}")'
+                    _rt_fields = (proc.rowtype_field_types.get(var_name_raw) if proc else None) or {}
+                    _ft = _rt_fields.get(field_key) or _rt_fields.get(field_name)
+                    if _ft:
+                        if "Timestamp" in _ft:
+                            return f'((java.sql.Timestamp) {raw_get})'
+                        if _ft in ("Long", "long"):
+                            return f'({raw_get} == null ? null : ((Number) {raw_get}).longValue())'
+                        if _ft in ("Integer", "int"):
+                            return f'({raw_get} == null ? null : ((Number) {raw_get}).intValue())'
+                        if "BigDecimal" in _ft:
+                            return f'({raw_get} == null ? null : new java.math.BigDecimal(String.valueOf({raw_get})))'
+                    return raw_get
             java_name = snake_to_camel(name)
             if proc is not None and name:
                 _is_local = name in proc.local_vars
@@ -10165,6 +10443,10 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 if is_bd and op == "||":
                     return f"{left}.toString().concat({right}.toString())"
 
+                if op == "||" and (".get(" in left or ".get(" in right):
+                    # Map.get() yields Object; `Object + Object` is invalid Java.
+                    return f"String.valueOf({left}).concat(String.valueOf({right}))"
+
             if op == "^":
                 left_d = f"((Number) ({left} != null ? {left} : 0.0d)).doubleValue()" if (".get(" in left and not _is_primitive_producing(left)) else (f"({left} != null ? Double.parseDouble({left}) : 0.0d)" if left_type == "String" else f"((Number) ({left})).doubleValue()")
                 right_d = f"((Number) ({right} != null ? {right} : 0.0d)).doubleValue()" if (".get(" in right and not _is_primitive_producing(right)) else (f"({right} != null ? Double.parseDouble({right}) : 0.0d)" if right_type == "String" else f"((Number) ({right})).doubleValue()")
@@ -10197,9 +10479,6 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     return f"({x} != null ? Double.parseDouble(String.valueOf({x})) : 0.0d)"
                 return f"((Number) ({x})).doubleValue()"
 
-            if op in ("+", "-", "*", "/") and (_left_str or _right_str or ".get(" in left or ".get(" in right):
-                # Oracle/Gauss `+` on VARCHAR2 is numeric addition; concat is `||`.
-                return f"({_num_operand(left, _left_str)} {java_op} {_num_operand(right, _right_str)})"
             _is_ts_left = "Timestamp" in left_type or "Timestamp" in left or "java.sql.Date" in left or left_type in ("java.sql.Date", "java.util.Date")
             _is_ts_right = "Timestamp" in right_type or "Timestamp" in right or "java.sql.Date" in right or right_type in ("java.sql.Date", "java.util.Date")
             _is_dur_left = ".toMillis()" in left
@@ -10209,6 +10488,9 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                               ".getMinute()", ".getSecond()", ".toLocalDate()")
             _left_is_extract = any(left.rstrip().endswith(t) for t in _extract_tails)
             _right_is_extract = any(right.rstrip().endswith(t) for t in _extract_tails)
+            if op in ("+", "-", "*", "/") and not (_is_ts_left or _is_ts_right) and (_left_str or _right_str or ".get(" in left or ".get(" in right):
+                # Oracle/Gauss `+` on VARCHAR2 is numeric addition; concat is `||`.
+                return f"({_num_operand(left, _left_str)} {java_op} {_num_operand(right, _right_str)})"
             if op == "-" and _is_ts_left and _is_ts_right:
                 if _left_is_extract or _right_is_extract:
                     return f"({left} - {right})"
@@ -10221,6 +10503,13 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 return f"new java.sql.Timestamp({left}.getTime() + {right})"
             if op == "+" and _is_ts_right and _is_dur_left:
                 return f"new java.sql.Timestamp({right}.getTime() + {left})"
+            if op == "-" and (_is_ts_left or _is_ts_right) and not (_is_ts_left and _is_ts_right):
+                # Timestamp minus a non-timestamp (interval/days value) → epoch arithmetic
+                _ts_side, _other = (left, right) if _is_ts_left else (right, left)
+                _other_d = f"((Number) ({_other} != null ? {_other} : 0L)).longValue()" if ".get(" in _other else f"((Number) ({_other})).longValue()"
+                # M1-minor (#114 review #1): `number - timestamp` was flipped to `+`
+                # (ts on the right side); both operand orders must subtract.
+                return f"new java.sql.Timestamp({_ts_side}.getTime() - {_other_d} * 86400000L)"
             if op == "+" and _is_ts_left and right_type in ("Long", "long", "Integer", "int", "Double", "double", "Float", "float", "java.math.BigDecimal", "BigDecimal"):
                 return f"new java.sql.Date({left}.getTime() + ((Number) ({right})).longValue() * 86400000L)"
             if op == "+" and _is_ts_right and left_type in ("Long", "long", "Integer", "int", "Double", "double", "Float", "float", "java.math.BigDecimal", "BigDecimal"):
@@ -10483,13 +10772,18 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                                         break
                                 if _exists_elsewhere:
                                     break
+                        _actual_target = None
+                        _actual_target_pkg = None
+                        raw_args = val.get("args", [])
                         if not _exists_elsewhere:
-                            raw_args = val.get("args", [])
                             _actual_target = _find_target_proc(_resolved_pkg, self_call_func, all_packages, arg_count=len(raw_args))
+                            if _actual_target:
+                                _actual_target_pkg = _resolved_pkg
                         if not _actual_target:
                             for _apk in (all_packages or {}):
                                 _actual_target = _find_target_proc(_apk, self_call_func, all_packages, arg_count=len(raw_args))
                                 if _actual_target:
+                                    _actual_target_pkg = _apk
                                     break
                         arg_types = []
                         for i, a_java in enumerate(args_java):
@@ -10503,13 +10797,37 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                                     inferred = "boolean"
                                 arg_types.append(inferred)
                         method = java_method_name(self_call_func)
-                        _register_missing_overload(self_call_pkg, method, arg_types, len(raw_args))
                         wrapped_args = []
                         for i, a_java in enumerate(args_java):
                             if i < len(arg_types):
-                                wrapped_args.append(_coerce_java_arg(a_java, arg_types[i]))
+                                # OUT params are passed through as-is (their
+                                # carrier var is promoted to AtomicReference).
+                                if _actual_target and i < len(_actual_target.parameters) and _actual_target.parameters[i].is_out:
+                                    wrapped_args.append(a_java)
+                                else:
+                                    wrapped_args.append(_coerce_java_arg(a_java, arg_types[i]))
                             else:
                                 wrapped_args.append(a_java)
+                        # Pad missing trailing args with the target's DEFAULTs
+                        # (SQL calls may omit default-valued parameters).
+                        if _actual_target and len(wrapped_args) < len(_actual_target.parameters):
+                            for _pi in range(len(wrapped_args), len(_actual_target.parameters)):
+                                wrapped_args.append(_param_default_java(_actual_target.parameters[_pi]))
+                        # If the function actually lives in ANOTHER package, emit the
+                        # cross-package service call instead of a local missing-overload
+                        # stub (which returns Object and breaks String assignments).
+                        _same_pkg = (
+                            _actual_target is not None
+                            and (
+                                (getattr(_actual_target, "package", "") or "").lower() == (getattr(proc, "package", "") or "").lower()
+                                or getattr(_actual_target, "source_file", None) == getattr(proc, "source_file", None)
+                            )
+                        )
+                        if _actual_target_pkg is not None and not _same_pkg:
+                            svc_name = f"{package_to_classname(_actual_target_pkg).lower()}Service"
+                            proc.service_calls.append(ServiceCall(svc_name, method, [], package_name=_actual_target_pkg))
+                            return f"{svc_name}.{method}({', '.join(wrapped_args)})"
+                        _register_missing_overload(self_call_pkg, method, arg_types, len(raw_args))
                         return f"this.{method}({', '.join(wrapped_args)})"
                 # Self-call failed — try cross-package search for the function
                 if all_packages and self_call_pkg is not None:
@@ -10708,6 +11026,13 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             if _tc_name in ("timestamp", "timestamptz", "timestamp with time zone", "timestamp without time zone"):
                 if _inner.strip().startswith("new java.sql.Timestamp") or "java.sql.Timestamp.valueOf" in _inner:
                     return _inner
+                _s = _inner.strip()
+                if len(_s) >= 2 and _s[0] == '"' and _s[-1] == '"' and len(_s[1:-1]) <= 10 and ":" not in _s[1:-1]:
+                    return f'java.sql.Timestamp.valueOf("{_s[1:-1]} 00:00:00")'
+                _it = _infer_expr_type(_tc_expr, proc) if proc else ""
+                if "Date" in _it and "Timestamp" not in _it:
+                    # Date-typed source: String.valueOf(date) lacks the time part
+                    return f"new java.sql.Timestamp({_inner}.getTime())"
                 return f"java.sql.Timestamp.valueOf(String.valueOf({_inner}))"
             return _inner
         elif key == "AtTimeZone":
@@ -11020,6 +11345,19 @@ def _extract_table_name_from_dml(dml_data: dict) -> str:
                             name = v.get("name", [])
                             return name[-1] if name else "unknown"
     return "unknown"
+
+
+def _lookup_var_type(proc, var_name: str) -> str:
+    """Case-insensitive local-var type lookup. Declaration keys keep the SQL's
+    original casing (e.g. `v_Account_Id1`) while INTO targets may arrive in a
+    different case (`V_ACCOUNT_ID1`), so plain dict.get() silently misses."""
+    if not var_name:
+        return "Object"
+    name_l = var_name.lower()
+    for vn, vt in (proc.local_vars.items() if proc is not None else []):
+        if vn.lower() == name_l:
+            return vt
+    return "Object"
 
 
 def _extract_into_variable(into_targets: list) -> Optional[str]:
@@ -13125,6 +13463,8 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
             body_lines.append(f"return {_type_default(ret_type)};")
         exception_block = None
     else:
+        if proc.is_function and getattr(proc, '_setof_accumulate', False) and "List" in ret_type:
+            body_lines.append(f"{ret_type} _returnRows = new java.util.ArrayList<>();")
         out_java_names = {p.java_name for p in out_params}
         top_level_declares = set()
         top_level_insert_idx = 0
@@ -13377,11 +13717,23 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
             for l in _trailing
         )
         if _has_unreachable:
+            # Issue #75: dropping unreachable code must not leave orphan `}`
+            # closers behind (their `{` opener was in the dropped code), which
+            # produced brace imbalance (e.g. delta=-16 on fastaas
+            # prc_split_sh_zqztg whose SQL carries a bare top-level RETURN;).
             _kept = []
+            _pending = 0
             for l in _trailing:
                 s = l.strip()
-                if not s or s.startswith("//") or s == "}" or s.startswith("/*"):
+                if not s or s.startswith("//") or s.startswith("/*"):
                     _kept.append(l)
+                    continue
+                _pending += s.count("{") - s.count("}")
+                if _pending < 0:
+                    _pending = 0
+                    continue
+                if s == "}" and _pending == 0:
+                    continue
             body_lines = body_lines[:_last_ret + 1] + _kept
 
     has_complex_issues, _failed_checks = _has_compilation_issues(body_lines, out_params, proc)
@@ -13594,7 +13946,7 @@ def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureI
 
     if re.search(r'\bv_cursorResult\b', all_text) and "vCursorResult" not in all_text and "v_cursorResult =" not in all_text:
         failed.append("cursor 结果变量 'v_cursorResult' 未正确初始化")
-    if re.search(r'AtomicReference.*<=', all_text):
+    if any("AtomicReference" in line and "<=" in line for line in _stripped):
         failed.append("AtomicReference 使用了不支持的比较运算符 (<=)")
 
     out_java_names = {p.java_name for p in out_params}
@@ -13911,6 +14263,63 @@ def _write_service_test(base_path: Path, pkg: PackageInfo, service_injections: d
     _write_source_file(test_dir / f"{test_class_name}.java", content)
 
 
+def _domain_test_value(proc: ProcedureInfo, param, pkg=None) -> str:
+    """Domain-aware test value for a procedure parameter.
+
+    Resolves placeholder data that passes generated validations:
+    1. Validation-literal sampling: `Arrays.asList("A","B").contains(<param>)`
+       → use the first literal (e.g. p_mode → "REPLACE").
+    2. Date-prefix params: `<param> + "-01"` → a "yyyy-MM" prefix so
+       to_date(param || '-01') parses.
+    3. SQL DEFAULT value (when present and usable).
+    4. Fallback to the generic placeholder generator.
+    """
+    jn = param.java_name
+    # 1. Validation literal sampling
+    for line in proc.java_logic_lines:
+        m = re.search(r'Arrays\.asList\(([^)]*)\)\s*\.contains\(\s*' + re.escape(jn) + r'\s*\)', line)
+        if m:
+            lits = re.findall(r'"([^"]*)"', m.group(1))
+            if lits:
+                return f'"{lits[0]}"'
+    # 2. Date-prefix usage: `to_date(x || '-01')` appears in declaration
+    # defaults (local_var_defaults) or arithmetic lines. Scan the whole pkg:
+    # a param may be validated inside a cross-called method (verifyFingerprint
+    # → takeFingerprint).
+    _date_ctx_lines = list(proc.java_logic_lines) + list(proc.local_var_defaults.values())
+    if pkg is not None:
+        for _pp in getattr(pkg, "procedures", []):
+            _date_ctx_lines.extend(_pp.java_logic_lines)
+            _date_ctx_lines.extend(getattr(_pp, "local_var_defaults", {}).values())
+    for line in _date_ctx_lines:
+        if re.search(re.escape(jn) + r'\s*\+\s*"-0[1-9]"', line) or re.search(re.escape(jn) + r"\s*\|\|\s*'-0[1-9]'", line):
+            return '"2024-01"'
+    # 3. DEFAULT value
+    if param.default_value:
+        dv = str(param.default_value).strip()
+        if dv and dv.lower() != "null":
+            if (dv.startswith("'") and dv.endswith("'")) or (dv.startswith('"') and dv.endswith('"')):
+                inner = dv[1:-1]
+                if inner.isdigit() and "string" not in param.java_type.lower():
+                    return inner
+                if "string" in param.java_type.lower():
+                    return f'"{inner}"'
+                # M2 (#114 review): a quoted default on a non-String param (e.g.
+                # `p_start date default '2024-01-01'`) must not produce a bare
+                # string literal — that fails to compile. Fall back to the
+                # type-aware generator so the value matches the Java type.
+                return _default_test_value(param.java_type, jn, pkg=pkg)
+            if re.match(r'^-?\d+(\.\d+)?$', dv):
+                lower_jt = param.java_type.lower()
+                if "bigdecimal" in lower_jt:
+                    return f"new java.math.BigDecimal(\"{dv}\")"
+                if "string" in lower_jt:
+                    return f'"{dv}"'
+                return dv
+    # 4. Fallback
+    return _default_test_value(param.java_type, jn, pkg=pkg)
+
+
 def _build_test_methods(proc: ProcedureInfo, mapper_name: str, service_injections: dict,
                          svc_method_param_counts: dict, pkg: PackageInfo) -> list:
     method_name = java_method_name(proc.proc_name)
@@ -13923,7 +14332,7 @@ def _build_test_methods(proc: ProcedureInfo, mapper_name: str, service_injection
     param_args = []
     svc_class = package_to_classname(pkg.package_name) + "Service"
     for p in in_params:
-        val = _default_test_value(p.java_type, p.java_name, pkg=pkg)
+        val = _domain_test_value(proc, p, pkg=pkg)
         decl_type = p.java_type
         if pkg and hasattr(pkg, 'custom_types'):
             for tn, ti in pkg.custom_types.items():
@@ -14112,10 +14521,13 @@ def _build_success_test(proc: ProcedureInfo, mapper_name: str,
     is_stubbed = (proc.name, len(proc.parameters)) in STUB_PROCEDURES
     has_empty_body = len(proc.java_logic_lines) == 0
     has_body_error = any("// ERROR:" in line for line in proc.java_logic_lines)
+    # #100: unhandled statement types (RETURN NEXT/QUERY etc.) produce a null-returning
+    # stub — the generated test must not assert non-null against it.
+    has_unhandled_stmt = any("unhandled PL/pgSQL statement type" in line for line in proc.java_logic_lines)
     if is_function:
         lines.append(f"        var result = service.{method_name}({args_str});")
-        if is_stubbed or has_empty_body or has_body_error:
-            lines.append(f"        // Stub/empty/error implementation — result may be null")
+        if is_stubbed or has_empty_body or has_body_error or has_unhandled_stmt:
+            lines.append(f"        // Stub/empty/error/unhandled implementation — result may be null")
         else:
             lines.append(f"        assertNotNull(result);")
     else:
@@ -14317,8 +14729,10 @@ def _mock_value_for_column(col_name: str) -> str:
         return "\"test\""
     if any(k in n for k in ("count", "qty", "quantity", "num", "head_count")):
         return "5"
-    if any(k in n for k in ("date", "time", "created", "updated")):
-        return "\"20240101\""
+    if any(k in n for k in ("_ts", "ts_value", "_at", "time", "timestamp")):
+        return '"2024-01-01 00:00:00"'
+    if any(k in n for k in ("date", "created", "updated")):
+        return '"20240101"'
     return "1"
 
 
@@ -14369,7 +14783,7 @@ def _extract_select_column(sql_text: str, index: int) -> str:
     return col
 
 
-def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bool, mapper_name: str, dml_method_id: str, method_any: str, dml_sql_text: str = "", returning_cols: list = None, returning_into_vars: list = None, extra_keys: list = None) -> str:
+def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bool, mapper_name: str, dml_method_id: str, method_any: str, dml_sql_text: str = "", returning_cols: list = None, returning_into_vars: list = None, extra_keys: list = None, count_usage: str = None) -> str:
     def _with_extra_keys(mock_fields: dict) -> str:
         puts = " ".join(f'm.put("{_escape_java_string(k)}", {v});' for k, v in mock_fields.items())
         return puts + " m.putAll(_rowTmpl);"
@@ -14396,16 +14810,33 @@ def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bo
             puts = _with_extra_keys(mock_fields)
             return f"        {{ var m = new java.util.HashMap<String,Object>(); {puts} when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }}"
         return f"        {{ var m = new java.util.HashMap<String,Object>(); m.putAll(_rowTmpl); m.put(\"id\", 1); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }}"
+    # M1 (#114 review): "count" must be a camelCase word (countOrders / ordersCount),
+    # not a substring (discount / account / encounter would force the mock to 0).
+    # method_id is `{dml_type}{snake_to_pascal(semantic_key)}` (e.g. selectOrderCount):
+    # snake_to_pascal capitalises each word, so a standalone "count" token is the
+    # PascalCase "Count" at a word start or after a lowercase/digit; "discount"
+    # keeps its lowercase c and does not match. The SQL text check still catches
+    # `count(` in the raw query.
+    _method_id_is_count = bool(
+        re.search(r'(^|[a-z0-9_])Count([A-Z_0-9]|$)', dml_method_id) or dml_method_id.startswith("Count")
+    ) or bool(re.search(r'\bcount\s*\(', (dml_sql_text or "").lower()))
+    _is_count_query = _method_id_is_count
     if dml_result_type == "Integer":
-        return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(999);"
+        _v = ("1" if count_usage == "exists" else "0") if _is_count_query else "999"
+        return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn({_v});"
     if dml_result_type == "Long":
-        return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(999L);"
+        _v = ("1L" if count_usage == "exists" else "0L") if _is_count_query else "999L"
+        return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn({_v});"
     if dml_result_type == "String":
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(\"1\");"
     if dml_result_type == "Boolean":
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(true);"
     if dml_result_type == "java.math.BigDecimal":
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.math.BigDecimal.TEN);"
+    if "Timestamp" in (dml_result_type or ""):
+        return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.sql.Timestamp.valueOf(\"2024-01-01 00:00:00\"));"
+    if "Date" in (dml_result_type or ""):
+        return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.sql.Date.valueOf(\"2024-01-01\"));"
     if dml_result_type and dml_result_type not in ("Map<String, Object>", "java.util.Map"):
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(null);"
     mock_fields = _extract_mock_fields_from_sql(dml_sql_text)
@@ -14431,6 +14862,31 @@ def _detect_overloaded_ids(all_dmls: dict) -> set:
             if len(counts) == 1 and len(entries) > 1:
                 overloaded.add(mid)
     return overloaded
+
+
+def _collect_count_usage(pkg: PackageInfo) -> dict:
+    """Map dml method_id → 'exists' | 'guard' based on how the result is validated.
+
+    `v = mapper.selectX(...)` followed by `if (v == 0)` is an existence check
+    (needs mock 1); `if (v > 0)` / `if (v != 0)` is a guard (needs mock 0).
+    """
+    usage: dict = {}
+    for _p in pkg.procedures:
+        lines = _p.java_logic_lines
+        for i, line in enumerate(lines):
+            m = re.search(r'(\w+)\s*=\s*(?:this\.)?[\w]*[Mm]apper\.(\w+)\s*\(', line)
+            if not m:
+                continue
+            var, method_id = m.group(1), m.group(2)
+            for j in range(i, min(i + 3, len(lines))):
+                l2 = lines[j]
+                if re.search(r'if\s*\(\s*' + re.escape(var) + r'\s*==\s*0\s*\)', l2):
+                    usage[method_id] = 'exists'
+                    break
+                if re.search(r'if\s*\(\s*' + re.escape(var) + r'\s*(?:>\s*0|!=\s*0)\s*\)', l2):
+                    usage[method_id] = 'guard'
+                    break
+    return usage
 
 
 def _mock_all_mapper_methods(mapper_name: str, pkg: PackageInfo, lines: list, error_mode: bool = False):
@@ -14464,6 +14920,7 @@ def _mock_all_mapper_methods(mapper_name: str, pkg: PackageInfo, lines: list, er
 
     _tmpl_puts = " ".join(f'_rowTmpl.put("{_escape_java_string(k)}", {_tmpl_value(k)});' for k in _extra_keys)
     lines.append(f"        var _rowTmpl = new java.util.HashMap<String,Object>(); {_tmpl_puts}")
+    _count_usage = _collect_count_usage(pkg)
     all_dmls = _collect_all_dmls(pkg)
     overloaded = _detect_overloaded_ids(all_dmls)
     for dml_key, dml_info in all_dmls.items():
@@ -14498,7 +14955,7 @@ def _mock_all_mapper_methods(mapper_name: str, pkg: PackageInfo, lines: list, er
             else:
                 lines.append(f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(null);")
         else:
-            lines.append(_mock_select_return(dml_sql_type, dml_result_type, dml_returns_list, mapper_name, dml_method_id, method_any, dml_sql_text, dml_returning_cols, dml_returning_into_vars, extra_keys=_extra_keys))
+            lines.append(_mock_select_return(dml_sql_type, dml_result_type, dml_returns_list, mapper_name, dml_method_id, method_any, dml_sql_text, dml_returning_cols, dml_returning_into_vars, extra_keys=_extra_keys, count_usage=_count_usage.get(dml_method_id)))
 
 
 def _build_any_matchers(proc: ProcedureInfo) -> str:
@@ -15714,15 +16171,79 @@ def _itest_add_transitive_tables(proc, pkg, schema_map, handled, needed, all_pac
                         break
 
 
+def _collect_fk_parents() -> dict:
+    """{table_lower: [parent_table_lower, ...]} from CREATE TABLE REFERENCES.
+
+    Scans the DDL source files recorded in _TABLE_DDL_SOURCE. Used by the
+    itest fixture generator to order INSERTs (parents first) and DELETEs
+    (children first) so FK constraints are not violated (#101)."""
+    fk: dict = {}
+    seen_files = set()
+    for (_tbl, _col), src_file in _TABLE_DDL_SOURCE.items():
+        if src_file in seen_files:
+            continue
+        seen_files.add(src_file)
+        try:
+            with open(src_file, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+        except OSError:
+            continue
+        # (#114 review minor 10): also strip `--` line comments (a `-- references
+        # ...` comment must not create a phantom FK edge) and quoted identifiers
+        # so `"Parent"` resolves to its unquoted name.
+        content_clean = re.sub(r'/\*.*?\*/', "", content, flags=re.DOTALL)
+        content_clean = re.sub(r'--.*$', "", content_clean, flags=re.MULTILINE)
+        for m in re.finditer(
+            r"create\s+table\s+(?:if\s+not\s+exists\s+)?(?:\w+\.)?(?:\"(\w+)\"|(\w+))\s*\(",
+            content_clean,
+            re.IGNORECASE,
+        ):
+            table = (m.group(1) or m.group(2)).lower()
+            start = m.end()
+            depth = 1
+            pos = start
+            while pos < len(content_clean) and depth > 0:
+                if content_clean[pos] == "(":
+                    depth += 1
+                elif content_clean[pos] == ")":
+                    depth -= 1
+                pos += 1
+            block = content_clean[start : pos - 1]
+            for fm in re.finditer(r"references\s+(?:\w+\.)?(?:\"(\w+)\"|(\w+))", block, re.IGNORECASE):
+                parent = (fm.group(1) or fm.group(2)).lower()
+                if parent != table:
+                    fk.setdefault(table, []).append(parent)
+    return fk
+
+
+def _topo_order_tables(tables: list, fk_parents: dict) -> list:
+    """Topological order: parents before children (for INSERT)."""
+    table_set = set(tables)
+    deps = {t: [p for p in fk_parents.get(t, []) if p in table_set] for t in tables}
+    ordered = []
+    remaining = set(tables)
+    while remaining:
+        ready = [t for t in remaining if not any(p in remaining for p in deps.get(t, []))]
+        if not ready:
+            ready = [sorted(remaining)[0]]
+        ordered.extend(sorted(ready))
+        remaining.difference_update(ready)
+    return ordered
+
+
 def _itest_write_fixtures(base_path: Path, proc: ProcedureInfo, pkg: PackageInfo, test_data: dict, bindings: dict = None, literals: dict = None) -> str:
     if not test_data:
         return ""
     lines = []
-    for table in sorted(test_data.keys()):
+    # #101: order DELETE children-first and INSERT parents-first per FK topology.
+    fk_parents = _collect_fk_parents()
+    topo = _topo_order_tables(list(test_data.keys()), fk_parents)
+    for table in reversed(topo):
         lines.append(f"DELETE FROM {table};")
     _skip_prefixes = ("constraint", "check", "primary", "foreign", "unique", "index", "like")
     bindings = bindings or {}
-    for table, columns in sorted(test_data.items()):
+    for table in topo:
+        columns = test_data.get(table)
         if not columns:
             continue
         col_names = []
@@ -16568,26 +17089,33 @@ def _build_arg_parser():
     return parser
 
 
-def _read_version_from_cargo_toml():
+def _read_version_from_cargo_toml(base_dir: str | None = None) -> str | None:
     """Read version from Cargo.toml (single source of truth).
 
-    Looks for crates/fluxgauss/Cargo.toml relative to this script.
-    Returns None if not found (e.g. PyInstaller bundle without source).
+    Crate Cargo.toml may declare `version.workspace = true` (no literal);
+    when that indirection is detected the search continues to the workspace
+    root Cargo.toml (`[workspace.package] version`). Returns None if not
+    found (e.g. PyInstaller bundle without source).
     """
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    script_dir = base_dir or os.path.dirname(os.path.abspath(__file__))
     for rel in [os.path.join('..', 'crates', 'fluxgauss', 'Cargo.toml'),
                 os.path.join('..', 'Cargo.toml'),
                 'Cargo.toml']:
         cargo_toml = os.path.normpath(os.path.join(script_dir, rel))
-        if os.path.isfile(cargo_toml):
-            try:
-                with open(cargo_toml, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        s = line.strip()
-                        if s.startswith('version = '):
-                            return s.split('"')[1]
-            except Exception:
-                pass
+        if not os.path.isfile(cargo_toml):
+            continue
+        uses_workspace_version = False
+        try:
+            with open(cargo_toml, 'r', encoding='utf-8') as f:
+                for line in f:
+                    s = line.strip()
+                    if s.startswith('version = '):
+                        return s.split('"')[1]
+                    if s.startswith('version.workspace'):
+                        uses_workspace_version = True
+        except Exception:
+            pass
+        if not uses_workspace_version:
             break
     return None
 

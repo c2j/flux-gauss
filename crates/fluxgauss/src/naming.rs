@@ -108,12 +108,11 @@ pub fn snake_to_pascal(s: &str) -> String {
 /// Examples: "bigfund.PKG_2008802001_MGT" → "_2008802001Mgt", "pkg_order" → "Order"
 pub fn package_to_classname(pkg_name: &str) -> String {
     let short_name = pkg_name.rsplit('.').next().unwrap_or(pkg_name);
-    let stripped = if short_name.starts_with("pkg_") {
+    let lower = short_name.to_lowercase();
+    let stripped = if lower.starts_with("pkg_") {
         &short_name[4..]
-    } else if short_name.starts_with("PKG_") {
-        &short_name[4..]
-    } else if short_name.starts_with("pack_") {
-        &short_name[5..]
+    } else if let Some(rest) = short_name.strip_prefix("pack_") {
+        rest
     } else {
         short_name
     };
@@ -124,13 +123,7 @@ pub fn package_to_classname(pkg_name: &str) -> String {
 /// Strips common "p_" or "v_" prefixes, then applies camelCase.
 pub fn java_method_name(proc_name: &str) -> String {
     let lower = proc_name.to_lowercase();
-    let stripped = if lower.starts_with("p_") {
-        &proc_name[2..]
-    } else if lower.starts_with("v_") {
-        &proc_name[2..]
-    } else {
-        proc_name
-    };
+    let stripped = if lower.starts_with("p_") || lower.starts_with("v_") { &proc_name[2..] } else { proc_name };
     java_safe_identifier(&snake_to_camel(stripped))
 }
 

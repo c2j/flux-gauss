@@ -83,18 +83,13 @@ pub struct GlobalFnEntry {
 
 // ── DML ──
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DmlType {
+    #[default]
     Select,
     Insert,
     Update,
     Delete,
-}
-
-impl Default for DmlType {
-    fn default() -> Self {
-        Self::Select
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -206,6 +201,11 @@ pub struct ProcedureInfo {
     pub imports: BTreeSet<String>,
     pub local_vars: HashMap<String, String>,
     pub local_var_defaults: HashMap<String, String>,
+
+    /// %ROWTYPE / RECORD-typed locals: var_lower → { field_lower → Java type }.
+    /// Populated from the table's DDL so field access (v_wm.wm_ts_value) can
+    /// emit typed extraction instead of raw Object Map.get.
+    pub rowtype_field_types: HashMap<String, HashMap<String, String>>,
     pub table_refs: HashSet<String>,
     pub var_assignments: HashMap<String, String>,
     pub dynamic_sql_templates: HashMap<String, (String, Vec<(String, bool)>)>,
@@ -244,6 +244,13 @@ pub struct ProcedureInfo {
     pub plain_loop_counter: usize,
     pub catch_counter: usize,
 
+    /// Numeric-range FOR loop counters auto-created by the statement handler
+    /// (NOT declared in the SQL). A real SQL-declared var is absent from this
+    /// set even though it also appears in `local_vars` — distinguishing the two
+    /// matters because javac forbids a for-init `int i` shadowing a method-level
+    /// `i`, so real declarations must be reused in the loop header.
+    pub range_loop_counters: HashSet<String>,
+
     pub source_file: String,
     pub source_path: String,
     pub source_start_line: u32,
@@ -275,6 +282,7 @@ impl ProcedureInfo {
             imports: BTreeSet::new(),
             local_vars: HashMap::new(),
             local_var_defaults: HashMap::new(),
+            rowtype_field_types: HashMap::new(),
             table_refs: HashSet::new(),
             var_assignments: HashMap::new(),
             dynamic_sql_templates: HashMap::new(),
@@ -296,6 +304,7 @@ impl ProcedureInfo {
             for_loop_counter: 0,
             plain_loop_counter: 0,
             catch_counter: 0,
+            range_loop_counters: HashSet::new(),
             source_file: String::new(),
             source_path: String::new(),
             source_start_line: 0,

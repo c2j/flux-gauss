@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_75_loop_exception_brace.sql",
+  "package_name": "issue_75_loop_exception_brace",
+  "files": {
+    "Service.java": "e17693c281e051d2",
+    "Mapper.java": "ce58ac0946d3c6ff",
+    "Mapper.xml": "b2fad99f14a3b242",
+    "ServiceTest.java": "18866d3231b34d44"
+  }
+}

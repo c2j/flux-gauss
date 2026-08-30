@@ -32,7 +32,7 @@ class BizServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_doIt_success() {
-        String pIMsg = "test_pIMsg";
+        String pIMsg = "test_p_i_msg";
         service.doIt(pIMsg);
     }
 }
@@ -67,7 +67,7 @@ class LogServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_instLog_success() {
-        String pIMsg = "test_pIMsg";
+        String pIMsg = "test_p_i_msg";
         service.instLog(pIMsg);
     }
 }

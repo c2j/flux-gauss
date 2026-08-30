@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_54_nested_exception.sql",
+  "package_name": "issue_54_nested_exception",
+  "files": {
+    "Service.java": "125d110eaf0143ed",
+    "Mapper.java": "137c9c03d6075308",
+    "Mapper.xml": "a8562f12c29d6379",
+    "ServiceTest.java": "492ee37978cfcd05"
+  }
+}

@@ -28,7 +28,7 @@ public class Issue64BigdecimalEmptyInitService {
         vPriceType = "T";
         pResult.set(String.valueOf(vOpenfundMode + vOpenfundPriceFlag + vPriceType + vPgPrice));
         if (pId != null) {
-            pResult.set(String.valueOf(pResult.get() + pId));
+            pResult.set(String.valueOf(String.valueOf(pResult.get()).concat(String.valueOf(pId))));
         }
     }
 }

@@ -1,6 +1,7 @@
-use crate::context::{AnalysisContext, ScanContext};
+use crate::context::AnalysisContext;
 use crate::types::{ConversionError, PackageInfo, ProcedureInfo, UnresolvedCall};
 use ogsql_parser::ast::plpgsql::PlStatement;
+use std::collections::HashMap;
 
 pub fn analyze_procedure(
     proc: &mut ProcedureInfo,
@@ -108,7 +109,7 @@ pub fn analyze_procedure(
         }
         ctx.dml_counters.insert(pkg_key, stmt_ctx.dml_counter.clone());
         // After normal processing, if GOTO pattern detected, rewrite the procedure body
-        if proc.goto_analysis.as_ref().map_or(false, |a| a.pattern.is_some()) {
+        if proc.goto_analysis.as_ref().is_some_and(|a| a.pattern.is_some()) {
             let analysis = proc.goto_analysis.take().unwrap();
             proc.java_logic_lines.clear();
             proc.dml_statements.clear();
@@ -151,7 +152,7 @@ pub fn analyze_procedure(
                 proc.java_logic_lines.push(format!("    __SQLERRM__ = {evar}.getMessage();"));
                 proc.java_logic_lines.push("    __SQLCODE__ = -1;".into());
                 for s in &handler.statements {
-                    if let Err(_) = crate::statement::process_statement(s, proc, &mut stmt_ctx) {
+                    if crate::statement::process_statement(s, proc, &mut stmt_ctx).is_err() {
                         break;
                     }
                 }
@@ -163,7 +164,7 @@ pub fn analyze_procedure(
                 proc.java_logic_lines.push("}".into());
             }
         }
-        ctx.unresolved_calls.extend(stmt_ctx.unresolved_calls.drain(..));
+        ctx.unresolved_calls.append(&mut stmt_ctx.unresolved_calls);
     }
     // Apply any bare-local-var promotions queued by emit_cross_pkg_call (see
     // crate::expr::take_pending_out_promotions) while generating this procedure's
@@ -186,8 +187,26 @@ pub fn process_declaration(
     match decl {
         PlDeclaration::Variable(var) => {
             let java_type = match &var.data_type {
-                ogsql_parser::ast::plpgsql::PlDataType::PercentRowType(_) => {
+                ogsql_parser::ast::plpgsql::PlDataType::PercentRowType(table) => {
                     proc.imports.insert("import java.util.Map;".into());
+                    // Resolve field types from the table's DDL so field access
+                    // (v_wm.wm_ts_value) can emit typed extraction.
+                    let table_lower = table.split('.').next_back().unwrap_or(table).to_lowercase();
+                    let field_types: HashMap<String, String> = ddl_schema
+                        .get(&table_lower)
+                        .map(|cols| {
+                            cols.iter()
+                                .map(|(col, raw_sql_type)| {
+                                    let sql_type = crate::extract::normalize_sql_type(raw_sql_type);
+                                    let java = crate::type_map::sql_type_to_java(&sql_type)
+                                        .map(|s| s.to_string())
+                                        .unwrap_or_else(|| "String".into());
+                                    (col.to_lowercase(), java)
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    proc.rowtype_field_types.insert(var.name.to_lowercase(), field_types);
                     "Map<String, Object>".into()
                 }
                 ogsql_parser::ast::plpgsql::PlDataType::PercentType { table, column } => {
@@ -396,6 +415,7 @@ pub fn collect_tobefix_warnings(pkg: &PackageInfo, ctx: &mut AnalysisContext) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::ScanContext;
 
     #[test]
     fn test_analyze_context_new() {

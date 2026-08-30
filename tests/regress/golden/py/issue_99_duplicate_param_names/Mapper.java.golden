@@ -1,0 +1,9 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue99DuplicateParamNamesMapper {
+
+    // No direct DML operations for issue_99_duplicate_param_names
+}

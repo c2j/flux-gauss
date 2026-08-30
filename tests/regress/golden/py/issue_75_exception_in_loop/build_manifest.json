@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_75_exception_in_loop.sql",
+  "package_name": "issue_75_exception_in_loop",
+  "files": {
+    "Service.java": "845582fbc74dc8f0",
+    "Mapper.java": "d116019980c00024",
+    "Mapper.xml": "c4270b614094fe4f",
+    "ServiceTest.java": "a18d4d24d7944b6c"
+  }
+}

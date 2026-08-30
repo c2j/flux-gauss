@@ -1,0 +1,32 @@
+# ogagila 回归基线（Rust 引擎）— openGauss 特性压测集
+#
+# $ cd ~/Projects/Desktop_Projects/DB/flux-gauss/ && rm -rf dest_ogagila_ru_v2 && OGSQL_BIN=../ogsql-parser/target/release/ogsql python3 converter/flux_gauss.py -c demo-project/fluxgauss_ogagila_ru_v2.yaml --skip-validate && cd dest_ogagila_ru_v2/ && mvn compile && mvn test
+output_dir: ./dest_ogagila_ru_v2
+base_package: ced
+
+integration_test:
+  enabled: false
+
+sources:
+  - lib/ogagila/sqls/ddl/init-gaussdb-schema.sql
+  - lib/ogagila/sqls/ddl/schema-jsonb.sql
+  - lib/ogagila/sqls/ddl/schema.sql
+  - lib/ogagila/sqls/dw/ddl/00-source-fixes.sql
+  - lib/ogagila/sqls/dw/ddl/01-infra-tables.sql
+  - lib/ogagila/sqls/dw/ddl/02-dim-tables.sql
+  - lib/ogagila/sqls/dw/ddl/03-dwd-tables.sql
+  - lib/ogagila/sqls/dw/ddl/04-dws-tables.sql
+  - lib/ogagila/sqls/dw/ddl/05-ads-tables.sql
+  - lib/ogagila/sqls/dw/ddl/06-rpt-tables.sql
+  - lib/ogagila/sqls/dw/program/00-pkg-etl-core.sql
+  - lib/ogagila/sqls/dw/program/01-pkg-dim.sql
+  - lib/ogagila/sqls/dw/program/02-pkg-dwd.sql
+  - lib/ogagila/sqls/dw/program/03-pkg-dq.sql
+  - lib/ogagila/sqls/dw/program/04-pkg-orch.sql
+  - lib/ogagila/sqls/dw/program/05-pkg-dws.sql
+  - lib/ogagila/sqls/dw/program/06-ads-views.sql
+  - lib/ogagila/sqls/dw/program/07-pkg-ads.sql
+  - lib/ogagila/sqls/dw/program/08-pkg-disclose.sql
+  - lib/ogagila/sqls/program/functions.sql
+  - lib/ogagila/sqls/program/triggers.sql
+  - lib/ogagila/sqls/program/views.sql

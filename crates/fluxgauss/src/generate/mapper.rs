@@ -5,7 +5,7 @@ use encoding_rs::Encoding;
 
 use crate::generate::writer::CodeWriter;
 use crate::naming::{package_to_classname, snake_to_camel};
-use crate::type_map::{java_type_to_jdbc, sql_type_to_java};
+use crate::type_map::java_type_to_jdbc;
 use crate::types::{DmlType, DynamicCondition, PackageInfo, Parameter};
 
 static IDENTIFIER_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
@@ -71,7 +71,7 @@ pub fn write_mapper_interface(
     let re_t = regex::Regex::new(r"\b([\w.]+(?:<[^>]+>)?)\s+(\w+)([,)])").unwrap();
     for m in methods {
         let mut norm = re_p.replace_all(&m, "").to_string();
-        if let Some(last) = norm.lines().filter(|l| !l.trim().starts_with("//")).last() {
+        if let Some(last) = norm.lines().rfind(|l| !l.trim().starts_with("//")) {
             norm = last.to_string();
         }
         norm = re_t.replace_all(&norm, "$1 $3").to_string();
@@ -1180,7 +1180,7 @@ fn replace_decode_with_case(sql: &str) -> String {
             if let Some(end) = find_matching_paren(&result, m.end() - 1) {
                 let inner = &result[m.end()..end];
                 let decoded = convert_decode_args(inner);
-                if decoded != &result[start..=end] {
+                if decoded != result[start..=end] {
                     result = format!("{}{}{}", &result[..start], decoded, &result[end + 1..]);
                     changed = true;
                 }
@@ -1305,6 +1305,37 @@ fn split_args_respecting_parens(s: &str) -> Vec<String> {
     args
 }
 
+/// Paren depth at byte `pos`, ignoring string literals. Used to keep
+/// `left.right` inside function calls/CASE/subqueries intact (issue #98:
+/// `SUM(film.rental_rate)` was rewritten to `SUM(film AS rental_rate)`).
+fn paren_depth_at(sql: &str, pos: usize) -> usize {
+    let bytes = sql.as_bytes();
+    let mut depth = 0usize;
+    let mut in_str: Option<u8> = None;
+    let mut i = 0usize;
+    while i < pos && i < bytes.len() {
+        let c = bytes[i];
+        if let Some(q) = in_str {
+            if c == q {
+                if i + 1 < pos && bytes[i + 1] == q {
+                    i += 2;
+                    continue;
+                }
+                in_str = None;
+            }
+        } else {
+            match c {
+                b'\'' | b'"' => in_str = Some(c),
+                b'(' => depth += 1,
+                b')' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    depth
+}
+
 fn fix_select_into_aliases(
     sql: &str,
     local_vars: &std::collections::HashMap<String, String>,
@@ -1394,6 +1425,9 @@ fn fix_select_into_aliases(
                 if left.starts_with("#{") {
                     return full_match.to_string();
                 }
+                if paren_depth_at(&result, match_start) > 0 {
+                    return full_match.to_string();
+                }
                 format!("{} AS {}", left, right)
             })
             .to_string();
@@ -1450,7 +1484,7 @@ fn convert_params_to_mybatis(
     local_vars: &std::collections::HashMap<String, String>,
     package_vars: &std::collections::HashMap<String, crate::types::VarInfo>,
 ) -> String {
-    let mut result = sql.to_string();
+    let result = sql.to_string();
 
     let alias_col_re =
         DOT_ACCESS_RE.get_or_init(|| regex::Regex::new(r"(?i)\b([a-zA-Z_]\w*)\s*\.\s*([a-zA-Z_]\w*)").unwrap());
@@ -2047,8 +2081,7 @@ mod tests {
 
     #[test]
     fn test_update_where_before_set_order() {
-        let mut proc =
-            ProcedureInfo::new("pkg_test.proc_dyn".to_string(), "pkg_test".to_string(), "proc_dyn".to_string());
+        let proc = ProcedureInfo::new("pkg_test.proc_dyn".to_string(), "pkg_test".to_string(), "proc_dyn".to_string());
         let dc_where = DynamicCondition {
             condition_expr: "id != null".to_string(),
             sql_fragment: "WHERE id = #{id}".to_string(),
@@ -2076,5 +2109,28 @@ mod tests {
         let where_pos = xml.find("<where>").unwrap_or(xml.len());
         let set_pos = xml.find("<set>").unwrap_or(xml.len());
         assert!(where_pos < set_pos, "<where> must come before <set> in UPDATE");
+    }
+
+    #[test]
+    fn test_fix_select_into_aliases_preserves_qualified_columns_in_aggregates() {
+        // Issue #98: qualified columns inside function calls/CASE must NOT be
+        // rewritten to `table AS column` (that is for top-level INTO aliasing).
+        let sql = "select coalesce ( SUM ( film . rental_rate ) , 0 ) from film";
+        let locals = std::collections::HashMap::new();
+        let pkg_vars = std::collections::HashMap::new();
+        let fixed = fix_select_into_aliases(sql, &locals, &pkg_vars);
+        assert!(fixed.contains("SUM ( film . rental_rate )"), "qualified column inside aggregate was mangled: {fixed}");
+        assert!(!fixed.contains("film AS rental_rate"), "qualified column became an AS alias: {fixed}");
+
+        let case_sql = "select coalesce ( SUM ( case when ( rental . return_date - rental . rental_date ) > ( film . rental_duration * '1 day' :: interval ) then 1 else 0 end ) , 0 ) from rental";
+        let fixed_case = fix_select_into_aliases(case_sql, &locals, &pkg_vars);
+        assert!(
+            fixed_case.contains("rental . return_date - rental . rental_date"),
+            "qualified columns inside CASE were mangled: {fixed_case}"
+        );
+        assert!(
+            !fixed_case.contains("rental AS return_date") && !fixed_case.contains("film AS rental_duration"),
+            "CASE qualified columns became AS aliases: {fixed_case}"
+        );
     }
 }

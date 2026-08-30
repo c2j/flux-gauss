@@ -22,7 +22,7 @@ public class Issue56ReturnHandlerService {
         String vData = null;
         try {
             pResult.set(null);
-            vData = issue56ReturnHandlerMapper.selectTIssue56Data();
+            vData = String.valueOf(issue56ReturnHandlerMapper.selectTIssue56Data());
             if (vData == null) {
                 pResult.set("not_found");
                 return;
@@ -40,7 +40,7 @@ public class Issue56ReturnHandlerService {
         String vTmp = null;
         try {
             pResult.set(null);
-            vData = issue56ReturnHandlerMapper.selectTIssue56Data_1();
+            vData = String.valueOf(issue56ReturnHandlerMapper.selectTIssue56Data_1());
             if (vData == null) {
                 try {
                     // SqlStatement
@@ -66,7 +66,7 @@ public class Issue56ReturnHandlerService {
         String vData = null;
         try {
             pResult.set(null);
-            vData = issue56ReturnHandlerMapper.selectTIssue56Data_2();
+            vData = String.valueOf(issue56ReturnHandlerMapper.selectTIssue56Data_2());
             if (vData == null) {
                 pResult.set("not_found");
                 return;

@@ -30,7 +30,7 @@ class Issue48LongComparetoStringServiceTest {
         Long pProId = 1L;
         AtomicReference<String> pResult = new AtomicReference<>(null);
         var _rowTmpl = new java.util.HashMap<String,Object>();
-        when(issue48LongComparetoStringMapper.selectDualCount(any())).thenReturn(999);
+        when(issue48LongComparetoStringMapper.selectDualCount(any())).thenReturn(1);
         service.procCheckProId(pProId, pResult);
     }
 
@@ -40,7 +40,7 @@ class Issue48LongComparetoStringServiceTest {
         Long pCount = 100L;
         AtomicReference<String> pLabel = new AtomicReference<>(null);
         var _rowTmpl = new java.util.HashMap<String,Object>();
-        when(issue48LongComparetoStringMapper.selectDualCount(any())).thenReturn(999);
+        when(issue48LongComparetoStringMapper.selectDualCount(any())).thenReturn(1);
         service.procCheckCount(pCount, pLabel);
     }
 
@@ -50,7 +50,7 @@ class Issue48LongComparetoStringServiceTest {
         String pStatus = "test_pStatus";
         AtomicReference<Integer> pCode = new AtomicReference<>(null);
         var _rowTmpl = new java.util.HashMap<String,Object>();
-        when(issue48LongComparetoStringMapper.selectDualCount(any())).thenReturn(999);
+        when(issue48LongComparetoStringMapper.selectDualCount(any())).thenReturn(1);
         service.procCheckStatus(pStatus, pCode);
     }
 
@@ -61,7 +61,7 @@ class Issue48LongComparetoStringServiceTest {
         String pThreshold = "test_pThreshold";
         AtomicReference<String> pResult = new AtomicReference<>(null);
         var _rowTmpl = new java.util.HashMap<String,Object>();
-        when(issue48LongComparetoStringMapper.selectDualCount(any())).thenReturn(999);
+        when(issue48LongComparetoStringMapper.selectDualCount(any())).thenReturn(1);
         service.procCompareLevel(pLevel, pThreshold, pResult);
     }
 }

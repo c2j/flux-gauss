@@ -3,9 +3,9 @@
   "fixture": "issue_47_long_parse_string.sql",
   "package_name": "issue_47_long_parse_string",
   "files": {
-    "Service.java": "d9473ce638f40e17",
+    "Service.java": "592087c8c9c6ac29",
     "Mapper.java": "61a5554437570c4a",
     "Mapper.xml": "b6c850501b438656",
-    "ServiceTest.java": "4ee43d56957f8254"
+    "ServiceTest.java": "bba6af4b16a69a31"
   }
 }

@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_61_outer_exception_brace.sql",
+  "package_name": "issue_61_outer_exception_brace",
+  "files": {
+    "Service.java": "0f3af4afe10e887f",
+    "Mapper.java": "6aba58e931cc5d16",
+    "Mapper.xml": "5a0c2a00d4663317",
+    "ServiceTest.java": "eb5e3a77623d85c9"
+  }
+}

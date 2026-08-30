@@ -28,8 +28,8 @@ class Issue61ExcServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_prcGetZsPrice_success() {
-        String pISecurityId = "test_pISecurityId";
-        String pIMarketType = "test_pIMarketType";
+        String pISecurityId = "test_p_i_security_id";
+        String pIMarketType = "test_p_i_market_type";
         AtomicReference<java.math.BigDecimal> pOMarketPriceRef = new AtomicReference<>(java.math.BigDecimal.ZERO);
         AtomicReference<String> pOPassFlagRef = new AtomicReference<>(null);
         AtomicReference<String> pOSucceedRef = new AtomicReference<>(null);

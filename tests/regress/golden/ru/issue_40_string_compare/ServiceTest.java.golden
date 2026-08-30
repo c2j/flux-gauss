@@ -28,7 +28,7 @@ class Issue40CompareServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procCheckStatus_success() {
-        String pStatus = "test_pStatus";
+        String pStatus = "test_p_status";
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
         service.procCheckStatus(pStatus, pResultRef);
     }
@@ -36,8 +36,8 @@ class Issue40CompareServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procValidateLevel_success() {
-        String pLevel = "test_pLevel";
-        String pMinLevel = "test_pMinLevel";
+        String pLevel = "test_p_level";
+        String pMinLevel = "test_p_min_level";
         AtomicReference<Boolean> pIsValidRef = new AtomicReference<>(null);
         service.procValidateLevel(pLevel, pMinLevel, pIsValidRef);
     }
@@ -45,8 +45,8 @@ class Issue40CompareServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procCompareVersions_success() {
-        String pVersion = "test_pVersion";
-        String pMinVer = "test_pMinVer";
+        String pVersion = "test_p_version";
+        String pMinVer = "test_p_min_ver";
         AtomicReference<Boolean> pOkRef = new AtomicReference<>(null);
         service.procCompareVersions(pVersion, pMinVer, pOkRef);
     }

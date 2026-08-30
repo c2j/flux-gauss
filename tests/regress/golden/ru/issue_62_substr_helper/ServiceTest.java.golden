@@ -28,7 +28,7 @@ class Issue62SubstrServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procSubstrBasic_success() {
-        String pId = "test_pId";
+        String pId = "test_p_id";
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
         service.procSubstrBasic(pId, pResultRef);
     }

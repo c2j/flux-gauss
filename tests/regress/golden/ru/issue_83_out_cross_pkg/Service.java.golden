@@ -1,0 +1,68 @@
+// ===== FILE: CalleeService.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.CalleeMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_83_out_cross_pkg.sql
+public class CalleeService {
+    private static final Logger log = LoggerFactory.getLogger(CalleeService.class);
+
+    private final CalleeMapper calleeMapper;
+
+    public CalleeService(CalleeMapper calleeMapper) {
+        this.calleeMapper = calleeMapper;
+    }
+
+    // Source: pkg_callee.plan_increment (PROCEDURE) — {FIXTURES_ROOT}/issue_83_out_cross_pkg.sql:8-11
+    public void planIncrement(String pSource, AtomicReference<Long> pIdFrom, AtomicReference<Long> pIdTo) {
+        // Auto-generated from stored procedure
+    }
+
+    // Source: pkg_callee.build_incremental (PROCEDURE) — {FIXTURES_ROOT}/issue_83_out_cross_pkg.sql:13-16
+    public void buildIncremental(String pRunId, AtomicReference<Long> pRows, AtomicReference<Long> pMonths) {
+        // Auto-generated from stored procedure
+    }
+}
+
+// ===== FILE: CallerService.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.CallerMapper;
+import com.example.demo.service.CalleeService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_83_out_cross_pkg.sql
+public class CallerService {
+    private static final Logger log = LoggerFactory.getLogger(CallerService.class);
+
+    private final CallerMapper callerMapper;
+    private final CalleeService calleeService;
+
+    public CallerService(CallerMapper callerMapper, CalleeService calleeService) {
+        this.callerMapper = callerMapper;
+        this.calleeService = calleeService;
+    }
+
+    // Source: pkg_caller.run_daily (PROCEDURE) — {FIXTURES_ROOT}/issue_83_out_cross_pkg.sql:26-35
+    public void runDaily(String pRunId) {
+        AtomicReference<Long> vMonths = new AtomicReference<>(1L);
+        AtomicReference<Long> vRows = new AtomicReference<>(1L);
+        calleeService.buildIncremental(pRunId, vRows, vMonths);
+        if (java.util.Optional.ofNullable((Number) vRows.get()).map(Number::longValue).orElse(0L) > 0) {
+        }
+        calleeService.planIncrement("x", vRows, vMonths);
+    }
+}

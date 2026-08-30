@@ -28,7 +28,7 @@ class Issue38MainServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procDoWork_success() {
-        String pInput = "test_pInput";
+        String pInput = "test_p_input";
         AtomicReference<String> pStatusRef = new AtomicReference<>(null);
         service.procDoWork(pInput, pStatusRef);
     }
@@ -36,8 +36,8 @@ class Issue38MainServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procCrossSetError_success() {
-        String pCode = "test_pCode";
-        String pMsg = "test_pMsg";
+        String pCode = "test_p_code";
+        String pMsg = "test_p_msg";
         service.procCrossSetError(pCode, pMsg);
     }
 

@@ -313,23 +313,23 @@ pub async fn run_mcp_server() -> anyhow::Result<()> {
 fn validate_error_to_json(err: &ogsql_parser::ParserError) -> ValidateErrorJson {
     match err {
         ogsql_parser::ParserError::UnexpectedToken { location, expected, got } => ValidateErrorJson {
-            line: location.line as usize,
-            column: location.column as usize,
+            line: location.line,
+            column: location.column,
             message: format!("Expected {}, got {}", expected, got),
         },
         ogsql_parser::ParserError::UnexpectedEof { expected, location } => ValidateErrorJson {
-            line: location.line as usize,
-            column: location.column as usize,
+            line: location.line,
+            column: location.column,
             message: format!("Unexpected end of input, expected {}", expected),
         },
         ogsql_parser::ParserError::ReservedKeywordAsIdentifier { keyword, location } => ValidateErrorJson {
-            line: location.line as usize,
-            column: location.column as usize,
+            line: location.line,
+            column: location.column,
             message: format!("Reserved keyword '{}' cannot be used as identifier", keyword),
         },
         ogsql_parser::ParserError::UnsupportedSyntax { location, syntax, hint } => ValidateErrorJson {
-            line: location.line as usize,
-            column: location.column as usize,
+            line: location.line,
+            column: location.column,
             message: format!("{} ({})", syntax, hint),
         },
         ogsql_parser::ParserError::Warning { message, location: _, level: _ } => {
@@ -361,9 +361,11 @@ fn resolve_convert_inputs(
         }
     };
 
-    let mut config = fluxgauss::config::AppConfig::default();
-    config.sources = req.files.clone();
-    config.output_dir = Some(output_dir.clone());
+    let config = fluxgauss::config::AppConfig {
+        sources: req.files.clone(),
+        output_dir: Some(output_dir.clone()),
+        ..Default::default()
+    };
 
     Ok((config, sql_files, output_dir))
 }

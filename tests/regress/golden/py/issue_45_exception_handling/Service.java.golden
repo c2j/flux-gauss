@@ -23,7 +23,7 @@ public class Issue45ExceptionHandlingService {
         try {
             pOSucceed.set(null);
             pOSecurityId.set(null);
-            vSecurityId = issue45ExceptionHandlingMapper.selectTIssue45Security(pSecurityCode);
+            vSecurityId = String.valueOf(issue45ExceptionHandlingMapper.selectTIssue45Security(pSecurityCode));
             if (vSecurityId == null) {
                 try {
                     // SqlStatement
@@ -48,7 +48,7 @@ public class Issue45ExceptionHandlingService {
         String vId = null;
         try {
             pResult.set(null);
-            vId = issue45ExceptionHandlingMapper.selectTIssue45Security_1(pSecurityCode);
+            vId = String.valueOf(issue45ExceptionHandlingMapper.selectTIssue45Security_1(pSecurityCode));
             pResult.set("OK: " + vId);
         } catch (Exception e) { // EXCEPTION handlers — src: issue_45_exception_handling.sql:104
             pResult.set("ERROR: " + e.getMessage());
@@ -61,7 +61,7 @@ public class Issue45ExceptionHandlingService {
         try {
             pMsg.set(null);
             try {
-                vValue = issue45ExceptionHandlingMapper.selectTIssue45Security_2(pCode);
+                vValue = String.valueOf(issue45ExceptionHandlingMapper.selectTIssue45Security_2(pCode));
                 pMsg.set("VALUE: " + vValue);
             } catch (Exception e) { // no_data_found; OTHERS
                 // WHEN no_data_found

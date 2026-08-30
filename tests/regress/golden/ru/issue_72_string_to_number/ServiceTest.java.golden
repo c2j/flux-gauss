@@ -36,7 +36,7 @@ class Issue72ServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_prcStrMethodWall_success() {
-        String pIn = "test_pIn";
+        String pIn = "test_p_in";
         AtomicReference<String> pOSucceedRef = new AtomicReference<>(null);
         service.prcStrMethodWall(pIn, pOSucceedRef);
     }

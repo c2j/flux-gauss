@@ -52,15 +52,22 @@ jobs:
     steps:
       - name: Checkout flux-gauss
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - name: Run Rust tests
         run: cargo test --workspace
 
       - name: Run Rust regression tests
         run: cargo test --test regress
+
+      - name: Clippy gate (zero warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Build and run Rust converter
         run: |
@@ -84,6 +91,8 @@ jobs:
     steps:
       - name: Checkout flux-gauss
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -136,6 +145,8 @@ jobs:
     steps:
       - name: Checkout flux-gauss
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Download ogsql
         uses: actions/download-artifact@v4

@@ -1,0 +1,34 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue108cBdReturnArithCalleeMapper;
+import com.example.demo.service.Issue108cBdReturnArithCalleeService;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class Issue108cBdReturnArithCalleeServiceTest {
+
+    @Mock
+    private Issue108cBdReturnArithCalleeMapper issue108cBdReturnArithCalleeMapper;
+
+    @InjectMocks
+    private Issue108cBdReturnArithCalleeService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_fnAvgAmount_success() {
+        Integer pId = 1;
+        var _rowTmpl = new java.util.HashMap<String,Object>();
+        var result = service.fnAvgAmount(pId);
+        assertNotNull(result);
+    }
+}
