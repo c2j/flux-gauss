@@ -984,6 +984,16 @@ fn expr_to_java_impl(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> St
         Expr::Default => "null".into(),
         Expr::Prior(_) => "null".into(),
         Expr::SysDate => "new java.sql.Timestamp(System.currentTimeMillis())".into(),
+        Expr::AtTimeZone { expr, zone } => {
+            // `expr AT TIME ZONE zone` → rezoned Timestamp (downstream contexts
+            // like DATE_TRUNC call .toInstant() on the result)
+            let inner = expr_to_java(expr, proc);
+            let zone_java = expr_to_java(zone, proc);
+            format!(
+                "java.sql.Timestamp.valueOf({}.toInstant().atZone(java.time.ZoneId.of({})).toLocalDateTime())",
+                inner, zone_java
+            )
+        }
         _ => "null".into(),
     }
 }
@@ -3003,6 +3013,34 @@ mod tests {
             out
         );
         assert!(out.starts_with("oMonths.set("), "must use .set(), got: {}", out);
+    }
+
+    #[test]
+    fn test_at_time_zone_expr_generates_zone_chain() {
+        // ogagila EtlCore:63 — `now() AT TIME ZONE 'UTC'` must map to the
+        // atZone(ZoneId.of(...)) chain; the previous fall-through emitted `null`
+        // → `null.toInstant()` compile error.
+        let proc = empty_proc();
+        let expr = ogsql_parser::ast::Expr::AtTimeZone {
+            expr: Box::new(ogsql_parser::ast::Expr::FunctionCall {
+                name: vec!["now".into()],
+                args: vec![],
+                distinct: false,
+                over: None,
+                filter: None,
+                within_group: vec![],
+                separator: None,
+                default: None,
+                conversion_format: None,
+                builtin: None,
+                agg_from: None,
+            }),
+            zone: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String("UTC".into()))),
+        };
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains("atZone(java.time.ZoneId.of(\"UTC\"))"), "got: {}", out);
+        assert!(!out.contains("null.toInstant"), "must not emit null.toInstant, got: {}", out);
+        assert!(!out.starts_with("null"), "AtTimeZone must not fall through to null, got: {}", out);
     }
 
     #[test]
