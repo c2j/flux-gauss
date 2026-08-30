@@ -980,6 +980,7 @@ class ProcedureInfo:
     imports: set = field(default_factory=set)
     local_vars: dict = field(default_factory=dict)
     local_var_defaults: dict = field(default_factory=dict)
+    rowtype_field_types: dict = field(default_factory=dict)
     table_refs: set = field(default_factory=set)
     var_assignments: dict = field(default_factory=dict)
     dynamic_sql_templates: dict = field(default_factory=dict)  # var_name -> (sql_template, param_list)
@@ -2501,6 +2502,22 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
                 else:
                     java_type = sql_type_to_java(raw_type)
                 proc.local_vars[var_name] = java_type
+                # %ROWTYPE: capture the table name to resolve field types from DDL
+                _rt_table = None
+                if isinstance(raw_type, dict) and "PercentRowType" in raw_type:
+                    _rt = raw_type["PercentRowType"]
+                    _rt_table = _rt if isinstance(_rt, str) else (_rt.get("table") or _rt.get("type_name") or "")
+                elif isinstance(raw_type, str) and "%rowtype" in raw_type.lower():
+                    _m = re.match(r'^([\w.]+)\s*%rowtype', raw_type, re.IGNORECASE)
+                    if _m:
+                        _rt_table = _m.group(1)
+                if _rt_table:
+                    _rt_tbl_lower = str(_rt_table).split('.')[-1].lower()
+                    _field_types = {}
+                    for (_tbl, _col), _sql_type in list(TYPE_OVERRIDES.items()):
+                        if _tbl.lower() == _rt_tbl_lower:
+                            _field_types[_col] = sql_type_to_java(_sql_type)
+                    proc.rowtype_field_types[var_name] = _field_types
                 if DEBUG_MODE:
                     _decl_line = _find_var_decl_line(proc, var_name)
                     if _decl_line:
@@ -9920,7 +9937,19 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     field_key = field_name.lower()
                     if not as_read:
                         return f'__MAP_PUT__{var_java}__{field_key}'
-                    return f'{var_java}.get("{field_key}")'
+                    raw_get = f'{var_java}.get("{field_key}")'
+                    _rt_fields = (proc.rowtype_field_types.get(var_name_raw) if proc else None) or {}
+                    _ft = _rt_fields.get(field_key) or _rt_fields.get(field_name)
+                    if _ft:
+                        if "Timestamp" in _ft:
+                            return f'((java.sql.Timestamp) {raw_get})'
+                        if _ft in ("Long", "long"):
+                            return f'({raw_get} == null ? null : ((Number) {raw_get}).longValue())'
+                        if _ft in ("Integer", "int"):
+                            return f'({raw_get} == null ? null : ((Number) {raw_get}).intValue())'
+                        if "BigDecimal" in _ft:
+                            return f'({raw_get} == null ? null : new java.math.BigDecimal(String.valueOf({raw_get})))'
+                    return raw_get
             java_name = snake_to_camel(name)
             if proc is not None and name:
                 _is_local = name in proc.local_vars
@@ -10283,9 +10312,6 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     return f"({x} != null ? Double.parseDouble(String.valueOf({x})) : 0.0d)"
                 return f"((Number) ({x})).doubleValue()"
 
-            if op in ("+", "-", "*", "/") and (_left_str or _right_str or ".get(" in left or ".get(" in right):
-                # Oracle/Gauss `+` on VARCHAR2 is numeric addition; concat is `||`.
-                return f"({_num_operand(left, _left_str)} {java_op} {_num_operand(right, _right_str)})"
             _is_ts_left = "Timestamp" in left_type or "Timestamp" in left or "java.sql.Date" in left or left_type in ("java.sql.Date", "java.util.Date")
             _is_ts_right = "Timestamp" in right_type or "Timestamp" in right or "java.sql.Date" in right or right_type in ("java.sql.Date", "java.util.Date")
             _is_dur_left = ".toMillis()" in left
@@ -10295,6 +10321,9 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                               ".getMinute()", ".getSecond()", ".toLocalDate()")
             _left_is_extract = any(left.rstrip().endswith(t) for t in _extract_tails)
             _right_is_extract = any(right.rstrip().endswith(t) for t in _extract_tails)
+            if op in ("+", "-", "*", "/") and not (_is_ts_left or _is_ts_right) and (_left_str or _right_str or ".get(" in left or ".get(" in right):
+                # Oracle/Gauss `+` on VARCHAR2 is numeric addition; concat is `||`.
+                return f"({_num_operand(left, _left_str)} {java_op} {_num_operand(right, _right_str)})"
             if op == "-" and _is_ts_left and _is_ts_right:
                 if _left_is_extract or _right_is_extract:
                     return f"({left} - {right})"
@@ -10307,6 +10336,13 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 return f"new java.sql.Timestamp({left}.getTime() + {right})"
             if op == "+" and _is_ts_right and _is_dur_left:
                 return f"new java.sql.Timestamp({right}.getTime() + {left})"
+            if op == "-" and (_is_ts_left or _is_ts_right) and not (_is_ts_left and _is_ts_right):
+                # Timestamp minus a non-timestamp (interval/days value) → epoch arithmetic
+                _ts_side, _other = (left, right) if _is_ts_left else (right, left)
+                _other_d = f"((Number) ({_other} != null ? {_other} : 0L)).longValue()" if ".get(" in _other else f"((Number) ({_other})).longValue()"
+                if _is_ts_left:
+                    return f"new java.sql.Timestamp({_ts_side}.getTime() - {_other_d} * 86400000L)"
+                return f"new java.sql.Timestamp({_ts_side}.getTime() + {_other_d} * 86400000L)"
             if op == "+" and _is_ts_left and right_type in ("Long", "long", "Integer", "int", "Double", "double", "Float", "float", "java.math.BigDecimal", "BigDecimal"):
                 return f"new java.sql.Date({left}.getTime() + ((Number) ({right})).longValue() * 86400000L)"
             if op == "+" and _is_ts_right and left_type in ("Long", "long", "Integer", "int", "Double", "double", "Float", "float", "java.math.BigDecimal", "BigDecimal"):
