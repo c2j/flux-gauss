@@ -3,9 +3,9 @@
   "fixture": "issue_72b_math_string_args.sql",
   "package_name": "issue_72b_math_string_args",
   "files": {
-    "Service.java": "bbcd41a37210b645",
+    "Service.java": "bb6625c8611dfc6e",
     "Mapper.java": "d21e217552e74c95",
     "Mapper.xml": "337efdc8d6bde57e",
-    "ServiceTest.java": "5cf5ae6b7c2f99b0"
+    "ServiceTest.java": "718726b439a26b28"
   }
 }

@@ -3,9 +3,9 @@
   "fixture": "issue_40_string_compare.sql",
   "package_name": "issue_40_string_compare",
   "files": {
-    "Service.java": "7a4fffc349b7a1ad",
+    "Service.java": "bde9f45960a921f1",
     "Mapper.java": "79a692fae6dba825",
     "Mapper.xml": "02befcdaedbbafd0",
-    "ServiceTest.java": "ce6165dd30c1de90"
+    "ServiceTest.java": "90f9d2870fd24801"
   }
 }

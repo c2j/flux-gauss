@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_62_substr_helper.sql",
+  "package_name": "issue_62_substr_helper",
+  "files": {
+    "Service.java": "ea95693f5b36f6b3",
+    "Mapper.java": "bf1d34c2c994faf7",
+    "Mapper.xml": "a7a064c3f2232143",
+    "ServiceTest.java": "7602e64452577c07"
+  }
+}

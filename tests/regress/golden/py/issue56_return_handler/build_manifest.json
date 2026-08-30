@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "pkg_issue56_return_handler.sql",
+  "package_name": "issue56_return_handler",
+  "files": {
+    "Service.java": "e4dea1303ab824bc",
+    "Mapper.java": "df49217d584b8421",
+    "Mapper.xml": "98de0e97e4c20a23",
+    "ServiceTest.java": "1e6094e3b01ecf56"
+  }
+}

@@ -14064,7 +14064,7 @@ def _domain_test_value(proc: ProcedureInfo, param, pkg=None) -> str:
         if dv and dv.lower() != "null":
             if (dv.startswith("'") and dv.endswith("'")) or (dv.startswith('"') and dv.endswith('"')):
                 inner = dv[1:-1]
-                if inner.isdigit():
+                if inner.isdigit() and "string" not in param.java_type.lower():
                     return inner
                 return f'"{inner}"'
             if re.match(r'^-?\d+(\.\d+)?$', dv):
@@ -14279,10 +14279,13 @@ def _build_success_test(proc: ProcedureInfo, mapper_name: str,
     is_stubbed = (proc.name, len(proc.parameters)) in STUB_PROCEDURES
     has_empty_body = len(proc.java_logic_lines) == 0
     has_body_error = any("// ERROR:" in line for line in proc.java_logic_lines)
+    # #100: unhandled statement types (RETURN NEXT/QUERY etc.) produce a null-returning
+    # stub — the generated test must not assert non-null against it.
+    has_unhandled_stmt = any("unhandled PL/pgSQL statement type" in line for line in proc.java_logic_lines)
     if is_function:
         lines.append(f"        var result = service.{method_name}({args_str});")
-        if is_stubbed or has_empty_body or has_body_error:
-            lines.append(f"        // Stub/empty/error implementation — result may be null")
+        if is_stubbed or has_empty_body or has_body_error or has_unhandled_stmt:
+            lines.append(f"        // Stub/empty/error/unhandled implementation — result may be null")
         else:
             lines.append(f"        assertNotNull(result);")
     else:
@@ -14563,16 +14566,21 @@ def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bo
             puts = _with_extra_keys(mock_fields)
             return f"        {{ var m = new java.util.HashMap<String,Object>(); {puts} when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }}"
         return f"        {{ var m = new java.util.HashMap<String,Object>(); m.putAll(_rowTmpl); m.put(\"id\", 1); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }}"
+    _is_count_query = "count" in dml_method_id.lower() or bool(re.search(r'\bcount\s*\(', (dml_sql_text or "").lower()))
     if dml_result_type == "Integer":
-        return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(999);"
+        return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(0);" if _is_count_query else f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(999);"
     if dml_result_type == "Long":
-        return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(999L);"
+        return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(0L);" if _is_count_query else f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(999L);"
     if dml_result_type == "String":
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(\"1\");"
     if dml_result_type == "Boolean":
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(true);"
     if dml_result_type == "java.math.BigDecimal":
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.math.BigDecimal.TEN);"
+    if "Timestamp" in (dml_result_type or ""):
+        return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.sql.Timestamp.valueOf(\"2024-01-01 00:00:00\"));"
+    if "Date" in (dml_result_type or ""):
+        return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.sql.Date.valueOf(\"2024-01-01\"));"
     if dml_result_type and dml_result_type not in ("Map<String, Object>", "java.util.Map"):
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(null);"
     mock_fields = _extract_mock_fields_from_sql(dml_sql_text)

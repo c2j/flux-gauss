@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "pkg_string_helper_coercion.sql",
+  "package_name": "string_helper_coercion",
+  "files": {
+    "Service.java": "a95bc1b365b42bc8",
+    "Mapper.java": "8d38b4243c1393d5",
+    "Mapper.xml": "c6f2718b6428d2f0",
+    "ServiceTest.java": "f276616c7f885085"
+  }
+}

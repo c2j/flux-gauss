@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_108c_bd_return_arith_caller.sql",
+  "package_name": "issue_108c_bd_return_arith_caller",
+  "files": {
+    "Service.java": "d5fe291a58cbabf0",
+    "Mapper.java": "e40a5da7f0927dff",
+    "Mapper.xml": "6dbbe9cfa51d8f5a",
+    "ServiceTest.java": "b79ac75c600d1a3c"
+  }
+}

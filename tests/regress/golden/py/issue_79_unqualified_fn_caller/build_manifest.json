@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_79_unqualified_fn_caller.sql",
+  "package_name": "issue_79_unqualified_fn_caller",
+  "files": {
+    "Service.java": "f7fda9a1d04e82bf",
+    "Mapper.java": "e89e0116750cdb79",
+    "Mapper.xml": "93f0f726177c72f9",
+    "ServiceTest.java": "9b1c7c2118ecd6f9"
+  }
+}

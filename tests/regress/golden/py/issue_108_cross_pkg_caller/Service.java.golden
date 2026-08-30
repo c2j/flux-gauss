@@ -1,0 +1,34 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue108CrossPkgCallerMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue108CrossPkgCallerService {
+    private static final Logger log = LoggerFactory.getLogger(Issue108CrossPkgCallerService.class);
+
+    private final Issue108CrossPkgCallerMapper issue108CrossPkgCallerMapper;
+
+    public Issue108CrossPkgCallerService(Issue108CrossPkgCallerMapper issue108CrossPkgCallerMapper) {
+        this.issue108CrossPkgCallerMapper = issue108CrossPkgCallerMapper;
+    }
+    // Source: prc_call_cross_pkg (PROCEDURE) — issue_108_cross_pkg_caller.sql:1-17
+    public void prcCallCrossPkg(String pIDate) {
+        Long vDeclBonus = /* TODO: implement fn_calc_bonus(12000, 0.10d, 2) — pkg=?, ret=?, args=[Integer, Double, Integer], caller=issue_108_cross_pkg_caller.sql:prc_call_cross_pkg */ null;
+        Long vBonus = 0L;
+        String vName = null;
+        Long vSum = Long.valueOf(0);
+        vBonus = (long) (0L);
+        // CALL prc_get_emp_name(...)
+        for (int i = 1; i <= 10; i++) {
+            vSum = vSum + i;
+        }
+        for (int i = 1; i <= 20; i++) {
+            vSum = vSum + i;
+        }
+    }
+}

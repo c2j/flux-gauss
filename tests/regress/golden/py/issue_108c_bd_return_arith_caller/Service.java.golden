@@ -1,0 +1,24 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue108cBdReturnArithCallerMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue108cBdReturnArithCallerService {
+    private static final Logger log = LoggerFactory.getLogger(Issue108cBdReturnArithCallerService.class);
+
+    private final Issue108cBdReturnArithCallerMapper issue108cBdReturnArithCallerMapper;
+
+    public Issue108cBdReturnArithCallerService(Issue108cBdReturnArithCallerMapper issue108cBdReturnArithCallerMapper) {
+        this.issue108cBdReturnArithCallerMapper = issue108cBdReturnArithCallerMapper;
+    }
+    // Source: prc_bd_return_arith (PROCEDURE) — issue_108c_bd_return_arith_caller.sql:1-7
+    public void prcBdReturnArith(Integer pIId) {
+        java.math.BigDecimal vThreshold = java.math.BigDecimal.ZERO;
+        vThreshold = java.math.BigDecimal.ZERO;
+    }
+}

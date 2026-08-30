@@ -3,9 +3,9 @@
   "fixture": "issue_44_if_elsif_goto_2.sql",
   "package_name": "issue_44_if_elsif_goto_2",
   "files": {
-    "Service.java": "c0a1a2b44e6856a2",
+    "Service.java": "17cc825d3bb83e49",
     "Mapper.java": "b1e25370cc894960",
     "Mapper.xml": "8183383bed6ecf60",
-    "ServiceTest.java": "d0512c4243a076ed"
+    "ServiceTest.java": "57917049c428085f"
   }
 }

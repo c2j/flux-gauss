@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_63_varchar2_return.sql",
+  "package_name": "issue_63_varchar2_return",
+  "files": {
+    "Service.java": "0dc394e6f66be101",
+    "Mapper.java": "8a692719375e6869",
+    "Mapper.xml": "22b9fe641d16f72e",
+    "ServiceTest.java": "170302f893df684a"
+  }
+}

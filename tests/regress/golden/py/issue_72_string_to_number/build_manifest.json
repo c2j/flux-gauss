@@ -3,9 +3,9 @@
   "fixture": "issue_72_string_to_number.sql",
   "package_name": "issue_72_string_to_number",
   "files": {
-    "Service.java": "4fd1ce5ca024b307",
+    "Service.java": "14f03726a5079f17",
     "Mapper.java": "6ac086785c4c4541",
     "Mapper.xml": "ad60a831c9ad8ba7",
-    "ServiceTest.java": "47da6b68ed90dda9"
+    "ServiceTest.java": "d1a9a6946d5153d9"
   }
 }
