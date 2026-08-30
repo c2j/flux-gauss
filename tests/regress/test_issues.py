@@ -23,6 +23,57 @@ from tests.regress.conftest import (
 )
 
 
+class TestIssue75_DeadReturnBraceBalance:
+    """#75: a bare top-level RETURN; followed by unreachable blocks must not
+    leave orphan `}` closers (brace imbalance) that force the procedure to
+    be stubbed."""
+
+    @staticmethod
+    def _convert(tmp_path):
+        import yaml
+
+        cfg = {
+            "output_dir": str(tmp_path / "dest"),
+            "base_package": "com.example.demo",
+            "sources": [os.path.join(FIXTURES_DIR, "issue_75_exception_in_loop.sql")],
+        }
+        cfg_path = tmp_path / "issue75.yaml"
+        cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(Path(fg.__file__).resolve()),
+                "-c",
+                str(cfg_path),
+                "--skip-validate",
+                "--full",
+            ],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "OGSQL_BIN": fg.OGSQL_BIN},
+            timeout=120,
+        )
+        assert result.returncode == 0, (
+            f"conversion failed:\n{result.stdout[-800:]}\n{result.stderr[-800:]}"
+        )
+        service = next((tmp_path / "dest" / "src/main/java").rglob("*Service.java"), None)
+        assert service is not None, "no Service.java generated"
+        return service.read_text(encoding="utf-8")
+
+    def test_dead_return_not_stubbed_and_balanced(self, tmp_path):
+        content = self._convert(tmp_path)
+        assert "Auto-generated stub" not in content, (
+            "bare top-level RETURN must not force the procedure into a stub"
+        )
+        m = re.search(r"public void pIssue75DeadReturn.*?\n    \}", content, re.DOTALL)
+        assert m is not None, "pIssue75DeadReturn method not found"
+        body = m.group(0)
+        assert body.count("{") - body.count("}") == 0, (
+            "method must have balanced braces (no orphan closers after dead code strip)"
+        )
+        assert re.search(r"return;", body), "the bare top-level RETURN must be preserved"
+
+
 class TestIssue100_SetofReturnNext:
     """#100: SETOF functions with RETURN NEXT must accumulate rows into a
     result list and return it at method end — not a TODO stub."""

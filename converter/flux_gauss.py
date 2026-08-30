@@ -13570,11 +13570,23 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
             for l in _trailing
         )
         if _has_unreachable:
+            # Issue #75: dropping unreachable code must not leave orphan `}`
+            # closers behind (their `{` opener was in the dropped code), which
+            # produced brace imbalance (e.g. delta=-16 on fastaas
+            # prc_split_sh_zqztg whose SQL carries a bare top-level RETURN;).
             _kept = []
+            _pending = 0
             for l in _trailing:
                 s = l.strip()
-                if not s or s.startswith("//") or s == "}" or s.startswith("/*"):
+                if not s or s.startswith("//") or s.startswith("/*"):
                     _kept.append(l)
+                    continue
+                _pending += s.count("{") - s.count("}")
+                if _pending < 0:
+                    _pending = 0
+                    continue
+                if s == "}" and _pending == 0:
+                    continue
             body_lines = body_lines[:_last_ret + 1] + _kept
 
     has_complex_issues, _failed_checks = _has_compilation_issues(body_lines, out_params, proc)

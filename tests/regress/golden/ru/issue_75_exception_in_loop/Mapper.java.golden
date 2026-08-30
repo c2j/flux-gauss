@@ -1,0 +1,12 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue75ExceptionInLoopMapper {
+
+    // {FIXTURES_ROOT}/issue_75_exception_in_loop.sql:4 — p_issue75_dead_return
+    int deleteTIssue75();
+    // {FIXTURES_ROOT}/issue_75_exception_in_loop.sql:4 — p_issue75_dead_return
+    int insertTIssue75(@Param("i") int i);
+}
