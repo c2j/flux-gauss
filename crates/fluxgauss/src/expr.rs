@@ -2217,6 +2217,14 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             };
             if unit_raw == "quarter" {
                 format!("java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({}.toInstant(), java.time.ZoneId.systemDefault()).truncatedTo(java.time.temporal.ChronoUnit.DAYS).withMonth(((java.time.LocalDateTime.ofInstant({}.toInstant(), java.time.ZoneId.systemDefault()).getMonthValue() - 1) / 3) * 3 + 1).withDayOfMonth(1))", jargs[1], jargs[1])
+            } else if chrono_unit.contains("MONTHS") {
+                // LocalDateTime.truncatedTo only accepts time units; date units
+                // need withDayOfMonth(1) + truncate to DAYS.
+                format!("java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({}.toInstant(), java.time.ZoneId.systemDefault()).withDayOfMonth(1).truncatedTo(java.time.temporal.ChronoUnit.DAYS))", jargs[1])
+            } else if chrono_unit.contains("YEARS") {
+                format!("java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({}.toInstant(), java.time.ZoneId.systemDefault()).withDayOfYear(1).truncatedTo(java.time.temporal.ChronoUnit.DAYS))", jargs[1])
+            } else if chrono_unit.contains("WEEKS") {
+                format!("java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({}.toInstant(), java.time.ZoneId.systemDefault()).with(java.time.DayOfWeek.MONDAY).truncatedTo(java.time.temporal.ChronoUnit.DAYS))", jargs[1])
             } else {
                 format!("java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({}.toInstant(), java.time.ZoneId.systemDefault()).truncatedTo({}))", jargs[1], chrono_unit)
             }
@@ -2802,8 +2810,15 @@ fn type_cast_to_java(expr: &ogsql_parser::ast::Expr, type_name: &str, proc: &Pro
         s if s.contains("bool") => format!("((Boolean) {})", inner),
         s if s.contains("timestamp") => {
             if inner.starts_with('"') {
-                // timestamptz '1970-01-01' — string literal must parse, not cast
-                format!("java.sql.Timestamp.valueOf({})", inner)
+                // timestamptz '1970-01-01' — string literal must parse, not cast;
+                // Timestamp.valueOf requires the time part, pad date-only literals.
+                let lit = &inner[1..inner.len() - 1];
+                let padded = if lit.len() <= 10 && !lit.contains(':') {
+                    format!("{} 00:00:00", lit)
+                } else {
+                    lit.to_string()
+                };
+                format!("java.sql.Timestamp.valueOf(\"{}\")", padded)
             } else {
                 format!("((java.sql.Timestamp) {})", inner)
             }

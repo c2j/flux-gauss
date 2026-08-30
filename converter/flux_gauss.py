@@ -8907,9 +8907,20 @@ def _handle_function(func_name, args_java, proc):
         unit = _DATE_TRUNC_UNIT_MAP.get(field_raw, "ChronoUnit.DAYS")
         ts_expr = args_java[1]
         if not (ts_expr.startswith("new java.sql.Timestamp") or ts_expr.startswith("java.sql.Timestamp.valueOf") or ts_expr.startswith("new java.sql.Date")):
-            ts_expr = f"java.sql.Timestamp.valueOf(String.valueOf({args_java[1]}))"
+            # Date-typed source: String.valueOf(date) lacks the time part
+            _arg_t = _infer_target_type(args_java[1], proc) if proc else ""
+            if "Date" in _arg_t and "Timestamp" not in _arg_t:
+                ts_expr = f"new java.sql.Timestamp({args_java[1]}.getTime())"
+            else:
+                ts_expr = f"java.sql.Timestamp.valueOf(String.valueOf({args_java[1]}))"
         if "MONTHS" in unit and field_raw == "quarter":
             return f"java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({ts_expr}.toInstant(), java.time.ZoneId.systemDefault()).truncatedTo(java.time.temporal.ChronoUnit.DAYS).withMonth(((java.time.LocalDateTime.ofInstant({ts_expr}.toInstant(), java.time.ZoneId.systemDefault()).getMonthValue() - 1) / 3) * 3 + 1).withDayOfMonth(1))"
+        if "MONTHS" in unit:
+            return f"java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({ts_expr}.toInstant(), java.time.ZoneId.systemDefault()).withDayOfMonth(1).truncatedTo(java.time.temporal.ChronoUnit.DAYS))"
+        if "YEARS" in unit:
+            return f"java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({ts_expr}.toInstant(), java.time.ZoneId.systemDefault()).withDayOfYear(1).truncatedTo(java.time.temporal.ChronoUnit.DAYS))"
+        if "WEEKS" in unit:
+            return f"java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({ts_expr}.toInstant(), java.time.ZoneId.systemDefault()).with(java.time.DayOfWeek.MONDAY).truncatedTo(java.time.temporal.ChronoUnit.DAYS))"
         return f"java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({ts_expr}.toInstant(), java.time.ZoneId.systemDefault()).truncatedTo(java.time.temporal.{unit}))"
 
     elif func_name == "translate":
@@ -10830,6 +10841,13 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             if _tc_name in ("timestamp", "timestamptz", "timestamp with time zone", "timestamp without time zone"):
                 if _inner.strip().startswith("new java.sql.Timestamp") or "java.sql.Timestamp.valueOf" in _inner:
                     return _inner
+                _s = _inner.strip()
+                if len(_s) >= 2 and _s[0] == '"' and _s[-1] == '"' and len(_s[1:-1]) <= 10 and ":" not in _s[1:-1]:
+                    return f'java.sql.Timestamp.valueOf("{_s[1:-1]} 00:00:00")'
+                _it = _infer_expr_type(_tc_expr, proc) if proc else ""
+                if "Date" in _it and "Timestamp" not in _it:
+                    # Date-typed source: String.valueOf(date) lacks the time part
+                    return f"new java.sql.Timestamp({_inner}.getTime())"
                 return f"java.sql.Timestamp.valueOf(String.valueOf({_inner}))"
             return _inner
         elif key == "AtTimeZone":
@@ -14053,8 +14071,14 @@ def _domain_test_value(proc: ProcedureInfo, param, pkg=None) -> str:
             if lits:
                 return f'"{lits[0]}"'
     # 2. Date-prefix usage: `to_date(x || '-01')` appears in declaration
-    # defaults (local_var_defaults) or arithmetic lines.
+    # defaults (local_var_defaults) or arithmetic lines. Scan the whole pkg:
+    # a param may be validated inside a cross-called method (verifyFingerprint
+    # → takeFingerprint).
     _date_ctx_lines = list(proc.java_logic_lines) + list(proc.local_var_defaults.values())
+    if pkg is not None:
+        for _pp in getattr(pkg, "procedures", []):
+            _date_ctx_lines.extend(_pp.java_logic_lines)
+            _date_ctx_lines.extend(getattr(_pp, "local_var_defaults", {}).values())
     for line in _date_ctx_lines:
         if re.search(re.escape(jn) + r'\s*\+\s*"-0[1-9]"', line) or re.search(re.escape(jn) + r"\s*\|\|\s*'-0[1-9]'", line):
             return '"2024-01"'
@@ -14487,8 +14511,10 @@ def _mock_value_for_column(col_name: str) -> str:
         return "\"test\""
     if any(k in n for k in ("count", "qty", "quantity", "num", "head_count")):
         return "5"
-    if any(k in n for k in ("date", "time", "created", "updated")):
-        return "\"20240101\""
+    if any(k in n for k in ("_ts", "ts_value", "_at", "time", "timestamp")):
+        return '"2024-01-01 00:00:00"'
+    if any(k in n for k in ("date", "created", "updated")):
+        return '"20240101"'
     return "1"
 
 
@@ -14539,7 +14565,7 @@ def _extract_select_column(sql_text: str, index: int) -> str:
     return col
 
 
-def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bool, mapper_name: str, dml_method_id: str, method_any: str, dml_sql_text: str = "", returning_cols: list = None, returning_into_vars: list = None, extra_keys: list = None) -> str:
+def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bool, mapper_name: str, dml_method_id: str, method_any: str, dml_sql_text: str = "", returning_cols: list = None, returning_into_vars: list = None, extra_keys: list = None, count_usage: str = None) -> str:
     def _with_extra_keys(mock_fields: dict) -> str:
         puts = " ".join(f'm.put("{_escape_java_string(k)}", {v});' for k, v in mock_fields.items())
         return puts + " m.putAll(_rowTmpl);"
@@ -14568,9 +14594,11 @@ def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bo
         return f"        {{ var m = new java.util.HashMap<String,Object>(); m.putAll(_rowTmpl); m.put(\"id\", 1); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }}"
     _is_count_query = "count" in dml_method_id.lower() or bool(re.search(r'\bcount\s*\(', (dml_sql_text or "").lower()))
     if dml_result_type == "Integer":
-        return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(0);" if _is_count_query else f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(999);"
+        _v = ("1" if count_usage == "exists" else "0") if _is_count_query else "999"
+        return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn({_v});"
     if dml_result_type == "Long":
-        return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(0L);" if _is_count_query else f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(999L);"
+        _v = ("1L" if count_usage == "exists" else "0L") if _is_count_query else "999L"
+        return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn({_v});"
     if dml_result_type == "String":
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(\"1\");"
     if dml_result_type == "Boolean":
@@ -14608,6 +14636,31 @@ def _detect_overloaded_ids(all_dmls: dict) -> set:
     return overloaded
 
 
+def _collect_count_usage(pkg: PackageInfo) -> dict:
+    """Map dml method_id → 'exists' | 'guard' based on how the result is validated.
+
+    `v = mapper.selectX(...)` followed by `if (v == 0)` is an existence check
+    (needs mock 1); `if (v > 0)` / `if (v != 0)` is a guard (needs mock 0).
+    """
+    usage: dict = {}
+    for _p in pkg.procedures:
+        lines = _p.java_logic_lines
+        for i, line in enumerate(lines):
+            m = re.search(r'(\w+)\s*=\s*(?:this\.)?[\w]*[Mm]apper\.(\w+)\s*\(', line)
+            if not m:
+                continue
+            var, method_id = m.group(1), m.group(2)
+            for j in range(i, min(i + 3, len(lines))):
+                l2 = lines[j]
+                if re.search(r'if\s*\(\s*' + re.escape(var) + r'\s*==\s*0\s*\)', l2):
+                    usage[method_id] = 'exists'
+                    break
+                if re.search(r'if\s*\(\s*' + re.escape(var) + r'\s*(?:>\s*0|!=\s*0)\s*\)', l2):
+                    usage[method_id] = 'guard'
+                    break
+    return usage
+
+
 def _mock_all_mapper_methods(mapper_name: str, pkg: PackageInfo, lines: list, error_mode: bool = False):
     _extra_keys = []
     _key_cast = {}
@@ -14639,6 +14692,7 @@ def _mock_all_mapper_methods(mapper_name: str, pkg: PackageInfo, lines: list, er
 
     _tmpl_puts = " ".join(f'_rowTmpl.put("{_escape_java_string(k)}", {_tmpl_value(k)});' for k in _extra_keys)
     lines.append(f"        var _rowTmpl = new java.util.HashMap<String,Object>(); {_tmpl_puts}")
+    _count_usage = _collect_count_usage(pkg)
     all_dmls = _collect_all_dmls(pkg)
     overloaded = _detect_overloaded_ids(all_dmls)
     for dml_key, dml_info in all_dmls.items():
@@ -14673,7 +14727,7 @@ def _mock_all_mapper_methods(mapper_name: str, pkg: PackageInfo, lines: list, er
             else:
                 lines.append(f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(null);")
         else:
-            lines.append(_mock_select_return(dml_sql_type, dml_result_type, dml_returns_list, mapper_name, dml_method_id, method_any, dml_sql_text, dml_returning_cols, dml_returning_into_vars, extra_keys=_extra_keys))
+            lines.append(_mock_select_return(dml_sql_type, dml_result_type, dml_returns_list, mapper_name, dml_method_id, method_any, dml_sql_text, dml_returning_cols, dml_returning_into_vars, extra_keys=_extra_keys, count_usage=_count_usage.get(dml_method_id)))
 
 
 def _build_any_matchers(proc: ProcedureInfo) -> str:

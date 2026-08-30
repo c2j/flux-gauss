@@ -76,8 +76,8 @@ class WarpdriverStressTestServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
@@ -143,8 +143,8 @@ class WarpdriverStressTestServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
@@ -213,8 +213,8 @@ class WarpdriverStressTestServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
@@ -279,8 +279,8 @@ class WarpdriverStressTestServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
@@ -344,8 +344,8 @@ class WarpdriverStressTestServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
@@ -410,8 +410,8 @@ class WarpdriverStressTestServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
@@ -475,8 +475,8 @@ class WarpdriverStressTestServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
@@ -543,8 +543,8 @@ class WarpdriverStressTestServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
@@ -609,8 +609,8 @@ class WarpdriverStressTestServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
@@ -676,8 +676,8 @@ class WarpdriverStressTestServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
@@ -743,8 +743,8 @@ class WarpdriverStressTestServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
@@ -810,8 +810,8 @@ class WarpdriverStressTestServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
@@ -877,8 +877,8 @@ class WarpdriverStressTestServiceTest {
         { var m = new java.util.HashMap<String,Object>(); m.put("node_id", 1); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnRecursiveTreeCleanup_13(any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.deleteTreeAttributes(any(), any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.deleteTreeNodes(any(), any(), any())).thenReturn(1);
-        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "20240101"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("order_id", 1); m.put("total_amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("create_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_14(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("payment_id", 1); m.put("pay_amount", java.math.BigDecimal.TEN); m.put("pay_channel", 1); m.put("pay_time", "2024-01-01 00:00:00"); m.putAll(_rowTmpl); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_15(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         when(warpdriverStressTestMapper.selectOrdersCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectPaymentsCount(any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts(any(), any())).thenReturn(java.math.BigDecimal.TEN);
