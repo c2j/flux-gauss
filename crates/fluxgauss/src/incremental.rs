@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::types::{PackageInfo, ServiceCall};
+use crate::types::PackageInfo;
 
 /// Bumped whenever a converter or parser change makes previously cached ASTs
 /// unsafe to reuse. A mismatch discards the whole manifest, forcing a reparse.
@@ -117,6 +117,7 @@ impl IncrementalState {
         std::fs::read_to_string(path).ok()
     }
 
+    #[allow(private_interfaces)]
     pub fn load_manifest_inner(&self) -> std::io::Result<Manifest> {
         let path = self.cache_dir.join("manifest.json");
         let content = std::fs::read_to_string(path)?;
@@ -257,7 +258,8 @@ impl IncrementalState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
+    use crate::types::ServiceCall;
+
     use tempfile::TempDir;
 
     fn setup_state(dir: &TempDir) -> IncrementalState {
@@ -563,7 +565,7 @@ mod tests {
         std::fs::write(&new_sql, "SELECT 2").unwrap();
         state.update_file_entry(&new_sql, "pkg_new", "com.new").unwrap();
 
-        state.cleanup_stale(&[new_sql.clone()]).unwrap();
+        state.cleanup_stale(std::slice::from_ref(&new_sql)).unwrap();
 
         let manifest = state.manifest.as_ref().unwrap();
         assert!(!manifest.files.contains_key(&old_sql.to_string_lossy().into_owned()));

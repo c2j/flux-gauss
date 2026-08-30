@@ -5,7 +5,7 @@ use encoding_rs::Encoding;
 
 use crate::generate::writer::CodeWriter;
 use crate::naming::{package_to_classname, snake_to_camel};
-use crate::type_map::{java_type_to_jdbc, sql_type_to_java};
+use crate::type_map::java_type_to_jdbc;
 use crate::types::{DmlType, DynamicCondition, PackageInfo, Parameter};
 
 static IDENTIFIER_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
@@ -71,7 +71,7 @@ pub fn write_mapper_interface(
     let re_t = regex::Regex::new(r"\b([\w.]+(?:<[^>]+>)?)\s+(\w+)([,)])").unwrap();
     for m in methods {
         let mut norm = re_p.replace_all(&m, "").to_string();
-        if let Some(last) = norm.lines().filter(|l| !l.trim().starts_with("//")).last() {
+        if let Some(last) = norm.lines().rfind(|l| !l.trim().starts_with("//")) {
             norm = last.to_string();
         }
         norm = re_t.replace_all(&norm, "$1 $3").to_string();
@@ -1180,7 +1180,7 @@ fn replace_decode_with_case(sql: &str) -> String {
             if let Some(end) = find_matching_paren(&result, m.end() - 1) {
                 let inner = &result[m.end()..end];
                 let decoded = convert_decode_args(inner);
-                if decoded != &result[start..=end] {
+                if decoded != result[start..=end] {
                     result = format!("{}{}{}", &result[..start], decoded, &result[end + 1..]);
                     changed = true;
                 }
@@ -1484,7 +1484,7 @@ fn convert_params_to_mybatis(
     local_vars: &std::collections::HashMap<String, String>,
     package_vars: &std::collections::HashMap<String, crate::types::VarInfo>,
 ) -> String {
-    let mut result = sql.to_string();
+    let result = sql.to_string();
 
     let alias_col_re =
         DOT_ACCESS_RE.get_or_init(|| regex::Regex::new(r"(?i)\b([a-zA-Z_]\w*)\s*\.\s*([a-zA-Z_]\w*)").unwrap());
@@ -2081,8 +2081,7 @@ mod tests {
 
     #[test]
     fn test_update_where_before_set_order() {
-        let mut proc =
-            ProcedureInfo::new("pkg_test.proc_dyn".to_string(), "pkg_test".to_string(), "proc_dyn".to_string());
+        let proc = ProcedureInfo::new("pkg_test.proc_dyn".to_string(), "pkg_test".to_string(), "proc_dyn".to_string());
         let dc_where = DynamicCondition {
             condition_expr: "id != null".to_string(),
             sql_fragment: "WHERE id = #{id}".to_string(),
@@ -2120,14 +2119,8 @@ mod tests {
         let locals = std::collections::HashMap::new();
         let pkg_vars = std::collections::HashMap::new();
         let fixed = fix_select_into_aliases(sql, &locals, &pkg_vars);
-        assert!(
-            fixed.contains("SUM ( film . rental_rate )"),
-            "qualified column inside aggregate was mangled: {fixed}"
-        );
-        assert!(
-            !fixed.contains("film AS rental_rate"),
-            "qualified column became an AS alias: {fixed}"
-        );
+        assert!(fixed.contains("SUM ( film . rental_rate )"), "qualified column inside aggregate was mangled: {fixed}");
+        assert!(!fixed.contains("film AS rental_rate"), "qualified column became an AS alias: {fixed}");
 
         let case_sql = "select coalesce ( SUM ( case when ( rental . return_date - rental . rental_date ) > ( film . rental_duration * '1 day' :: interval ) then 1 else 0 end ) , 0 ) from rental";
         let fixed_case = fix_select_into_aliases(case_sql, &locals, &pkg_vars);

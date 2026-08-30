@@ -3,32 +3,9 @@ use std::path::Path;
 
 use encoding_rs::Encoding;
 
-use crate::generate::mapper::is_simple_java_type;
 use crate::generate::writer::CodeWriter;
 use crate::naming::{java_method_name, package_to_classname, snake_to_camel};
 use crate::types::{DmlType, PackageInfo};
-
-static IDENTIFIER_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-
-fn case_insensitive_word_match(text: &str, word: &str) -> bool {
-    let lower_text = text.to_lowercase();
-    let lower_word = word.to_lowercase();
-    let mut start = 0;
-    while let Some(pos) = lower_text[start..].find(&lower_word) {
-        let abs_pos = start + pos;
-        let before_ok = abs_pos == 0
-            || !lower_text.as_bytes()[abs_pos - 1].is_ascii_alphanumeric()
-                && lower_text.as_bytes()[abs_pos - 1] != b'_';
-        let after_pos = abs_pos + lower_word.len();
-        let after_ok = after_pos >= lower_text.len()
-            || (!lower_text.as_bytes()[after_pos].is_ascii_alphanumeric() && lower_text.as_bytes()[after_pos] != b'_');
-        if before_ok && after_ok {
-            return true;
-        }
-        start = abs_pos + 1;
-    }
-    false
-}
 
 pub fn write_service_test(
     base_path: &Path,
@@ -98,7 +75,9 @@ pub fn write_service_test(
     w.push_indent();
 
     w.line("@Mock");
-    w.line(&format!("private {} {};", format!("{}Mapper", package_to_classname(&pkg.package_name)), mapper_var));
+    #[allow(clippy::format_in_format_args)]
+    let mapper_class = format!("{}Mapper", package_to_classname(&pkg.package_name));
+    w.line(&format!("private {mapper_class} {mapper_var};"));
 
     for &(svc_var, pkg_name) in &sorted_injections {
         let svc_class = if !pkg_name.is_empty() {
@@ -150,66 +129,6 @@ pub fn write_service_test(
     let file_path = test_dir.join(format!("{}.java", test_class_name));
     w.write_to_file(&file_path, encoding)?;
     Ok(test_class_name)
-}
-
-fn count_mapper_params_for_dml(
-    proc: &crate::types::ProcedureInfo,
-    dml: &crate::types::DmlStatement,
-    pkg: &PackageInfo,
-) -> usize {
-    let in_count = proc.parameters.iter().filter(|p| !p.is_out()).count();
-    // Collect all param java names (lowercase) — mirroring mapper.rs logic:
-    //   1. non-out proc params + 2. extra_params + 3. local var refs + 4. pkg var refs + 5. OUT params
-    let mut all_names: std::collections::HashSet<String> =
-        proc.parameters.iter().filter(|p| !p.is_out()).map(|p| snake_to_camel(&p.name).to_lowercase()).collect();
-
-    // Step 2: dml.extra_params (deduped against proc params)
-    for (jn, _) in &dml.extra_params {
-        all_names.insert(jn.to_lowercase());
-    }
-
-    // Step 3: local vars referenced in SQL text
-    let local_var_refs = count_local_var_refs_in_sql(&dml.sql_text, &proc.local_vars, &proc.parameters);
-    // count_local_var_refs_in_sql already returns count of unique local vars not in proc.params
-    // We need their actual names to prevent double-counting with extra_params.
-    // Re-implement inline to get names:
-    let param_names: std::collections::HashSet<String> =
-        proc.parameters.iter().filter(|p| !p.is_out()).map(|p| p.name.to_lowercase()).collect();
-    let re = IDENTIFIER_RE.get_or_init(|| regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap());
-    for caps in re.captures_iter(&dml.sql_text) {
-        let word = caps.get(1).unwrap().as_str();
-        if proc.local_vars.contains_key(&word.to_lowercase()) && !param_names.contains(&word.to_lowercase()) {
-            let jn = snake_to_camel(word).to_lowercase();
-            all_names.insert(jn);
-        }
-    }
-
-    // Step 4: package vars referenced in SQL text
-    let pkg_param_names: std::collections::HashSet<String> =
-        proc.parameters.iter().filter(|p| !p.is_out()).map(|p| p.name.to_lowercase()).collect();
-    for caps in re.captures_iter(&dml.sql_text) {
-        let word = caps.get(1).unwrap().as_str();
-        if pkg.package_vars.contains_key(word)
-            && !proc.local_vars.contains_key(&word.to_lowercase())
-            && !pkg_param_names.contains(&word.to_lowercase())
-        {
-            let jn = snake_to_camel(word).to_lowercase();
-            all_names.insert(jn);
-        }
-    }
-
-    // Step 5: OUT params in SQL text (already tracked in all_names via step 1 if they exist)
-    // Add OUT params found in SQL text
-    for p in &proc.parameters {
-        if p.is_out() {
-            if case_insensitive_word_match(&dml.sql_text, &p.name) {
-                let jn = snake_to_camel(&p.name).to_lowercase();
-                all_names.insert(jn);
-            }
-        }
-    }
-
-    all_names.len()
 }
 
 fn build_success_test(
@@ -343,46 +262,6 @@ fn proc_has_unterminated_loop(proc: &crate::types::ProcedureInfo, pkg: &PackageI
     has_while_with_mapper
 }
 
-fn count_local_var_refs_in_sql(
-    sql_text: &str,
-    local_vars: &std::collections::HashMap<String, String>,
-    params: &[crate::types::Parameter],
-) -> usize {
-    let param_names: std::collections::HashSet<String> =
-        params.iter().filter(|p| !p.is_out()).map(|p| p.name.to_lowercase()).collect();
-    let mut found: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let re = IDENTIFIER_RE.get_or_init(|| regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap());
-    for caps in re.captures_iter(sql_text) {
-        let word = caps.get(1).unwrap().as_str();
-        if local_vars.contains_key(&word.to_lowercase()) && !param_names.contains(&word.to_lowercase()) {
-            found.insert(word.to_lowercase());
-        }
-    }
-    found.len()
-}
-
-fn count_package_var_refs_in_sql(
-    sql_text: &str,
-    package_vars: &std::collections::HashMap<String, crate::types::VarInfo>,
-    local_vars: &std::collections::HashMap<String, String>,
-    params: &[crate::types::Parameter],
-) -> usize {
-    let param_names: std::collections::HashSet<String> =
-        params.iter().filter(|p| !p.is_out()).map(|p| p.name.to_lowercase()).collect();
-    let mut found: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let re = IDENTIFIER_RE.get_or_init(|| regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap());
-    for caps in re.captures_iter(sql_text) {
-        let word = caps.get(1).unwrap().as_str();
-        if package_vars.contains_key(word)
-            && !param_names.contains(&word.to_lowercase())
-            && !local_vars.contains_key(&word.to_lowercase())
-        {
-            found.insert(word.to_lowercase());
-        }
-    }
-    found.len()
-}
-
 fn extract_select_columns(sql: &str) -> Vec<String> {
     let upper = sql.to_uppercase();
     let select_pos = match upper.find("SELECT") {
@@ -462,7 +341,13 @@ fn column_mock_value_for_key(camel_key: &str) -> String {
     {
         return "java.math.BigDecimal.TEN".to_string();
     }
-    if nl.ends_with("_ts") || nl.contains("ts_value") || nl.contains("tsvalue") || nl.ends_with("_at") || nl.contains("timestamp") || nl.ends_with("time") {
+    if nl.ends_with("_ts")
+        || nl.contains("ts_value")
+        || nl.contains("tsvalue")
+        || nl.ends_with("_at")
+        || nl.contains("timestamp")
+        || nl.ends_with("time")
+    {
         return "java.sql.Timestamp.valueOf(\"2024-01-01 00:00:00\")".to_string();
     }
     if nl.ends_with("date") {
@@ -580,7 +465,7 @@ fn mock_cross_service_calls(pkg: &PackageInfo, sorted_injections: &[(&String, &S
                             // method signature, so the matcher must use `anyInt()`/`anyLong()`
                             // (not `(Integer) any()`) or Mockito's null unboxes and NPEs.
                             let is_null_default =
-                                p.default_value.as_ref().map_or(false, |dv| dv.to_lowercase() == "null");
+                                p.default_value.as_ref().is_some_and(|dv| dv.to_lowercase() == "null");
                             let t = if is_null_default {
                                 p.java_type.as_str()
                             } else {
@@ -609,6 +494,7 @@ fn mock_cross_service_calls(pkg: &PackageInfo, sorted_injections: &[(&String, &S
 
 fn mock_all_mapper_methods(mapper_name: &str, pkg: &PackageInfo) -> Vec<String> {
     let extra_keys = extract_map_access_keys(pkg);
+    #[allow(clippy::type_complexity)]
     let mut all_dmls: Vec<(String, DmlType, usize, bool, Option<String>, String, Vec<String>)> = Vec::new();
     for proc in &pkg.procedures {
         for dml in &proc.dml_statements {
@@ -634,8 +520,8 @@ fn mock_all_mapper_methods(mapper_name: &str, pkg: &PackageInfo) -> Vec<String> 
         .into_iter()
         .filter(|(id, _, _, _, _, _, pts)| seen_sigs.insert(format!("{}|{}", id, pts.join(","))))
         .collect();
-    for (method_id, sql_type, param_count, returns_list, result_type, sql_text, param_types) in &all_dmls {
-        let is_overloaded =
+    for (method_id, sql_type, param_count, _returns_list, result_type, sql_text, param_types) in &all_dmls {
+        let _is_overloaded =
             all_dmls.iter().filter(|(id, _, _, _, _, _, pts)| id == method_id && pts != param_types).count() > 0;
         let any_args = if *param_count > 0 {
             if !param_types.is_empty() {
@@ -732,14 +618,17 @@ fn mock_all_mapper_methods(mapper_name: &str, pkg: &PackageInfo) -> Vec<String> 
 /// Domain-aware test value: validation-literal sampling and date-prefix params
 /// (mirrors the Python engine's `_domain_test_value`). Falls back to the
 /// generic placeholder generator.
-fn domain_test_value(proc: &crate::types::ProcedureInfo, pkg: &PackageInfo, java_type: &str, param_name: &str) -> String {
+fn domain_test_value(
+    proc: &crate::types::ProcedureInfo,
+    pkg: &PackageInfo,
+    java_type: &str,
+    param_name: &str,
+) -> String {
     let jn = crate::naming::snake_to_camel(param_name);
     // 1. Validation literal sampling: `Arrays.asList("A","B").contains(<param>)`
-    let as_list_re = regex::Regex::new(&format!(
-        r#"Arrays\.asList\(([^)]*)\)\s*\.contains\(\s*{}\s*\)"#,
-        regex::escape(&jn)
-    ))
-    .unwrap();
+    let as_list_re =
+        regex::Regex::new(&format!(r#"Arrays\.asList\(([^)]*)\)\s*\.contains\(\s*{}\s*\)"#, regex::escape(&jn)))
+            .unwrap();
     let lit_re = regex::Regex::new(r#""([^"]*)""#).unwrap();
     for line in &proc.java_logic_lines {
         if let Some(caps) = as_list_re.captures(line) {
@@ -758,10 +647,7 @@ fn domain_test_value(proc: &crate::types::ProcedureInfo, pkg: &PackageInfo, java
         .map(|s| s.as_str())
         .chain(proc.local_var_defaults.values().map(|s| s.as_str()))
         .chain(pkg.procedures.iter().flat_map(|pp| {
-            pp.java_logic_lines
-                .iter()
-                .map(|s| s.as_str())
-                .chain(pp.local_var_defaults.values().map(|s| s.as_str()))
+            pp.java_logic_lines.iter().map(|s| s.as_str()).chain(pp.local_var_defaults.values().map(|s| s.as_str()))
         }))
     {
         if line.contains(&format!("{} + \"-01\"", jn))
@@ -937,7 +823,7 @@ fn any_matcher_type(java_type: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{DmlStatement, DmlType, ParamMode, Parameter, ProcedureInfo};
+    use crate::types::{DmlStatement, DmlType, ProcedureInfo};
 
     fn make_pkg(name: &str, procs: Vec<ProcedureInfo>) -> PackageInfo {
         PackageInfo {

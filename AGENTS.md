@@ -249,7 +249,7 @@ ogsql validate → 转换 → mvn compile → mvn test → DB_PASSWORD=... mvn v
 ### 6. Rust 侧规范
 
 - workspace 根执行 cargo；依赖变更用 `cargo add` / `cargo update -p <crate>`（禁止一次性 update 整个 lockfile；ogsql-parser 以 rev/tag 精确固定）
-- **clippy 债务策略**：存量告警（build 43 条 / clippy 口径 188 条）由独立任务清零；**新增代码零新增 warning**——改动涉及文件不允许引入新告警
+- **clippy 债务策略（已清零，2026-08-30）**：存量告警已全部清零（203→0，含 fluxgauss + fluxgauss-mcp + tests），CI 已加 `cargo clippy --workspace --all-targets -- -D warnings` 门禁（#102）；**任何 PR 不得引入新 warning**——本地跑 `cargo clippy --workspace --all-targets` 必须为 0
 - 上游 ogsql-parser 仓库保持全量门禁（fmt + clippy -D warnings + test，CI 已生效），向其提交 PR 须全绿
 - 禁止把 clippy/测试失败说成「main 原来就红」
 

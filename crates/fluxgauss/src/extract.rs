@@ -1,14 +1,9 @@
 use std::collections::HashMap;
-use std::path::Path;
 
-use ogsql_parser::ast::{
-    CreateFunctionStatement, CreatePackageBodyStatement, CreatePackageStatement, CreateProcedureStatement,
-    PackageFunction, PackageItem, PackageProcedure, RoutineParam, Statement, StatementInfo, TypeKind,
-};
+use ogsql_parser::ast::{PackageItem, RoutineParam, Statement, TypeKind};
 use ogsql_parser::parser::ParseOutput;
 
-use crate::naming::{java_method_name, package_to_classname, snake_to_camel};
-use crate::type_map::{sql_type_to_java, sql_type_to_jdbc};
+use crate::type_map::sql_type_to_java;
 use crate::types::{
     CommentBlock, ConversionError, CustomTypeInfo, PackageInfo, ParamMode, Parameter, ProcedureInfo, SkippedItem,
     VarInfo,
@@ -103,9 +98,9 @@ pub fn extract_from_parse_output(
                                 packages.push(build_package_info(
                                     &pkg_name_for_group,
                                     procs,
-                                    package_vars.drain().collect(),
-                                    custom_types.drain().collect(),
-                                    table_refs.drain().collect(),
+                                    std::mem::take(&mut package_vars),
+                                    std::mem::take(&mut custom_types),
+                                    std::mem::take(&mut table_refs),
                                     source_file,
                                     base_package,
                                 ));
@@ -180,12 +175,8 @@ pub fn extract_from_parse_output(
                     if pkg_name.is_empty() { proc_name.clone() } else { format!("{}.{}", pkg_name, proc_name) };
 
                 let params = convert_params(&func_stmt.node.parameters);
-                let return_type = func_stmt
-                    .node
-                    .return_type
-                    .as_deref()
-                    .map(strip_function_return_modifiers)
-                    .and_then(|rt| {
+                let return_type =
+                    func_stmt.node.return_type.as_deref().map(strip_function_return_modifiers).and_then(|rt| {
                         // Preserve `trigger` so should_stub_procedure can stub it
                         // (#94); everything else maps to a Java type.
                         if rt == "trigger" {
@@ -693,6 +684,7 @@ fn package_registration_name(name: &ogsql_parser::ast::ObjectName) -> String {
     name.last().map(ToString::to_string).unwrap_or_default()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_procedure_info(
     name: String,
     package: String,
@@ -753,7 +745,7 @@ fn dedup_procedures(procs: Vec<ProcedureInfo>) -> Vec<ProcedureInfo> {
     let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut result: Vec<ProcedureInfo> = Vec::new();
     for proc in procs {
-        let short_name = proc.name.split('.').last().unwrap_or(&proc.name);
+        let short_name = proc.name.split('.').next_back().unwrap_or(&proc.name);
         let method_name = crate::naming::java_method_name(short_name);
         let key = format!("{}_{}", method_name, proc.parameters.len());
         if let Some(&existing_idx) = seen.get(&key) {

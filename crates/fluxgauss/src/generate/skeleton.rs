@@ -319,12 +319,11 @@ fn write_business_exception(exc_dir: &Path, base_package: &str, encoding: &'stat
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Read;
 
     #[test]
     fn test_pom_xml_content() -> std::io::Result<()> {
         let dir = tempfile::tempdir()?;
-        let config = AppConfig::default();
+        let _config = AppConfig::default();
         write_pom_xml(dir.path(), "com.example.demo", encoding_rs::UTF_8)?;
         let content = std::fs::read_to_string(dir.path().join("pom.xml"))?;
         assert!(content.contains("spring-boot-starter-parent"));

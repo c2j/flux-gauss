@@ -83,18 +83,13 @@ pub struct GlobalFnEntry {
 
 // ── DML ──
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DmlType {
+    #[default]
     Select,
     Insert,
     Update,
     Delete,
-}
-
-impl Default for DmlType {
-    fn default() -> Self {
-        Self::Select
-    }
 }
 
 #[derive(Debug, Clone)]

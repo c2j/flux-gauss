@@ -14,39 +14,18 @@ const BASE_PACKAGE: &str = "com.example.demo";
 
 const KNOWN_BROKEN: &[&str] = &[];
 
-const FOUR_FILE_TYPES: &[(&str, FilePathFn)] = &[
-    ("Service.java", service_path as FilePathFn),
-    ("Mapper.java", mapper_path as FilePathFn),
-    ("Mapper.xml", xml_path as FilePathFn),
-    ("ServiceTest.java", test_path as FilePathFn),
-];
-
-type FilePathFn = fn(&Path, &str) -> PathBuf;
-
 fn service_path(out_dir: &Path, class_name: &str) -> PathBuf {
     out_dir.join("src/main/java/com/example/demo/service").join(format!("{}Service.java", class_name))
-}
-
-fn mapper_path(out_dir: &Path, class_name: &str) -> PathBuf {
-    out_dir.join("src/main/java/com/example/demo/mapper").join(format!("{}Mapper.java", class_name))
-}
-
-fn xml_path(out_dir: &Path, class_name: &str) -> PathBuf {
-    out_dir.join("src/main/resources/mapper").join(format!("{}Mapper.xml", class_name))
-}
-
-fn test_path(out_dir: &Path, class_name: &str) -> PathBuf {
-    out_dir.join("src/test/java/com/example/demo/service").join(format!("{}ServiceTest.java", class_name))
 }
 
 fn fixture_files() -> Vec<PathBuf> {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let dir = Path::new(manifest_dir).join(FIXTURES_REL);
     let mut files: Vec<_> = fs::read_dir(&dir)
-        .expect(&format!("Fixture dir not found: {}", dir.display()))
+        .unwrap_or_else(|_| panic!("Fixture dir not found: {}", dir.display()))
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.extension().map_or(false, |e| e == "sql"))
+        .filter(|p| p.extension().is_some_and(|e| e == "sql"))
         .filter(|p| {
             let name = p.file_name().unwrap().to_string_lossy();
             !KNOWN_BROKEN.contains(&name.as_ref())
@@ -105,7 +84,7 @@ struct GeneratedFiles {
 
 fn run_conversion(sql_file: &Path, out_dir: &Path) -> GeneratedFiles {
     let pkg_name = pkg_name_from_path(sql_file);
-    let class_name = package_to_classname(&pkg_name);
+    let _class_name = package_to_classname(&pkg_name);
 
     let config = AppConfig {
         output_dir: Some(out_dir.to_string_lossy().into()),
@@ -137,7 +116,7 @@ fn run_conversion(sql_file: &Path, out_dir: &Path) -> GeneratedFiles {
             let mut matched: Vec<(String, String)> = entries
                 .filter_map(|e| e.ok())
                 .map(|e| e.path())
-                .filter(|p| p.file_name().map_or(false, |n| n.to_string_lossy().ends_with(ft)))
+                .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().ends_with(ft)))
                 .filter_map(|p| {
                     let name = p.file_name().unwrap().to_string_lossy().to_string();
                     fs::read_to_string(&p).ok().map(|content| (name, content))
@@ -210,7 +189,7 @@ fn run_multi_file_services(sql_files: &[PathBuf], out_dir: &Path) -> HashMap<Str
             entries
                 .filter_map(|e| e.ok())
                 .map(|e| e.path())
-                .filter(|p| p.file_name().map_or(false, |n| n.to_string_lossy().ends_with("Service.java")))
+                .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().ends_with("Service.java")))
                 .filter_map(|p| {
                     let name = p.file_name().unwrap().to_string_lossy().to_string();
                     fs::read_to_string(&p).ok().map(|content| (name, content))
@@ -245,7 +224,7 @@ fn run_multi_file_service_tests(sql_files: &[PathBuf], out_dir: &Path) -> HashMa
             entries
                 .filter_map(|e| e.ok())
                 .map(|e| e.path())
-                .filter(|p| p.file_name().map_or(false, |n| n.to_string_lossy().ends_with("ServiceTest.java")))
+                .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().ends_with("ServiceTest.java")))
                 .filter_map(|p| {
                     let name = p.file_name().unwrap().to_string_lossy().to_string();
                     fs::read_to_string(&p).ok().map(|content| (name, content))

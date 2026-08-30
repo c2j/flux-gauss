@@ -69,6 +69,7 @@ pub fn analyze_goto_patterns(
 ///   1. HashMap of label_name -> estimated statement index
 ///   2. HashMap of label_name -> list of GOTO source line numbers
 ///   3. HashMap of label_name -> label declaration line number
+#[allow(clippy::type_complexity)]
 fn scan_source_text_for_labels(
     proc: &ProcedureInfo,
     body: &[PlStatement],
@@ -96,8 +97,7 @@ fn scan_source_text_for_labels(
     }
 
     // Scan for <<label>> patterns — use index-based access on owned Vec<String>
-    for line_idx in start..end {
-        let line = &all_lines[line_idx];
+    for (line_idx, line) in all_lines.iter().enumerate().take(end).skip(start) {
         let line_num = line_idx + 1; // 1-based line number
                                      // Find all <<label>> on this line
         let mut chars = line.char_indices().peekable();
@@ -325,9 +325,7 @@ fn invert_condition(cond: &str) -> String {
     let c = cond.trim();
     if c.starts_with("(!") && c.ends_with(')') {
         c[2..c.len() - 1].to_string()
-    } else if c.starts_with('(') && c.ends_with(')') {
-        format!("!{}", c)
-    } else if !c.contains(' ') {
+    } else if (c.starts_with('(') && c.ends_with(')')) || !c.contains(' ') {
         format!("!{}", c)
     } else {
         format!("!({})", c)
@@ -656,7 +654,7 @@ fn generate_deep_nested_goto(
             let t = l.trim();
             !t.starts_with("//") && !t.is_empty() && !t.starts_with("}")
         })
-        .map_or(false, |l| {
+        .is_some_and(|l| {
             let t = l.trim();
             t.starts_with("return ") || t == "return;" || t.starts_with("throw ")
         });
@@ -826,8 +824,7 @@ fn generate_state_machine_goto(
     proc.java_logic_lines.push("while (running && _smGuard++ < 10000) {".to_string());
 
     let first_label_idx = ordered_labels.first().map(|(_, idx)| *idx).unwrap_or(0);
-    for idx in 0..first_label_idx {
-        let stmt = &body[idx];
+    for stmt in body.iter().take(first_label_idx) {
         crate::statement::process_statement(stmt, proc, stmt_ctx)?;
         if let Some(last) = proc.java_logic_lines.last() {
             let t = last.trim();
@@ -851,8 +848,7 @@ fn generate_state_machine_goto(
             .map(|(_, idx)| *idx)
             .unwrap_or(body.len());
 
-        for idx in target..end_idx {
-            let stmt = &body[idx];
+        for stmt in body.iter().take(end_idx).skip(target) {
             let mut hit_goto = false;
             match stmt {
                 PlStatement::Goto { label } => {
@@ -879,7 +875,7 @@ fn generate_state_machine_goto(
                                 }
                             }
                         }
-                        if proc.java_logic_lines.last().map_or(false, |l| {
+                        if proc.java_logic_lines.last().is_some_and(|l| {
                             let t = l.trim();
                             t == "break;" || t.starts_with("return ") || t == "return;" || t == "continue;"
                         }) {
@@ -907,7 +903,7 @@ fn generate_state_machine_goto(
             let t = l.trim();
             !t.is_empty() && t != "}" && !t.starts_with("//")
         });
-        let needs_break = !last_meaningful.map_or(true, |l| {
+        let needs_break = !last_meaningful.is_some_and(|l| {
             let t = l.trim();
             t == "break;"
                 || t == "continue;"

@@ -9,8 +9,11 @@ fn infer_select_result_type(var_type: &str, sql: &str) -> String {
 
 use crate::context::StatementContext;
 use crate::expr::is_nullish_java_expr;
-use crate::types::{ConversionError, DmlStatement, DmlType, Parameter, ProcedureInfo, ServiceCall, UnresolvedCall};
+use crate::types::{ConversionError, DmlStatement, DmlType, ProcedureInfo, ServiceCall, UnresolvedCall};
 use regex::Regex;
+
+static ELEM_LIST_TYPE_RE: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(r"(?i)java\.util\.List<(.+)>").unwrap());
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -253,8 +256,7 @@ fn push_logic_line(proc: &mut ProcedureInfo, line: String) {
 }
 
 fn strip_out_param_get(java: &str, proc: &ProcedureInfo) -> String {
-    if java.ends_with(".get()") {
-        let base = &java[..java.len() - 6];
+    if let Some(base) = java.strip_suffix(".get()") {
         let camel = crate::naming::snake_to_camel;
         for p in &proc.parameters {
             if p.is_out() && camel(&p.name) == base {
@@ -288,10 +290,10 @@ fn dml_method_name(
 
 fn extract_dml_target_table(stmt: &ogsql_parser::ast::Statement) -> Option<String> {
     use ogsql_parser::ast::Statement;
-    use ogsql_parser::ast::TableRef;
+
     match stmt {
         Statement::Select(s) => extract_first_table_name(&s.node.from),
-        Statement::Insert(s) => s.node.table.last().map(|i| ident_string(i)),
+        Statement::Insert(s) => s.node.table.last().map(ident_string),
         Statement::Update(s) => extract_first_table_name(&s.node.tables),
         Statement::Delete(s) => extract_first_table_name(&s.node.tables),
         _ => None,
@@ -301,7 +303,7 @@ fn extract_dml_target_table(stmt: &ogsql_parser::ast::Statement) -> Option<Strin
 fn extract_first_table_name(tables: &[ogsql_parser::ast::TableRef]) -> Option<String> {
     use ogsql_parser::ast::TableRef;
     tables.first().and_then(|t| match t {
-        TableRef::Table { name, .. } => name.last().map(|i| ident_string(i)),
+        TableRef::Table { name, .. } => name.last().map(ident_string),
         _ => None,
     })
 }
@@ -350,9 +352,7 @@ fn try_parse_inline_var_decl(sql: &str, _proc: &ProcedureInfo) -> Option<(String
         let d = m.as_str().trim();
         if d.starts_with('\'') && d.ends_with('\'') {
             format!("\"{}\"", &d[1..d.len() - 1])
-        } else if d.parse::<i64>().is_ok() {
-            d.to_string()
-        } else if d.parse::<f64>().is_ok() {
+        } else if d.parse::<i64>().is_ok() || d.parse::<f64>().is_ok() {
             d.to_string()
         } else {
             crate::naming::snake_to_camel(d)
@@ -482,14 +482,11 @@ fn resolve_package_name(pkg_hint: &str, summaries: &HashMap<String, crate::types
 
 fn extract_table_ref(table_ref: &ogsql_parser::ast::TableRef, proc: &mut ProcedureInfo) {
     use ogsql_parser::ast::TableRef;
-    match table_ref {
-        TableRef::Table { name, .. } => {
-            let table_name = name.last().map(|s| ident_string(s)).unwrap_or_default();
-            if !table_name.is_empty() {
-                proc.table_refs.insert(table_name);
-            }
+    if let TableRef::Table { name, .. } = table_ref {
+        let table_name = name.last().map(ident_string).unwrap_or_default();
+        if !table_name.is_empty() {
+            proc.table_refs.insert(table_name);
         }
-        _ => {}
     }
 }
 
@@ -573,7 +570,6 @@ fn extract_assignment_target_name(target: &ogsql_parser::ast::Expr) -> Option<St
 /// Returns (sql_template, [(java_name, is_identifier), ...]) or None if the expression
 /// is not a recognizable SQL concatenation pattern.
 fn flatten_concat(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> Option<(String, Vec<(String, bool)>)> {
-    use ogsql_parser::ast::Expr;
     let mut parts: Vec<String> = Vec::new();
     let mut params: Vec<(String, bool)> = Vec::new();
     flatten_concat_inner(expr, proc, &mut parts, &mut params);
@@ -581,7 +577,7 @@ fn flatten_concat(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> Optio
         return None;
     }
     let sql_template = parts.join("");
-    let first_word = sql_template.trim_start().split_whitespace().next()?.to_lowercase();
+    let first_word = sql_template.split_whitespace().next()?.to_lowercase();
     let sql_verbs = [
         "select",
         "insert",
@@ -635,7 +631,7 @@ fn detect_sql_concat_append(
 fn extract_leftmost_var_from_concat(expr: &ogsql_parser::ast::Expr) -> String {
     use ogsql_parser::ast::Expr;
     match expr {
-        Expr::PlVariable(name) | Expr::ColumnRef(name) if name.len() >= 1 => ident_string(&name[name.len() - 1]),
+        Expr::PlVariable(name) | Expr::ColumnRef(name) if !name.is_empty() => ident_string(&name[name.len() - 1]),
         Expr::BinaryOp { left, op, .. } if op == "||" => extract_leftmost_var_from_concat(left),
         _ => String::new(),
     }
@@ -654,11 +650,9 @@ fn flatten_suffix_after_var(
             return false;
         }
         match left.as_ref() {
-            Expr::PlVariable(name) | Expr::ColumnRef(name) if name.len() >= 1 => {
-                if name[name.len() - 1] == var_name {
-                    flatten_concat_inner(right, proc, parts, params);
-                    return true;
-                }
+            Expr::PlVariable(name) | Expr::ColumnRef(name) if !name.is_empty() && name[name.len() - 1] == var_name => {
+                flatten_concat_inner(right, proc, parts, params);
+                return true;
             }
             _ => {}
         }
@@ -782,7 +776,7 @@ fn flatten_concat_inner(
         Expr::Literal(Literal::Float(f)) => {
             parts.push(f.clone());
         }
-        Expr::PlVariable(name) | Expr::ColumnRef(name) if name.len() >= 1 => {
+        Expr::PlVariable(name) | Expr::ColumnRef(name) if !name.is_empty() => {
             let var_name = ident_string(&name[name.len() - 1]);
             let java_name = crate::naming::snake_to_camel(&var_name);
             // Determine if this is an identifier context (table/column name → ${})
@@ -797,7 +791,7 @@ fn flatten_concat_inner(
         }
         _ => {
             // For any other expression, convert to Java and treat as a value param
-            let java_expr = crate::expr::expr_to_java(expr, proc);
+            let _java_expr = crate::expr::expr_to_java(expr, proc);
             let safe_name = format!("expr_{}", params.len());
             parts.push(format!("#{{{}}}", safe_name));
             params.push((safe_name, false));
@@ -892,7 +886,6 @@ fn process_execute_stmt(
     proc: &mut ProcedureInfo,
     ctx: &mut StatementContext,
 ) {
-    use ogsql_parser::ast::plpgsql::PlUsingMode;
     use ogsql_parser::ast::Expr;
 
     if let Some(parsed_query) = &execute.parsed_query {
@@ -945,7 +938,7 @@ fn process_execute_stmt(
             let jdbc = sql_type_to_jdbc(&p.sql_type);
             let java = &p.java_type;
             let placeholder = match (jdbc, java) {
-                (Some(j), jt) if !jt.is_empty() => format!("#{{{}}}", jn),
+                (Some(_j), jt) if !jt.is_empty() => format!("#{{{}}}", jn),
                 _ => format!("#{{{}}}", jn),
             };
             let re = regex::Regex::new(&format!(r"(?i)\b{}\b", regex::escape(&p.name))).unwrap();
@@ -1053,8 +1046,7 @@ fn process_execute_stmt(
         let args = build_mapper_call_args(proc);
 
         if !execute.into_targets.is_empty() {
-            let var_names: Vec<String> =
-                execute.into_targets.iter().filter_map(|t| extract_var_name_from_expr(t)).collect();
+            let var_names: Vec<String> = execute.into_targets.iter().filter_map(extract_var_name_from_expr).collect();
             let is_out_param = |var_name: &str, proc: &ProcedureInfo| -> bool {
                 proc.parameters.iter().any(|p| p.name == var_name && p.is_out())
             };
@@ -1282,14 +1274,14 @@ fn process_execute_stmt(
         Expr::ColumnRef(name) | Expr::PlVariable(name) if name.len() == 1 => {
             let var_name = ident_string(&name[0]);
             if let Some((sql_template, concat_vars)) = proc.dynamic_sql_templates.get(&var_name).cloned() {
-                handle_resolved_execute_sql(proc, &sql_template, &concat_vars, &execute, ctx, &var_name);
+                handle_resolved_execute_sql(proc, &sql_template, &concat_vars, execute, ctx, &var_name);
             } else {
                 push_logic_line(proc, format!("// TODO: EXECUTE {} — could not resolve SQL string", var_name));
             }
         }
         Expr::BinaryOp { op, .. } if op == "||" => {
             if let Some((sql_template, concat_vars)) = flatten_concat(&execute.string_expr, proc) {
-                handle_resolved_execute_sql(proc, &sql_template, &concat_vars, &execute, ctx, "");
+                handle_resolved_execute_sql(proc, &sql_template, &concat_vars, execute, ctx, "");
                 return;
             }
             push_logic_line(proc, "// TODO: EXECUTE dynamic SQL — could not resolve SQL string".to_string());
@@ -1317,7 +1309,7 @@ fn process_sql_statement(
             let clean_sql = clean_sql_for_mapper(sql_text, DmlType::Select);
             let args = build_mapper_call_args(proc);
 
-            if into_targets.is_some() && into_targets.as_ref().map_or(false, |t| !t.is_empty()) {
+            if into_targets.as_ref().is_some_and(|t| !t.is_empty()) {
                 let targets = into_targets.as_ref().unwrap();
 
                 // Extract simple variable names from INTO targets
@@ -1537,7 +1529,7 @@ fn infer_arg_type(arg: &str, proc: &ProcedureInfo) -> &'static str {
     }
     // List element access like vAccntIdList.get((int)(i) - 1)
     if trimmed.contains(".get(") && !trimmed.starts_with("AtomicReference") {
-        for (_, vtype) in &proc.local_vars {
+        for vtype in proc.local_vars.values() {
             if vtype.starts_with("List<") {
                 return "String";
             }
@@ -1611,25 +1603,25 @@ fn process_procedure_call(
     // Try to resolve package from the hint
     let mut matched_pkg = resolve_package_name(pkg_hint, ctx.summaries);
 
-    if name_parts.len() == 1 {
-        if matched_pkg.is_none() || matched_pkg.as_ref().map(|p| p.to_lowercase()) == Some(proc.package.to_lowercase())
-        {
-            let found_in_current = ctx
-                .summaries
-                .get(&proc.package)
-                .or_else(|| {
-                    let proc_pkg_lower = proc.package.to_lowercase();
-                    ctx.summaries.iter().find(|(k, _)| k.to_lowercase() == proc_pkg_lower).map(|(_, v)| v)
-                })
-                .map(|s| s.find_procedure(func).is_some())
-                .unwrap_or(false);
+    if name_parts.len() == 1
+        && (matched_pkg.is_none()
+            || matched_pkg.as_ref().map(|p| p.to_lowercase()) == Some(proc.package.to_lowercase()))
+    {
+        let found_in_current = ctx
+            .summaries
+            .get(&proc.package)
+            .or_else(|| {
+                let proc_pkg_lower = proc.package.to_lowercase();
+                ctx.summaries.iter().find(|(k, _)| k.to_lowercase() == proc_pkg_lower).map(|(_, v)| v)
+            })
+            .map(|s| s.find_procedure(func).is_some())
+            .unwrap_or(false);
 
-            if !found_in_current {
-                for (pkg_name, summary) in ctx.summaries.iter() {
-                    if summary.find_procedure(func).is_some() {
-                        matched_pkg = Some(pkg_name.clone());
-                        break;
-                    }
+        if !found_in_current {
+            for (pkg_name, summary) in ctx.summaries.iter() {
+                if summary.find_procedure(func).is_some() {
+                    matched_pkg = Some(pkg_name.clone());
+                    break;
                 }
             }
         }
@@ -1654,7 +1646,7 @@ fn process_procedure_call(
         });
         let target_proc = target_summary.and_then(|s| s.find_procedure(func));
 
-        let target_param_count = target_proc.as_ref().map(|tp| tp.parameters.len()).unwrap_or(0);
+        let _target_param_count = target_proc.as_ref().map(|tp| tp.parameters.len()).unwrap_or(0);
         let mut args: Vec<String> = raw_args
             .iter()
             .enumerate()
@@ -1667,7 +1659,7 @@ fn process_procedure_call(
                         if param.is_out() {
                             let arg_trimmed = arg.trim();
                             if !arg_trimmed.contains('.') && !arg_trimmed.contains('(') {
-                                for (vname, _) in &proc.local_vars {
+                                for vname in proc.local_vars.keys() {
                                     let vname_camel = crate::naming::snake_to_camel(vname);
                                     if vname_camel == arg_trimmed {
                                         proc.out_local_vars.insert(vname.to_lowercase(), target_type.clone());
@@ -1697,10 +1689,10 @@ fn process_procedure_call(
                                 arg = "0L".to_string();
                             } else if is_nullish_java_expr(&arg) && target_is_int {
                                 arg = "0".to_string();
-                            } else if target_is_string && arg_type_inferred == "long" && !is_nullish_java_expr(&arg) {
-                                arg = format!("String.valueOf({})", arg);
                             } else if target_is_string
-                                && (arg_type_inferred == "Object" || arg_type_inferred == "BigDecimal")
+                                && (arg_type_inferred == "long"
+                                    || arg_type_inferred == "Object"
+                                    || arg_type_inferred == "BigDecimal")
                                 && !is_nullish_java_expr(&arg)
                             {
                                 arg = format!("String.valueOf({})", arg);
@@ -1748,7 +1740,7 @@ fn process_procedure_call(
             while args.len() < tp.parameters.len() {
                 let param = &tp.parameters[args.len()];
                 if param.is_out() {
-                    args.push(format!("new AtomicReference<>(null)"));
+                    args.push("new AtomicReference<>(null)".to_string());
                 } else if param.java_type == "long" {
                     args.push("0L".into());
                 } else if param.java_type == "int" {
@@ -1998,7 +1990,7 @@ fn process_forall_stmt(
         let arr_java = snake_to_camel(arr_name);
         let arr_type = proc.local_vars.get(&arr_name.to_lowercase()).map(|s| s.as_str()).unwrap_or("Object");
         // Extract element type from List<T>
-        let elem_type_re = Regex::new(r"(?i)java\.util\.List<(.+)>").unwrap();
+        let elem_type_re: &Regex = &ELEM_LIST_TYPE_RE;
         if let Some(et_caps) = elem_type_re.captures(arr_type) {
             let elem_type = et_caps.get(1).unwrap().as_str().to_string();
             extra_params.push((arr_java.clone(), elem_type.clone()));
@@ -2325,7 +2317,7 @@ pub fn process_statement(
                     val
                 };
                 push_logic_line(proc, format!("return {};", coerced));
-            } else if proc.return_type.as_ref().map_or(false, |rt| rt != "void") {
+            } else if proc.return_type.as_ref().is_some_and(|rt| rt != "void") {
                 push_logic_line(proc, "return null;".into());
             } else if proc.parameters.iter().any(|p| p.is_out() && p.is_refcursor()) {
                 push_logic_line(proc, "return java.util.Collections.emptyList();".into());
@@ -2536,7 +2528,7 @@ pub fn process_statement(
                 }
             }
             // If body ended with terminal, strip the try { line and skip exception handlers
-            let ended_with_terminal = proc.java_logic_lines.last().map_or(false, |l| {
+            let ended_with_terminal = proc.java_logic_lines.last().is_some_and(|l| {
                 let t = l.trim();
                 t == "break;" || t.starts_with("return ") || t == "return;" || t == "continue;"
             });
@@ -2644,8 +2636,8 @@ pub fn process_statement(
                     // A real SQL-declared var (absent from range_loop_counters) is
                     // reused in the loop header; a synthetic counter (auto-created
                     // here) keeps its own inline `int` per loop.
-                    let pre_declared = proc.local_vars.contains_key(&var_lower)
-                        && !proc.range_loop_counters.contains(&var_lower);
+                    let pre_declared =
+                        proc.local_vars.contains_key(&var_lower) && !proc.range_loop_counters.contains(&var_lower);
                     if !proc.local_vars.contains_key(&var_lower) {
                         proc.local_vars.insert(var_lower.clone(), "int".into());
                         proc.range_loop_counters.insert(var_lower);
@@ -2689,7 +2681,7 @@ pub fn process_statement(
                         (clean_sql.clone(), Vec::new(), Vec::new(), String::new())
                     };
 
-                    push_logic_line(proc, format!("// for {} in query: {}", var, &clean_sql));
+                    push_logic_line(proc, format!("// for {} in query: {}", var, clean_sql));
                     proc.local_vars.insert(for_stmt.node.variable.to_lowercase(), "Map<String, Object>".into());
                     proc.local_var_defaults.remove(&for_stmt.node.variable);
                     proc.imports.insert("import java.util.List;".to_string());
@@ -2854,7 +2846,8 @@ pub fn process_statement(
 
             let is_out_refcursor = proc.refcursor_out_params.contains(&raw_cursor_java);
 
-            let (sql_text_opt, using_args, dynamic_conditions, extra_params, base_sql): (
+            #[allow(clippy::type_complexity)]
+            let (sql_text_opt, using_args, dynamic_conditions, _extra_params, base_sql): (
                 Option<String>,
                 Vec<ogsql_parser::ast::Expr>,
                 Vec<crate::types::DynamicCondition>,
@@ -3034,7 +3027,7 @@ pub fn process_statement(
                             };
                             let var_java = crate::naming::snake_to_camel(&var_name);
                             let (type_str, _) = resolve_var_type(proc, &var_name);
-                            let (cast_expr, is_set_call) = row_extraction_expr("_row", &var_name, &type_str);
+                            let (cast_expr, is_set_call) = row_extraction_expr("_row", &var_name, type_str);
                             if is_set_call {
                                 push_logic_line(proc, format!("    {}{};", var_java, cast_expr));
                             } else if !cast_expr.is_empty() {
@@ -3058,7 +3051,7 @@ pub fn process_statement(
             Ok(())
         }
         PlStatement::Move { cursor, .. } => {
-            let cur = crate::expr::expr_to_java(cursor, proc);
+            let _cur = crate::expr::expr_to_java(cursor, proc);
             let cur_name = format!("{:?}", cursor);
             let idx_var = format!("{}Idx", snake_to_camel(&cur_name.replace('"', "")));
             push_logic_line(proc, format!("{}++;", idx_var));
@@ -3318,7 +3311,7 @@ pub fn process_statement(
             Ok(())
         }
         PlStatement::SqlStatement { sql_text, statement, .. } => {
-            process_sql_statement(statement, &sql_text, proc, ctx);
+            process_sql_statement(statement, sql_text, proc, ctx);
             Ok(())
         }
         PlStatement::ForAll(forall) => {
@@ -3386,11 +3379,7 @@ mod tests {
             "pre-declared counter must not redeclare in for-header, got: {}",
             header
         );
-        assert!(
-            header.contains("for (i = 1;"),
-            "pre-declared counter must reuse method var, got: {}",
-            header
-        );
+        assert!(header.contains("for (i = 1;"), "pre-declared counter must reuse method var, got: {}", header);
         // The declared type must not be clobbered to primitive int.
         assert_eq!(proc.local_vars.get("i").map(|s| s.as_str()), Some("Integer"));
     }

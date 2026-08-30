@@ -140,7 +140,7 @@ pub fn phase0_validate(sql_files: &[PathBuf]) -> ValidateResult {
 
     let error_file_count = file_results.iter().filter(|r| r.errors.iter().any(|e| !is_warning(e))).count();
     let warning_file_count =
-        file_results.iter().filter(|r| r.errors.iter().all(|e| is_warning(e)) && !r.warnings.is_empty()).count();
+        file_results.iter().filter(|r| r.errors.iter().all(is_warning) && !r.warnings.is_empty()).count();
 
     ValidateResult { file_results, error_file_count, warning_file_count }
 }
@@ -285,7 +285,7 @@ pub fn run_pipeline(
     incremental: &mut IncrementalState,
     debug: bool,
 ) -> PipelineResult {
-    let base_package = config.base_package_or_default();
+    let _base_package = config.base_package_or_default();
     let mut ctx = AnalysisContext::new();
 
     let parsed = phase1_parse(sql_files, config, incremental);
@@ -470,35 +470,43 @@ fn merge_package_info(existing: &mut PackageInfo, incoming: PackageInfo, skipped
     }
 
     for (name, value) in incoming.package_vars {
-        if existing.package_vars.contains_key(&name) {
-            skipped.push(SkippedItem {
-                item_type: "PACKAGE_VARS".into(),
-                name,
-                source_file: incoming.source_file.clone(),
-                line_number: 0,
-                reason: format!(
-                    "Conflicting package variable while merging {}; kept first definition",
-                    existing.package_name
-                ),
-            });
-        } else {
-            existing.package_vars.insert(name, value);
+        match existing.package_vars.entry(name) {
+            std::collections::hash_map::Entry::Occupied(occupied) => {
+                let dup_name = occupied.key().clone();
+                skipped.push(SkippedItem {
+                    item_type: "PACKAGE_VARS".into(),
+                    name: dup_name,
+                    source_file: incoming.source_file.clone(),
+                    line_number: 0,
+                    reason: format!(
+                        "Conflicting package variable while merging {}; kept first definition",
+                        existing.package_name
+                    ),
+                });
+            }
+            std::collections::hash_map::Entry::Vacant(vacant) => {
+                vacant.insert(value);
+            }
         }
     }
     for (name, value) in incoming.custom_types {
-        if existing.custom_types.contains_key(&name) {
-            skipped.push(SkippedItem {
-                item_type: "CUSTOM_TYPES".into(),
-                name,
-                source_file: incoming.source_file.clone(),
-                line_number: 0,
-                reason: format!(
-                    "Conflicting custom type while merging {}; kept first definition",
-                    existing.package_name
-                ),
-            });
-        } else {
-            existing.custom_types.insert(name, value);
+        match existing.custom_types.entry(name) {
+            std::collections::hash_map::Entry::Occupied(occupied) => {
+                let dup_name = occupied.key().clone();
+                skipped.push(SkippedItem {
+                    item_type: "CUSTOM_TYPES".into(),
+                    name: dup_name,
+                    source_file: incoming.source_file.clone(),
+                    line_number: 0,
+                    reason: format!(
+                        "Conflicting custom type while merging {}; kept first definition",
+                        existing.package_name
+                    ),
+                });
+            }
+            std::collections::hash_map::Entry::Vacant(vacant) => {
+                vacant.insert(value);
+            }
         }
     }
     existing.comments.extend(incoming.comments);
@@ -541,7 +549,7 @@ fn track_package_origins(
 
 fn phase2_analyze(
     parsed: ParsedPackages,
-    mut ctx: &mut AnalysisContext,
+    ctx: &mut AnalysisContext,
     sql_files: &[PathBuf],
     debug: bool,
 ) -> AnalyzedPackages {
@@ -558,7 +566,7 @@ fn phase2_analyze(
 
     // Build a global map: java_method_name → all candidate GlobalFnEntry across all procedures.
     let mut global_proc_map: HashMap<String, Vec<crate::types::GlobalFnEntry>> = HashMap::new();
-    for (_summary_name, summary) in &proc_summaries {
+    for summary in proc_summaries.values() {
         for proc_in_summary in &summary.procedures {
             let method_name = crate::naming::java_method_name(&proc_in_summary.proc_name);
             let svc_pkg = if !proc_in_summary.package.is_empty() {
@@ -602,7 +610,7 @@ fn phase2_analyze(
             idx += 1;
             crate::progress::progress_bar("Analyze", idx, total, &proc.name);
 
-            if let Err(e) = crate::analyze::analyze_procedure(proc, &proc_summaries, &mut ctx, &ddl_schema, debug) {
+            if let Err(e) = crate::analyze::analyze_procedure(proc, &proc_summaries, ctx, &ddl_schema, debug) {
                 errors.push(e);
             }
         }
@@ -610,7 +618,7 @@ fn phase2_analyze(
             crate::analyze::promote_out_local_vars(proc);
         }
         crate::analyze::discover_cross_service_refs(pkg, &all_pkg_names);
-        crate::analyze::collect_tobefix_warnings(pkg, &mut ctx);
+        crate::analyze::collect_tobefix_warnings(pkg, ctx);
     }
 
     crate::progress::progress_done("Analyze", total);
@@ -658,7 +666,8 @@ fn phase3_generate(
         None
     };
 
-    if schema_map.is_some() {
+    if let Some(schema_map_ref) = &schema_map {
+        let _ = schema_map_ref;
         if let Err(e) = crate::generate::itest::write_abstract_integration_test(output_dir, &base_package, encoding) {
             errors.push(ConversionError::Io {
                 path: output_dir.to_string_lossy().into_owned(),
@@ -669,7 +678,7 @@ fn phase3_generate(
         if let Err(e) = crate::generate::itest::write_itest_schema_sql(
             output_dir,
             &analyzed.packages,
-            schema_map.as_ref().unwrap(),
+            schema_map_ref,
             &itest_mode,
             encoding,
         ) {

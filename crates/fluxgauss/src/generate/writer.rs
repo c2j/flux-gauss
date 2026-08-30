@@ -7,6 +7,12 @@ pub struct CodeWriter {
     indent_level: usize,
 }
 
+impl Default for CodeWriter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CodeWriter {
     pub fn new() -> Self {
         Self { lines: Vec::new(), indent_level: 0 }
@@ -43,6 +49,7 @@ impl CodeWriter {
         self.pop_indent();
     }
 
+    #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
         self.lines.join("\n")
     }
@@ -53,7 +60,7 @@ impl CodeWriter {
         }
         let content = format!("{}\n", self.to_string());
         let (cow, _, _) = encoding.encode(&content);
-        std::fs::write(path, cow.into_owned())
+        std::fs::write(path, &cow)
     }
 }
 

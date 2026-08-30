@@ -34,7 +34,7 @@ fn cli_output_dir_is_respected() {
     let src = out.join("src");
     if src.exists() {
         for entry in walk_java(&src) {
-            if entry.extension().map_or(false, |e| e == "java") {
+            if entry.extension().is_some_and(|e| e == "java") {
                 java_files += 1;
             }
         }
