@@ -1102,9 +1102,11 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
                     var_name.clone()
                 };
                 if field_camel != parts[1] {
-                    format!("{}.getOrDefault(\"{}\", {}.get(\"{}\"))", map_base, field_camel, map_base, parts[1])
+                    let raw = format!("{}.getOrDefault(\"{}\", {}.get(\"{}\"))", map_base, field_camel, map_base, parts[1]);
+                    typed_rowtype_field(raw, snake_base, parts[1], proc)
                 } else {
-                    format!("{}.get(\"{}\")", map_base, field_camel)
+                    let raw = format!("{}.get(\"{}\")", map_base, field_camel);
+                    typed_rowtype_field(raw, snake_base, parts[1], proc)
                 }
             } else {
                 let camel = snake_to_camel(name);
@@ -1462,6 +1464,30 @@ fn call_expr_return_type(expr_str: &str, proc: &ProcedureInfo) -> Option<String>
     }
 }
 
+pub(crate) fn typed_rowtype_field(raw_get: String, base_var: &str, field: &str, proc: &ProcedureInfo) -> String {
+    let field_types = match proc.rowtype_field_types.get(&base_var.to_lowercase()) {
+        Some(ft) => ft,
+        None => return raw_get,
+    };
+    let field_type = match field_types.get(&field.to_lowercase()) {
+        Some(t) => t.as_str(),
+        None => return raw_get,
+    };
+    if field_type.contains("Timestamp") {
+        // Cast of null is null — no NPE, and the arithmetic timestamp-branch
+        // recognizes the ((java.sql.Timestamp) ...) prefix.
+        format!("((java.sql.Timestamp) {})", raw_get)
+    } else if field_type == "Long" || field_type == "long" {
+        format!("({} == null ? null : ((Number) {}).longValue())", raw_get, raw_get)
+    } else if field_type == "Integer" || field_type == "int" {
+        format!("({} == null ? null : ((Number) {}).intValue())", raw_get, raw_get)
+    } else if field_type.contains("BigDecimal") {
+        format!("({} == null ? null : new java.math.BigDecimal(String.valueOf({})))", raw_get, raw_get)
+    } else {
+        raw_get
+    }
+}
+
 fn is_timestamp_or_date_var(expr_str: &str, proc: &ProcedureInfo) -> bool {
     let name = expr_str.trim();
     let base = name.split(|c: char| c == '.' || c == '(').next().unwrap_or(name);
@@ -1590,11 +1616,13 @@ fn binary_op_to_java(
     let l_trim = l.trim();
     let r_trim = r.trim();
     let l_is_ts = is_timestamp_or_date_var(&l, proc)
+        || l_trim.contains("((java.sql.Timestamp)")
         || l_trim.starts_with("java.sql.Date.valueOf(")
         || l_trim.starts_with("java.sql.Timestamp.valueOf(")
         || l_trim.starts_with("new java.sql.Date(")
         || l_trim.starts_with("new java.sql.Timestamp(");
     let r_is_ts = is_timestamp_or_date_var(&r, proc)
+        || r_trim.contains("((java.sql.Timestamp)")
         || r_trim.starts_with("java.sql.Date.valueOf(")
         || r_trim.starts_with("java.sql.Timestamp.valueOf(")
         || r_trim.starts_with("new java.sql.Date(")
@@ -2772,7 +2800,14 @@ fn type_cast_to_java(expr: &ogsql_parser::ast::Expr, type_name: &str, proc: &Pro
             }
         }
         s if s.contains("bool") => format!("((Boolean) {})", inner),
-        s if s.contains("timestamp") => format!("((java.sql.Timestamp) {})", inner),
+        s if s.contains("timestamp") => {
+            if inner.starts_with('"') {
+                // timestamptz '1970-01-01' — string literal must parse, not cast
+                format!("java.sql.Timestamp.valueOf({})", inner)
+            } else {
+                format!("((java.sql.Timestamp) {})", inner)
+            }
+        }
         s if s.contains("date") => {
             if inner.starts_with('"') {
                 format!("java.sql.Date.valueOf({})", inner)
@@ -3090,6 +3125,66 @@ mod tests {
         assert!(
             out.contains("vReturnRateOrg.get()"),
             "queued promotion must be deref'd in arithmetic, got: {}",
+            out
+        );
+    }
+
+    #[test]
+    fn test_rowtype_field_access_typed_extraction() {
+        // ogagila plan_increment: v_wm is dw.etl_watermark%ROWTYPE; field
+        // access must emit typed extraction (Timestamp cast / null-safe Long).
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_wm".into(), "Map<String, Object>".into());
+        let mut fields = std::collections::HashMap::new();
+        fields.insert("wm_ts_value".to_string(), "java.sql.Timestamp".to_string());
+        fields.insert("wm_id_value".to_string(), "Long".to_string());
+        fields.insert("src_table".to_string(), "String".to_string());
+        proc.rowtype_field_types.insert("v_wm".into(), fields);
+
+        let ts = resolve_column_ref("v_wm.wm_ts_value", &proc);
+        assert!(ts.contains("((java.sql.Timestamp)"), "got: {}", ts);
+        assert!(ts.contains("getOrDefault"), "got: {}", ts);
+
+        let id = resolve_column_ref("v_wm.wm_id_value", &proc);
+        assert!(
+            id.contains("vWm.getOrDefault(\"wmIdValue\", vWm.get(\"wm_id_value\")) == null ? null : ((Number) vWm.getOrDefault(\"wmIdValue\", vWm.get(\"wm_id_value\"))).longValue()"),
+            "got: {}",
+            id
+        );
+
+        let st = resolve_column_ref("v_wm.src_table", &proc);
+        assert_eq!(
+            st,
+            "vWm.getOrDefault(\"srcTable\", vWm.get(\"src_table\"))",
+            "String field stays raw for null checks: {}",
+            st
+        );
+    }
+
+    #[test]
+    fn test_binary_sub_rowtype_timestamp_field_uses_ts_branch() {
+        // o_ts_from := v_wm.wm_ts_value - <interval>: the typed field access
+        // produces ((java.sql.Timestamp) ...) which must route to the timestamp
+        // subtraction branch, NOT the (Number) fallback.
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_wm".into(), "Map<String, Object>".into());
+        let mut fields = std::collections::HashMap::new();
+        fields.insert("wm_ts_value".to_string(), "java.sql.Timestamp".to_string());
+        proc.rowtype_field_types.insert("v_wm".into(), fields);
+        let expr = ogsql_parser::ast::Expr::BinaryOp {
+            left: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["v_wm".into(), "wm_ts_value".into()])),
+            op: "-".into(),
+            right: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Integer(5))),
+        };
+        let out = expr_to_java(&expr, &proc);
+        assert!(
+            out.contains("new java.sql.Timestamp("),
+            "timestamp subtraction branch must fire, got: {}",
+            out
+        );
+        assert!(
+            !out.contains("(Number)"),
+            "no (Number) cast on a Timestamp operand, got: {}",
             out
         );
     }

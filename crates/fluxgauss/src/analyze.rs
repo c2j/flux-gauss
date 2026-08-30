@@ -1,6 +1,7 @@
 use crate::context::{AnalysisContext, ScanContext};
 use crate::types::{ConversionError, PackageInfo, ProcedureInfo, UnresolvedCall};
 use ogsql_parser::ast::plpgsql::PlStatement;
+use std::collections::HashMap;
 
 pub fn analyze_procedure(
     proc: &mut ProcedureInfo,
@@ -186,8 +187,26 @@ pub fn process_declaration(
     match decl {
         PlDeclaration::Variable(var) => {
             let java_type = match &var.data_type {
-                ogsql_parser::ast::plpgsql::PlDataType::PercentRowType(_) => {
+                ogsql_parser::ast::plpgsql::PlDataType::PercentRowType(table) => {
                     proc.imports.insert("import java.util.Map;".into());
+                    // Resolve field types from the table's DDL so field access
+                    // (v_wm.wm_ts_value) can emit typed extraction.
+                    let table_lower = table.split('.').last().unwrap_or(table).to_lowercase();
+                    let field_types: HashMap<String, String> = ddl_schema
+                        .get(&table_lower)
+                        .map(|cols| {
+                            cols.iter()
+                                .map(|(col, raw_sql_type)| {
+                                    let sql_type = crate::extract::normalize_sql_type(raw_sql_type);
+                                    let java = crate::type_map::sql_type_to_java(&sql_type)
+                                        .map(|s| s.to_string())
+                                        .unwrap_or_else(|| "String".into());
+                                    (col.to_lowercase(), java)
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    proc.rowtype_field_types.insert(var.name.to_lowercase(), field_types);
                     "Map<String, Object>".into()
                 }
                 ogsql_parser::ast::plpgsql::PlDataType::PercentType { table, column } => {

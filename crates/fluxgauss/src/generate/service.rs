@@ -309,6 +309,31 @@ pub fn write_service_class(
     Ok(class_name)
 }
 
+/// For a dynamic-SQL extra param that came from a %ROWTYPE field reference
+/// (e.g. `v_wm.src_id_col`), return the typed field-access expression so the
+/// Mapper call passes the value instead of an undeclared bare name.
+/// The dml.sql_text is already parameter-substituted (${srcIdCol}), so match
+/// by reverse lookup: extra-param camel name → rowtype var field.
+fn dynamic_sql_rowtype_field_arg(_sql_text: &str, java_name: &str, proc: &crate::types::ProcedureInfo) -> Option<String> {
+    let name_lower = java_name.to_lowercase();
+    for (var_lower, fields) in &proc.rowtype_field_types {
+        for field in fields.keys() {
+            if crate::naming::snake_to_camel(field).to_lowercase() == name_lower {
+                let var_camel = crate::naming::snake_to_camel(var_lower);
+                let raw = format!(
+                    "{}.getOrDefault(\"{}\", {}.get(\"{}\"))",
+                    var_camel,
+                    crate::naming::snake_to_camel(field),
+                    var_camel,
+                    field
+                );
+                return Some(crate::expr::typed_rowtype_field(raw, var_lower, field, proc));
+            }
+        }
+    }
+    None
+}
+
 pub(crate) fn boxed_to_primitive(t: &str) -> &str {
     match t {
         "Long" => "long",
@@ -1062,7 +1087,8 @@ fn append_local_vars_to_mapper_calls(
                     if is_ar {
                         extra_args.push(format!("{}.get()", name));
                     } else {
-                        extra_args.push(name.clone());
+                        let rowtype_expr = dynamic_sql_rowtype_field_arg(&dml.sql_text, name, proc);
+                        extra_args.push(rowtype_expr.unwrap_or_else(|| name.clone()));
                     }
                 }
             }
