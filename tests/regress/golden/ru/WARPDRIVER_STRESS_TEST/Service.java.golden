@@ -250,7 +250,7 @@ public class WarpdriverStressTestService {
         Integer vDeleted = 0;
         Integer vRowcount = 0;
         int __ROWCOUNT__ = 0;
-        vCutoff = new java.sql.Timestamp(new java.sql.Timestamp(System.currentTimeMillis()).getTime() - (long)(Long.parseLong(String.valueOf(String.valueOf((String.valueOf(pRetentionDays)))))) * 24 * 60 * 60 * 1000);
+        vCutoff = new java.sql.Timestamp(new java.sql.Timestamp(System.currentTimeMillis()).getTime() - (long)(pRetentionDays) * 24 * 60 * 60 * 1000);
         do {
             __ROWCOUNT__ = warpdriverStressTestMapper.deleteOperationLogs(pRetentionDays, vBatch, vCutoff);
             vRowcount = Integer.valueOf(__ROWCOUNT__);

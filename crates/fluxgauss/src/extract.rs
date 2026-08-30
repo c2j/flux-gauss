@@ -185,7 +185,15 @@ pub fn extract_from_parse_output(
                     .return_type
                     .as_deref()
                     .map(strip_function_return_modifiers)
-                    .and_then(|rt| sql_type_to_java(&rt).map(|s| s.to_string()));
+                    .and_then(|rt| {
+                        // Preserve `trigger` so should_stub_procedure can stub it
+                        // (#94); everything else maps to a Java type.
+                        if rt == "trigger" {
+                            Some("trigger".to_string())
+                        } else {
+                            sql_type_to_java(&rt).map(|s| s.to_string())
+                        }
+                    });
                 let proc_info = build_procedure_info(
                     full_name,
                     pkg_name,

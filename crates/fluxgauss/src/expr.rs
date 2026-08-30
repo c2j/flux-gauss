@@ -1575,6 +1575,52 @@ fn interval_month_count(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) ->
     }
 }
 
+/// Extract (value_java, unit) from an interval expression (literal or concat).
+/// Unit is normalized to month/year/day/hour — the caller converts to Java.
+fn interval_count_unit(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> Option<(String, String)> {
+    use ogsql_parser::ast::{DataType, Expr};
+    let inner = match expr {
+        Expr::TypeCast { expr, type_name: DataType::Interval(_), .. } => expr.as_ref(),
+        _ => return None,
+    };
+    interval_count_unit_inner(inner, proc)
+}
+
+/// Like `interval_count_unit` but takes the already-unwrapped interval body.
+fn interval_count_unit_inner(inner: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> Option<(String, String)> {
+    use ogsql_parser::ast::{Expr, Literal};
+    let inner = match inner {
+        Expr::Parenthesized(p) => p.as_ref(),
+        other => other,
+    };
+    let (value, unit) = match inner {
+        Expr::Literal(Literal::String(value)) => {
+            let mut parts = value.split_whitespace();
+            (parts.next()?.to_string(), parts.next()?.to_ascii_lowercase())
+        }
+        Expr::BinaryOp { left, op, right } if op == "||" => {
+            let unit = match right.as_ref() {
+                Expr::Literal(Literal::String(value)) => value.trim().to_ascii_lowercase(),
+                _ => return None,
+            };
+            (expr_to_java(left, proc), unit)
+        }
+        _ => return None,
+    };
+    let unit = if unit.starts_with("month") {
+        "month"
+    } else if unit.starts_with("year") {
+        "year"
+    } else if unit.starts_with("day") {
+        "day"
+    } else if unit.starts_with("hour") {
+        "hour"
+    } else {
+        return None;
+    };
+    Some((value, unit.to_string()))
+}
+
 fn binary_op_to_java(
     left: &ogsql_parser::ast::Expr,
     op: &str,
@@ -1633,20 +1679,49 @@ fn binary_op_to_java(
                 return format!("(({}).getTime() - ({}).getTime()) / (24 * 60 * 60 * 1000)", l, r);
             }
             if l_is_ts && !r_is_ts {
-                // #95: `now() - interval '3 month'` must use plus/minusMonths,
-                // not Long.parseLong("3 month") (runtime NumberFormatException).
-                if let Some(months) = interval_month_count(right, proc) {
+                // #95: `ts - interval '3 month'` must use minusMonths (not
+                // Long.parseLong("3 month")); day/hour units use epoch math.
+                if let Some((value_java, unit)) = interval_count_unit(right, proc) {
                     let l_trimmed = l.trim();
-                    if l_trimmed.starts_with("new java.sql.Date") || l_trimmed.starts_with("java.sql.Date.valueOf") {
-                        return format!(
-                            "java.sql.Date.valueOf({}.toLocalDate().minusMonths((long)({})))",
-                            l, months
-                        );
+                    let date_form = l_trimmed.starts_with("new java.sql.Date") || l_trimmed.starts_with("java.sql.Date.valueOf");
+                    match unit.as_str() {
+                        "month" => {
+                            if date_form {
+                                return format!(
+                                    "java.sql.Date.valueOf({}.toLocalDate().minusMonths((long)({})))",
+                                    l, value_java
+                                );
+                            }
+                            return format!(
+                                "java.sql.Timestamp.valueOf({}.toLocalDateTime().minusMonths((long)({})))",
+                                l, value_java
+                            );
+                        }
+                        "year" => {
+                            if date_form {
+                                return format!(
+                                    "java.sql.Date.valueOf({}.toLocalDate().minusYears((long)({})))",
+                                    l, value_java
+                                );
+                            }
+                            return format!(
+                                "java.sql.Timestamp.valueOf({}.toLocalDateTime().minusYears((long)({})))",
+                                l, value_java
+                            );
+                        }
+                        "day" => {
+                            return format!(
+                                "new java.sql.Timestamp({}.getTime() - (long)({}) * 24 * 60 * 60 * 1000)",
+                                l, value_java
+                            );
+                        }
+                        _ => {
+                            return format!(
+                                "new java.sql.Timestamp({}.getTime() - (long)({}) * 60 * 60 * 1000)",
+                                l, value_java
+                            );
+                        }
                     }
-                    return format!(
-                        "java.sql.Timestamp.valueOf({}.toLocalDateTime().minusMonths((long)({})))",
-                        l, months
-                    );
                 }
                 let r_coerced = if r.contains("concat(String.valueOf(\" days\"))") || r.contains("concat(\" days\")") {
                     let stripped =
@@ -1668,11 +1743,41 @@ fn binary_op_to_java(
         }
         if op == "+" && (l_is_ts || r_is_ts) {
             if l_is_ts && !r_is_ts {
-                if let Some(months) = interval_month_count(right, proc) {
-                    return format!(
-                        "java.sql.Timestamp.valueOf({}.toLocalDateTime().plusMonths((long)({})))",
-                        l, months
-                    );
+                if let Some((value_java, unit)) = interval_count_unit(right, proc) {
+                    let l_trimmed = l.trim();
+                    let date_form = l_trimmed.starts_with("new java.sql.Date") || l_trimmed.starts_with("java.sql.Date.valueOf");
+                    match unit.as_str() {
+                        "month" => {
+                            if date_form {
+                                return format!(
+                                    "java.sql.Date.valueOf({}.toLocalDate().plusMonths((long)({})))",
+                                    l, value_java
+                                );
+                            }
+                            return format!(
+                                "java.sql.Timestamp.valueOf({}.toLocalDateTime().plusMonths((long)({})))",
+                                l, value_java
+                            );
+                        }
+                        "year" => {
+                            return format!(
+                                "java.sql.Timestamp.valueOf({}.toLocalDateTime().plusYears((long)({})))",
+                                l, value_java
+                            );
+                        }
+                        "day" => {
+                            return format!(
+                                "new java.sql.Timestamp({}.getTime() + (long)({}) * 24 * 60 * 60 * 1000)",
+                                l, value_java
+                            );
+                        }
+                        _ => {
+                            return format!(
+                                "new java.sql.Timestamp({}.getTime() + (long)({}) * 60 * 60 * 1000)",
+                                l, value_java
+                            );
+                        }
+                    }
                 }
                 let r_coerced = if r.contains("concat(String.valueOf(\" days\"))") || r.contains("concat(\" days\")") {
                     let stripped =
@@ -2063,6 +2168,10 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         // #112: `quote_literal(x)` must not degrade to a TOBEFIX null placeholder
         // (callers concat it into SQL strings — a null NPEs at runtime).
         "QUOTE_LITERAL" => format!("String.valueOf({})", jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")),
+        // #112: clock_timestamp()/statement_timestamp() are timestamps, not nulls
+        "CLOCK_TIMESTAMP" | "STATEMENT_TIMESTAMP" | "TRANSACTION_TIMESTAMP" => {
+            "new java.sql.Timestamp(System.currentTimeMillis())".to_string()
+        }
         "LOWER" => format!("String.valueOf({}).toLowerCase()", jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")),
         "TRIM" => format!("{}.trim()", jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")),
         "LENGTH" => format!("{}.length()", jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")),
@@ -2219,6 +2328,21 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         "AGE" if jargs.len() >= 2 => format!("java.time.Period.between(new java.sql.Date(((java.sql.Timestamp){}).getTime()).toLocalDate(), new java.sql.Date(((java.sql.Timestamp){}).getTime()).toLocalDate())", jargs[1], jargs[0]),
         "AGE" if jargs.len() == 1 => format!("java.time.Period.between(new java.sql.Date(((java.sql.Timestamp){}).getTime()).toLocalDate(), java.time.LocalDate.now())", jargs[0]),
         "DATE_TRUNC" if jargs.len() >= 2 => {
+            // java.sql.Date.toInstant() throws UnsupportedOperationException —
+            // wrap Date-typed args in a Timestamp before calling .toInstant().
+            let ts_arg = {
+                let a = jargs[1].trim();
+                if a.starts_with("new java.sql.Date")
+                    || a.starts_with("java.sql.Date.valueOf")
+                    || resolve_var_java_type(a, proc)
+                        .map(|t| t.contains("java.sql.Date") && !t.contains("Timestamp"))
+                        .unwrap_or(false)
+                {
+                    format!("new java.sql.Timestamp({}.getTime())", a)
+                } else {
+                    jargs[1].clone()
+                }
+            };
             let unit_raw = jargs[0].trim_matches('"').trim_matches('\'').to_lowercase();
             let chrono_unit = match unit_raw.as_str() {
                 "microsecond" | "microseconds" => "java.time.temporal.ChronoUnit.MICROS",
@@ -2234,17 +2358,17 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                 _ => "java.time.temporal.ChronoUnit.DAYS",
             };
             if unit_raw == "quarter" {
-                format!("java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({}.toInstant(), java.time.ZoneId.systemDefault()).truncatedTo(java.time.temporal.ChronoUnit.DAYS).withMonth(((java.time.LocalDateTime.ofInstant({}.toInstant(), java.time.ZoneId.systemDefault()).getMonthValue() - 1) / 3) * 3 + 1).withDayOfMonth(1))", jargs[1], jargs[1])
+                format!("java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({}.toInstant(), java.time.ZoneId.systemDefault()).truncatedTo(java.time.temporal.ChronoUnit.DAYS).withMonth(((java.time.LocalDateTime.ofInstant({}.toInstant(), java.time.ZoneId.systemDefault()).getMonthValue() - 1) / 3) * 3 + 1).withDayOfMonth(1))", ts_arg, ts_arg)
             } else if chrono_unit.contains("MONTHS") {
                 // LocalDateTime.truncatedTo only accepts time units; date units
                 // need withDayOfMonth(1) + truncate to DAYS.
-                format!("java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({}.toInstant(), java.time.ZoneId.systemDefault()).withDayOfMonth(1).truncatedTo(java.time.temporal.ChronoUnit.DAYS))", jargs[1])
+                format!("java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({}.toInstant(), java.time.ZoneId.systemDefault()).withDayOfMonth(1).truncatedTo(java.time.temporal.ChronoUnit.DAYS))", ts_arg)
             } else if chrono_unit.contains("YEARS") {
-                format!("java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({}.toInstant(), java.time.ZoneId.systemDefault()).withDayOfYear(1).truncatedTo(java.time.temporal.ChronoUnit.DAYS))", jargs[1])
+                format!("java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({}.toInstant(), java.time.ZoneId.systemDefault()).withDayOfYear(1).truncatedTo(java.time.temporal.ChronoUnit.DAYS))", ts_arg)
             } else if chrono_unit.contains("WEEKS") {
-                format!("java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({}.toInstant(), java.time.ZoneId.systemDefault()).with(java.time.DayOfWeek.MONDAY).truncatedTo(java.time.temporal.ChronoUnit.DAYS))", jargs[1])
+                format!("java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({}.toInstant(), java.time.ZoneId.systemDefault()).with(java.time.DayOfWeek.MONDAY).truncatedTo(java.time.temporal.ChronoUnit.DAYS))", ts_arg)
             } else {
-                format!("java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({}.toInstant(), java.time.ZoneId.systemDefault()).truncatedTo({}))", jargs[1], chrono_unit)
+                format!("java.sql.Timestamp.valueOf(java.time.LocalDateTime.ofInstant({}.toInstant(), java.time.ZoneId.systemDefault()).truncatedTo({}))", ts_arg, chrono_unit)
             }
         }
         "MONTHS_BETWEEN" if jargs.len() >= 2 => format!("java.time.Period.between(new java.sql.Date(((java.sql.Timestamp){}).getTime()).toLocalDate(), new java.sql.Date(((java.sql.Timestamp){}).getTime()).toLocalDate()).toTotalMonths()", jargs[1], jargs[0]),
@@ -2861,7 +2985,15 @@ fn type_cast_to_java(expr: &ogsql_parser::ast::Expr, type_name: &str, proc: &Pro
                 format!("((java.sql.Date) {})", inner)
             }
         }
-        s if s.contains("interval") => format!("String.valueOf({})", inner),
+        s if s.contains("interval") => {
+            // `(x || ' day')::interval` in a numeric context must produce the
+            // numeric value, not a "N day" string that later parseLong rejects.
+            if let Some((value_java, _unit)) = interval_count_unit_inner(expr, proc) {
+                format!("(long)({})", value_java)
+            } else {
+                format!("String.valueOf({})", inner)
+            }
+        }
         _ => format!("String.valueOf({})", inner),
     }
 }
@@ -3222,6 +3354,24 @@ mod tests {
             "no (Number) cast on a Timestamp operand, got: {}",
             out
         );
+    }
+
+    #[test]
+    fn test_interval_cast_numeric() {
+        let proc = empty_proc();
+        // (v_wm.lookback_days || ' day')::interval must not parseLong the string
+        let cast = ogsql_parser::ast::Expr::TypeCast {
+            expr: Box::new(ogsql_parser::ast::Expr::BinaryOp {
+                left: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["v_wm".into(), "lookback_days".into()])),
+                op: "||".into(),
+                right: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String(" day".into()))),
+            }),
+            type_name: ogsql_parser::ast::DataType::Interval(None),
+            default: None,
+            format: None,
+        };
+        let out = expr_to_java(&cast, &proc);
+        assert!(!out.contains("parseLong"), "no parseLong on interval, got: {}", out);
     }
 
     #[test]

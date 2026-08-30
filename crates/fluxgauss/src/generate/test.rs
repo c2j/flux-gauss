@@ -462,7 +462,7 @@ fn column_mock_value_for_key(camel_key: &str) -> String {
     {
         return "java.math.BigDecimal.TEN".to_string();
     }
-    if nl.ends_with("ts") || nl.contains("ts_value") || nl.ends_with("_at") || nl.contains("timestamp") || nl.ends_with("time") {
+    if nl.ends_with("_ts") || nl.contains("ts_value") || nl.contains("tsvalue") || nl.ends_with("_at") || nl.contains("timestamp") || nl.ends_with("time") {
         return "java.sql.Timestamp.valueOf(\"2024-01-01 00:00:00\")".to_string();
     }
     if nl.ends_with("date") {
