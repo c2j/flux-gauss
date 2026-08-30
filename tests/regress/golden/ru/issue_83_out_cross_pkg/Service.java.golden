@@ -61,7 +61,7 @@ public class CallerService {
         AtomicReference<Long> vMonths = new AtomicReference<>(1L);
         AtomicReference<Long> vRows = new AtomicReference<>(1L);
         calleeService.buildIncremental(pRunId, vRows, vMonths);
-        if (vRows > 0) {
+        if (java.util.Optional.ofNullable((Number) vRows.get()).map(Number::longValue).orElse(0L) > 0) {
         }
         calleeService.planIncrement("x", vRows, vMonths);
     }

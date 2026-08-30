@@ -142,6 +142,19 @@ pub fn assignment_to_java(
                     } else {
                         val
                     }
+                } else if ptype == "Integer" || ptype == "int" {
+                    // Narrow long-producing expressions to int; plain int literals
+                    // autobox fine and must stay unchanged.
+                    if val.contains("0L")
+                        || val.contains(".longValue()")
+                        || val.contains("Long.parseLong")
+                        || val.contains(".doubleValue()")
+                        || val.contains(".intValue()")
+                    {
+                        format!("((Number)({})).intValue()", val)
+                    } else {
+                        val
+                    }
                 } else if !ptype.is_empty() && ptype != "Object" && ptype != "String" {
                     if val.starts_with("String.valueOf(") {
                         let inner = val.trim_start_matches("String.valueOf(").trim_end_matches(')');
@@ -1524,6 +1537,26 @@ fn binary_op_to_java(
 ) -> String {
     let mut l = expr_to_java(left, proc);
     let mut r = expr_to_java(right, proc);
+
+    // Promoted local vars (AtomicReference holders for OUT args) read in
+    // arithmetic/comparison must be dereferenced — the bare name is the
+    // reference, not the value. Call-argument OUT positions are handled
+    // separately (emit_cross_pkg_call), so this only affects value contexts.
+    let deref_promoted = |e: &str| -> String {
+        let t = e.trim();
+        if is_bare_identifier(t)
+            && proc
+                .out_local_vars
+                .keys()
+                .any(|k| crate::naming::snake_to_camel(k) == t)
+        {
+            format!("{}.get()", t)
+        } else {
+            t.to_string()
+        }
+    };
+    l = deref_promoted(&l);
+    r = deref_promoted(&r);
 
     // Unwrap (Number) prefix for arithmetic contexts
     if matches!(op, "*" | "/" | "+" | "-") {
@@ -2941,6 +2974,35 @@ mod tests {
             "must not sibling-cast Timestamp to Date, got: {}",
             out
         );
+    }
+
+    #[test]
+    fn test_assignment_out_integer_param_long_expr_uses_int_value() {
+        // #103 DwdService:102/139 — `o_months := o_months + 1` produces a long
+        // expression (safe_long_value), but oMonths is AtomicReference<Integer>;
+        // .set(long) fails javac — must narrow with ((Number)(...)).intValue().
+        let mut proc = empty_proc();
+        let p = crate::types::Parameter {
+            name: "o_months".into(),
+            java_type: "Integer".into(),
+            sql_type: "number".into(),
+            mode: Some(crate::types::ParamMode::Out),
+            default_value: None,
+        };
+        proc.parameters.push(p);
+        let target = ogsql_parser::ast::Expr::PlVariable(vec!["o_months".into()]);
+        let value = ogsql_parser::ast::Expr::BinaryOp {
+            left: Box::new(ogsql_parser::ast::Expr::PlVariable(vec!["o_months".into()])),
+            op: "+".into(),
+            right: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Integer(1))),
+        };
+        let out = assignment_to_java(&target, &value, &proc);
+        assert!(
+            out.contains(".intValue()"),
+            "Integer OUT param must narrow long expression, got: {}",
+            out
+        );
+        assert!(out.starts_with("oMonths.set("), "must use .set(), got: {}", out);
     }
 
     #[test]

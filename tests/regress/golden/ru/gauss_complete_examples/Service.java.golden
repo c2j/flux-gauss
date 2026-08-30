@@ -226,7 +226,7 @@ public class CursorLifecycleService {
         this.procGetRawCursor(pDeptId, vCursor1);
         this.procEnhanceCursor(vCursor1.get(), vCursor2);
         this.procConsumeCursor(vCursor2.get(), vResult, new AtomicReference<>(null));
-        // CALL DBE_OUTPUT.PRINT_LINE(String.valueOf("Pipeline result: ").concat(String.valueOf(vResult)))
+        // CALL DBE_OUTPUT.PRINT_LINE(String.valueOf("Pipeline result: ").concat(String.valueOf(vResult.get())))
     }
 }
 
