@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.Issue100ReturnNextMapper">
+
+    <!-- Source: issue_100_return_next.sql:5-5 — f_issue100_collect_rows.selectFIssue100CollectRows -->
+    <select id="selectFIssue100CollectRows" resultType="java.util.LinkedHashMap">
+        select *
+        from customer
+    </select>
+
+</mapper>

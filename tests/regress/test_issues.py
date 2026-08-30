@@ -23,6 +23,61 @@ from tests.regress.conftest import (
 )
 
 
+class TestIssue100_SetofReturnNext:
+    """#100: SETOF functions with RETURN NEXT must accumulate rows into a
+    result list and return it at method end — not a TODO stub."""
+
+    @staticmethod
+    def _convert_fixture(tmp_path):
+        import yaml
+
+        cfg = {
+            "output_dir": str(tmp_path / "dest"),
+            "base_package": "com.example.demo",
+            "sources": [os.path.join(FIXTURES_DIR, "issue_100_return_next.sql")],
+        }
+        cfg_path = tmp_path / "setof.yaml"
+        cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(Path(fg.__file__).resolve()),
+                "-c",
+                str(cfg_path),
+                "--skip-validate",
+                "--full",
+            ],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "OGSQL_BIN": fg.OGSQL_BIN},
+            timeout=120,
+        )
+        assert result.returncode == 0, (
+            f"conversion failed:\n{result.stdout[-800:]}\n{result.stderr[-800:]}"
+        )
+        return tmp_path / "dest"
+
+    @staticmethod
+    def _service_content(out):
+        service = next((out / "src/main/java").rglob("*Service.java"), None)
+        assert service is not None, "no Service.java generated"
+        return service.read_text(encoding="utf-8")
+
+    def test_setof_return_type_is_list(self, tmp_path):
+        content = self._service_content(self._convert_fixture(tmp_path))
+        assert "List<Map<String, Object>> fIssue100CollectRows" in content, (
+            "SETOF function must map to List<Map<String, Object>> return type"
+        )
+
+    def test_return_next_accumulates_and_returns(self, tmp_path):
+        content = self._service_content(self._convert_fixture(tmp_path))
+        assert "_returnRows.add(" in content, "RETURN NEXT must accumulate into _returnRows"
+        assert "return _returnRows;" in content, "method must end by returning _returnRows"
+        assert "unhandled PL/pgSQL statement type: ReturnNext" not in content, (
+            "RETURN NEXT must not fall through to the unhandled-statement stub"
+        )
+
+
 class TestIssue101_ItestFixtureConstraints:
     """#101: itest fixtures must not violate FK constraints.
 

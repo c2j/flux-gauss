@@ -1,0 +1,31 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue100ReturnNextMapper;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue100ReturnNextService {
+    private static final Logger log = LoggerFactory.getLogger(Issue100ReturnNextService.class);
+
+    private final Issue100ReturnNextMapper issue100ReturnNextMapper;
+
+    public Issue100ReturnNextService(Issue100ReturnNextMapper issue100ReturnNextMapper) {
+        this.issue100ReturnNextMapper = issue100ReturnNextMapper;
+    }
+    // Source: f_issue100_collect_rows (FUNCTION) — issue_100_return_next.sql:3-14
+    public java.util.List<Map<String, Object>> fIssue100CollectRows() {
+        java.util.List<Map<String, Object>> _returnRows = new java.util.ArrayList<>();
+        List<Map<String, Object>> rrList = issue100ReturnNextMapper.selectFIssue100CollectRows();
+        for (Map<String, Object> rr : rrList) {
+            _returnRows.add(rr);
+        }
+        return _returnRows;
+    }
+}

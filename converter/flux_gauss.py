@@ -676,6 +676,9 @@ def sql_type_to_java(sql_type) -> str:
     normalized = re.sub(r"\(.*\)", "", normalized).strip()
     if normalized.startswith("table"):
         return "java.util.List<java.util.Map<String, Object>>"
+    if normalized.startswith("setof"):
+        inner = normalized[5:].strip()
+        return f"java.util.List<{sql_type_to_java(inner)}>"
     # Handle SQL array types: FLOAT8[] → List<Double>, TEXT[] → List<String>, etc.
     if normalized.endswith("[]"):
         base = normalized[:-2].strip()
@@ -3157,6 +3160,8 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
             proc.imports.add("import java.sql.Savepoint;")
         elif stmt_type == "ReturnQuery":
             _process_return_query(stmt_data, proc, all_packages, dml_counter)
+        elif stmt_type == "ReturnNext":
+            _process_return_next(stmt_data, proc, all_packages)
         elif stmt_type == "GetDiagnostics":
             _process_get_diagnostics(stmt_data, proc)
         elif stmt_type == "ForAll":
@@ -4812,6 +4817,8 @@ def _process_return(return_data: dict, proc: ProcedureInfo, all_packages: dict =
             if _needs_coercion(_et, ret_java):
                 java_expr = _coerce_type(java_expr, _et, ret_java)
         proc.java_logic_lines.append(f"return {java_expr};")
+    elif getattr(proc, '_setof_accumulate', False):
+        proc.java_logic_lines.append("return _returnRows;")
     else:
         proc.java_logic_lines.append("return;")
 
@@ -7190,6 +7197,31 @@ def _process_return_query(rq_data: dict, proc: ProcedureInfo, all_packages: dict
         proc.java_logic_lines.append(f"// TODO: RETURN QUERY EXECUTE — dynamic SQL variable: {var_name}")
         proc.java_logic_lines.append(f"//       This function returns a dynamic query result. Consider using mapper.selectXxx() with the resolved SQL.")
         _record_todo("RETURN_QUERY_DYNAMIC", proc, f"var={var_name}")
+
+
+def _process_return_next(rn_data: dict, proc: ProcedureInfo, all_packages: dict = None):
+    expr = rn_data.get("expression")
+    if not proc.is_function or not proc.return_type:
+        proc.java_logic_lines.append("// TODO: RETURN NEXT in non-function context")
+        _record_todo("RETURN_NEXT_NON_FUNC", proc, "")
+        return
+    rt = str(proc.return_type).strip().lower()
+    if not rt.startswith("setof"):
+        proc.java_logic_lines.append("// TODO: RETURN NEXT outside SETOF function")
+        _record_todo("RETURN_NEXT_NON_SETOF", proc, "")
+        return
+    if not expr:
+        proc.java_logic_lines.append("// TODO: RETURN NEXT without expression")
+        _record_todo("RETURN_NEXT_EMPTY", proc, "")
+        return
+    inner_java = sql_type_to_java(rt[len("setof"):].strip())
+    if "Map" not in inner_java:
+        proc.java_logic_lines.append(f"// TODO: RETURN NEXT of scalar SETOF ({inner_java}) not supported")
+        _record_todo("RETURN_NEXT_SCALAR", proc, inner_java)
+        return
+    java_expr = _expr_to_java(expr, proc, all_packages=all_packages)
+    proc._setof_accumulate = True
+    proc.java_logic_lines.append(f"_returnRows.add({java_expr});")
 
 
 def _extract_var_name_from_expr(expr: dict) -> str:
@@ -13284,6 +13316,8 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
             body_lines.append(f"return {_type_default(ret_type)};")
         exception_block = None
     else:
+        if proc.is_function and getattr(proc, '_setof_accumulate', False) and "List" in ret_type:
+            body_lines.append(f"{ret_type} _returnRows = new java.util.ArrayList<>();")
         out_java_names = {p.java_name for p in out_params}
         top_level_declares = set()
         top_level_insert_idx = 0

@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_100_return_next.sql",
+  "package_name": "issue_100_return_next",
+  "files": {
+    "Service.java": "56335f66b8b94743",
+    "Mapper.java": "380220cc25e0e6f7",
+    "Mapper.xml": "32bf6933cee27e8b",
+    "ServiceTest.java": "6ab9f24981a5dec6"
+  }
+}

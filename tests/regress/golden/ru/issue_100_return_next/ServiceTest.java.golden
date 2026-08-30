@@ -1,0 +1,33 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue100ReturnNextMapper;
+import com.example.demo.service.Issue100ReturnNextService;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_100_return_next.sql
+class Issue100ReturnNextServiceTest {
+
+    @Mock
+    private Issue100ReturnNextMapper issue100ReturnNextMapper;
+
+    @InjectMocks
+    private Issue100ReturnNextService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_fIssue100CollectRows_success() {
+        { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); when(issue100ReturnNextMapper.selectFIssue100CollectRows()).thenReturn(java.util.List.of(m)); }
+        var result = service.fIssue100CollectRows();
+    }
+}
