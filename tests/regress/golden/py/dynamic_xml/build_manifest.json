@@ -3,9 +3,9 @@
   "fixture": "pkg_dynamic_xml.sql",
   "package_name": "dynamic_xml",
   "files": {
-    "Service.java": "8a4c11d7264f7188",
+    "Service.java": "096dcb4401719861",
     "Mapper.java": "c8ec71e16954cd2c",
     "Mapper.xml": "4494d1ecb1fa0387",
-    "ServiceTest.java": "7b66b62ceb311462"
+    "ServiceTest.java": "908865647433e651"
   }
 }

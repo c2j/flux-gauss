@@ -14033,6 +14033,51 @@ def _write_service_test(base_path: Path, pkg: PackageInfo, service_injections: d
     _write_source_file(test_dir / f"{test_class_name}.java", content)
 
 
+def _domain_test_value(proc: ProcedureInfo, param, pkg=None) -> str:
+    """Domain-aware test value for a procedure parameter.
+
+    Resolves placeholder data that passes generated validations:
+    1. Validation-literal sampling: `Arrays.asList("A","B").contains(<param>)`
+       → use the first literal (e.g. p_mode → "REPLACE").
+    2. Date-prefix params: `<param> + "-01"` → a "yyyy-MM" prefix so
+       to_date(param || '-01') parses.
+    3. SQL DEFAULT value (when present and usable).
+    4. Fallback to the generic placeholder generator.
+    """
+    jn = param.java_name
+    # 1. Validation literal sampling
+    for line in proc.java_logic_lines:
+        m = re.search(r'Arrays\.asList\(([^)]*)\)\s*\.contains\(\s*' + re.escape(jn) + r'\s*\)', line)
+        if m:
+            lits = re.findall(r'"([^"]*)"', m.group(1))
+            if lits:
+                return f'"{lits[0]}"'
+    # 2. Date-prefix usage: `to_date(x || '-01')` appears in declaration
+    # defaults (local_var_defaults) or arithmetic lines.
+    _date_ctx_lines = list(proc.java_logic_lines) + list(proc.local_var_defaults.values())
+    for line in _date_ctx_lines:
+        if re.search(re.escape(jn) + r'\s*\+\s*"-0[1-9]"', line) or re.search(re.escape(jn) + r"\s*\|\|\s*'-0[1-9]'", line):
+            return '"2024-01"'
+    # 3. DEFAULT value
+    if param.default_value:
+        dv = str(param.default_value).strip()
+        if dv and dv.lower() != "null":
+            if (dv.startswith("'") and dv.endswith("'")) or (dv.startswith('"') and dv.endswith('"')):
+                inner = dv[1:-1]
+                if inner.isdigit():
+                    return inner
+                return f'"{inner}"'
+            if re.match(r'^-?\d+(\.\d+)?$', dv):
+                lower_jt = param.java_type.lower()
+                if "bigdecimal" in lower_jt:
+                    return f"new java.math.BigDecimal(\"{dv}\")"
+                if "string" in lower_jt:
+                    return f'"{dv}"'
+                return dv
+    # 4. Fallback
+    return _default_test_value(param.java_type, jn, pkg=pkg)
+
+
 def _build_test_methods(proc: ProcedureInfo, mapper_name: str, service_injections: dict,
                          svc_method_param_counts: dict, pkg: PackageInfo) -> list:
     method_name = java_method_name(proc.proc_name)
@@ -14045,7 +14090,7 @@ def _build_test_methods(proc: ProcedureInfo, mapper_name: str, service_injection
     param_args = []
     svc_class = package_to_classname(pkg.package_name) + "Service"
     for p in in_params:
-        val = _default_test_value(p.java_type, p.java_name, pkg=pkg)
+        val = _domain_test_value(proc, p, pkg=pkg)
         decl_type = p.java_type
         if pkg and hasattr(pkg, 'custom_types'):
             for tn, ti in pkg.custom_types.items():

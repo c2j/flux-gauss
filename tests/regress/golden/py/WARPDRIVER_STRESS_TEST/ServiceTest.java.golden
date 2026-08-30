@@ -630,7 +630,7 @@ class WarpdriverStressTestServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_fnRecursiveTreeCleanup_success() {
         Long pParentId = 1L;
-        Integer pDepth = 20;
+        Integer pDepth = 0;
         var _rowTmpl = new java.util.HashMap<String,Object>(); _rowTmpl.put("v_rec", new java.util.HashMap<String,Object>()); _rowTmpl.put("region_code", 1); _rowTmpl.put("cnt", 1); _rowTmpl.put("amt", 1); _rowTmpl.put("avg_fee", 1); _rowTmpl.put("threshold", 1); _rowTmpl.put("required_qty", 5); _rowTmpl.put("v_child_id", 1);
         when(warpdriverStressTestMapper.insertAuditTrail(any(), any())).thenReturn(1);
         when(warpdriverStressTestMapper.updateFnDynamicExecutor(any(), any(), any())).thenReturn(1);
