@@ -15962,15 +15962,75 @@ def _itest_add_transitive_tables(proc, pkg, schema_map, handled, needed, all_pac
                         break
 
 
+def _collect_fk_parents() -> dict:
+    """{table_lower: [parent_table_lower, ...]} from CREATE TABLE REFERENCES.
+
+    Scans the DDL source files recorded in _TABLE_DDL_SOURCE. Used by the
+    itest fixture generator to order INSERTs (parents first) and DELETEs
+    (children first) so FK constraints are not violated (#101)."""
+    fk: dict = {}
+    seen_files = set()
+    for (_tbl, _col), src_file in _TABLE_DDL_SOURCE.items():
+        if src_file in seen_files:
+            continue
+        seen_files.add(src_file)
+        try:
+            with open(src_file, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+        except OSError:
+            continue
+        content_clean = re.sub(r'/\*.*?\*/', "", content, flags=re.DOTALL)
+        for m in re.finditer(
+            r"create\s+table\s+(?:if\s+not\s+exists\s+)?(?:\w+\.)?(\w+)\s*\(",
+            content_clean,
+            re.IGNORECASE,
+        ):
+            table = m.group(1).lower()
+            start = m.end()
+            depth = 1
+            pos = start
+            while pos < len(content_clean) and depth > 0:
+                if content_clean[pos] == "(":
+                    depth += 1
+                elif content_clean[pos] == ")":
+                    depth -= 1
+                pos += 1
+            block = content_clean[start : pos - 1]
+            for fm in re.finditer(r"references\s+(?:\w+\.)?(\w+)", block, re.IGNORECASE):
+                parent = fm.group(1).lower()
+                if parent != table:
+                    fk.setdefault(table, []).append(parent)
+    return fk
+
+
+def _topo_order_tables(tables: list, fk_parents: dict) -> list:
+    """Topological order: parents before children (for INSERT)."""
+    table_set = set(tables)
+    deps = {t: [p for p in fk_parents.get(t, []) if p in table_set] for t in tables}
+    ordered = []
+    remaining = set(tables)
+    while remaining:
+        ready = [t for t in remaining if not any(p in remaining for p in deps.get(t, []))]
+        if not ready:
+            ready = [sorted(remaining)[0]]
+        ordered.extend(sorted(ready))
+        remaining.difference_update(ready)
+    return ordered
+
+
 def _itest_write_fixtures(base_path: Path, proc: ProcedureInfo, pkg: PackageInfo, test_data: dict, bindings: dict = None, literals: dict = None) -> str:
     if not test_data:
         return ""
     lines = []
-    for table in sorted(test_data.keys()):
+    # #101: order DELETE children-first and INSERT parents-first per FK topology.
+    fk_parents = _collect_fk_parents()
+    topo = _topo_order_tables(list(test_data.keys()), fk_parents)
+    for table in reversed(topo):
         lines.append(f"DELETE FROM {table};")
     _skip_prefixes = ("constraint", "check", "primary", "foreign", "unique", "index", "like")
     bindings = bindings or {}
-    for table, columns in sorted(test_data.items()):
+    for table in topo:
+        columns = test_data.get(table)
         if not columns:
             continue
         col_names = []

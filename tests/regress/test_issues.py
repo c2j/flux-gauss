@@ -23,6 +23,94 @@ from tests.regress.conftest import (
 )
 
 
+class TestIssue101_ItestFixtureConstraints:
+    """#101: itest fixtures must not violate FK constraints.
+
+    INSERT parents-first, DELETE children-first, and remote-mode
+    itest-schema must contain zero DROP TABLE (AGENTS.md section 7
+    checkpoint)."""
+
+    @staticmethod
+    def _convert_with_itest(tmp_path):
+        import yaml
+
+        cfg = {
+            "output_dir": str(tmp_path / "dest"),
+            "base_package": "com.example.demo",
+            "integration_test": {
+                "enabled": True,
+                "mode": "remote",
+                "url": "jdbc:postgresql://localhost:5432/x",
+                "username": "x",
+                "password": "x",
+            },
+            "sources": [
+                "demo-project/sql/ddl/01_core_demo_tables.sql",
+                "demo-project/sql/gauss_complete_examples.sql",
+            ],
+        }
+        cfg_path = tmp_path / "itest.yaml"
+        cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(Path(fg.__file__).resolve()),
+                "-c",
+                str(cfg_path),
+                "--skip-validate",
+                "--full",
+            ],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "OGSQL_BIN": fg.OGSQL_BIN},
+            timeout=180,
+        )
+        assert result.returncode == 0, (
+            f"conversion failed:\n{result.stdout[-800:]}\n{result.stderr[-800:]}"
+        )
+        return tmp_path / "dest"
+
+    def test_fixture_fk_topology_orders_inserts_and_deletes(self, tmp_path):
+        out = self._convert_with_itest(tmp_path)
+        fixture = (
+            out
+            / "src/test/resources/itest-fixtures/gauss_complete_examples_proc_sync_employee_bonus.sql"
+        )
+        content = fixture.read_text(encoding="utf-8")
+        del_positions = {
+            t: content.index(f"DELETE FROM {t};") for t in ("employee_bonus", "departments")
+        }
+        assert del_positions["employee_bonus"] < del_positions["departments"], (
+            "DELETE must remove children (employee_bonus) before parents (departments)"
+        )
+        ins_positions = {
+            t: content.index(f"INSERT INTO {t}") for t in ("departments", "employee_bonus")
+        }
+        assert ins_positions["departments"] < ins_positions["employee_bonus"], (
+            "INSERT must add parents (departments) before children (employee_bonus)"
+        )
+
+    def test_itest_schema_has_no_drop_table(self, tmp_path):
+        out = self._convert_with_itest(tmp_path)
+        schema = (out / "src/test/resources/itest-schema.sql").read_text(encoding="utf-8")
+        assert "DROP TABLE" not in schema.upper(), (
+            "remote-mode itest-schema must not emit DROP TABLE (AGENTS.md section 7)"
+        )
+
+    def test_fixtures_idempotent_delete_then_insert(self, tmp_path):
+        out = self._convert_with_itest(tmp_path)
+        fixtures_dir = out / "src/test/resources/itest-fixtures"
+        for fixture in fixtures_dir.glob("*.sql"):
+            content = fixture.read_text(encoding="utf-8")
+            inserts = [l for l in content.splitlines() if l.startswith("INSERT INTO")]
+            if inserts:
+                first_insert = content.index(inserts[0])
+                assert "DELETE FROM" in content[:first_insert], (
+                    f"fixture must delete-then-insert for idempotency: {fixture.name}"
+                )
+
+
+
 # ── Helpers ──────────────────────────────────────────────────────
 
 def _run_pipeline(sql_file, cached_ast, tmp_path):
