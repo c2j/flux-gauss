@@ -2252,6 +2252,13 @@ def _patch_promoted_var_reads(line: str, var_java: str, string_inner: bool = Fal
         f'{var_java}.get()',
         line,
     )
+    # Null-guard dereferenced promoted refs in numeric coercion: a cross-service
+    # OUT ref left unset (e.g. by a mock) would NPE on .longValue()/.intValue().
+    _vget = f'{var_java}.get()'
+    for _accessor in ("longValue", "intValue", "doubleValue"):
+        _guarded = f"({_vget} == null ? null : ((Number) ({_vget})).{_accessor}())"
+        line = line.replace(f"((Number) ({_vget})).{_accessor}()", _guarded)
+        line = line.replace(f"((Number) {_vget}).{_accessor}()", _guarded)
     if proc is not None and all_packages:
         line = _strip_get_for_cross_pkg_out_args(line, var_java, proc, all_packages)
     if string_inner:
@@ -4885,12 +4892,21 @@ def _next_catch_var(proc) -> str:
 
 
 def _safe_map_cast(var_type: str, expr: str) -> str:
+    # A bare `.get()` result (AtomicReference/Map) may be null — guard before
+    # dereferencing so cross-service OUT refs left unset by mocks don't NPE.
+    _bare_get = re.match(r'^[\w.]+\.get\(\)$', expr.strip())
     if _is_primitive_producing(expr):
         if var_type == "Long":
+            if _bare_get:
+                return f"({expr} == null ? null : ((Number) ({expr})).longValue())"
             return f"((Number) ({expr})).longValue()"
         if var_type in ("Integer", "int"):
+            if _bare_get:
+                return f"({expr} == null ? null : ((Number) ({expr})).intValue())"
             return f"((Number) ({expr})).intValue()"
         if var_type == "Double":
+            if _bare_get:
+                return f"({expr} == null ? null : ((Number) ({expr})).doubleValue())"
             return f"((Number) ({expr})).doubleValue()"
         if "BigDecimal" in var_type:
             return f"java.math.BigDecimal.valueOf({expr})"
@@ -4984,7 +5000,10 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
         elif target in out_long_names and _is_bare_int_literal(expr):
             expr = f"Long.valueOf({expr})"
         elif target in out_long_names and not _is_long_expr(expr):
-            expr = f"((Number) {expr}).longValue()"
+            if re.match(r'^[\w.]+\.get\(\)$', expr.strip()):
+                expr = f"({expr} == null ? null : ((Number) {expr}).longValue())"
+            else:
+                expr = f"((Number) {expr}).longValue()"
         elif target in out_integer_names:
             if _is_bare_int_literal(expr):
                 expr = f"Integer.valueOf({expr})"
