@@ -46,7 +46,7 @@ class Issue48CompareServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procCheckStatus_success() {
-        String pStatus = "test_pStatus";
+        String pStatus = "test_p_status";
         AtomicReference<Integer> pCodeRef = new AtomicReference<>(0);
         when(issue48CompareMapper.selectDual((Long) any())).thenReturn(999);
         service.procCheckStatus(pStatus, pCodeRef);
@@ -56,7 +56,7 @@ class Issue48CompareServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procCompareLevel_success() {
         java.math.BigDecimal pLevel = new java.math.BigDecimal("99.99");
-        String pThreshold = "test_pThreshold";
+        String pThreshold = "test_p_threshold";
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
         when(issue48CompareMapper.selectDual((Long) any())).thenReturn(999);
         service.procCompareLevel(pLevel, pThreshold, pResultRef);

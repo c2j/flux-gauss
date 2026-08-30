@@ -37,7 +37,7 @@ class Issue47TypesServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procProcessId_success() {
-        String pType = "test_pType";
+        String pType = "test_p_type";
         AtomicReference<String> pProIdRef = new AtomicReference<>(null);
         service.procProcessId(pType, pProIdRef);
     }
@@ -45,7 +45,7 @@ class Issue47TypesServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procCorrectVarchar_success() {
-        String pLabel = "test_pLabel";
+        String pLabel = "test_p_label";
         AtomicReference<String> pValueRef = new AtomicReference<>(null);
         service.procCorrectVarchar(pLabel, pValueRef);
     }

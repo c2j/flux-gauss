@@ -27,7 +27,7 @@ class CasefoldServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_delEntry_success() {
-        String pIId = "test_pIId";
+        String pIId = "test_p_i_id";
         service.delEntry(pIId);
     }
 }

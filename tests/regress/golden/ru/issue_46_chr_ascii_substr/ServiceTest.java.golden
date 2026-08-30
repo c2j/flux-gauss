@@ -28,7 +28,7 @@ class Issue46FunctionsServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procConvertTradeCode_success() {
-        String pZqdm = "test_pZqdm";
+        String pZqdm = "test_p_zqdm";
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
         service.procConvertTradeCode(pZqdm, pResultRef);
     }
@@ -36,7 +36,7 @@ class Issue46FunctionsServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procGetAscii_success() {
-        String pInput = "test_pInput";
+        String pInput = "test_p_input";
         AtomicReference<Integer> pCodeRef = new AtomicReference<>(0);
         service.procGetAscii(pInput, pCodeRef);
     }
@@ -52,9 +52,9 @@ class Issue46FunctionsServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procSubstrMixed_success() {
-        String pText = "test_pText";
-        String pStart = "test_pStart";
-        String pLen = "test_pLen";
+        String pText = "test_p_text";
+        String pStart = "test_p_start";
+        String pLen = "test_p_len";
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
         service.procSubstrMixed(pText, pStart, pLen, pResultRef);
     }
@@ -62,7 +62,7 @@ class Issue46FunctionsServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procRangeMapping_success() {
-        String pInput = "test_pInput";
+        String pInput = "test_p_input";
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
         service.procRangeMapping(pInput, pResultRef);
     }

@@ -68,7 +68,7 @@ public class WarpdriverStressTestService {
     public void spMainOrchestrator(String pBizDate, String pMode, AtomicReference<java.math.BigDecimal> pTotalAmt, AtomicReference<Long> pLogId) {
         Integer vCleaned = 0;
         java.util.List<Object> vCurOrders = null;
-        java.sql.Date vDate = java.sql.Date.valueOf(java.time.LocalDate.parse(String.valueOf(pBizDate), java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd]")));
+        java.sql.Date vDate = java.sql.Date.valueOf(java.time.LocalDate.parse(String.valueOf(pBizDate), java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd][yyyy-M-d]")));
         Boolean vHasError = false;
         Integer vIdx = 0;
         List<String> vItemTab = null;
@@ -266,7 +266,7 @@ public class WarpdriverStressTestService {
 
     // Source: PKG_WARPDRIVER_STRESS_TEST.sp_goto_skip_logic (PROCEDURE) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:397-437
     public void spGotoSkipLogic(String pReportType, String pBizDate, AtomicReference<String> pContent) {
-        java.sql.Date vDate = java.sql.Date.valueOf(java.time.LocalDate.parse(String.valueOf(pBizDate), java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd]")));
+        java.sql.Date vDate = java.sql.Date.valueOf(java.time.LocalDate.parse(String.valueOf(pBizDate), java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd][yyyy-M-d]")));
         String vDetail = "";
         String vHeader = null;
         vHeader = String.valueOf(String.valueOf(String.valueOf("=== 清算报告 (").concat(String.valueOf(pBizDate))).concat(String.valueOf(") ==="))).concat(String.valueOf(String.valueOf((char)(10))));

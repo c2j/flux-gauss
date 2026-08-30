@@ -1633,6 +1633,21 @@ fn binary_op_to_java(
                 return format!("(({}).getTime() - ({}).getTime()) / (24 * 60 * 60 * 1000)", l, r);
             }
             if l_is_ts && !r_is_ts {
+                // #95: `now() - interval '3 month'` must use plus/minusMonths,
+                // not Long.parseLong("3 month") (runtime NumberFormatException).
+                if let Some(months) = interval_month_count(right, proc) {
+                    let l_trimmed = l.trim();
+                    if l_trimmed.starts_with("new java.sql.Date") || l_trimmed.starts_with("java.sql.Date.valueOf") {
+                        return format!(
+                            "java.sql.Date.valueOf({}.toLocalDate().minusMonths((long)({})))",
+                            l, months
+                        );
+                    }
+                    return format!(
+                        "java.sql.Timestamp.valueOf({}.toLocalDateTime().minusMonths((long)({})))",
+                        l, months
+                    );
+                }
                 let r_coerced = if r.contains("concat(String.valueOf(\" days\"))") || r.contains("concat(\" days\")") {
                     let stripped =
                         r.replace(".concat(String.valueOf(\" days\"))", "").replace(".concat(\" days\")", "");
@@ -2045,6 +2060,9 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             format!("({} != null ? {} : {})", arg0, true_val, else_val)
         }
         "UPPER" => format!("String.valueOf({}).toUpperCase()", jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")),
+        // #112: `quote_literal(x)` must not degrade to a TOBEFIX null placeholder
+        // (callers concat it into SQL strings — a null NPEs at runtime).
+        "QUOTE_LITERAL" => format!("String.valueOf({})", jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")),
         "LOWER" => format!("String.valueOf({}).toLowerCase()", jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")),
         "TRIM" => format!("{}.trim()", jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")),
         "LENGTH" => format!("{}.length()", jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")),
@@ -2270,7 +2288,9 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         "TO_DATE" if jargs.len() >= 2 => {
             let fmt_raw = jargs[1].trim_matches('"').trim_matches('\'').to_lowercase();
             if fmt_raw == "yyyy-mm-dd" {
-                format!("java.sql.Date.valueOf(java.time.LocalDate.parse(String.valueOf({}), java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd]\")))", jargs[0])
+                // #96: month/day may be single-digit ("2026-5-01") from manual
+                // string concat — accept lenient single-digit forms too.
+                format!("java.sql.Date.valueOf(java.time.LocalDate.parse(String.valueOf({}), java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd][yyyy-M-d]\")))", jargs[0])
             } else {
                 let java_fmt = fmt_raw.replace("yyyy", "yyyy").replace("yy", "yy")
                     .replace("mm", "MM").replace("mon", "MMM").replace("month", "MMMM")

@@ -258,7 +258,7 @@ fn build_success_test(
                 .push(format!("AtomicReference<{}> {} = new AtomicReference<>({});", inner_type, ref_var, ar_init));
             param_args.push(ref_var);
         } else {
-            let val = default_test_value(&p.java_type, &snake_to_camel(&p.name));
+            let val = domain_test_value(proc, pkg, &p.java_type, &p.name);
             param_values.push(format!("{} {} = {};", p.java_type, snake_to_camel(&p.name), val));
             param_args.push(snake_to_camel(&p.name));
         }
@@ -462,7 +462,10 @@ fn column_mock_value_for_key(camel_key: &str) -> String {
     {
         return "java.math.BigDecimal.TEN".to_string();
     }
-    if nl.ends_with("date") || nl.ends_with("time") {
+    if nl.ends_with("ts") || nl.contains("ts_value") || nl.ends_with("_at") || nl.contains("timestamp") || nl.ends_with("time") {
+        return "java.sql.Timestamp.valueOf(\"2024-01-01 00:00:00\")".to_string();
+    }
+    if nl.ends_with("date") {
         return "java.sql.Date.valueOf(\"2024-01-01\")".to_string();
     }
     if nl.ends_with("flag") || nl.starts_with("is") {
@@ -672,7 +675,23 @@ fn mock_all_mapper_methods(mapper_name: &str, pkg: &PackageInfo) -> Vec<String> 
                         lines.push(format!("        {}", mock));
                     }
                 } else if is_scalar {
-                    let scalar_val = if rt == "Object" { "999".to_string() } else { scalar_mock_value(rt) };
+                    let is_count = method_id.to_lowercase().contains("count");
+                    let scalar_val = if rt == "Object" {
+                        "999".to_string()
+                    } else {
+                        let v = scalar_mock_value(rt);
+                        if is_count && (v == "999L" || v == "999" || v == "999.0d") {
+                            if v == "999L" {
+                                "0L".to_string()
+                            } else if v == "999" {
+                                "0".to_string()
+                            } else {
+                                "0.0d".to_string()
+                            }
+                        } else {
+                            v
+                        }
+                    };
                     lines.push(format!(
                         "        when({}.{}({})).thenReturn({});",
                         mapper_name, method_id, any_args, scalar_val
@@ -708,6 +727,52 @@ fn mock_all_mapper_methods(mapper_name: &str, pkg: &PackageInfo) -> Vec<String> 
         }
     }
     lines
+}
+
+/// Domain-aware test value: validation-literal sampling and date-prefix params
+/// (mirrors the Python engine's `_domain_test_value`). Falls back to the
+/// generic placeholder generator.
+fn domain_test_value(proc: &crate::types::ProcedureInfo, pkg: &PackageInfo, java_type: &str, param_name: &str) -> String {
+    let jn = crate::naming::snake_to_camel(param_name);
+    // 1. Validation literal sampling: `Arrays.asList("A","B").contains(<param>)`
+    let as_list_re = regex::Regex::new(&format!(
+        r#"Arrays\.asList\(([^)]*)\)\s*\.contains\(\s*{}\s*\)"#,
+        regex::escape(&jn)
+    ))
+    .unwrap();
+    let lit_re = regex::Regex::new(r#""([^"]*)""#).unwrap();
+    for line in &proc.java_logic_lines {
+        if let Some(caps) = as_list_re.captures(line) {
+            if let Some(lit) = lit_re.captures(caps.get(1).map(|m| m.as_str()).unwrap_or("")) {
+                return format!("\"{}\"", &lit[1]);
+            }
+        }
+    }
+    // 2. Date-prefix usage: `to_date(x || '-01')` in logic lines or defaults.
+    //    The Rust engine renders concat as `.concat(String.valueOf("-01"))`.
+    //    Scan the whole pkg: a param may be validated inside a cross-called
+    //    method (verifyFingerprint → takeFingerprint).
+    for line in proc
+        .java_logic_lines
+        .iter()
+        .map(|s| s.as_str())
+        .chain(proc.local_var_defaults.values().map(|s| s.as_str()))
+        .chain(pkg.procedures.iter().flat_map(|pp| {
+            pp.java_logic_lines
+                .iter()
+                .map(|s| s.as_str())
+                .chain(pp.local_var_defaults.values().map(|s| s.as_str()))
+        }))
+    {
+        if line.contains(&format!("{} + \"-01\"", jn))
+            || line.contains(&format!("{} || '-01'", jn))
+            || line.contains(&format!("{}).concat(String.valueOf(\"-0", jn))
+            || line.contains(&format!("{})).concat(String.valueOf(\"-0", jn))
+        {
+            return "\"2024-01\"".to_string();
+        }
+    }
+    default_test_value(java_type, param_name)
 }
 
 fn default_test_value(java_type: &str, param_name: &str) -> String {

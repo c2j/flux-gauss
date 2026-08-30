@@ -28,11 +28,11 @@ class Issue34OrderServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procCreateOrder_success() {
-        String pCustomerName = "test_pCustomerName";
-        String pProductCode = "test_pProductCode";
+        String pCustomerName = "test_p_customer_name";
+        String pProductCode = "test_p_product_code";
         Integer pQuantity = 1;
         java.math.BigDecimal pUnitPrice = new java.math.BigDecimal("99.99");
-        String pCreatedBy = "test_pCreatedBy";
+        String pCreatedBy = "test_p_created_by";
         AtomicReference<Long> pOrderIdRef = new AtomicReference<>(1L);
         AtomicReference<java.math.BigDecimal> pTotalAmountRef = new AtomicReference<>(java.math.BigDecimal.ZERO);
         AtomicReference<String> pStatusMsgRef = new AtomicReference<>(null);
@@ -53,7 +53,7 @@ class Issue34OrderServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procQueryOrderStats_success() {
-        String pStatus = "test_pStatus";
+        String pStatus = "test_p_status";
         java.math.BigDecimal pMinAmount = new java.math.BigDecimal("99.99");
         AtomicReference<Integer> pOrderCountRef = new AtomicReference<>(0);
         AtomicReference<java.math.BigDecimal> pTotalRevenueRef = new AtomicReference<>(java.math.BigDecimal.ZERO);
@@ -75,7 +75,7 @@ class Issue34OrderServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procUpdateOrder_success() {
         Long pOrderId = 1L;
-        String pNewStatus = "test_pNewStatus";
+        String pNewStatus = "test_p_new_status";
         String pUpdatedBy = "20240101";
         AtomicReference<String> pOldStatusRef = new AtomicReference<>(null);
         AtomicReference<Integer> pRowsUpdatedRef = new AtomicReference<>(0);

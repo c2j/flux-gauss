@@ -28,15 +28,15 @@ class CalleeServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_simpleLog_success_1() {
-        String pMsg = "test_pMsg";
+        String pMsg = "test_p_msg";
         service.simpleLog(pMsg);
     }
 
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_simpleLog_success_2() {
-        String pMsg = "test_pMsg";
-        String pDetail = "test_pDetail";
+        String pMsg = "test_p_msg";
+        String pDetail = "test_p_detail";
         service.simpleLog(pMsg, pDetail);
     }
 }
@@ -75,7 +75,7 @@ class HandlerServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_guardedRun_success() {
-        String pX = "test_pX";
+        String pX = "test_p_x";
         service.guardedRun(pX);
     }
 }

@@ -27,7 +27,7 @@ class BigfundServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_fncB_success() {
-        String pIY = "test_pIY";
+        String pIY = "test_p_i_y";
         var result = service.fncB(pIY);
     }
 }

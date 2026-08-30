@@ -28,7 +28,7 @@ class Issue60InstrServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procCaseInstrWhenZero_success() {
-        String pFileName = "test_pFileName";
+        String pFileName = "test_p_file_name";
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
         service.procCaseInstrWhenZero(pFileName, pResultRef);
     }
@@ -36,7 +36,7 @@ class Issue60InstrServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procInstrEqZero_success() {
-        String pSrc = "test_pSrc";
+        String pSrc = "test_p_src";
         AtomicReference<String> pFoundRef = new AtomicReference<>(null);
         service.procInstrEqZero(pSrc, pFoundRef);
     }

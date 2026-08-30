@@ -28,7 +28,7 @@ class Issue44BugsServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procDynamicSqlIfElse_success() {
-        String pStatus = "test_pStatus";
+        String pStatus = "test_p_status";
         String pDate = "20240101";
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
         when(issue44BugsMapper.selectTIssue44Orders((String) any(), (String) any())).thenReturn(999);
@@ -43,7 +43,7 @@ class Issue44BugsServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procDynamicSqlIfElsif_success() {
-        String pFilter = "test_pFilter";
+        String pFilter = "test_p_filter";
         Integer pMode = 1;
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
         when(issue44BugsMapper.selectTIssue44Orders((String) any(), (String) any())).thenReturn(999);
@@ -58,8 +58,8 @@ class Issue44BugsServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procNestedDynamicIf_success() {
-        String pType = "test_pType";
-        String pSubType = "test_pSubType";
+        String pType = "test_p_type";
+        String pSubType = "test_p_sub_type";
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
         when(issue44BugsMapper.selectTIssue44Orders((String) any(), (String) any())).thenReturn(999);
         when(issue44BugsMapper.selectTIssue44Orders_1((String) any(), (String) any())).thenReturn("1");
@@ -87,7 +87,7 @@ class Issue44BugsServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procChainedIfWithConcat_success() {
-        String pCode = "test_pCode";
+        String pCode = "test_p_code";
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
         when(issue44BugsMapper.selectTIssue44Orders((String) any(), (String) any())).thenReturn(999);
         when(issue44BugsMapper.selectTIssue44Orders_1((String) any(), (String) any())).thenReturn("1");

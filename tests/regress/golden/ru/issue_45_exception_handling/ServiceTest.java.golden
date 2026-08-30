@@ -28,7 +28,7 @@ class Issue45ExceptionServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procLinkEtfRepay_success() {
-        String pSecurityCode = "test_pSecurityCode";
+        String pSecurityCode = "test_p_security_code";
         AtomicReference<String> pOSucceedRef = new AtomicReference<>(null);
         AtomicReference<String> pOSecurityIdRef = new AtomicReference<>(null);
         when(issue45ExceptionMapper.selectTIssue45Security((String) any())).thenReturn("1");
@@ -41,7 +41,7 @@ class Issue45ExceptionServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procSimpleException_success() {
-        String pSecurityCode = "test_pSecurityCode";
+        String pSecurityCode = "test_p_security_code";
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
         when(issue45ExceptionMapper.selectTIssue45Security((String) any())).thenReturn("1");
         when(issue45ExceptionMapper.selectTIssue45SecurityBak((String) any())).thenReturn("1");
@@ -53,7 +53,7 @@ class Issue45ExceptionServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procNestedException_success() {
-        String pCode = "test_pCode";
+        String pCode = "test_p_code";
         AtomicReference<String> pMsgRef = new AtomicReference<>(null);
         when(issue45ExceptionMapper.selectTIssue45Security((String) any())).thenReturn("1");
         when(issue45ExceptionMapper.selectTIssue45SecurityBak((String) any())).thenReturn("1");

@@ -29,7 +29,7 @@ class CalleeServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_planIncrement_success() {
-        String pSource = "test_pSource";
+        String pSource = "test_p_source";
         AtomicReference<Long> pIdFromRef = new AtomicReference<>(1L);
         AtomicReference<Long> pIdToRef = new AtomicReference<>(1L);
         service.planIncrement(pSource, pIdFromRef, pIdToRef);
@@ -38,7 +38,7 @@ class CalleeServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_buildIncremental_success() {
-        String pRunId = "test_pRunId";
+        String pRunId = "test_p_run_id";
         AtomicReference<Long> pRowsRef = new AtomicReference<>(1L);
         AtomicReference<Long> pMonthsRef = new AtomicReference<>(1L);
         service.buildIncremental(pRunId, pRowsRef, pMonthsRef);
@@ -79,7 +79,7 @@ class CallerServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_runDaily_success() {
-        String pRunId = "test_pRunId";
+        String pRunId = "test_p_run_id";
         service.runDaily(pRunId);
     }
 }
