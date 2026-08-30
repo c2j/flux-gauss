@@ -11,7 +11,9 @@ use crate::types::PackageInfo;
 /// unsafe to reuse. A mismatch discards the whole manifest, forcing a reparse.
 /// Also folds in the ogsql-parser version, since the two engines are pinned
 /// separately (see AGENTS.md) and a parser bump silently changes AST shape.
-const CACHE_SCHEMA_VERSION: &str = concat!("2:ogsql-", env!("CARGO_PKG_VERSION"));
+/// (bump 2→3: #114/#115 review fixes — count detection, interval year, AtTimeZone
+/// Date guard, QUOTE_LITERAL escaping, Integer narrowing, deref contexts)
+const CACHE_SCHEMA_VERSION: &str = concat!("3:ogsql-", env!("CARGO_PKG_VERSION"));
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct Manifest {

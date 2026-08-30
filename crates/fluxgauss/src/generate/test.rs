@@ -561,7 +561,7 @@ fn mock_all_mapper_methods(mapper_name: &str, pkg: &PackageInfo) -> Vec<String> 
                         lines.push(format!("        {}", mock));
                     }
                 } else if is_scalar {
-                    let is_count = method_id.to_lowercase().contains("count");
+                    let is_count = is_count_method(method_id, sql_text);
                     let scalar_val = if rt == "Object" {
                         "999".to_string()
                     } else {
@@ -740,6 +740,22 @@ fn default_test_value(java_type: &str, param_name: &str) -> String {
         }
     }
     format!("\"test_{}\"", param_name)
+}
+
+/// A mapper method is a count query when "count" appears as a standalone
+/// camelCase word in the method_id (countOrders / ordersCount) — not as a
+/// substring (discount, account, encounter) — or as `count(...)` in the SQL
+/// text. method_id is `{dml_type}{snake_to_pascal(semantic_key)}` (e.g.
+/// selectOrderCount): snake_to_pascal capitalises each word, so a count token
+/// is the PascalCase "Count" at a word start or after a lowercase/digit —
+/// "discount" keeps its lowercase c and does not match. The SQL-text fallback
+/// mirrors the Python engine. (M1, #114 review)
+fn is_count_method(method_id: &str, sql_text: &str) -> bool {
+    static ID_RE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"(^|[a-z0-9_])Count([A-Z_0-9]|$)").unwrap());
+    static SQL_RE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"\bcount\s*\(").unwrap());
+    ID_RE.is_match(method_id) || method_id.starts_with("Count") || SQL_RE.is_match(&sql_text.to_lowercase())
 }
 
 fn scalar_mock_value(java_type: &str) -> String {
@@ -938,7 +954,9 @@ mod tests {
             dir.path().join("src/test/java/com/example/demo/service/InventoryServiceTest.java"),
         )
         .unwrap();
-        assert!(content.contains("when(inventoryMapper.selectCheckStock()).thenReturn(999)"));
+        // count(*) in the SQL text marks this as a count query → mock 0, not
+        // 999 (mirrors the Python engine; the method_id has no Count token).
+        assert!(content.contains("when(inventoryMapper.selectCheckStock()).thenReturn(0)"));
         assert!(!content.contains("HashMap"));
     }
 
@@ -970,6 +988,25 @@ mod tests {
         assert_eq!(default_test_value("int", "pStatus"), "1");
         assert_eq!(default_test_value("String", "pName"), "\"test_pName\"");
         assert_eq!(default_test_value("boolean", "pFlag"), "true");
+    }
+
+    #[test]
+    fn test_count_detection_word_boundary_not_substring() {
+        // M1 (#114 review): discount/account/encounter contain "count" as a
+        // substring but are NOT count queries — scalar mock must stay 999/999L.
+        for method_id in ["selectDiscount", "selectAccount", "selectEncounter"] {
+            assert!(!is_count_method(method_id, ""), "{} must not be treated as a count query", method_id);
+        }
+        for method_id in ["selectOrderCount", "selectCountOrders", "selectCountByStatus"] {
+            assert!(is_count_method(method_id, ""), "{} must be treated as a count query", method_id);
+        }
+        assert!(!is_count_method("selectCounter", ""));
+        assert!(!is_count_method("selectCounterparty", ""));
+        // count(*) in the SQL text forces a count mock even when the method_id
+        // has no Count token (mirrors the Python engine).
+        assert!(is_count_method("selectCheckStock", "select count(*) into v_count from t"));
+        assert!(is_count_method("selectCheckStock", "SELECT COUNT(*) FROM t"));
+        assert!(!is_count_method("selectCheckStock", "select * from t"));
     }
 
     #[test]

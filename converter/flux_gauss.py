@@ -522,7 +522,10 @@ def _param_default_java(param) -> str:
     if (dv_s.startswith("'") and dv_s.endswith("'")) or (dv_s.startswith('"') and dv_s.endswith('"')):
         inner = dv_s[1:-1]
         if "String" in param.java_type:
-            return f'"{inner}"'
+            # (#115 review #6): SQL doubles single quotes to escape them
+            # (`DEFAULT 'it''s'`); Java string literals need the raw quote,
+            # plus standard backslash/quote escaping for the literal.
+            return f'"{_escape_java_string(inner.replace("''", "\'"))}"'
         if inner.isdigit() or (inner.startswith("-") and inner[1:].isdigit()):
             return inner
         return _default_for_type(param.java_type)
@@ -2251,14 +2254,29 @@ def _strip_get_for_cross_pkg_out_args(line: str, var_java: str, proc: ProcedureI
     if not candidates:
         return line
     exact = [p for p in candidates if len(p.parameters) == len(args)]
-    target = exact[0] if exact else candidates[0]
+    if not exact:
+        # M3 (#114 review): ambiguous overload — no exact arity match. Do not
+        # silently pick candidates[0] (may strip the wrong arg positions);
+        # keep the caller's .get() form and record a degradation note.
+        _record_todo("cross-pkg OUT arg strip skipped",
+                     proc,
+                     f"{svc_var}.{method} has no exact arity match for {len(args)} args "
+                     f"(candidates: {[len(p.parameters) for p in candidates]})")
+        return line
+    target = exact[0]
     var_get = f"{var_java}.get()"
     for pos, arg in enumerate(args):
         if pos >= len(target.parameters):
             break
         if target.parameters[pos].is_out and var_get in arg:
-            line = line.replace(var_get, var_java)
-    return line
+            # M3 (#114 review): only rewrite this OUT-position argument token, not
+            # every `.get()` occurrence in the line — the same var may appear as an
+            # IN arg elsewhere in this call and must keep its deref.
+            args[pos] = arg.replace(var_get, var_java)
+    # Splice the reconstructed args back into the original line so leading
+    # indentation and any prefix (e.g. `return `, `vX = `) are preserved.
+    new_args_str = ", ".join(args)
+    return line[: m.start(3)] + new_args_str + line[m.end(3):]
 
 
 def _patch_promoted_var_reads(line: str, var_java: str, string_inner: bool = False,
@@ -10489,9 +10507,9 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 # Timestamp minus a non-timestamp (interval/days value) → epoch arithmetic
                 _ts_side, _other = (left, right) if _is_ts_left else (right, left)
                 _other_d = f"((Number) ({_other} != null ? {_other} : 0L)).longValue()" if ".get(" in _other else f"((Number) ({_other})).longValue()"
-                if _is_ts_left:
-                    return f"new java.sql.Timestamp({_ts_side}.getTime() - {_other_d} * 86400000L)"
-                return f"new java.sql.Timestamp({_ts_side}.getTime() + {_other_d} * 86400000L)"
+                # M1-minor (#114 review #1): `number - timestamp` was flipped to `+`
+                # (ts on the right side); both operand orders must subtract.
+                return f"new java.sql.Timestamp({_ts_side}.getTime() - {_other_d} * 86400000L)"
             if op == "+" and _is_ts_left and right_type in ("Long", "long", "Integer", "int", "Double", "double", "Float", "float", "java.math.BigDecimal", "BigDecimal"):
                 return f"new java.sql.Date({left}.getTime() + ((Number) ({right})).longValue() * 86400000L)"
             if op == "+" and _is_ts_right and left_type in ("Long", "long", "Integer", "int", "Double", "double", "Float", "float", "java.math.BigDecimal", "BigDecimal"):
@@ -14284,7 +14302,13 @@ def _domain_test_value(proc: ProcedureInfo, param, pkg=None) -> str:
                 inner = dv[1:-1]
                 if inner.isdigit() and "string" not in param.java_type.lower():
                     return inner
-                return f'"{inner}"'
+                if "string" in param.java_type.lower():
+                    return f'"{inner}"'
+                # M2 (#114 review): a quoted default on a non-String param (e.g.
+                # `p_start date default '2024-01-01'`) must not produce a bare
+                # string literal — that fails to compile. Fall back to the
+                # type-aware generator so the value matches the Java type.
+                return _default_test_value(param.java_type, jn, pkg=pkg)
             if re.match(r'^-?\d+(\.\d+)?$', dv):
                 lower_jt = param.java_type.lower()
                 if "bigdecimal" in lower_jt:
@@ -14786,7 +14810,17 @@ def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bo
             puts = _with_extra_keys(mock_fields)
             return f"        {{ var m = new java.util.HashMap<String,Object>(); {puts} when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }}"
         return f"        {{ var m = new java.util.HashMap<String,Object>(); m.putAll(_rowTmpl); m.put(\"id\", 1); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }}"
-    _is_count_query = "count" in dml_method_id.lower() or bool(re.search(r'\bcount\s*\(', (dml_sql_text or "").lower()))
+    # M1 (#114 review): "count" must be a camelCase word (countOrders / ordersCount),
+    # not a substring (discount / account / encounter would force the mock to 0).
+    # method_id is `{dml_type}{snake_to_pascal(semantic_key)}` (e.g. selectOrderCount):
+    # snake_to_pascal capitalises each word, so a standalone "count" token is the
+    # PascalCase "Count" at a word start or after a lowercase/digit; "discount"
+    # keeps its lowercase c and does not match. The SQL text check still catches
+    # `count(` in the raw query.
+    _method_id_is_count = bool(
+        re.search(r'(^|[a-z0-9_])Count([A-Z_0-9]|$)', dml_method_id) or dml_method_id.startswith("Count")
+    ) or bool(re.search(r'\bcount\s*\(', (dml_sql_text or "").lower()))
+    _is_count_query = _method_id_is_count
     if dml_result_type == "Integer":
         _v = ("1" if count_usage == "exists" else "0") if _is_count_query else "999"
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn({_v});"
@@ -16154,13 +16188,17 @@ def _collect_fk_parents() -> dict:
                 content = f.read()
         except OSError:
             continue
+        # (#114 review minor 10): also strip `--` line comments (a `-- references
+        # ...` comment must not create a phantom FK edge) and quoted identifiers
+        # so `"Parent"` resolves to its unquoted name.
         content_clean = re.sub(r'/\*.*?\*/', "", content, flags=re.DOTALL)
+        content_clean = re.sub(r'--.*$', "", content_clean, flags=re.MULTILINE)
         for m in re.finditer(
-            r"create\s+table\s+(?:if\s+not\s+exists\s+)?(?:\w+\.)?(\w+)\s*\(",
+            r"create\s+table\s+(?:if\s+not\s+exists\s+)?(?:\w+\.)?(?:\"(\w+)\"|(\w+))\s*\(",
             content_clean,
             re.IGNORECASE,
         ):
-            table = m.group(1).lower()
+            table = (m.group(1) or m.group(2)).lower()
             start = m.end()
             depth = 1
             pos = start
@@ -16171,8 +16209,8 @@ def _collect_fk_parents() -> dict:
                     depth -= 1
                 pos += 1
             block = content_clean[start : pos - 1]
-            for fm in re.finditer(r"references\s+(?:\w+\.)?(\w+)", block, re.IGNORECASE):
-                parent = fm.group(1).lower()
+            for fm in re.finditer(r"references\s+(?:\w+\.)?(?:\"(\w+)\"|(\w+))", block, re.IGNORECASE):
+                parent = (fm.group(1) or fm.group(2)).lower()
                 if parent != table:
                     fk.setdefault(table, []).append(parent)
     return fk

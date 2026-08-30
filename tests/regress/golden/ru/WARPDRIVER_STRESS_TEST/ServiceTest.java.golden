@@ -72,8 +72,8 @@ class WarpdriverStressTestServiceTest {
         when(warpdriverStressTestMapper.deleteTreeNodes((Long) any(), (Integer) any(), (Long) any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn((Long) any())).thenReturn(java.util.List.of(m)); }
         { var m = new java.util.HashMap<String,Object>(); m.put("paymentId", 1L); m.put("payAmount", java.math.BigDecimal.TEN); m.put("payChannel", 1L); m.put("payTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1((Long) any())).thenReturn(java.util.List.of(m)); }
-        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(999);
-        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(999);
+        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(0);
+        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts((Long) any(), (java.math.BigDecimal) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(warpdriverStressTestMapper.updateAccounts_1((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertAccountJournal((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
@@ -134,8 +134,8 @@ class WarpdriverStressTestServiceTest {
         when(warpdriverStressTestMapper.deleteTreeNodes((Long) any(), (Integer) any(), (Long) any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn((Long) any())).thenReturn(java.util.List.of(m)); }
         { var m = new java.util.HashMap<String,Object>(); m.put("paymentId", 1L); m.put("payAmount", java.math.BigDecimal.TEN); m.put("payChannel", 1L); m.put("payTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1((Long) any())).thenReturn(java.util.List.of(m)); }
-        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(999);
-        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(999);
+        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(0);
+        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts((Long) any(), (java.math.BigDecimal) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(warpdriverStressTestMapper.updateAccounts_1((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertAccountJournal((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
@@ -197,8 +197,8 @@ class WarpdriverStressTestServiceTest {
         when(warpdriverStressTestMapper.deleteTreeNodes((Long) any(), (Integer) any(), (Long) any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn((Long) any())).thenReturn(java.util.List.of(m)); }
         { var m = new java.util.HashMap<String,Object>(); m.put("paymentId", 1L); m.put("payAmount", java.math.BigDecimal.TEN); m.put("payChannel", 1L); m.put("payTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1((Long) any())).thenReturn(java.util.List.of(m)); }
-        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(999);
-        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(999);
+        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(0);
+        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts((Long) any(), (java.math.BigDecimal) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(warpdriverStressTestMapper.updateAccounts_1((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertAccountJournal((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
@@ -258,8 +258,8 @@ class WarpdriverStressTestServiceTest {
         when(warpdriverStressTestMapper.deleteTreeNodes((Long) any(), (Integer) any(), (Long) any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn((Long) any())).thenReturn(java.util.List.of(m)); }
         { var m = new java.util.HashMap<String,Object>(); m.put("paymentId", 1L); m.put("payAmount", java.math.BigDecimal.TEN); m.put("payChannel", 1L); m.put("payTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1((Long) any())).thenReturn(java.util.List.of(m)); }
-        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(999);
-        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(999);
+        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(0);
+        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts((Long) any(), (java.math.BigDecimal) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(warpdriverStressTestMapper.updateAccounts_1((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertAccountJournal((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
@@ -319,8 +319,8 @@ class WarpdriverStressTestServiceTest {
         when(warpdriverStressTestMapper.deleteTreeNodes((Long) any(), (Integer) any(), (Long) any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn((Long) any())).thenReturn(java.util.List.of(m)); }
         { var m = new java.util.HashMap<String,Object>(); m.put("paymentId", 1L); m.put("payAmount", java.math.BigDecimal.TEN); m.put("payChannel", 1L); m.put("payTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1((Long) any())).thenReturn(java.util.List.of(m)); }
-        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(999);
-        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(999);
+        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(0);
+        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts((Long) any(), (java.math.BigDecimal) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(warpdriverStressTestMapper.updateAccounts_1((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertAccountJournal((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
@@ -381,8 +381,8 @@ class WarpdriverStressTestServiceTest {
         when(warpdriverStressTestMapper.deleteTreeNodes((Long) any(), (Integer) any(), (Long) any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn((Long) any())).thenReturn(java.util.List.of(m)); }
         { var m = new java.util.HashMap<String,Object>(); m.put("paymentId", 1L); m.put("payAmount", java.math.BigDecimal.TEN); m.put("payChannel", 1L); m.put("payTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1((Long) any())).thenReturn(java.util.List.of(m)); }
-        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(999);
-        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(999);
+        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(0);
+        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts((Long) any(), (java.math.BigDecimal) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(warpdriverStressTestMapper.updateAccounts_1((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertAccountJournal((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
@@ -442,8 +442,8 @@ class WarpdriverStressTestServiceTest {
         when(warpdriverStressTestMapper.deleteTreeNodes((Long) any(), (Integer) any(), (Long) any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn((Long) any())).thenReturn(java.util.List.of(m)); }
         { var m = new java.util.HashMap<String,Object>(); m.put("paymentId", 1L); m.put("payAmount", java.math.BigDecimal.TEN); m.put("payChannel", 1L); m.put("payTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1((Long) any())).thenReturn(java.util.List.of(m)); }
-        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(999);
-        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(999);
+        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(0);
+        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts((Long) any(), (java.math.BigDecimal) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(warpdriverStressTestMapper.updateAccounts_1((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertAccountJournal((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
@@ -505,8 +505,8 @@ class WarpdriverStressTestServiceTest {
         when(warpdriverStressTestMapper.deleteTreeNodes((Long) any(), (Integer) any(), (Long) any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn((Long) any())).thenReturn(java.util.List.of(m)); }
         { var m = new java.util.HashMap<String,Object>(); m.put("paymentId", 1L); m.put("payAmount", java.math.BigDecimal.TEN); m.put("payChannel", 1L); m.put("payTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1((Long) any())).thenReturn(java.util.List.of(m)); }
-        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(999);
-        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(999);
+        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(0);
+        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts((Long) any(), (java.math.BigDecimal) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(warpdriverStressTestMapper.updateAccounts_1((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertAccountJournal((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
@@ -566,8 +566,8 @@ class WarpdriverStressTestServiceTest {
         when(warpdriverStressTestMapper.deleteTreeNodes((Long) any(), (Integer) any(), (Long) any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn((Long) any())).thenReturn(java.util.List.of(m)); }
         { var m = new java.util.HashMap<String,Object>(); m.put("paymentId", 1L); m.put("payAmount", java.math.BigDecimal.TEN); m.put("payChannel", 1L); m.put("payTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1((Long) any())).thenReturn(java.util.List.of(m)); }
-        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(999);
-        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(999);
+        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(0);
+        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts((Long) any(), (java.math.BigDecimal) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(warpdriverStressTestMapper.updateAccounts_1((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertAccountJournal((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
@@ -628,8 +628,8 @@ class WarpdriverStressTestServiceTest {
         when(warpdriverStressTestMapper.deleteTreeNodes((Long) any(), (Integer) any(), (Long) any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn((Long) any())).thenReturn(java.util.List.of(m)); }
         { var m = new java.util.HashMap<String,Object>(); m.put("paymentId", 1L); m.put("payAmount", java.math.BigDecimal.TEN); m.put("payChannel", 1L); m.put("payTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1((Long) any())).thenReturn(java.util.List.of(m)); }
-        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(999);
-        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(999);
+        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(0);
+        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts((Long) any(), (java.math.BigDecimal) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(warpdriverStressTestMapper.updateAccounts_1((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertAccountJournal((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
@@ -689,8 +689,8 @@ class WarpdriverStressTestServiceTest {
         when(warpdriverStressTestMapper.deleteTreeNodes((Long) any(), (Integer) any(), (Long) any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn((Long) any())).thenReturn(java.util.List.of(m)); }
         { var m = new java.util.HashMap<String,Object>(); m.put("paymentId", 1L); m.put("payAmount", java.math.BigDecimal.TEN); m.put("payChannel", 1L); m.put("payTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1((Long) any())).thenReturn(java.util.List.of(m)); }
-        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(999);
-        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(999);
+        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(0);
+        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts((Long) any(), (java.math.BigDecimal) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(warpdriverStressTestMapper.updateAccounts_1((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertAccountJournal((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
@@ -750,8 +750,8 @@ class WarpdriverStressTestServiceTest {
         when(warpdriverStressTestMapper.deleteTreeNodes((Long) any(), (Integer) any(), (Long) any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn((Long) any())).thenReturn(java.util.List.of(m)); }
         { var m = new java.util.HashMap<String,Object>(); m.put("paymentId", 1L); m.put("payAmount", java.math.BigDecimal.TEN); m.put("payChannel", 1L); m.put("payTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1((Long) any())).thenReturn(java.util.List.of(m)); }
-        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(999);
-        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(999);
+        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(0);
+        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts((Long) any(), (java.math.BigDecimal) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(warpdriverStressTestMapper.updateAccounts_1((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertAccountJournal((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
@@ -811,8 +811,8 @@ class WarpdriverStressTestServiceTest {
         when(warpdriverStressTestMapper.deleteTreeNodes((Long) any(), (Integer) any(), (Long) any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn((Long) any())).thenReturn(java.util.List.of(m)); }
         { var m = new java.util.HashMap<String,Object>(); m.put("paymentId", 1L); m.put("payAmount", java.math.BigDecimal.TEN); m.put("payChannel", 1L); m.put("payTime", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")); when(warpdriverStressTestMapper.selectFnMultiCursorReturn_1((Long) any())).thenReturn(java.util.List.of(m)); }
-        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(999);
-        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(999);
+        when(warpdriverStressTestMapper.selectOrders_2((Long) any())).thenReturn(0);
+        when(warpdriverStressTestMapper.selectPayments((Long) any())).thenReturn(0);
         when(warpdriverStressTestMapper.selectAccounts((Long) any(), (java.math.BigDecimal) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(warpdriverStressTestMapper.updateAccounts_1((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);
         when(warpdriverStressTestMapper.insertAccountJournal((Long) any(), (java.math.BigDecimal) any())).thenReturn(1);

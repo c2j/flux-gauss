@@ -30,7 +30,7 @@ class Issue48CompareServiceTest {
     void test_procCheckProId_success() {
         Long pProId = 1L;
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
-        when(issue48CompareMapper.selectDual((Long) any())).thenReturn(999);
+        when(issue48CompareMapper.selectDual((Long) any())).thenReturn(0);
         service.procCheckProId(pProId, pResultRef);
     }
 
@@ -39,7 +39,7 @@ class Issue48CompareServiceTest {
     void test_procCheckCount_success() {
         Long pCount = 100L;
         AtomicReference<String> pLabelRef = new AtomicReference<>(null);
-        when(issue48CompareMapper.selectDual((Long) any())).thenReturn(999);
+        when(issue48CompareMapper.selectDual((Long) any())).thenReturn(0);
         service.procCheckCount(pCount, pLabelRef);
     }
 
@@ -48,7 +48,7 @@ class Issue48CompareServiceTest {
     void test_procCheckStatus_success() {
         String pStatus = "test_p_status";
         AtomicReference<Integer> pCodeRef = new AtomicReference<>(0);
-        when(issue48CompareMapper.selectDual((Long) any())).thenReturn(999);
+        when(issue48CompareMapper.selectDual((Long) any())).thenReturn(0);
         service.procCheckStatus(pStatus, pCodeRef);
     }
 
@@ -58,7 +58,7 @@ class Issue48CompareServiceTest {
         java.math.BigDecimal pLevel = new java.math.BigDecimal("99.99");
         String pThreshold = "test_p_threshold";
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
-        when(issue48CompareMapper.selectDual((Long) any())).thenReturn(999);
+        when(issue48CompareMapper.selectDual((Long) any())).thenReturn(0);
         service.procCompareLevel(pLevel, pThreshold, pResultRef);
     }
 }

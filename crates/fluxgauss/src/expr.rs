@@ -59,7 +59,9 @@ pub fn bool_expr_to_java(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -
     if is_nullish_java_expr(&val) {
         "/* unhandled */ false".into()
     } else {
-        val
+        // M5 (#114 review): a promoted local var used as a boolean condition is
+        // an AtomicReference — deref before evaluating (bare ref is always non-null).
+        maybe_deref_promoted(&val, proc)
     }
 }
 
@@ -144,12 +146,14 @@ pub fn assignment_to_java(
                     }
                 } else if ptype == "Integer" || ptype == "int" {
                     // Narrow long-producing expressions to int; plain int literals
-                    // autobox fine and must stay unchanged.
-                    if val.contains("0L")
+                    // autobox fine and must stay unchanged. (#114 review minor 9):
+                    // `contains("0L")` also matches 100L/1000L — match the exact
+                    // `0L` literal token instead; and don't re-narrow a value that
+                    // already went through .intValue().
+                    if is_long_literal(&val)
                         || val.contains(".longValue()")
                         || val.contains("Long.parseLong")
                         || val.contains(".doubleValue()")
-                        || val.contains(".intValue()")
                     {
                         format!("((Number)({})).intValue()", val)
                     } else {
@@ -185,12 +189,15 @@ pub fn assignment_to_java(
             var_type = Some(format!("AtomicReference<{}>", inner_type));
         }
         let mut val = expr_to_java(value, proc);
+        // M5 (#114 review): a promoted local var on the RHS is an AtomicReference —
+        // deref to the value before assignment/.set(), or javac fails on the type.
+        val = maybe_deref_promoted(&val, proc);
         // Local vars promoted to AtomicReference for OUT-arg usage need .set()
         if let Some(vt) = &var_type {
             if vt.contains("AtomicReference<") {
                 let inner_type = vt.trim_start_matches("AtomicReference<").trim_end_matches('>');
                 let coerced = if (inner_type == "Integer" || inner_type == "int")
-                    && (val.contains(".longValue()") || val.contains("0L"))
+                    && (val.contains(".longValue()") || is_long_literal(&val))
                 {
                     format!("((Number)({})).intValue()", val)
                 } else {
@@ -206,7 +213,10 @@ pub fn assignment_to_java(
         return format!("{} = {};", camel, val);
     }
     let var = expr_to_java(target, proc);
-    let val = expr_to_java(value, proc);
+    let mut val = expr_to_java(value, proc);
+    // M5 (#114 review): a promoted local var on the RHS is an AtomicReference —
+    // deref to the value before plain assignment, or javac fails on the type.
+    val = maybe_deref_promoted(&val, proc);
     format!("{} = {};", var, val)
 }
 
@@ -293,6 +303,15 @@ fn is_bare_identifier(expr: &str) -> bool {
     !t.is_empty()
         && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
         && !t.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(true)
+}
+
+/// Whether a rendered value contains the Long literal `0L` as a standalone
+/// token (not as a digit suffix: 100L/1000L contain "0L" as a substring but
+/// are not the zero literal). Used to decide integer narrowing.
+fn is_long_literal(expr: &str) -> bool {
+    static RE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"(?:\D|^)0[lL](?:\D|$)").unwrap());
+    RE.is_match(expr)
 }
 
 fn has_decimal_literal(expr: &str) -> bool {
@@ -997,9 +1016,25 @@ fn expr_to_java_impl(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> St
             // like DATE_TRUNC call .toInstant() on the result)
             let inner = expr_to_java(expr, proc);
             let zone_java = expr_to_java(zone, proc);
+            // (#114 review minor 4): java.sql.Date.toInstant() throws
+            // UnsupportedOperationException — wrap Date-typed inputs in a
+            // Timestamp first (mirrors the DATE_TRUNC guard).
+            let inner_ts = {
+                let a = inner.trim();
+                if a.starts_with("new java.sql.Date")
+                    || a.starts_with("java.sql.Date.valueOf")
+                    || resolve_var_java_type(a, proc)
+                        .map(|t| t.contains("java.sql.Date") && !t.contains("Timestamp"))
+                        .unwrap_or(false)
+                {
+                    format!("new java.sql.Timestamp({}.getTime())", a)
+                } else {
+                    inner.clone()
+                }
+            };
             format!(
                 "java.sql.Timestamp.valueOf({}.toInstant().atZone(java.time.ZoneId.of({})).toLocalDateTime())",
-                inner, zone_java
+                inner_ts, zone_java
             )
         }
         _ => "null".into(),
@@ -1596,6 +1631,24 @@ fn interval_count_unit_inner(inner: &ogsql_parser::ast::Expr, proc: &ProcedureIn
     Some((value, unit.to_string()))
 }
 
+/// Deref a rendered value expression if it is a bare promoted local var
+/// (AtomicReference holder for an OUT arg) — the bare name is the reference,
+/// not the value. Call-argument OUT positions are handled separately
+/// (emit_cross_pkg_call passes the AtomicReference itself), so callers use
+/// this only for value contexts: arithmetic/comparison operands, assignment
+/// RHS, IF/WHILE conditions, RETURN expressions. (M5, #114 review)
+pub(crate) fn maybe_deref_promoted(e: &str, proc: &ProcedureInfo) -> String {
+    let t = e.trim();
+    if is_bare_identifier(t) {
+        let is_promoted =
+            proc.out_local_vars.keys().any(|k| crate::naming::snake_to_camel(k) == t) || has_pending_out_promotion(t);
+        if is_promoted {
+            return format!("{}.get()", t);
+        }
+    }
+    t.to_string()
+}
+
 fn binary_op_to_java(
     left: &ogsql_parser::ast::Expr,
     op: &str,
@@ -1605,23 +1658,8 @@ fn binary_op_to_java(
     let mut l = expr_to_java(left, proc);
     let mut r = expr_to_java(right, proc);
 
-    // Promoted local vars (AtomicReference holders for OUT args) read in
-    // arithmetic/comparison must be dereferenced — the bare name is the
-    // reference, not the value. Call-argument OUT positions are handled
-    // separately (emit_cross_pkg_call), so this only affects value contexts.
-    let deref_promoted = |e: &str| -> String {
-        let t = e.trim();
-        if is_bare_identifier(t) {
-            let is_promoted = proc.out_local_vars.keys().any(|k| crate::naming::snake_to_camel(k) == t)
-                || has_pending_out_promotion(t);
-            if is_promoted {
-                return format!("{}.get()", t);
-            }
-        }
-        t.to_string()
-    };
-    l = deref_promoted(&l);
-    r = deref_promoted(&r);
+    l = maybe_deref_promoted(&l, proc);
+    r = maybe_deref_promoted(&r, proc);
 
     // Unwrap (Number) prefix for arithmetic contexts
     if matches!(op, "*" | "/" | "+" | "-") {
@@ -1737,6 +1775,14 @@ fn binary_op_to_java(
                             );
                         }
                         "year" => {
+                            // (#115 review #8): align with month — a java.sql.Date
+                            // operand must stay Date (Date has no toLocalDateTime).
+                            if date_form {
+                                return format!(
+                                    "java.sql.Date.valueOf({}.toLocalDate().plusYears((long)({})))",
+                                    l, value_java
+                                );
+                            }
                             return format!(
                                 "java.sql.Timestamp.valueOf({}.toLocalDateTime().plusYears((long)({})))",
                                 l, value_java
@@ -2144,7 +2190,12 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         "UPPER" => format!("String.valueOf({}).toUpperCase()", jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")),
         // #112: `quote_literal(x)` must not degrade to a TOBEFIX null placeholder
         // (callers concat it into SQL strings — a null NPEs at runtime).
-        "QUOTE_LITERAL" => format!("String.valueOf({})", jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")),
+        "QUOTE_LITERAL" => format!(
+            // (#115 review #5): escape single quotes so the value can be
+            // embedded in a SQL string literal without breaking out of it.
+            "String.valueOf({}).replace(\"'\", \"''\")",
+            jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")
+        ),
         // #112: clock_timestamp()/statement_timestamp() are timestamps, not nulls
         "CLOCK_TIMESTAMP" | "STATEMENT_TIMESTAMP" | "TRANSACTION_TIMESTAMP" => {
             "new java.sql.Timestamp(System.currentTimeMillis())".to_string()
@@ -3185,6 +3236,17 @@ mod tests {
     }
 
     #[test]
+    fn test_integer_narrow_does_not_match_100l_substring() {
+        // (#114 review minor 9): `contains("0L")` matched the substring inside
+        // 100L/1000L, wrongly narrowing them to int. Only the exact `0L` literal
+        // (or a long-producing call) must be narrowed.
+        assert!(is_long_literal("0L"));
+        assert!(!is_long_literal("100L"));
+        assert!(!is_long_literal("1000L"));
+        assert!(!is_long_literal("999L"));
+    }
+
+    #[test]
     fn test_at_time_zone_expr_generates_zone_chain() {
         // ogagila EtlCore:63 — `now() AT TIME ZONE 'UTC'` must map to the
         // atZone(ZoneId.of(...)) chain; the previous fall-through emitted `null`
@@ -3210,6 +3272,25 @@ mod tests {
         assert!(out.contains("atZone(java.time.ZoneId.of(\"UTC\"))"), "got: {}", out);
         assert!(!out.contains("null.toInstant"), "must not emit null.toInstant, got: {}", out);
         assert!(!out.starts_with("null"), "AtTimeZone must not fall through to null, got: {}", out);
+    }
+
+    #[test]
+    fn test_at_time_zone_wraps_date_input_before_to_instant() {
+        // (#114 review minor 4): `d AT TIME ZONE 'UTC'` where d is java.sql.Date —
+        // Date.toInstant() throws UnsupportedOperationException, so the input
+        // must be wrapped in a Timestamp first (mirrors the DATE_TRUNC guard).
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_d".into(), "java.sql.Date".into());
+        let expr = ogsql_parser::ast::Expr::AtTimeZone {
+            expr: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["v_d".into()])),
+            zone: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String("UTC".into()))),
+        };
+        let out = expr_to_java(&expr, &proc);
+        assert!(
+            out.contains("new java.sql.Timestamp(vD.getTime()).toInstant()"),
+            "Date input must be wrapped in Timestamp before toInstant, got: {}",
+            out
+        );
     }
 
     #[test]
@@ -3242,9 +3323,39 @@ mod tests {
             right: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["v_return_rate_org".into()])),
         };
         let out = expr_to_java(&expr, &proc);
-        // Drain the queue so the test doesn't leak into other tests.
-        crate::expr::take_pending_out_promotions();
+        // (#115 review #10): drain before the assert — if the assert panics the
+        // thread-local queue must still be empty or it leaks into other tests.
+        let drained = crate::expr::take_pending_out_promotions();
+        assert!(drained.len() == 1, "expected one queued promotion, got: {:?}", drained);
         assert!(out.contains("vReturnRateOrg.get()"), "queued promotion must be deref'd in arithmetic, got: {}", out);
+    }
+
+    #[test]
+    fn test_assignment_rhs_derefs_promoted_var() {
+        // M5 (#114 review): `v_sum := v_return_rate_org` where the RHS is a
+        // promoted local (AtomicReference<Long>) must deref to the value —
+        // a bare AtomicReference on the RHS fails javac.
+        let mut proc = empty_proc();
+        proc.out_local_vars.insert("v_return_rate_org".into(), "AtomicReference<Long>".into());
+        proc.local_vars.insert("v_return_rate_org".into(), "Long".into());
+        proc.local_vars.insert("v_sum".into(), "Long".into());
+        let target = ogsql_parser::ast::Expr::PlVariable(vec!["v_sum".into()]);
+        let value = ogsql_parser::ast::Expr::PlVariable(vec!["v_return_rate_org".into()]);
+        let out = assignment_to_java(&target, &value, &proc);
+        assert!(out.contains("vReturnRateOrg.get()"), "assignment RHS must deref promoted var, got: {}", out);
+    }
+
+    #[test]
+    fn test_bool_cond_derefs_promoted_var() {
+        // M5 (#114 review): `IF v_flag THEN` where v_flag is a promoted local
+        // (AtomicReference<Boolean>) must deref — a bare ref is always non-null
+        // and wrong for the condition.
+        let mut proc = empty_proc();
+        proc.out_local_vars.insert("v_flag".into(), "AtomicReference<Boolean>".into());
+        proc.local_vars.insert("v_flag".into(), "Boolean".into());
+        let expr = ogsql_parser::ast::Expr::ColumnRef(vec!["v_flag".into()]);
+        let out = bool_expr_to_java(&expr, &proc);
+        assert!(out == "vFlag.get()", "boolean condition must deref promoted var, got: {}", out);
     }
 
     #[test]
@@ -3314,6 +3425,35 @@ mod tests {
         };
         let out = expr_to_java(&cast, &proc);
         assert!(!out.contains("parseLong"), "no parseLong on interval, got: {}", out);
+    }
+
+    #[test]
+    fn test_date_plus_interval_year_uses_to_local_date() {
+        // (#115 review #8): `Date + interval '1 year'` must stay java.sql.Date —
+        // java.sql.Date has no toLocalDateTime, so the old year branch (which
+        // always emitted Timestamp) produced a compile error.
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_d".into(), "java.sql.Date".into());
+        let date_expr = ogsql_parser::ast::Expr::TypeCast {
+            expr: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String("2024-01-01".into()))),
+            type_name: ogsql_parser::ast::DataType::Date,
+            default: None,
+            format: None,
+        };
+        let year_expr = ogsql_parser::ast::Expr::TypeCast {
+            expr: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String("1 year".into()))),
+            type_name: ogsql_parser::ast::DataType::Interval(None),
+            default: None,
+            format: None,
+        };
+        let expr =
+            ogsql_parser::ast::Expr::BinaryOp { left: Box::new(date_expr), op: "+".into(), right: Box::new(year_expr) };
+        let out = expr_to_java(&expr, &proc);
+        assert!(
+            out.contains(".toLocalDate().plusYears("),
+            "Date + interval year must use toLocalDate().plusYears, got: {}",
+            out
+        );
     }
 
     #[test]
@@ -3508,5 +3648,27 @@ mod tests {
         let out = expr_to_java(&expr, &proc);
         assert!(out.contains("TOBEFIX"), "ambiguous call must not resolve silently: {}", out);
         assert!(out.contains("candidates=[pkgAService, pkgBService]"), "candidates must be listed: {}", out);
+    }
+
+    #[test]
+    fn test_quote_literal_escapes_single_quotes() {
+        // (#115 review #5): quote_literal(x) feeds a SQL string literal — a raw
+        // single quote would break out of it (injection surface). Must escape.
+        let proc = empty_proc();
+        let expr = ogsql_parser::ast::Expr::FunctionCall {
+            name: vec!["quote_literal".into()],
+            args: vec![ogsql_parser::ast::Expr::ColumnRef(vec!["v_name".into()])],
+            distinct: false,
+            over: None,
+            filter: None,
+            within_group: Vec::new(),
+            separator: None,
+            default: None,
+            conversion_format: None,
+            agg_from: None,
+            builtin: None,
+        };
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains(".replace(\"'\", \"''\")"), "quote_literal must escape single quotes, got: {}", out);
     }
 }

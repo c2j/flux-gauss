@@ -2120,6 +2120,26 @@ CREATE TABLE BIGFUND.orders (
     }
 
     #[test]
+    fn test_parse_select_columns_where_param_uses_first_param() {
+        // (#115 review #9, confirmed): the WHERE-clause MyBatis param type
+        // inference takes the FIRST `#{param}` — clippy cleanup (#102) replaced
+        // `captures_iter + break` with an equivalent `captures`, so behavior is
+        // unchanged; this test locks it down so a future rewrite can't silently
+        // flip to "last param wins".
+        let sql = "select id, name from t_users where status = #{status} and age > #{age}";
+        let (tbl, cols) = parse_select_columns(sql).unwrap();
+        assert_eq!(tbl, "t_users");
+        assert!(cols.contains_key("id"), "select columns must be collected: {:?}", cols);
+        assert!(cols.contains_key("name"), "select columns must be collected: {:?}", cols);
+        let status_type = cols.get("status").cloned().unwrap_or_default();
+        assert_eq!(
+            infer_type_from_mybatis_param("#{status}"),
+            status_type,
+            "WHERE param type must come from the first {{param}}: {:?}",
+            cols
+        );
+    }
+    #[test]
     fn test_maybe_upgrade_type_conventions() {
         assert_eq!(maybe_upgrade_type("TEXT", "id"), "BIGINT");
         assert_eq!(maybe_upgrade_type("TEXT", "user_id"), "BIGINT");

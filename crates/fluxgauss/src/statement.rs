@@ -2310,7 +2310,10 @@ pub fn process_statement(
         }
         PlStatement::Return { expression } => {
             if let Some(expr) = expression {
-                let val = crate::expr::expr_to_java(expr, proc);
+                let mut val = crate::expr::expr_to_java(expr, proc);
+                // M5 (#114 review): a promoted local var (AtomicReference) returned
+                // bare fails javac — deref to the value first.
+                val = crate::expr::maybe_deref_promoted(&val, proc);
                 let coerced = if let Some(rt) = &proc.return_type {
                     crate::expr::coerce_for_type(&val, Some(rt), proc)
                 } else {

@@ -32,7 +32,7 @@ class DynamicXmlServiceTest {
         String pOrderBy = "test_p_order_by";
         Integer pLimit = 5;
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createdAt", 1L); when(dynamicXmlMapper.selectProcConditionalQuery((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(m); }
-        when(dynamicXmlMapper.selectAuditLog((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(999);
+        when(dynamicXmlMapper.selectAuditLog((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(0);
         when(dynamicXmlMapper.updateProcConditionalUpdate((String) any(), (Integer) any(), (String) any(), (Long) any(), (String) any())).thenReturn(1);
         when(dynamicXmlMapper.insertProcMixedLogic((String) any(), (String) any())).thenReturn(1);
         when(dynamicXmlMapper.insertAuditLog((String) any(), (String) any(), (String) any())).thenReturn(1);
@@ -50,7 +50,7 @@ class DynamicXmlServiceTest {
         Long pAmount = 100L;
         String pRemark = "test_p_remark";
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createdAt", 1L); when(dynamicXmlMapper.selectProcConditionalQuery((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(m); }
-        when(dynamicXmlMapper.selectAuditLog((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(999);
+        when(dynamicXmlMapper.selectAuditLog((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(0);
         when(dynamicXmlMapper.updateProcConditionalUpdate((String) any(), (Integer) any(), (String) any(), (Long) any(), (String) any())).thenReturn(1);
         when(dynamicXmlMapper.insertProcMixedLogic((String) any(), (String) any())).thenReturn(1);
         when(dynamicXmlMapper.insertAuditLog((String) any(), (String) any(), (String) any())).thenReturn(1);
@@ -66,7 +66,7 @@ class DynamicXmlServiceTest {
         String pTableName = "test_p_table_name";
         String pMode = "test_p_mode";
         { var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); m.put("name", "test"); m.put("amount", java.math.BigDecimal.TEN); m.put("status", "test"); m.put("createdAt", 1L); when(dynamicXmlMapper.selectProcConditionalQuery((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(m); }
-        when(dynamicXmlMapper.selectAuditLog((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(999);
+        when(dynamicXmlMapper.selectAuditLog((String) any(), (String) any(), (String) any(), (Integer) any())).thenReturn(0);
         when(dynamicXmlMapper.updateProcConditionalUpdate((String) any(), (Integer) any(), (String) any(), (Long) any(), (String) any())).thenReturn(1);
         when(dynamicXmlMapper.insertProcMixedLogic((String) any(), (String) any())).thenReturn(1);
         when(dynamicXmlMapper.insertAuditLog((String) any(), (String) any(), (String) any())).thenReturn(1);
