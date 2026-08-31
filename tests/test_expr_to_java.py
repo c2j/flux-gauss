@@ -108,6 +108,22 @@ class TestExprToJavaBinaryOp:
         )
         assert ">" in result
 
+    @pytest.mark.parametrize(
+        ("op", "left", "right"),
+        [
+            ("+", "amount", "x"),
+            ("+", "x", "amount"),
+            (">", "amount", "x"),
+            ("<", "x", "amount"),
+        ],
+    )
+    def test_integer_variable_wrapped_as_bigdecimal_is_null_safe(self, proc, op, left, right):
+        result = fg._expr_to_java(
+            {"BinaryOp": {"op": op, "left": {"ColumnRef": [left]}, "right": {"ColumnRef": [right]}}},
+            proc,
+        )
+        assert "x != null ? x : 0L" in result
+
 
 class TestExprToJavaUnaryOp:
     def test_not(self):
@@ -411,8 +427,70 @@ class TestIntervalAndTypeCast:
             local_vars={
                 "v_from": "java.sql.Date",
                 "p_months_ahead": "Integer",
+                "v_str": "String",
             },
         )
+
+    @staticmethod
+    def _interval_cast(expr):
+        return {"TypeCast": {"type_name": {"Custom": [["interval"], []]}, "expr": expr}}
+
+    def test_interval_literal_with_leading_zero_is_decimal_normalized(self):
+        result = fg._expr_to_java(self._interval_cast({"Literal": {"String": "08 day"}}), self._proc())
+        assert "(long)(8)" in result
+        assert "(long)(08)" not in result
+
+    def test_interval_literal_with_multiple_leading_zeros_is_decimal_normalized(self):
+        result = fg._expr_to_java(self._interval_cast({"Literal": {"String": "010 day"}}), self._proc())
+        assert "(long)(10)" in result
+        assert "(long)(010)" not in result
+
+    def test_string_interval_value_is_parsed_as_long(self):
+        expr = {
+            "Parenthesized": {
+                "BinaryOp": {
+                    "op": "||",
+                    "left": {"ColumnRef": ["v_str"]},
+                    "right": {"Literal": {"String": " day"}},
+                }
+            }
+        }
+        result = fg._expr_to_java(self._interval_cast(expr), self._proc())
+        assert "Long.parseLong(String.valueOf(vStr))" in result
+
+    def test_null_interval_value_is_guarded_as_zero(self):
+        expr = {
+            "Parenthesized": {
+                "BinaryOp": {
+                    "op": "||",
+                    "left": {"Literal": {"Null": None}},
+                    "right": {"Literal": {"String": " month"}},
+                }
+            }
+        }
+        ast = {
+            "BinaryOp": {
+                "op": "-",
+                "left": {"ColumnRef": ["v_from"]},
+                "right": self._interval_cast(expr),
+            }
+        }
+        result = fg._expr_to_java(ast, self._proc())
+        assert "!= null ?" in result
+        assert "String.valueOf(null)" not in result
+
+    @pytest.mark.parametrize("literal", ["abc", "123"])
+    def test_invalid_short_timestamp_literal_does_not_emit_failing_value_of(self, literal):
+        ast = {"TypeCast": {"type_name": "timestamp", "expr": {"Literal": {"String": literal}}}}
+        result = fg._expr_to_java(ast, self._proc())
+        assert f'Timestamp.valueOf("{literal} 00:00:00")' not in result
+        assert "TODO" in result
+
+    def test_non_padded_timestamptz_literal_uses_lenient_date_formatter(self):
+        ast = {"TypeCast": {"type_name": "timestamptz", "expr": {"Literal": {"String": "2026-5-01"}}}}
+        result = fg._expr_to_java(ast, self._proc())
+        assert 'DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd][yyyy-M-d]")' in result
+        assert "atStartOfDay()" in result
 
     def test_date_plus_interval_month(self):
         proc = self._proc()

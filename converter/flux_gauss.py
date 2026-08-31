@@ -10914,7 +10914,7 @@ def _parse_interval_value_unit(tc_expr, proc, all_packages):
     if s:
         m = re.match(r"^\s*(\d+)\s*(day|month|year|hour|minute|second)s?\s*$", s, re.IGNORECASE)
         if m:
-            return (m.group(2).lower(), m.group(1))
+            return (m.group(2).lower(), str(int(m.group(1))))
         return None
     if isinstance(tc_expr, dict) and "Parenthesized" in tc_expr:
         inner = tc_expr["Parenthesized"]
@@ -10924,6 +10924,9 @@ def _parse_interval_value_unit(tc_expr, proc, all_packages):
                 unit = _literal_string(bop.get("right", {})).strip().lower().rstrip("s")
                 if unit in ("day", "month", "year", "hour", "minute", "second"):
                     value_java = _expr_to_java(bop.get("left", {}), proc, all_packages=all_packages)
+                    if not re.fullmatch(r"\d+", value_java.strip()):
+                        parsed = "0L" if value_java == "null" else f"Long.parseLong(String.valueOf({value_java}))"
+                        value_java = f"({value_java} != null ? {parsed} : 0L)"
                     return (unit, value_java)
     return None
 
@@ -10954,9 +10957,12 @@ def _date_month_arith(date_java: str, date_type: str, value_java: str, is_year: 
         method = "plusYears" if is_year else "plusMonths"
     else:
         method = "minusYears" if is_year else "minusMonths"
+    safe_value = value_java
+    if not re.fullmatch(r"\d+", value_java.strip()) and "!= null ?" not in value_java:
+        safe_value = f"({value_java} != null ? {value_java} : 0L)"
     if date_type == "java.sql.Date" or date_java.strip().startswith("new java.sql.Date"):
-        return f"java.sql.Date.valueOf({date_java}.toLocalDate().{method}((long)({value_java})))"
-    return f"java.sql.Timestamp.valueOf({date_java}.toLocalDateTime().{method}((long)({value_java})))"
+        return f"java.sql.Date.valueOf({date_java}.toLocalDate().{method}((long)({safe_value})))"
+    return f"java.sql.Timestamp.valueOf({date_java}.toLocalDateTime().{method}((long)({safe_value})))"
 
 
 def _cast_to_date(inner_java: str, inner_type: str = "") -> str:
@@ -11311,10 +11317,10 @@ def _expr_to_java(expr, proc: Any = None, as_read: bool = True, all_packages: An
                         right = f"java.math.BigDecimal.valueOf({right})"
                     if "Integer" in left_type or left_type == "int":
                         if "BigDecimal" not in left:
-                            left = f"java.math.BigDecimal.valueOf({left})"
+                            left = f"java.math.BigDecimal.valueOf({left} != null ? {left} : 0L)"
                     if "Integer" in right_type or right_type == "int":
                         if "BigDecimal" not in right:
-                            right = f"java.math.BigDecimal.valueOf({right})"
+                            right = f"java.math.BigDecimal.valueOf({right} != null ? {right} : 0L)"
                     return f"{left}.compareTo({right}) {cmp_map[op]} 0"
 
                 if is_str and not is_bd and op in (">", "<", ">=", "<="):
@@ -11465,13 +11471,15 @@ def _expr_to_java(expr, proc: Any = None, as_read: bool = True, all_packages: An
                     def _bd_operand(x, x_type):
                         if "BigDecimal" in x_type or "BigDecimal" in x:
                             return x
-                        if _is_numeric_literal_expr(x):
+                        if _is_numeric_literal_expr(x) or _is_numeric_literal_expr(x.strip("()")):
                             return f"java.math.BigDecimal.valueOf({x})"
                         if x_type == "String" or "_substr(" in x or ".get(" in x:
                             return f"new java.math.BigDecimal(String.valueOf({x}))"
                         if "?" in x and "null" in x:
                             return _wrap_ternary_nullsafe_bd(x)
-                        return f"java.math.BigDecimal.valueOf({x})"
+                        if _is_primitive_producing(x):
+                            return f"java.math.BigDecimal.valueOf({x})"
+                        return f"java.math.BigDecimal.valueOf({x} != null ? {x} : 0L)"
 
                     left = _bd_operand(left, left_type)
                     right = _bd_operand(right, right_type)
@@ -12222,8 +12230,12 @@ def _expr_to_java(expr, proc: Any = None, as_read: bool = True, all_packages: An
                 if _inner.strip().startswith("new java.sql.Timestamp") or "java.sql.Timestamp.valueOf" in _inner:
                     return _inner
                 _s = _inner.strip()
-                if len(_s) >= 2 and _s[0] == '"' and _s[-1] == '"' and len(_s[1:-1]) <= 10 and ":" not in _s[1:-1]:
-                    return f'java.sql.Timestamp.valueOf("{_s[1:-1]} 00:00:00")'
+                if len(_s) >= 2 and _s[0] == '"' and _s[-1] == '"':
+                    _literal = _s[1:-1]
+                    if re.fullmatch(r"\d{1,4}-\d{1,2}-\d{1,2}|\d{8}", _literal):
+                        return f'java.sql.Timestamp.valueOf(java.time.LocalDate.parse("{_literal}", java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd][yyyy-M-d]")).atStartOfDay())'
+                    if len(_literal) <= 10 and ":" not in _literal:
+                        return f'/* TODO: invalid timestamp literal */ "{_escape_java_string(_literal)}"'
                 _it = _infer_expr_type(_tc_expr, proc) if proc else ""
                 if "Date" in _it and "Timestamp" not in _it:
                     # Date-typed source: String.valueOf(date) lacks the time part
@@ -15706,12 +15718,19 @@ def _domain_test_value(proc: ProcedureInfo, param, pkg=None) -> str:
     """
     jn = param.java_name
     # 1. Validation literal sampling
+    _raise_literals = set()
+    for _idx, _line in enumerate(proc.java_logic_lines):
+        if "throw new BusinessException" in _line:
+            _raise_context = proc.java_logic_lines[max(0, _idx - 1) : _idx + 1]
+            for _raise_line in _raise_context:
+                _raise_literals.update(re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', _raise_line))
     for line in proc.java_logic_lines:
         m = re.search(r"Arrays\.asList\(([^)]*)\)\s*\.contains\(\s*" + re.escape(jn) + r"\s*\)", line)
         if m:
             lits = re.findall(r'"([^"]*)"', m.group(1))
             if lits:
-                return f'"{lits[0]}"'
+                selected = next((lit for lit in lits if lit not in _raise_literals), lits[0])
+                return f'"{selected}"'
     # 2. Date-prefix usage: `to_date(x || '-01')` appears in declaration
     # defaults (local_var_defaults) or arithmetic lines. Scan the whole pkg:
     # a param may be validated inside a cross-called method (verifyFingerprint
@@ -16432,6 +16451,7 @@ def _collect_count_usage(pkg: PackageInfo) -> dict:
     (needs mock 1); `if (v > 0)` / `if (v != 0)` is a guard (needs mock 0).
     """
     usage: dict = {}
+    priority = {"exists": 0, "guard": 1}
     for _p in pkg.procedures:
         lines = _p.java_logic_lines
         for i, line in enumerate(lines):
@@ -16439,13 +16459,19 @@ def _collect_count_usage(pkg: PackageInfo) -> dict:
             if not m:
                 continue
             var, method_id = m.group(1), m.group(2)
-            for j in range(i, min(i + 3, len(lines))):
+            for j in range(i, min(i + 5, len(lines))):
                 l2 = lines[j]
-                if re.search(r"if\s*\(\s*" + re.escape(var) + r"\s*==\s*0\s*\)", l2):
-                    usage[method_id] = "exists"
-                    break
-                if re.search(r"if\s*\(\s*" + re.escape(var) + r"\s*(?:>\s*0|!=\s*0)\s*\)", l2):
-                    usage[method_id] = "guard"
+                var_re = re.escape(var)
+                detected = None
+                if re.search(r"\b" + var_re + r"\s*==\s*0\b|\b0\s*==\s*" + var_re + r"\b", l2):
+                    detected = "exists"
+                elif re.search(r"\b" + var_re + r"\s*<\s*1\b", l2):
+                    detected = "exists"
+                elif re.search(r"\b" + var_re + r"\s*(?:>\s*0|!=\s*0|>=\s*1)\b", l2):
+                    detected = "guard"
+                if detected is not None:
+                    if method_id not in usage or priority[detected] > priority[usage[method_id]]:
+                        usage[method_id] = detected
                     break
     return usage
 

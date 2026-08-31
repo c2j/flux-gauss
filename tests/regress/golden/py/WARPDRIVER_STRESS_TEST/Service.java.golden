@@ -219,7 +219,7 @@ public class WarpdriverStressTestService {
             for (Map<String, Object> stockRec : stockRecList_8) {
                 vStock = warpdriverStressTestMapper.selectInventory_1(pBatchId, stockRec);
                 if (vStock == null) vStock = 0;
-                if (java.math.BigDecimal.valueOf(vStock).compareTo(java.math.BigDecimal.valueOf(((Number) (stockRec.get("required_qty") != null ? stockRec.get("required_qty") : 0L)).longValue())) < 0) {
+                if (java.math.BigDecimal.valueOf(vStock != null ? vStock : 0L).compareTo(java.math.BigDecimal.valueOf(((Number) (stockRec.get("required_qty") != null ? stockRec.get("required_qty") : 0L)).longValue())) < 0) {
                     vInvalid = vInvalid + 1;
                     _sqlRowCount = warpdriverStressTestMapper.updateBulkOrders_6(pBatchId, mainRec, stockRec);
                     continue;

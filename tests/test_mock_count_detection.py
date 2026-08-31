@@ -44,6 +44,51 @@ class TestCountDetectionWordBoundary:
         assert "thenReturn(0)" in out, f"count(*) in SQL must mock 0, got: {out}"
 
 
+class TestCollectCountUsageBlindSpots:
+    def _proc(self, name, lines):
+        proc = _make_callee(name, [])
+        proc.java_logic_lines = lines
+        return proc
+
+    def _usage(self, *procedures):
+        pkg = fg.PackageInfo(package_name="pkg_cal", procedures=list(procedures))
+        return fg._collect_count_usage(pkg)
+
+    def test_reversed_zero_equality_is_exists_check(self):
+        proc = self._proc("reversed", ["vCount = mapper.selectShared();", "if (0 == vCount) {"])
+        assert self._usage(proc)["selectShared"] == "exists"
+
+    def test_greater_or_equal_one_is_guard(self):
+        proc = self._proc("gte", ["vCount = mapper.selectShared();", "if (vCount >= 1) {"])
+        assert self._usage(proc)["selectShared"] == "guard"
+
+    def test_less_than_one_is_exists_check(self):
+        proc = self._proc("lt", ["vCount = mapper.selectShared();", "if (vCount < 1) {"])
+        assert self._usage(proc)["selectShared"] == "exists"
+
+    def test_compound_zero_condition_is_exists_check(self):
+        proc = self._proc("compound", ["vCount = mapper.selectShared();", "if (vCount == 0 || other) {"])
+        assert self._usage(proc)["selectShared"] == "exists"
+
+    def test_condition_four_lines_after_assignment_is_detected(self):
+        proc = self._proc(
+            "distant",
+            [
+                "vCount = mapper.selectShared();",
+                "auditOne();",
+                "auditTwo();",
+                "auditThree();",
+                "if (vCount > 0) {",
+            ],
+        )
+        assert self._usage(proc)["selectShared"] == "guard"
+
+    def test_guard_wins_when_procedures_share_method_id(self):
+        exists = self._proc("exists", ["vCount = mapper.selectShared();", "if (vCount == 0) {"])
+        guard = self._proc("guard", ["vCount = mapper.selectShared();", "if (vCount != 0) {"])
+        assert self._usage(guard, exists)["selectShared"] == "guard"
+
+
 class TestDomainTestValueQuotedDefault:
     """M2 (#114 review): a quoted DEFAULT on a non-String param must not emit a
     bare string literal (compile error); it falls back to the type-aware value."""
@@ -88,6 +133,16 @@ class TestDomainTestValueQuotedDefault:
         )
         out = fg._domain_test_value(proc, param, pkg=None)
         assert "BigDecimal" in out, f"BigDecimal default must be type-aware, got: {out}"
+
+    def test_validation_literal_avoids_value_used_by_raise_guard(self):
+        proc = self._proc()
+        proc.java_logic_lines = [
+            'if (Arrays.asList("BAD", "GOOD").contains(pMode)) {',
+            'if ("BAD".equals(pMode)) {',
+            'throw new BusinessException("BAD mode");',
+        ]
+        param = fg.Parameter(name="p_mode", java_type="String", sql_type="varchar")
+        assert fg._domain_test_value(proc, param, pkg=None) == '"GOOD"'
 
 
 def _make_callee(name, params):
