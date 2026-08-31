@@ -7,13 +7,29 @@ use crate::generate::writer::CodeWriter;
 use crate::naming::{java_method_name, package_to_classname, snake_to_camel};
 use crate::types::{DmlType, PackageInfo, Parameter, ProcedureInfo};
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TableConstraints {
+    pub enums: HashMap<String, Vec<String>>,
+    pub checks: HashMap<String, Vec<String>>,
+    pub partition_key: Option<String>,
+    pub partition_bounds: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SchemaMetadata {
+    pub columns: HashMap<String, HashMap<String, String>>,
+    pub constraints: HashMap<String, TableConstraints>,
+    pub enum_types: HashMap<String, Vec<String>>,
+    pub fk_parents: HashMap<String, Vec<String>>,
+}
+
 pub fn write_itest_class(
     base_path: &Path,
     pkg: &PackageInfo,
     base_package: &str,
     service_injections: &std::collections::HashMap<String, String>,
     all_packages: &[PackageInfo],
-    precomputed_schema_map: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    precomputed_schema: &SchemaMetadata,
     encoding: &'static Encoding,
 ) -> std::io::Result<String> {
     let mut sorted_injections: Vec<(&String, &String)> = service_injections.iter().collect();
@@ -62,7 +78,7 @@ pub fn write_itest_class(
         imports.insert(format!("import {}.{};", target_jp, svc_class_inj));
     }
 
-    let schema_map = precomputed_schema_map;
+    let schema_map = &precomputed_schema.columns;
 
     let object_pkg_var_names: Vec<String> = pkg
         .package_vars
@@ -132,7 +148,8 @@ pub fn write_itest_class(
         let args_str = all_args.join(", ");
 
         let test_data = infer_test_data(proc, pkg, schema_map, all_packages);
-        let sql_script = write_fixtures(base_path, proc, pkg, &test_data, encoding).unwrap_or_default();
+        let sql_script =
+            write_fixtures(base_path, proc, pkg, &test_data, precomputed_schema, encoding).unwrap_or_default();
 
         let base_test_name = format!("test_{}_integration", method_name);
         let count = seen_method_names.entry(base_test_name.clone()).or_insert(0);
@@ -367,11 +384,11 @@ fn is_system_object(name: &str) -> bool {
 pub fn write_itest_schema_sql(
     base_path: &Path,
     all_packages: &[PackageInfo],
-    precomputed_schema_map: &HashMap<String, HashMap<String, String>>,
+    precomputed_schema: &SchemaMetadata,
     mode: &str,
     encoding: &'static Encoding,
 ) -> std::io::Result<()> {
-    let schema_map = precomputed_schema_map;
+    let schema_map = &precomputed_schema.columns;
 
     let mut tables_with_explicit_id_insert: HashSet<String> = HashSet::new();
     let mut tables_with_implicit_id_insert: HashSet<String> = HashSet::new();
@@ -450,6 +467,28 @@ pub fn write_itest_schema_sql(
         lines.push(format!("CREATE SEQUENCE IF NOT EXISTS {} START WITH 1 INCREMENT BY 1;", seq));
     }
     if !sequences_needed.is_empty() {
+        lines.push(String::new());
+    }
+
+    let referenced_enum_types: HashSet<String> = schema_map
+        .values()
+        .flat_map(|columns| columns.values())
+        .filter_map(|sql_type| {
+            let name = sql_type
+                .split(|ch: char| ch.is_whitespace() || ch == '(')
+                .next()
+                .unwrap_or(sql_type)
+                .trim_matches('"')
+                .to_lowercase();
+            precomputed_schema.enum_types.contains_key(&name).then_some(name)
+        })
+        .collect();
+    for type_name in sorted(&referenced_enum_types) {
+        let members = precomputed_schema.enum_types.get(&type_name).unwrap();
+        let quoted = members.iter().map(|member| format!("'{}'", member.replace('\'', "''"))).collect::<Vec<_>>();
+        lines.push(format!("CREATE TYPE {} AS ENUM ({});", type_name, quoted.join(", ")));
+    }
+    if !referenced_enum_types.is_empty() {
         lines.push(String::new());
     }
 
@@ -532,10 +571,6 @@ pub fn write_itest_schema_sql(
         lines.push(String::new());
     }
 
-    if schema_map.contains_key("t_products") {
-        lines.push("INSERT INTO \"t_products\" (id, name, price, stock_qty, active) VALUES (1, 'Test Product', 10.00, 100, true) ON CONFLICT DO NOTHING;".to_string());
-    }
-
     let content = lines.join("\n");
     let res_dir = base_path.join("src/test/resources");
     std::fs::create_dir_all(&res_dir)?;
@@ -546,13 +581,10 @@ pub fn write_itest_schema_sql(
 
 /// Compute the full schema map once: parses DDL from SQL files, then augments with DML-inferred columns.
 /// Call this once before the per-package loop and pass the result to both `write_itest_schema_sql` and `write_itest_class`.
-pub fn build_full_schema_map(
-    all_packages: &[PackageInfo],
-    sql_files: &[std::path::PathBuf],
-) -> HashMap<String, HashMap<String, String>> {
-    let ddl_schemas = parse_table_ddl(sql_files);
-
-    build_schema_map(all_packages, &ddl_schemas)
+pub fn build_full_schema_map(all_packages: &[PackageInfo], sql_files: &[std::path::PathBuf]) -> SchemaMetadata {
+    let mut metadata = parse_table_ddl(sql_files);
+    metadata.columns = build_schema_map(all_packages, &metadata.columns);
+    metadata
 }
 
 fn is_better_type(new_type: &str, existing_type: &str) -> bool {
@@ -760,9 +792,15 @@ fn build_schema_map(
     schema_map
 }
 
-pub fn parse_table_ddl(sql_files: &[std::path::PathBuf]) -> HashMap<String, HashMap<String, String>> {
-    let mut schema: HashMap<String, HashMap<String, String>> = HashMap::new();
+pub fn parse_table_ddl(sql_files: &[std::path::PathBuf]) -> SchemaMetadata {
+    let mut metadata = SchemaMetadata::default();
     let create_re = regex::Regex::new(r"(?i)create\s+table\s+(?:if\s+not\s+exists\s+)?(?:\w+\.)?(\w+)\s*\(").unwrap();
+    let enum_re = regex::Regex::new(r"(?is)create\s+type\s+(?:\w+\.)?(\w+)\s+as\s+enum\s*\(([^)]*)\)").unwrap();
+    let check_re = regex::Regex::new(r"(?is)check\s*\(([^()]*)\)").unwrap();
+    let check_col_re = regex::Regex::new(r#"(?i)^\s*"?([a-z_][a-z0-9_]*)"?\s*(?:>=|<=|=|>|<)"#).unwrap();
+    let partition_re = regex::Regex::new(r#"(?is)partition\s+by\s+range\s*\(\s*"?(\w+)"?\s*\)"#).unwrap();
+    let bound_re = regex::Regex::new(r"(?is)values\s+less\s+than\s*\(\s*'?([^')\s,]+)'?\s*\)").unwrap();
+    let reference_re = regex::Regex::new(r#"(?i)references\s+(?:\w+\.)?(?:"(\w+)"|(\w+))"#).unwrap();
 
     for sql_file in sql_files {
         let content = match std::fs::read(sql_file) {
@@ -770,6 +808,14 @@ pub fn parse_table_ddl(sql_files: &[std::path::PathBuf]) -> HashMap<String, Hash
             Err(_) => continue,
         };
         let content_clean = BLOCK_COMMENT_RE.replace_all(&content, "");
+        for caps in enum_re.captures_iter(&content_clean) {
+            let members = caps[2]
+                .split(',')
+                .map(|member| member.trim().trim_matches('\'').replace("''", "'"))
+                .filter(|member| !member.is_empty())
+                .collect();
+            metadata.enum_types.insert(caps[1].to_lowercase(), members);
+        }
 
         for caps in create_re.captures_iter(&content_clean) {
             let table_name = caps.get(1).unwrap().as_str().to_lowercase();
@@ -789,6 +835,8 @@ pub fn parse_table_ddl(sql_files: &[std::path::PathBuf]) -> HashMap<String, Hash
             }
 
             let columns_text = &content_clean[start..pos - 1];
+            let statement_tail =
+                &content_clean[pos..content_clean[pos..].find(';').map_or(content_clean.len(), |i| pos + i)];
 
             let mut parts: Vec<String> = Vec::new();
             let mut depth2: i32 = 0;
@@ -812,6 +860,7 @@ pub fn parse_table_ddl(sql_files: &[std::path::PathBuf]) -> HashMap<String, Hash
             }
 
             let mut columns: HashMap<String, String> = HashMap::new();
+            let mut constraints = TableConstraints::default();
             for part in parts {
                 let part = part.trim();
                 if part.is_empty() {
@@ -827,6 +876,12 @@ pub fn parse_table_ddl(sql_files: &[std::path::PathBuf]) -> HashMap<String, Hash
                     || first_word == "INDEX"
                     || first_word == "LIKE"
                 {
+                    for check_caps in check_re.captures_iter(part) {
+                        let expression = check_caps[1].trim().to_string();
+                        if let Some(col_caps) = check_col_re.captures(&expression) {
+                            constraints.checks.entry(col_caps[1].to_lowercase()).or_default().push(expression);
+                        }
+                    }
                     continue;
                 }
 
@@ -843,6 +898,10 @@ pub fn parse_table_ddl(sql_files: &[std::path::PathBuf]) -> HashMap<String, Hash
                 let col_name = tokens[0].trim().trim_matches('"').to_lowercase();
                 let mut col_type = tokens[1].trim().to_string();
 
+                for check_caps in check_re.captures_iter(part) {
+                    constraints.checks.entry(col_name.clone()).or_default().push(check_caps[1].trim().to_string());
+                }
+
                 if let Some(stripped) = CONSTRAINT_SPLIT_RE.split(&col_type).next() {
                     col_type = stripped.to_string();
                 }
@@ -852,18 +911,50 @@ pub fn parse_table_ddl(sql_files: &[std::path::PathBuf]) -> HashMap<String, Hash
                 }
             }
 
+            for caps in reference_re.captures_iter(columns_text) {
+                let parent = caps.get(1).or_else(|| caps.get(2)).unwrap().as_str().to_lowercase();
+                if parent != table_name {
+                    metadata.fk_parents.entry(table_name.clone()).or_default().push(parent);
+                }
+            }
+
+            if let Some(caps) = partition_re.captures(statement_tail) {
+                constraints.partition_key = Some(caps[1].to_lowercase());
+                let mut lower = String::new();
+                for bound_caps in bound_re.captures_iter(statement_tail) {
+                    let upper = bound_caps[1].to_string();
+                    if upper.eq_ignore_ascii_case("maxvalue") {
+                        break;
+                    }
+                    constraints.partition_bounds.push((lower.clone(), upper.clone()));
+                    lower = upper;
+                }
+            }
+
             if !columns.is_empty() {
-                let entry = schema.entry(table_name).or_default();
+                for (column, sql_type) in &columns {
+                    let type_name = sql_type
+                        .split(|ch: char| ch.is_whitespace() || ch == '(')
+                        .next()
+                        .unwrap_or(sql_type)
+                        .trim_matches('"')
+                        .to_lowercase();
+                    if let Some(members) = metadata.enum_types.get(&type_name) {
+                        constraints.enums.insert(column.clone(), members.clone());
+                    }
+                }
+                let entry = metadata.columns.entry(table_name.clone()).or_default();
                 for (col, typ) in columns {
                     if !entry.contains_key(&col) || is_better_type(&typ, entry.get(&col).unwrap()) {
                         entry.insert(col, typ);
                     }
                 }
+                metadata.constraints.insert(table_name, constraints);
             }
         }
     }
 
-    schema
+    metadata
 }
 
 fn parse_insert_columns(sql: &str) -> Option<(String, HashMap<String, String>)> {
@@ -1296,6 +1387,7 @@ fn write_fixtures(
     proc: &ProcedureInfo,
     pkg: &PackageInfo,
     test_data: &HashMap<String, HashMap<String, String>>,
+    schema_metadata: &SchemaMetadata,
     encoding: &'static Encoding,
 ) -> std::io::Result<String> {
     if test_data.is_empty() {
@@ -1303,9 +1395,13 @@ fn write_fixtures(
     }
     let mut lines: Vec<String> = Vec::new();
     let skip_prefixes = ["constraint", "check", "primary", "foreign", "unique", "index", "like"];
-    let mut tables: Vec<&String> = test_data.keys().collect();
-    tables.sort();
-    for table in tables {
+    let tables = topo_order_tables(test_data.keys().cloned().collect(), &schema_metadata.fk_parents);
+    for table in tables.iter().rev() {
+        if !is_sql_reserved_word(table) {
+            lines.push(format!("DELETE FROM {};", table));
+        }
+    }
+    for table in &tables {
         if is_sql_reserved_word(table) {
             continue;
         }
@@ -1330,7 +1426,7 @@ fn write_fixtures(
             }
             col_names.push(col.clone());
             let sql_type = columns.get(col).cloned().unwrap_or_else(|| "TEXT".to_string());
-            values.push(generate_test_value(col, &sql_type));
+            values.push(generate_test_value(col, &sql_type, schema_metadata.constraints.get(table)));
         }
         if col_names.is_empty() {
             continue;
@@ -1354,9 +1450,79 @@ fn write_fixtures(
     Ok(format!("classpath:itest-fixtures/{}", fname))
 }
 
-fn generate_test_value(col_name: &str, sql_type: &str) -> String {
+fn topo_order_tables(tables: Vec<String>, fk_parents: &HashMap<String, Vec<String>>) -> Vec<String> {
+    let table_set: HashSet<String> = tables.iter().cloned().collect();
+    let mut remaining: HashSet<String> = tables.into_iter().collect();
+    let mut ordered = Vec::new();
+    while !remaining.is_empty() {
+        let mut ready: Vec<String> = remaining
+            .iter()
+            .filter(|table| {
+                !fk_parents
+                    .get(*table)
+                    .into_iter()
+                    .flatten()
+                    .any(|parent| table_set.contains(parent) && remaining.contains(parent))
+            })
+            .cloned()
+            .collect();
+        if ready.is_empty() {
+            ready.push(remaining.iter().min().unwrap().clone());
+        }
+        ready.sort();
+        for table in &ready {
+            remaining.remove(table);
+        }
+        ordered.extend(ready);
+    }
+    ordered
+}
+
+fn generate_test_value(col_name: &str, sql_type: &str, constraints: Option<&TableConstraints>) -> String {
     let lower_type = sql_type.to_lowercase();
     let lower_col = col_name.to_lowercase();
+    if let Some(enum_members) = constraints.and_then(|value| value.enums.get(&lower_col)) {
+        if let Some(first) = enum_members.first() {
+            return format!("'{}'", first.replace('\'', "''"));
+        }
+    }
+    if let Some(expressions) = constraints.and_then(|value| value.checks.get(&lower_col)) {
+        static CHECK_BOUND_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+        let re = CHECK_BOUND_RE.get_or_init(|| {
+            regex::Regex::new(r#"(?i)^\s*"?[a-z_][a-z0-9_]*"?\s*(>=|<=|=|>|<)\s*(-?\d+(?:\.\d+)?)\s*$"#).unwrap()
+        });
+        for expression in expressions {
+            if let Some(caps) = re.captures(expression) {
+                let operator = &caps[1];
+                let raw = &caps[2];
+                if let Ok(bound) = raw.parse::<i64>() {
+                    let value = match operator {
+                        ">" if bound >= 1900 => bound + 100,
+                        ">" => bound + 1,
+                        "<" => bound - 1,
+                        _ => bound,
+                    };
+                    return value.to_string();
+                }
+                return raw.to_string();
+            }
+        }
+    }
+    let is_partition_column = constraints.and_then(|value| value.partition_key.as_deref()) == Some(lower_col.as_str());
+    if is_partition_column && (lower_type.contains("timestamp") || lower_type.contains("date")) {
+        if let Some((lower, upper)) = constraints.and_then(|value| value.partition_bounds.first()) {
+            if !lower.is_empty() {
+                return format!("'{}'", lower);
+            }
+            if upper.len() >= 4 {
+                if let Ok(year) = upper[..4].parse::<i32>() {
+                    return format!("'{:04}-01-01'", year - 1);
+                }
+            }
+        }
+        eprintln!("warning: no parseable partition bound for column {lower_col}; using 2024-01-01");
+        return "'2024-01-01'".to_string();
+    }
     if lower_type.contains("bigserial") || lower_type.contains("serial") {
         return "DEFAULT".to_string();
     }
@@ -1775,7 +1941,7 @@ mod tests {
             "com.example.demo",
             &Default::default(),
             &[],
-            &HashMap::new(),
+            &SchemaMetadata::default(),
             encoding_rs::UTF_8,
         )
         .unwrap();
@@ -1817,7 +1983,7 @@ mod tests {
             "com.example.demo",
             &Default::default(),
             &[],
-            &HashMap::new(),
+            &SchemaMetadata::default(),
             encoding_rs::UTF_8,
         )
         .unwrap();
@@ -1854,7 +2020,7 @@ mod tests {
             "com.example.demo",
             &Default::default(),
             &[],
-            &HashMap::new(),
+            &SchemaMetadata::default(),
             encoding_rs::UTF_8,
         )
         .unwrap();
@@ -1887,7 +2053,7 @@ mod tests {
             "com.example.demo",
             &Default::default(),
             &[],
-            &HashMap::new(),
+            &SchemaMetadata::default(),
             encoding_rs::UTF_8,
         )
         .unwrap();
@@ -1925,7 +2091,7 @@ mod tests {
             "com.example.demo",
             &Default::default(),
             &[],
-            &HashMap::new(),
+            &SchemaMetadata::default(),
             encoding_rs::UTF_8,
         )
         .unwrap();
@@ -1956,7 +2122,7 @@ mod tests {
             "com.example.demo",
             &Default::default(),
             &[pkg.clone()],
-            &HashMap::new(),
+            &SchemaMetadata::default(),
             encoding_rs::UTF_8,
         )
         .unwrap();
@@ -1981,13 +2147,55 @@ mod tests {
         });
         let pkg = make_pkg("pkg_inventory", vec![proc]);
         let dir = tempfile::tempdir().unwrap();
-        write_itest_schema_sql(dir.path(), &[pkg], &HashMap::new(), "testcontainers", encoding_rs::UTF_8).unwrap();
+        write_itest_schema_sql(dir.path(), &[pkg], &SchemaMetadata::default(), "testcontainers", encoding_rs::UTF_8)
+            .unwrap();
         let schema_path = dir.path().join("src/test/resources/itest-schema.sql");
         assert!(schema_path.exists());
         let content = std::fs::read_to_string(&schema_path).unwrap();
         // schema_map is empty so no DDL is inferred from DML alone —
         // the file should exist but may be empty or contain only DDL from schema_map
         assert!(content.is_empty() || content.contains("CREATE TABLE"));
+    }
+
+    #[test]
+    fn issue_101_schema_emits_only_referenced_enum_before_table() {
+        let mut metadata = SchemaMetadata::default();
+        metadata.enum_types.insert("film_rating".into(), vec!["G".into(), "PG".into()]);
+        metadata.enum_types.insert("unused_status".into(), vec!["x".into()]);
+        metadata.columns.insert(
+            "films".into(),
+            HashMap::from([("id".into(), "BIGINT".into()), ("rating".into(), "film_rating".into())]),
+        );
+        metadata.constraints.insert(
+            "films".into(),
+            TableConstraints {
+                enums: HashMap::from([("rating".into(), vec!["G".into(), "PG".into()])]),
+                ..Default::default()
+            },
+        );
+        let dir = tempfile::tempdir().unwrap();
+        write_itest_schema_sql(dir.path(), &[], &metadata, "testcontainers", encoding_rs::UTF_8).unwrap();
+        let content = std::fs::read_to_string(dir.path().join("src/test/resources/itest-schema.sql")).unwrap();
+        let type_pos = content.find("CREATE TYPE film_rating AS ENUM ('G', 'PG');").unwrap();
+        let table_pos = content.find("CREATE TABLE \"films\"").unwrap();
+        assert!(type_pos < table_pos);
+        assert!(!content.contains("unused_status"));
+    }
+
+    #[test]
+    fn issue_101_schema_has_no_postgres_on_conflict_seed() {
+        let metadata = SchemaMetadata {
+            columns: HashMap::from([(
+                "t_products".into(),
+                HashMap::from([("id".into(), "BIGINT".into()), ("name".into(), "VARCHAR(100)".into())]),
+            )]),
+            ..Default::default()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        write_itest_schema_sql(dir.path(), &[], &metadata, "remote", encoding_rs::UTF_8).unwrap();
+        let content = std::fs::read_to_string(dir.path().join("src/test/resources/itest-schema.sql")).unwrap();
+        assert!(!content.to_lowercase().contains("on conflict"));
+        assert!(!content.contains("Test Product"));
     }
 
     #[test]
@@ -2015,7 +2223,8 @@ mod tests {
         schema_map.insert("public".to_string(), pub_schema);
 
         let dir = tempfile::tempdir().unwrap();
-        write_itest_schema_sql(dir.path(), std::slice::from_ref(&pkg), &schema_map, "remote", encoding_rs::UTF_8)
+        let metadata = SchemaMetadata { columns: schema_map, ..Default::default() };
+        write_itest_schema_sql(dir.path(), std::slice::from_ref(&pkg), &metadata, "remote", encoding_rs::UTF_8)
             .unwrap();
         let content = std::fs::read_to_string(dir.path().join("src/test/resources/itest-schema.sql")).unwrap();
         assert!(content.contains("CREATE TABLE IF NOT EXISTS \"inventory\""));
@@ -2024,7 +2233,7 @@ mod tests {
         assert!(!content.contains("\"public\""));
 
         let dir2 = tempfile::tempdir().unwrap();
-        write_itest_schema_sql(dir2.path(), &[pkg], &schema_map, "testcontainers", encoding_rs::UTF_8).unwrap();
+        write_itest_schema_sql(dir2.path(), &[pkg], &metadata, "testcontainers", encoding_rs::UTF_8).unwrap();
         let content2 = std::fs::read_to_string(dir2.path().join("src/test/resources/itest-schema.sql")).unwrap();
         assert!(content2.contains("DROP TABLE IF EXISTS \"inventory\" CASCADE"));
         assert!(content2.contains("CREATE TABLE \"inventory\""));
@@ -2040,6 +2249,81 @@ mod tests {
         assert_eq!(default_test_value("int", "pStatus"), "1");
         assert_eq!(default_test_value("String", "pName"), "\"t_pNam\"");
         assert_eq!(default_test_value("boolean", "pFlag"), "true");
+    }
+
+    #[test]
+    fn issue_101_sampler_uses_enum_member() {
+        let constraints = TableConstraints {
+            enums: HashMap::from([("rating".into(), vec!["G".into(), "PG".into()])]),
+            ..Default::default()
+        };
+        assert_eq!(generate_test_value("rating", "film_rating", Some(&constraints)), "'G'");
+    }
+
+    #[test]
+    fn issue_101_sampler_satisfies_check_bounds() {
+        for (expression, expected) in [
+            ("release_year > 1901", "2001"),
+            ("score >= 5", "5"),
+            ("rank < 10", "9"),
+            ("ceiling <= 10", "10"),
+            ("kind = 7", "7"),
+        ] {
+            let constraints = TableConstraints {
+                checks: HashMap::from([(
+                    expression.split_whitespace().next().unwrap().into(),
+                    vec![expression.into()],
+                )]),
+                ..Default::default()
+            };
+            assert_eq!(
+                generate_test_value(expression.split_whitespace().next().unwrap(), "INTEGER", Some(&constraints)),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn issue_101_sampler_uses_partition_bound_date() {
+        let constraints = TableConstraints {
+            partition_key: Some("created_at".into()),
+            partition_bounds: vec![(String::new(), "2025-01-01".into())],
+            ..Default::default()
+        };
+        assert_eq!(generate_test_value("created_at", "TIMESTAMP", Some(&constraints)), "'2024-01-01'");
+    }
+
+    #[test]
+    fn issue_101_sampler_partition_fallback_is_fixed_date() {
+        let constraints = TableConstraints { partition_key: Some("created_at".into()), ..Default::default() };
+        assert_eq!(generate_test_value("created_at", "TIMESTAMP", Some(&constraints)), "'2024-01-01'");
+    }
+
+    #[test]
+    fn issue_101_fixtures_delete_children_first_and_insert_parents_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let proc = make_proc("seed_orders");
+        let pkg = make_pkg("pkg_orders", vec![proc.clone()]);
+        let test_data = HashMap::from([
+            ("orders".into(), HashMap::from([("id".into(), "BIGINT".into())])),
+            (
+                "order_items".into(),
+                HashMap::from([("id".into(), "BIGINT".into()), ("order_id".into(), "BIGINT".into())]),
+            ),
+        ]);
+        let metadata = SchemaMetadata {
+            fk_parents: HashMap::from([("order_items".into(), vec!["orders".into()])]),
+            ..Default::default()
+        };
+
+        write_fixtures(dir.path(), &proc, &pkg, &test_data, &metadata, encoding_rs::UTF_8).unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join("src/test/resources/itest-fixtures/pkg_orders_seed_orders.sql"))
+                .unwrap();
+        let expected =
+            ["DELETE FROM order_items;", "DELETE FROM orders;", "INSERT INTO orders", "INSERT INTO order_items"];
+        let positions = expected.map(|needle| content.find(needle).unwrap());
+        assert!(positions.windows(2).all(|pair| pair[0] < pair[1]), "{content}");
     }
 
     #[test]
@@ -2061,14 +2345,46 @@ CREATE TABLE users (
         )
         .unwrap();
         let schemas = parse_table_ddl(&[sql_file]);
-        assert!(schemas.contains_key("users"));
-        let cols = schemas.get("users").unwrap();
+        assert!(schemas.columns.contains_key("users"));
+        let cols = schemas.columns.get("users").unwrap();
         assert_eq!(cols.get("id").unwrap(), "BIGINT");
         assert_eq!(cols.get("name").unwrap(), "VARCHAR(100)");
         assert_eq!(cols.get("email").unwrap(), "VARCHAR2(255)");
         assert_eq!(cols.get("amount").unwrap(), "NUMERIC(18,2)");
         assert_eq!(cols.get("created_at").unwrap(), "TIMESTAMP");
         assert_eq!(cols.get("is_active").unwrap(), "BOOLEAN");
+    }
+
+    #[test]
+    fn issue_101_parse_ddl_constraints_and_partition_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let sql_file = dir.path().join("constraints.sql");
+        std::fs::write(
+            &sql_file,
+            r#"
+CREATE TYPE film_rating AS ENUM ('G', 'PG', 'R');
+CREATE TABLE films (
+    id BIGINT,
+    rating film_rating,
+    release_year INTEGER CHECK (release_year > 1901),
+    created_at TIMESTAMP,
+    CONSTRAINT valid_id CHECK (id >= 1)
+) PARTITION BY RANGE (created_at) (
+    PARTITION p2024 VALUES LESS THAN ('2025-01-01'),
+    PARTITION pmax VALUES LESS THAN (MAXVALUE)
+);
+"#,
+        )
+        .unwrap();
+
+        let parsed = parse_table_ddl(&[sql_file]);
+        assert_eq!(parsed.enum_types.get("film_rating").unwrap(), &vec!["G", "PG", "R"]);
+        let constraints = parsed.constraints.get("films").unwrap();
+        assert_eq!(constraints.enums.get("rating").unwrap(), &vec!["G", "PG", "R"]);
+        assert_eq!(constraints.checks.get("release_year").unwrap(), &vec!["release_year > 1901"]);
+        assert_eq!(constraints.checks.get("id").unwrap(), &vec!["id >= 1"]);
+        assert_eq!(constraints.partition_key.as_deref(), Some("created_at"));
+        assert_eq!(constraints.partition_bounds, vec![(String::new(), "2025-01-01".to_string())]);
     }
 
     #[test]
@@ -2087,8 +2403,8 @@ CREATE TABLE BIGFUND.orders (
         )
         .unwrap();
         let schemas = parse_table_ddl(&[sql_file]);
-        assert!(schemas.contains_key("orders"));
-        let cols = schemas.get("orders").unwrap();
+        assert!(schemas.columns.contains_key("orders"));
+        let cols = schemas.columns.get("orders").unwrap();
         assert_eq!(cols.get("order_id").unwrap(), "NUMBER(18,4)");
         assert_eq!(cols.get("qty").unwrap(), "INT");
         assert_eq!(cols.get("processed").unwrap(), "BOOLEAN");
@@ -2201,7 +2517,7 @@ CREATE TABLE BIGFUND.orders (
             "com.example.demo",
             &Default::default(),
             &[],
-            &HashMap::new(),
+            &SchemaMetadata::default(),
             encoding_rs::UTF_8,
         )
         .unwrap();

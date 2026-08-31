@@ -213,16 +213,29 @@ pub fn extract_from_parse_output(
             }
             Statement::CreateType(ct) => {
                 let type_name = object_name_to_string(&ct.name);
-                if let TypeKind::Composite { attributes } = &ct.type_kind {
-                    let fields: Vec<(String, String)> = attributes
-                        .iter()
-                        .map(|attr| {
-                            let sql_t = format_sql_data_type(&attr.data_type);
-                            let jt = sql_type_to_java(&sql_t).map(|s| s.to_string()).unwrap_or_else(|| "Object".into());
-                            (attr.name.clone(), jt)
-                        })
-                        .collect();
-                    custom_types.insert(type_name.clone(), CustomTypeInfo { fields, is_record: true });
+                match &ct.type_kind {
+                    TypeKind::Composite { attributes } => {
+                        let fields: Vec<(String, String)> = attributes
+                            .iter()
+                            .map(|attr| {
+                                let sql_t = format_sql_data_type(&attr.data_type);
+                                let jt =
+                                    sql_type_to_java(&sql_t).map(|s| s.to_string()).unwrap_or_else(|| "Object".into());
+                                (attr.name.clone(), jt)
+                            })
+                            .collect();
+                        custom_types.insert(
+                            type_name.clone(),
+                            CustomTypeInfo { fields, is_record: true, enum_members: Vec::new() },
+                        );
+                    }
+                    TypeKind::Enum { labels } => {
+                        custom_types.insert(
+                            type_name.clone(),
+                            CustomTypeInfo { fields: Vec::new(), is_record: false, enum_members: labels.clone() },
+                        );
+                    }
+                    _ => {}
                 }
             }
             Statement::Grant(_) => {
@@ -396,14 +409,21 @@ fn extract_package_item(
                             (f.name.clone(), jt)
                         })
                         .collect();
-                    custom_types.insert(name.clone(), CustomTypeInfo { fields: java_fields, is_record: true });
+                    custom_types.insert(
+                        name.clone(),
+                        CustomTypeInfo { fields: java_fields, is_record: true, enum_members: Vec::new() },
+                    );
                 }
                 PlTypeDecl::TableOf { name, elem_type, .. } => {
                     let sql_t = format_pl_data_type(elem_type);
                     let jt = sql_type_to_java(&sql_t).map(|s| s.to_string()).unwrap_or_else(|| "Object".into());
                     custom_types.insert(
                         name.clone(),
-                        CustomTypeInfo { fields: vec![("element".into(), jt)], is_record: false },
+                        CustomTypeInfo {
+                            fields: vec![("element".into(), jt)],
+                            is_record: false,
+                            enum_members: Vec::new(),
+                        },
                     );
                 }
                 PlTypeDecl::VarrayOf { name, elem_type, .. } => {
@@ -411,11 +431,18 @@ fn extract_package_item(
                     let jt = sql_type_to_java(&sql_t).map(|s| s.to_string()).unwrap_or_else(|| "Object".into());
                     custom_types.insert(
                         name.clone(),
-                        CustomTypeInfo { fields: vec![("element".into(), jt)], is_record: false },
+                        CustomTypeInfo {
+                            fields: vec![("element".into(), jt)],
+                            is_record: false,
+                            enum_members: Vec::new(),
+                        },
                     );
                 }
                 PlTypeDecl::RefCursor { name } => {
-                    custom_types.insert(name.clone(), CustomTypeInfo { fields: Vec::new(), is_record: false });
+                    custom_types.insert(
+                        name.clone(),
+                        CustomTypeInfo { fields: Vec::new(), is_record: false, enum_members: Vec::new() },
+                    );
                 }
             }
         }
@@ -1084,6 +1111,35 @@ mod tests {
         assert!(pkg.procedures.iter().all(|proc| proc.name.starts_with("PKG_BIZ.")));
         assert!(pkg.package_vars.contains_key("g_prefix"));
         assert!(pkg.custom_types.contains_key("t_result"));
+    }
+
+    #[test]
+    fn issue_101_extracts_create_type_enum_members() {
+        use ogsql_parser::{Parser, Tokenizer};
+        let sql =
+            "CREATE TYPE order_status AS ENUM ('pending', 'paid');\nCREATE PROCEDURE touch_order() AS BEGIN NULL; END;";
+        let tokens = Tokenizer::new(sql).tokenize().unwrap();
+        let stmts = Parser::new(tokens).parse();
+        let output = ogsql_parser::parser::ParseOutput {
+            statements: stmts
+                .into_iter()
+                .map(|statement| ogsql_parser::ast::StatementInfo {
+                    sql_text: String::new(),
+                    start_line: 0,
+                    start_col: 0,
+                    end_line: 0,
+                    end_col: 0,
+                    statement,
+                })
+                .collect(),
+            errors: Vec::new(),
+            comments: Vec::new(),
+        };
+
+        let result = extract_from_parse_output(&output, "issue_101.sql", "com.example");
+        let enum_type = result.packages[0].custom_types.get("order_status").unwrap();
+        assert_eq!(enum_type.enum_members, vec!["pending", "paid"]);
+        assert!(!enum_type.is_record);
     }
 
     #[test]
