@@ -1,0 +1,43 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue118PromotedFnArgMapper;
+import com.example.demo.service.Issue118PromotedFnArgService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class Issue118PromotedFnArgServiceTest {
+
+    @Mock
+    private Issue118PromotedFnArgMapper issue118PromotedFnArgMapper;
+
+    @InjectMocks
+    private Issue118PromotedFnArgService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_fillName_success() {
+        Long pId = 1L;
+        AtomicReference<String> pName = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
+        var result = service.fillName(pId, pName);
+        assertNotNull(result);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_consumeName_success() {
+        var _rowTmpl = new java.util.HashMap<String,Object>();
+        service.consumeName();
+    }
+}
