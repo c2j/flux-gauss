@@ -1,6 +1,5 @@
 """Regression guard for #73: version read must resolve the workspace root
 `[workspace.package] version`, not fall back to a hardcoded literal."""
-import pytest
 
 import converter.flux_gauss as fg
 
@@ -22,10 +21,7 @@ def test_version_resolves_workspace_root_when_crate_uses_version_workspace(tmp_p
     _write_cargo(
         tmp_path,
         crate_toml='[package]\nname = "fluxgauss"\nversion.workspace = true\n',
-        root_toml=(
-            '[workspace]\nmembers = ["crates/fluxgauss"]\n\n'
-            '[workspace.package]\nversion = "9.9.9"\n'
-        ),
+        root_toml=('[workspace]\nmembers = ["crates/fluxgauss"]\n\n[workspace.package]\nversion = "9.9.9"\n'),
     )
     assert fg._read_version_from_cargo_toml(base_dir=_base_dir(tmp_path)) == "9.9.9"
 

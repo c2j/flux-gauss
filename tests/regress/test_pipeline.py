@@ -4,10 +4,10 @@ For each fixture SQL file, run the full conversion pipeline and verify
 structural invariants — pipeline completion, procedure counts, DML presence,
 output file generation. Does NOT compare output content (that's Layer 2).
 """
+
 import json
-import os
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -16,10 +16,10 @@ import converter.flux_gauss as fg
 # conftest.py helpers are accessed as fixtures or via the module
 # (pytest conftest.py is auto-loaded, not directly importable)
 from tests.regress.conftest import (
-    FIXTURES_DIR,
     EXPECTED_BASELINES,
-    _fixture_sql_files,
+    FIXTURES_DIR,
     _fixture_pkg_name,
+    _fixture_sql_files,
 )
 
 
@@ -29,8 +29,7 @@ class TestParseSqlFile:
     def test_fixtures_available(self):
         files = _fixture_sql_files()
         assert len(files) > 0, (
-            f"No SQL fixtures found in {FIXTURES_DIR}. "
-            f"Copy files from demo-project/sql/ to tests/regress/fixtures/"
+            f"No SQL fixtures found in {FIXTURES_DIR}. Copy files from demo-project/sql/ to tests/regress/fixtures/"
         )
 
     def test_returns_valid_ast_structure(self):
@@ -89,9 +88,7 @@ class TestExtractProcedures:
 
         exp = EXPECTED_BASELINES.get(sql_file, {})
         min_procs = exp.get("min_procs", 0)
-        assert len(procs) >= min_procs, (
-            f"{sql_file}: expected ≥{min_procs} procedures, got {len(procs)}"
-        )
+        assert len(procs) >= min_procs, f"{sql_file}: expected ≥{min_procs} procedures, got {len(procs)}"
 
     @pytest.mark.parametrize("sql_file", _fixture_sql_files())
     def test_each_procedure_has_required_fields(self, sql_file, cached_ast):
@@ -143,9 +140,7 @@ class TestAnalyzeProcedures:
             fg.analyze_procedure(proc, all_pkgs)
 
         procs_with_logic = [p for p in procs if p.java_logic_lines]
-        assert len(procs_with_logic) > 0, (
-            f"{sql_file}: no procedures produced java_logic_lines"
-        )
+        assert len(procs_with_logic) > 0, f"{sql_file}: no procedures produced java_logic_lines"
 
     @pytest.mark.parametrize("sql_file", _fixture_sql_files())
     def test_detects_dml_statements(self, sql_file, cached_ast):
@@ -163,8 +158,7 @@ class TestAnalyzeProcedures:
         min_dml = exp.get("min_procs_with_dml", 0)
         procs_with_dml = [p for p in procs if p.dml_statements]
         assert len(procs_with_dml) >= min_dml, (
-            f"{sql_file}: expected ≥{min_dml} procedures with DML, "
-            f"got {len(procs_with_dml)}"
+            f"{sql_file}: expected ≥{min_dml} procedures with DML, got {len(procs_with_dml)}"
         )
 
     @pytest.mark.parametrize("sql_file", _fixture_sql_files())
@@ -179,9 +173,7 @@ class TestAnalyzeProcedures:
         for proc in procs:
             fg.analyze_procedure(proc, all_pkgs)
             for line in proc.java_logic_lines:
-                assert isinstance(line, str), (
-                    f"{sql_file}/{proc.proc_name}: non-string line: {line!r}"
-                )
+                assert isinstance(line, str), f"{sql_file}/{proc.proc_name}: non-string line: {line!r}"
 
 
 class TestGenerateProject:
@@ -212,7 +204,15 @@ class TestGenerateProject:
         service_path = base / pkg_base / "service" / f"{class_name}Service.java"
         mapper_path = base / pkg_base / "mapper" / f"{class_name}Mapper.java"
         xml_path = base / "src" / "main" / "resources" / "mapper" / f"{class_name}Mapper.xml"
-        test_path = base / "src" / "test" / "java" / fg._pkg_java_package(pkg).replace(".", "/") / "service" / f"{class_name}ServiceTest.java"
+        test_path = (
+            base
+            / "src"
+            / "test"
+            / "java"
+            / fg._pkg_java_package(pkg).replace(".", "/")
+            / "service"
+            / f"{class_name}ServiceTest.java"
+        )
 
         assert service_path.exists(), f"Missing: {service_path}"
         assert mapper_path.exists(), f"Missing: {mapper_path}"

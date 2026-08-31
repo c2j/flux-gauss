@@ -1,7 +1,7 @@
 """
 Tests for expression conversion utility functions in converter/flux_gauss.py.
 """
-import pytest
+
 import converter.flux_gauss as fg
 
 

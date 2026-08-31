@@ -326,11 +326,11 @@ public class ForInSelectService {
             if (vEmpList == null) vEmpList = new ArrayList<>();
             for (Map<String, Object> vEmp : vEmpList) {
                 try {
-                    vBonusRate = java.math.BigDecimal.valueOf(((Number) this.funcGetBonusRate(((Number) vEmp.getOrDefault("departmentId", vEmp.get("department_id"))).intValue())).longValue());
-                    vBonusAmt = java.math.BigDecimal.valueOf(((Number) vEmp.get("salary")).doubleValue()).multiply(vBonusRate).setScale((int)(2), java.math.RoundingMode.HALF_UP);
+                    vBonusRate = java.math.BigDecimal.valueOf(((Number) java.util.Objects.requireNonNullElse(this.funcGetBonusRate(((Number) vEmp.getOrDefault("departmentId", vEmp.get("department_id"))).intValue()), 0L)).longValue());
+                    vBonusAmt = java.math.BigDecimal.valueOf(((Number) java.util.Objects.requireNonNullElse(vEmp.get("salary"), 0L)).doubleValue()).multiply(vBonusRate).setScale((int)(2), java.math.RoundingMode.HALF_UP);
                     vMaxBonus = java.math.BigDecimal.valueOf(java.util.Optional.ofNullable((Number) vEmp.get("salary")).map(Number::longValue).orElse(0L) * 12 * 0.20);
-                    if (java.math.BigDecimal.valueOf(((Number) vEmp.getOrDefault("yearBonusTotal", vEmp.get("year_bonus_total"))).doubleValue()).add(vBonusAmt).compareTo(vMaxBonus) > 0) {
-                        vBonusAmt = vMaxBonus.subtract(java.math.BigDecimal.valueOf(((Number) vEmp.getOrDefault("yearBonusTotal", vEmp.get("year_bonus_total"))).doubleValue()));
+                    if (java.math.BigDecimal.valueOf(((Number) java.util.Objects.requireNonNullElse(vEmp.getOrDefault("yearBonusTotal", vEmp.get("year_bonus_total")), 0L)).doubleValue()).add(vBonusAmt).compareTo(vMaxBonus) > 0) {
+                        vBonusAmt = vMaxBonus.subtract(java.math.BigDecimal.valueOf(((Number) java.util.Objects.requireNonNullElse(vEmp.getOrDefault("yearBonusTotal", vEmp.get("year_bonus_total")), 0L)).doubleValue()));
                         forInSelectMapper.insertBonusLimitLog(vEmp);
                     }
                     if (vBonusAmt.compareTo(java.math.BigDecimal.valueOf(0)) > 0) {

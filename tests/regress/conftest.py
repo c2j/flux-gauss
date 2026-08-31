@@ -8,13 +8,15 @@ Key concerns:
    handles this gracefully.
 3. Golden file tests use --regress-save / --regress-update CLI flags.
 """
+
 import hashlib
 import json
 import os
 import subprocess
-import warnings
-import pytest
 import sys
+import warnings
+
+import pytest
 
 if sys.version_info < (3, 10):
     raise RuntimeError(
@@ -25,7 +27,7 @@ if sys.version_info < (3, 10):
     )
 
 # Add project root so we can import converter.flux_gauss
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import converter.flux_gauss as fg
 
@@ -38,12 +40,16 @@ GOLDEN_DIR = os.path.join(os.path.dirname(__file__), "golden")
 # ── CLI Flags for Golden Management ─────────────────────────────
 def pytest_addoption(parser):
     parser.addoption(
-        "--regress-save", action="store_true", default=False,
-        help="Generate golden files from current output (first-time baseline)."
+        "--regress-save",
+        action="store_true",
+        default=False,
+        help="Generate golden files from current output (first-time baseline).",
     )
     parser.addoption(
-        "--regress-update", action="store_true", default=False,
-        help="Overwrite golden files with current output (after intentional changes)."
+        "--regress-update",
+        action="store_true",
+        default=False,
+        help="Overwrite golden files with current output (after intentional changes).",
     )
 
 
@@ -62,6 +68,7 @@ def regress_update(request):
 # Every test must start with clean state.
 # This is MORE thorough than tests/conftest.py — adds _SQL_FILE_CACHE
 # which is critical when regress tests re-parse the same SQL fixtures.
+
 
 @pytest.fixture(autouse=True)
 def _reset_global_state():
@@ -93,12 +100,15 @@ def _reset_global_state():
 
 # ── ogsql Binary Detection ──────────────────────────────────────
 
+
 def _ogsql_available() -> bool:
     """Check if the ogsql binary resolved by flux_gauss is callable."""
     try:
         result = subprocess.run(
             [fg.OGSQL_BIN, "--version"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired, PermissionError):
@@ -106,6 +116,7 @@ def _ogsql_available() -> bool:
 
 
 _OGSQL_CHECKED = None
+
 
 def _check_ogsql():
     """Cached check — only runs once per session."""
@@ -117,31 +128,30 @@ def _check_ogsql():
 
 # ── AST Cache ───────────────────────────────────────────────────
 
+
 def _run_ogsql_parse(sql_path: str) -> dict:
     """Call ogsql binary to parse a SQL file, return AST dict."""
     raw, encoding = fg._read_sql_file(sql_path)
     result = subprocess.run(
         [fg.OGSQL_BIN, "parse", "-j"],
-        input=raw, capture_output=True, text=True, timeout=30,
+        input=raw,
+        capture_output=True,
+        text=True,
+        timeout=30,
         encoding=encoding,
     )
     if result.returncode != 0:
-        raise RuntimeError(
-            f"ogsql parse failed for {sql_path}:\n{result.stderr[:500]}"
-        )
+        raise RuntimeError(f"ogsql parse failed for {sql_path}:\n{result.stderr[:500]}")
     if not result.stdout.strip():
         raise RuntimeError(f"ogsql produced empty output for {sql_path}")
     return json.loads(result.stdout)
 
 
 def _resolve_fixture_path(sql_file: str):
-    sql_full = os.path.join(FIXTURES_DIR, sql_file) \
-        if not os.path.isabs(sql_file) else sql_file
+    sql_full = os.path.join(FIXTURES_DIR, sql_file) if not os.path.isabs(sql_file) else sql_file
     if os.path.isfile(sql_full):
         return sql_full
-    alt_path = os.path.join(
-        os.path.dirname(__file__), '..', '..', 'demo-project', 'sql', sql_file
-    )
+    alt_path = os.path.join(os.path.dirname(__file__), "..", "..", "demo-project", "sql", sql_file)
     return alt_path if os.path.isfile(alt_path) else None
 
 
@@ -207,6 +217,7 @@ def _get_cached_ast(sql_file: str) -> dict:
 
 # ── Session-Scoped AST Fixtures ─────────────────────────────────
 
+
 @pytest.fixture(scope="session")
 def cached_ast():
     """{filename: AST dict} mapping for all fixtures in FIXTURES_DIR."""
@@ -229,9 +240,7 @@ def cached_ast_by_pkg():
         for f in sorted(os.listdir(FIXTURES_DIR)):
             if f.endswith(".sql"):
                 name = os.path.splitext(f)[0]
-                if name.startswith("pkg_"):
-                    name = name[4:]
-                elif name.startswith("PKG_"):
+                if name.startswith("pkg_") or name.startswith("PKG_"):
                     name = name[4:]
                 cache[name] = _get_cached_ast(f)
     return cache
@@ -239,15 +248,13 @@ def cached_ast_by_pkg():
 
 # ── Fixture Discovery Helpers ───────────────────────────────────
 
+
 def _fixture_sql_files() -> list:
     """Return sorted list of .sql fixture filenames (excluding known-broken)."""
     if not os.path.isdir(FIXTURES_DIR):
         return []
     _excluded = KNOWN_BROKEN_FIXTURES | MULTI_FILE_FIXTURES
-    return sorted(
-        f for f in os.listdir(FIXTURES_DIR)
-        if f.endswith(".sql") and f not in _excluded
-    )
+    return sorted(f for f in os.listdir(FIXTURES_DIR) if f.endswith(".sql") and f not in _excluded)
 
 
 def _fixture_pkg_name(sql_file: str) -> str:
@@ -255,9 +262,7 @@ def _fixture_pkg_name(sql_file: str) -> str:
     e.g. "pkg_order.sql" → "order", "PKG_WARPDRIVER_STRESS_TEST.sql" → "WARPDRIVER_STRESS_TEST"
     """
     name = os.path.splitext(sql_file)[0]
-    if name.startswith("pkg_"):
-        return name[4:]
-    elif name.startswith("PKG_"):
+    if name.startswith("pkg_") or name.startswith("PKG_"):
         return name[4:]
     return name
 
@@ -266,28 +271,28 @@ def _fixture_pkg_name(sql_file: str) -> str:
 # These are floor values, not exact — tests check "≥ expected".
 
 EXPECTED_BASELINES = {
-    "pkg_order.sql":                 {"min_procs": 5, "min_procs_with_dml": 3},
-    "pkg_dynamic_xml.sql":           {"min_procs": 2, "min_procs_with_dml": 1},
-    "complex_clearing_pkg.sql":      {"min_procs": 3, "min_procs_with_dml": 2},
-    "gauss_complete_examples.sql":   {"min_procs": 4, "min_procs_with_dml": 2},
-    "PKG_WARPDRIVER_STRESS_TEST.sql":{"min_procs": 5, "min_procs_with_dml": 1},
+    "pkg_order.sql": {"min_procs": 5, "min_procs_with_dml": 3},
+    "pkg_dynamic_xml.sql": {"min_procs": 2, "min_procs_with_dml": 1},
+    "complex_clearing_pkg.sql": {"min_procs": 3, "min_procs_with_dml": 2},
+    "gauss_complete_examples.sql": {"min_procs": 4, "min_procs_with_dml": 2},
+    "PKG_WARPDRIVER_STRESS_TEST.sql": {"min_procs": 5, "min_procs_with_dml": 1},
     # Issue regression fixtures (#34–#41)
-    "issue_34_35_dto_naming.sql":    {"min_procs": 3, "min_procs_with_dml": 2},
-    "issue_38_map_put.sql":          {"min_procs": 3, "min_procs_with_dml": 0},
-    "issue_39_thread_safety.sql":    {"min_procs": 3, "min_procs_with_dml": 0},
-    "issue_40_string_compare.sql":   {"min_procs": 3, "min_procs_with_dml": 0},
-    "issue_41_type_system.sql":      {"min_procs": 3, "min_procs_with_dml": 2},
+    "issue_34_35_dto_naming.sql": {"min_procs": 3, "min_procs_with_dml": 2},
+    "issue_38_map_put.sql": {"min_procs": 3, "min_procs_with_dml": 0},
+    "issue_39_thread_safety.sql": {"min_procs": 3, "min_procs_with_dml": 0},
+    "issue_40_string_compare.sql": {"min_procs": 3, "min_procs_with_dml": 0},
+    "issue_41_type_system.sql": {"min_procs": 3, "min_procs_with_dml": 2},
     # Issue regression fixtures (#44–#49)
-    "issue_44_if_elsif_goto.sql":    {"min_procs": 5, "min_procs_with_dml": 3},
-    "issue_45_exception_handling.sql":{"min_procs": 3, "min_procs_with_dml": 3},
+    "issue_44_if_elsif_goto.sql": {"min_procs": 5, "min_procs_with_dml": 3},
+    "issue_45_exception_handling.sql": {"min_procs": 3, "min_procs_with_dml": 3},
     "issue_46_chr_ascii_substr.sql": {"min_procs": 5, "min_procs_with_dml": 0},
-    "issue_47_long_parse_string.sql":{"min_procs": 3, "min_procs_with_dml": 0},
-    "issue_48_long_compareto_string.sql":{"min_procs": 4, "min_procs_with_dml": 1},
-    "issue_49_varchar2_concat.sql":  {"min_procs": 3, "min_procs_with_dml": 0},
+    "issue_47_long_parse_string.sql": {"min_procs": 3, "min_procs_with_dml": 0},
+    "issue_48_long_compareto_string.sql": {"min_procs": 4, "min_procs_with_dml": 1},
+    "issue_49_varchar2_concat.sql": {"min_procs": 3, "min_procs_with_dml": 0},
     # Issue regression fixtures (#54)
-    "issue_54_nested_exception.sql":{"min_procs": 2, "min_procs_with_dml": 1},
+    "issue_54_nested_exception.sql": {"min_procs": 2, "min_procs_with_dml": 1},
     # Issue regression fixtures (#56)
-    "pkg_issue56_return_handler.sql":{"min_procs": 3, "min_procs_with_dml": 3},
+    "pkg_issue56_return_handler.sql": {"min_procs": 3, "min_procs_with_dml": 3},
 }
 
 # complex_clearing_pkg.sql crashes ogsql v0.8.32's Python engine

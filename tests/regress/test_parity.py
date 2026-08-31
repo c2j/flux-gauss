@@ -11,6 +11,7 @@ in formatting).
 
 Run: pytest tests/regress/test_parity.py -m parity
 """
+
 import os
 import re
 import subprocess
@@ -70,11 +71,20 @@ def _require_tools():
 
 def _run_python(sql_files, out_dir: Path):
     cmd = [
-        sys.executable, str(Path(fg.__file__).resolve()),
-        "-o", str(out_dir), "-s", *[str(p) for p in sql_files], "--full", "--skip-validate",
+        sys.executable,
+        str(Path(fg.__file__).resolve()),
+        "-o",
+        str(out_dir),
+        "-s",
+        *[str(p) for p in sql_files],
+        "--full",
+        "--skip-validate",
     ]
     return subprocess.run(
-        cmd, capture_output=True, text=True, timeout=300,
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=300,
         env={**os.environ, "OGSQL_BIN": fg.OGSQL_BIN},
     )
 
@@ -90,7 +100,9 @@ def _run_rust(sql_files, out_dir: Path, tmp_path: Path):
     )
     return subprocess.run(
         [str(RUST_BIN), "-c", str(config), "--full"],
-        capture_output=True, text=True, timeout=300,
+        capture_output=True,
+        text=True,
+        timeout=300,
         env={**os.environ, "OGSQL_BIN": fg.OGSQL_BIN},
         cwd=str(REPO_ROOT),
     )
@@ -99,15 +111,14 @@ def _run_rust(sql_files, out_dir: Path, tmp_path: Path):
 def _facts(out_dir: Path) -> dict:
     """Engine-independent facts about a generated project."""
     svc_dir = _service_dir(out_dir)
-    services = sorted(p.name[: -len("Service.java")] for p in svc_dir.glob("*Service.java")) \
-        if svc_dir.is_dir() else []
+    services = sorted(p.name[: -len("Service.java")] for p in svc_dir.glob("*Service.java")) if svc_dir.is_dir() else []
     unresolved = 0
     resolved = 0
-    for path in (svc_dir.glob("*Service.java") if svc_dir.is_dir() else []):
+    for path in svc_dir.glob("*Service.java") if svc_dir.is_dir() else []:
         text = path.read_text(encoding="utf-8", errors="replace")
-        unresolved += len(re.findall(r'^\s*//\s*CALL\s', text, re.MULTILINE))
+        unresolved += len(re.findall(r"^\s*//\s*CALL\s", text, re.MULTILINE))
         own = path.name[: -len(".java")]
-        for match in re.finditer(r'\b(\w+Service)\.\w+\s*\(', text):
+        for match in re.finditer(r"\b(\w+Service)\.\w+\s*\(", text):
             if match.group(1) != own:
                 resolved += 1
     return {"services": services, "unresolved": unresolved, "resolved": resolved}
@@ -136,9 +147,7 @@ def test_service_class_sets_match(fixture, tmp_path):
         pytest.skip(f"fixture missing: {fixture}")
     py, ru = _both_engines([sql], tmp_path)
     assert py["services"] == ru["services"], (
-        f"Service class sets diverge for {fixture}\n"
-        f"  python: {py['services']}\n"
-        f"  rust:   {ru['services']}"
+        f"Service class sets diverge for {fixture}\n  python: {py['services']}\n  rust:   {ru['services']}"
     )
 
 
@@ -189,8 +198,8 @@ def test_cross_package_call_resolution_parity_multi_file(tmp_path):
 @pytest.mark.xfail(
     strict=True,
     reason="Known divergence: Python collapses all packages in one file into a "
-           "single PackageInfo (pkg_name = procedures[0].package), so a multi-package "
-           "file yields one Service; Rust yields one per package. Not addressed by #70.",
+    "single PackageInfo (pkg_name = procedures[0].package), so a multi-package "
+    "file yields one Service; Rust yields one per package. Not addressed by #70.",
 )
 def test_multi_package_single_file_divergence(fixture, tmp_path):
     """Documents the multi-package-per-file divergence so it flips when fixed."""
@@ -198,6 +207,4 @@ def test_multi_package_single_file_divergence(fixture, tmp_path):
     if not sql.is_file():
         pytest.skip(f"fixture missing: {fixture}")
     py, ru = _both_engines([sql], tmp_path)
-    assert py["services"] == ru["services"], (
-        f"python: {py['services']}\nrust: {ru['services']}"
-    )
+    assert py["services"] == ru["services"], f"python: {py['services']}\nrust: {ru['services']}"

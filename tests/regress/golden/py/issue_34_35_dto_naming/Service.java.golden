@@ -29,7 +29,7 @@ public class Issue3435DtoNamingService {
             pTotalAmount.set(null);
             pStatusMsg.set(null);
             vOrderId = String.valueOf(issue3435DtoNamingMapper.selectTIssue34OrderMaxOrderId(pCustomerName, pProductCode, pQuantity, pUnitPrice, pCreatedBy));
-            vAmount = java.math.BigDecimal.valueOf(pQuantity).multiply(pUnitPrice);
+            vAmount = java.math.BigDecimal.valueOf(pQuantity != null ? pQuantity : 0L).multiply(pUnitPrice);
             _sqlRowCount = issue3435DtoNamingMapper.insertTIssue34Order(pCustomerName, pProductCode, pQuantity, pUnitPrice, pCreatedBy, vOrderId, vAmount);
             _sqlRowCount = issue3435DtoNamingMapper.insertTIssue34OrderLog(pCustomerName, pProductCode, pQuantity, pUnitPrice, pCreatedBy, vOrderId);
             pOrderId.set(Long.parseLong(vOrderId));

@@ -4,7 +4,7 @@ Tests for DML analysis functions in converter/flux_gauss.py.
 These functions extract table names and targets from DML AST nodes.
 AST format: table names are plain string lists like ["orders"] or ["public", "orders"].
 """
-import pytest
+
 import converter.flux_gauss as fg
 
 

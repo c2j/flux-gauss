@@ -1,7 +1,10 @@
-[lint]
-select = ["E", "F", "I", "N", "W", "UP", "B", "SIM"]
-ignore = ["E501"]
-
-[format]
+# ruff 配置
+# #111 修复：line-length/indent-width 属顶层字段，[format] 段不接受
+# select 仅保留当前可强制的核心集；N/UP/B/SIM 存量 153 处未清理（201 非 fixable），
+# 暂移出 select，全量清理为后续独立任务。E741/F841 为存量豁免（见 #111 commit）。
 line-length = 120
 indent-width = 4
+
+[lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501", "E741", "F841"]

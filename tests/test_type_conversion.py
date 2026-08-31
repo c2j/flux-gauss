@@ -4,7 +4,7 @@ Tests for type conversion functions in converter/flux_gauss.py.
 These are the most critical pure functions — every SQL-to-Java conversion
 depends on correct type mapping.
 """
-import pytest
+
 import converter.flux_gauss as fg
 
 

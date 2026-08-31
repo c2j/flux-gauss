@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_118_promoted_fn_arg.sql",
+  "package_name": "issue_118_promoted_fn_arg",
+  "files": {
+    "Service.java": "08cf934061c39700",
+    "Mapper.java": "4784779f9a6d8f33",
+    "Mapper.xml": "22001fdaf67b8682",
+    "ServiceTest.java": "924571737d1b4a90"
+  }
+}

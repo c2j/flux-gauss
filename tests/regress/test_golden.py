@@ -9,9 +9,9 @@ are accepted with --regress-update.
 
 report.json is saved for reference but NOT compared (it contains timestamps).
 """
+
 import hashlib
 import json
-import os
 import re
 from pathlib import Path
 
@@ -19,10 +19,9 @@ import pytest
 
 import converter.flux_gauss as fg
 from tests.regress.conftest import (
-    FIXTURES_DIR,
     GOLDEN_DIR,
-    _fixture_sql_files,
     _fixture_pkg_name,
+    _fixture_sql_files,
 )
 
 ENGINE = "py"
@@ -66,8 +65,7 @@ def _generate_for_package(sql_file: str, cached_ast_by_pkg: dict, tmp_path: str)
             filepath = base / "src" / "main" / "resources" / "mapper" / f"{class_name}{file_type}"
         elif file_type == "ServiceTest.java":
             filepath = (
-                base / "src" / "test" / "java" / java_pkg.replace(".", "/")
-                / "service" / f"{class_name}{file_type}"
+                base / "src" / "test" / "java" / java_pkg.replace(".", "/") / "service" / f"{class_name}{file_type}"
             )
         elif file_type.startswith("Mapper"):
             filepath = base / pkg_base / "mapper" / f"{class_name}{file_type}"
@@ -88,6 +86,7 @@ def _generate_for_package(sql_file: str, cached_ast_by_pkg: dict, tmp_path: str)
             config_path="regress",
         )
         import dataclasses
+
         report_path.write_text(
             json.dumps(dataclasses.asdict(report), indent=2, default=str),
             encoding="utf-8",
@@ -114,10 +113,7 @@ def _collect_golden_packages(engine: str) -> list:
     engine_dir = Path(GOLDEN_DIR) / engine
     if not engine_dir.is_dir():
         return []
-    return sorted(
-        d.name for d in engine_dir.iterdir()
-        if d.is_dir() and not d.name.startswith(".")
-    )
+    return sorted(d.name for d in engine_dir.iterdir() if d.is_dir() and not d.name.startswith("."))
 
 
 def _all_golden_files_present(pkg_name: str, engine: str) -> bool:
@@ -137,9 +133,7 @@ class TestGoldenSave:
         output = _generate_for_package(sql_file, cached_ast_by_pkg, str(tmp_path))
 
         for file_type in FOUR_FILE_TYPES:
-            assert file_type in output, (
-                f"Missing {file_type} in generated output for {sql_file}"
-            )
+            assert file_type in output, f"Missing {file_type} in generated output for {sql_file}"
             _write_golden(pkg_name, ENGINE, file_type, output[file_type])
 
         # Save build manifest
@@ -147,10 +141,7 @@ class TestGoldenSave:
             "engine": "python",
             "fixture": sql_file,
             "package_name": pkg_name,
-            "files": {
-                ft: _output_checksum(output[ft])
-                for ft in FOUR_FILE_TYPES if ft in output
-            },
+            "files": {ft: _output_checksum(output[ft]) for ft in FOUR_FILE_TYPES if ft in output},
         }
         manifest_path = Path(GOLDEN_DIR) / ENGINE / pkg_name / "build_manifest.json"
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -164,9 +155,7 @@ class TestGoldenSave:
         output = _generate_for_package(sql_file, cached_ast_by_pkg, str(tmp_path))
 
         for file_type in FOUR_FILE_TYPES:
-            assert file_type in output, (
-                f"Missing {file_type} in generated output for {sql_file}"
-            )
+            assert file_type in output, f"Missing {file_type} in generated output for {sql_file}"
             _write_golden(pkg_name, ENGINE, file_type, output[file_type])
 
 
@@ -204,9 +193,7 @@ class TestGoldenStructure:
     """Verify golden directory has correct structure after save."""
 
     @pytest.mark.parametrize("sql_file", _fixture_sql_files())
-    def test_all_file_types_present_after_save(
-        self, sql_file, cached_ast_by_pkg, tmp_path, regress_save
-    ):
+    def test_all_file_types_present_after_save(self, sql_file, cached_ast_by_pkg, tmp_path, regress_save):
         if not regress_save:
             pytest.skip("Use --regress-save to verify")
 
@@ -216,9 +203,7 @@ class TestGoldenStructure:
         for file_type in FOUR_FILE_TYPES:
             _write_golden(pkg_name, ENGINE, file_type, output[file_type])
 
-        assert _all_golden_files_present(pkg_name, ENGINE), (
-            f"Not all golden files written for {pkg_name}"
-        )
+        assert _all_golden_files_present(pkg_name, ENGINE), f"Not all golden files written for {pkg_name}"
 
         manifest_path = Path(GOLDEN_DIR) / ENGINE / pkg_name / "build_manifest.json"
         assert manifest_path.exists(), f"Missing manifest for {pkg_name}"
@@ -251,25 +236,18 @@ class TestGoldenIntegrity:
     """Meta-tests that golden directory is healthy — prevents silent-pass risks."""
 
     def test_every_fixture_has_golden_package(self):
-        missing = [
-            f for f in _fixture_sql_files()
-            if _fixture_pkg_name(f) not in _collect_golden_packages(ENGINE)
-        ]
-        assert not missing, (
-            f"Fixtures without golden files: {missing}. "
-            f"Run: pytest tests/regress/ --regress-save"
-        )
+        missing = [f for f in _fixture_sql_files() if _fixture_pkg_name(f) not in _collect_golden_packages(ENGINE)]
+        assert not missing, f"Fixtures without golden files: {missing}. Run: pytest tests/regress/ --regress-save"
 
     def test_every_golden_package_has_all_file_types(self):
         for pkg_name in _collect_golden_packages(ENGINE):
             assert _all_golden_files_present(pkg_name, ENGINE), (
-                f"Golden package {pkg_name} is incomplete. "
-                f"Run: pytest tests/regress/ --regress-save"
+                f"Golden package {pkg_name} is incomplete. Run: pytest tests/regress/ --regress-save"
             )
 
     def test_golden_directory_exists(self):
         from pathlib import Path
+
         assert Path(GOLDEN_DIR).joinpath(ENGINE).is_dir(), (
-            f"Golden directory missing: {GOLDEN_DIR}/{ENGINE}. "
-            f"Run: pytest tests/regress/ --regress-save"
+            f"Golden directory missing: {GOLDEN_DIR}/{ENGINE}. Run: pytest tests/regress/ --regress-save"
         )

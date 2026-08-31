@@ -7,7 +7,7 @@ Tests cover:
 3. _build_mapper_statement() dynamic XML generation
 4. ProcedureInfo.sql_concat_chain field
 """
-import pytest
+
 import converter.flux_gauss as fg
 
 
@@ -212,7 +212,7 @@ class TestBuildMapperStatementDynamicXml:
 
         xml = fg._build_mapper_statement(proc, dml)
         assert "<where>" not in xml
-        assert '<if test=' not in xml
+        assert "<if test=" not in xml
         assert "from orders" in xml
         assert "status = #{status}" in xml
 
@@ -256,14 +256,24 @@ class TestProcedureInfoSqlConcatChain:
 
     def test_chain_is_independent_per_instance(self):
         proc1 = fg.ProcedureInfo(
-            name="p1", package="pkg", proc_name="p1",
-            is_function=False, return_type=None, parameters=[],
-            body={}, sql_text="",
+            name="p1",
+            package="pkg",
+            proc_name="p1",
+            is_function=False,
+            return_type=None,
+            parameters=[],
+            body={},
+            sql_text="",
         )
         proc2 = fg.ProcedureInfo(
-            name="p2", package="pkg", proc_name="p2",
-            is_function=False, return_type=None, parameters=[],
-            body={}, sql_text="",
+            name="p2",
+            package="pkg",
+            proc_name="p2",
+            is_function=False,
+            return_type=None,
+            parameters=[],
+            body={},
+            sql_text="",
         )
         proc1.sql_concat_chain["v_sql"] = [("x != null", "WHERE x = 1", "WHERE")]
         assert "v_sql" not in proc2.sql_concat_chain
@@ -274,9 +284,14 @@ class TestDetectSqlConcatAppend:
 
     def test_returns_none_for_non_concat(self):
         proc = fg.ProcedureInfo(
-            name="pkg_test.proc_a", package="pkg_test", proc_name="proc_a",
-            is_function=False, return_type=None, parameters=[],
-            body={}, sql_text="",
+            name="pkg_test.proc_a",
+            package="pkg_test",
+            proc_name="proc_a",
+            is_function=False,
+            return_type=None,
+            parameters=[],
+            body={},
+            sql_text="",
         )
         assign = {"target": {"Identifier": {"name": "v_sql"}}, "expression": {"Literal": {"String": "'SELECT 1'"}}}
         result = fg._detect_sql_concat_append(assign, proc)
@@ -284,9 +299,14 @@ class TestDetectSqlConcatAppend:
 
     def test_detects_where_append(self):
         proc = fg.ProcedureInfo(
-            name="pkg_test.proc_a", package="pkg_test", proc_name="proc_a",
-            is_function=False, return_type=None, parameters=[],
-            body={}, sql_text="",
+            name="pkg_test.proc_a",
+            package="pkg_test",
+            proc_name="proc_a",
+            is_function=False,
+            return_type=None,
+            parameters=[],
+            body={},
+            sql_text="",
         )
         proc.parameters = [fg.Parameter(name="p_where", java_type="String", sql_type="varchar")]
         assign = {
@@ -309,3 +329,56 @@ class TestDetectSqlConcatAppend:
         assert result is not None
         assert result[0] == "v_sql"
         assert result[2] == "WHERE"
+
+
+class TestReconstructSqlFromConcat:
+    """Tests for _reconstruct_sql_from_concat() — SQL template extraction from || chains."""
+
+    def _make_proc(self):
+        return fg.ProcedureInfo(
+            name="pkg_test.proc_a",
+            package="pkg_test",
+            proc_name="proc_a",
+            is_function=False,
+            return_type=None,
+            parameters=[],
+            body={},
+            sql_text="",
+        )
+
+    def test_nested_arithmetic_in_concat_keeps_sql_operator(self):
+        proc = self._make_proc()
+        expr = {
+            "BinaryOp": {
+                "op": "||",
+                "left": {"Literal": {"String": "SELECT * FROM t WHERE id = "}},
+                "right": {
+                    "BinaryOp": {
+                        "op": "+",
+                        "left": {"PlVariable": ["v_id"]},
+                        "right": {"Literal": {"Integer": 1}},
+                    }
+                },
+            }
+        }
+        result = fg._reconstruct_sql_from_concat(expr, proc)
+        assert result is not None
+        sql_template, param_list = result
+        assert "SELECT * FROM t WHERE id =" in sql_template
+        assert "+ 1" in sql_template
+        assert ("vId", False) in param_list
+
+    def test_pure_concat_still_works(self):
+        proc = self._make_proc()
+        expr = {
+            "BinaryOp": {
+                "op": "||",
+                "left": {"Literal": {"String": "SELECT * FROM t WHERE x = "}},
+                "right": {"PlVariable": ["p_x"]},
+            }
+        }
+        result = fg._reconstruct_sql_from_concat(expr, proc)
+        assert result is not None
+        sql_template, param_list = result
+        assert "SELECT * FROM t WHERE x =" in sql_template
+        assert ("pX", False) in param_list

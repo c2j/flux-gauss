@@ -4,7 +4,7 @@ Tests for AST extraction functions in converter/flux_gauss.py.
 These functions convert raw ogsql-parser JSON AST into structured
 Python dataclasses. Tests verify correct parsing of AST nodes.
 """
-import pytest
+
 import converter.flux_gauss as fg
 
 
@@ -57,10 +57,16 @@ class TestMapCommentsToProcedures:
 
     def test_leading_comment_assigned_to_procedure(self):
         proc = fg.ProcedureInfo(
-            name="pkg.p1", package="pkg", proc_name="p1",
-            is_function=False, return_type=None, parameters=[],
-            body={}, sql_text="",
-            source_start_line=5, source_end_line=10,
+            name="pkg.p1",
+            package="pkg",
+            proc_name="p1",
+            is_function=False,
+            return_type=None,
+            parameters=[],
+            body={},
+            sql_text="",
+            source_start_line=5,
+            source_end_line=10,
         )
         comment = fg.CommentInfo(text="-- doc for p1", line=3, end_line=3, column=0, comment_type="line")
         result = fg._map_comments_to_procedures([comment], [proc])
@@ -70,10 +76,16 @@ class TestMapCommentsToProcedures:
 
     def test_inline_comment_inside_procedure(self):
         proc = fg.ProcedureInfo(
-            name="pkg.p1", package="pkg", proc_name="p1",
-            is_function=False, return_type=None, parameters=[],
-            body={}, sql_text="",
-            source_start_line=1, source_end_line=10,
+            name="pkg.p1",
+            package="pkg",
+            proc_name="p1",
+            is_function=False,
+            return_type=None,
+            parameters=[],
+            body={},
+            sql_text="",
+            source_start_line=1,
+            source_end_line=10,
         )
         comment = fg.CommentInfo(text="-- inline", line=5, end_line=5, column=0, comment_type="line")
         fg._map_comments_to_procedures([comment], [proc])
@@ -81,16 +93,28 @@ class TestMapCommentsToProcedures:
 
     def test_comment_between_procedures_is_leading(self):
         proc1 = fg.ProcedureInfo(
-            name="pkg.p1", package="pkg", proc_name="p1",
-            is_function=False, return_type=None, parameters=[],
-            body={}, sql_text="",
-            source_start_line=1, source_end_line=5,
+            name="pkg.p1",
+            package="pkg",
+            proc_name="p1",
+            is_function=False,
+            return_type=None,
+            parameters=[],
+            body={},
+            sql_text="",
+            source_start_line=1,
+            source_end_line=5,
         )
         proc2 = fg.ProcedureInfo(
-            name="pkg.p2", package="pkg", proc_name="p2",
-            is_function=False, return_type=None, parameters=[],
-            body={}, sql_text="",
-            source_start_line=10, source_end_line=15,
+            name="pkg.p2",
+            package="pkg",
+            proc_name="p2",
+            is_function=False,
+            return_type=None,
+            parameters=[],
+            body={},
+            sql_text="",
+            source_start_line=10,
+            source_end_line=15,
         )
         comment = fg.CommentInfo(text="-- between", line=7, end_line=7, column=0, comment_type="line")
         fg._map_comments_to_procedures([comment], [proc1, proc2])

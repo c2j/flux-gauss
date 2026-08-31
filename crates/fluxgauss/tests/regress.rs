@@ -413,6 +413,31 @@ fn issue_108_cross_pkg_call_arg_and_out_handling() {
     );
 }
 
+#[test]
+fn issue_118_promoted_local_is_dereferenced_in_normal_function_args() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let sql_file = manifest_dir.join(FIXTURES_REL).join("issue_118_promoted_fn_arg.sql");
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let generated = run_conversion(&sql_file, &tmp.path().join("dest"));
+    let service = generated.files.get("Service.java").expect("Service.java not generated");
+
+    assert!(
+        service.contains("fillName(1, vName)"),
+        "cross-package OUT position must keep the bare AtomicReference:\n{}",
+        service
+    );
+    assert!(
+        service.contains("String.valueOf(vName.get()).toUpperCase()"),
+        "UPPER must consume the promoted local's value via .get():\n{}",
+        service
+    );
+    assert!(
+        service.contains("vName.get().length()"),
+        "LENGTH must consume the promoted local's value via .get():\n{}",
+        service
+    );
+}
+
 /// Root cause B3 (#107 follow-up): a cross-package FUNCTION call's *return value*
 /// participating in a binary op must be treated according to the callee's declared
 /// return type. `looks_bd_expr` only does textual pattern-matching (`.multiply(`,
@@ -598,6 +623,22 @@ fn issue_72b_math_string_arguments_are_parsed() {
     assert!(
         service.contains("Math.round(Double.parseDouble(String.valueOf(vFlag)))"),
         "ROUND(String) must parse its argument before calling Math.round:\n{}",
+        service
+    );
+}
+
+#[test]
+fn issue_94_trigger_function_is_stubbed_without_bare_new() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let sql_file = manifest_dir.join(FIXTURES_REL).join("issue_94_trigger_fn.sql");
+    let tmp = tempfile::tempdir().expect("Failed to create temp dir");
+    let generated = run_conversion(&sql_file, &tmp.path().join("dest"));
+    let service = generated.files.get("Service.java").expect("Service.java not generated");
+
+    assert!(!service.contains("return new;"), "trigger function must not emit bare Java keyword `new`:\n{}", service);
+    assert!(
+        service.contains("// TODO: Auto-generated stub") && service.contains("return null;"),
+        "trigger function must be stubbed for manual review:\n{}",
         service
     );
 }

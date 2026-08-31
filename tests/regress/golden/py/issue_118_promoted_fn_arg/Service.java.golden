@@ -1,0 +1,37 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue118PromotedFnArgMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue118PromotedFnArgService {
+    private static final Logger log = LoggerFactory.getLogger(Issue118PromotedFnArgService.class);
+
+    private final Issue118PromotedFnArgMapper issue118PromotedFnArgMapper;
+
+    public Issue118PromotedFnArgService(Issue118PromotedFnArgMapper issue118PromotedFnArgMapper) {
+        this.issue118PromotedFnArgMapper = issue118PromotedFnArgMapper;
+    }
+    // Source: pkg_issue118_callee.fill_name (FUNCTION) — issue_118_promoted_fn_arg.sql:7-11
+    public Long fillName(Long pId, AtomicReference<String> pName) {
+        pName.set(null);
+        pName.set("alice");
+        return pId;
+    }
+
+    // Source: pkg_issue118_caller.consume_name (PROCEDURE) — issue_118_promoted_fn_arg.sql:21-30
+    public void consumeName() {
+        Long vResult = 0L;
+        String vName = null;
+        String vUpper = null;
+        Long vLength = 0L;
+        vResult = (long) (0L);
+        vUpper = String.valueOf(vName).toUpperCase();
+        vLength = (long) (String.valueOf(vName).length());
+    }
+}

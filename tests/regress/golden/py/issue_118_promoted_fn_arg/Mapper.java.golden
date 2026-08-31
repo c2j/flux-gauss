@@ -1,0 +1,9 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue118PromotedFnArgMapper {
+
+    // No direct DML operations for issue_118_promoted_fn_arg
+}

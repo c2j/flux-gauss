@@ -148,6 +148,7 @@ pub struct CursorInfo {
 pub struct CustomTypeInfo {
     pub fields: Vec<(String, String)>,
     pub is_record: bool,
+    pub enum_members: Vec<String>,
 }
 
 // ── Scheduler Task ──
@@ -632,6 +633,7 @@ mod tests {
         let ct = CustomTypeInfo {
             fields: vec![("id".into(), "Long".into()), ("name".into(), "String".into())],
             is_record: false,
+            enum_members: Vec::new(),
         };
         assert_eq!(ct.fields.len(), 2);
         assert!(!ct.is_record);

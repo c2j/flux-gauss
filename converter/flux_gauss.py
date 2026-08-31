@@ -9,22 +9,22 @@ Reads ogsql-parser JSON AST output and generates:
   - Spring Boot project skeleton
 """
 
+import argparse
+import hashlib
 import json
 import os
 import re
-import sys
-import argparse
-import subprocess
-import tempfile
-import traceback
-import textwrap
-import hashlib
 import shutil
-from dataclasses import dataclass, field
-from datetime import datetime
-from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import textwrap
+import traceback
 from collections import defaultdict, namedtuple
-from typing import Optional
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Optional, cast
 
 try:
     import yaml
@@ -33,23 +33,26 @@ except ImportError:
 
 # ── Configuration ──────────────────────────────────────────────
 
+
 def _resolve_ogsql_bin() -> str:
     _script_dir = os.path.dirname(os.path.abspath(__file__))
     _project_dir = os.path.dirname(_script_dir)
     candidates = []
     # PyInstaller frozen binary: bundled ogsql is in sys._MEIPASS
-    if getattr(sys, 'frozen', False):
-        _meipass = getattr(sys, '_MEIPASS', '')
+    if getattr(sys, "frozen", False):
+        _meipass = getattr(sys, "_MEIPASS", "")
         if _meipass:
-            candidates.append(os.path.join(_meipass, 'ogsql'))
-            candidates.append(os.path.join(_meipass, 'ogsql.exe'))
-    candidates.extend([
-        os.path.join(os.getcwd(), "ogsql"),
-        os.environ.get("OGSQL_BIN", ""),
-        shutil.which("ogsql") or "",
-        os.path.join(_project_dir, "lib", "ogsql-parser", "target", "aarch64-apple-darwin", "release", "ogsql"),
-        os.path.join(_project_dir, "lib", "ogsql-parser", "target", "release", "ogsql"),
-    ])
+            candidates.append(os.path.join(_meipass, "ogsql"))
+            candidates.append(os.path.join(_meipass, "ogsql.exe"))
+    candidates.extend(
+        [
+            os.path.join(os.getcwd(), "ogsql"),
+            os.environ.get("OGSQL_BIN", ""),
+            shutil.which("ogsql") or "",
+            os.path.join(_project_dir, "lib", "ogsql-parser", "target", "aarch64-apple-darwin", "release", "ogsql"),
+            os.path.join(_project_dir, "lib", "ogsql-parser", "target", "release", "ogsql"),
+        ]
+    )
     for candidate in candidates:
         if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return candidate
@@ -69,6 +72,7 @@ def _pkg_java_package(pkg) -> str:
 def _pkg_base_dir(pkg) -> str:
     return "src/main/java/" + _pkg_java_package(pkg).replace(".", "/")
 
+
 # ── Logger Configuration ──────────────────────────────────────────
 
 LOGGER_PRESETS = {
@@ -87,8 +91,8 @@ LOGGER_PRESETS = {
         ],
         "declaration": "private static final Logger log = LogManager.getLogger({class_name}.class);",
         "pom": [
-            '<dependency>\n    <groupId>org.apache.logging.log4j</groupId>\n    <artifactId>log4j-core</artifactId>\n    <version>2.23.1</version>\n</dependency>',
-            '<dependency>\n    <groupId>org.apache.logging.log4j</groupId>\n    <artifactId>log4j-slf4j2-impl</artifactId>\n    <version>2.23.1</version>\n</dependency>',
+            "<dependency>\n    <groupId>org.apache.logging.log4j</groupId>\n    <artifactId>log4j-core</artifactId>\n    <version>2.23.1</version>\n</dependency>",
+            "<dependency>\n    <groupId>org.apache.logging.log4j</groupId>\n    <artifactId>log4j-slf4j2-impl</artifactId>\n    <version>2.23.1</version>\n</dependency>",
         ],
     },
     "commons-logging": {
@@ -98,7 +102,7 @@ LOGGER_PRESETS = {
         ],
         "declaration": "private static final Log log = LogFactory.getLog({class_name}.class);",
         "pom": [
-            '<dependency>\n    <groupId>commons-logging</groupId>\n    <artifactId>commons-logging</artifactId>\n    <version>1.3.1</version>\n</dependency>',
+            "<dependency>\n    <groupId>commons-logging</groupId>\n    <artifactId>commons-logging</artifactId>\n    <version>1.3.1</version>\n</dependency>",
         ],
     },
     "jul": {
@@ -114,13 +118,13 @@ LOGGER_PRESETS = {
 _LOGGER_CONFIG = None  # resolved from YAML, defaults to slf4j
 
 # Source file encoding (overridable via --encoding CLI or encoding: YAML config)
-_SOURCE_ENCODING = 'utf-8'
+_SOURCE_ENCODING = "utf-8"
 
 # Debug mode: inject SQL source line comments into generated Java/XML (via --debug flag)
 DEBUG_MODE = False
 
 # Cache for reading source SQL files (path -> list of lines)
-_SQL_FILE_CACHE = {}
+_SQL_FILE_CACHE: dict[str, list[str]] = {}
 
 
 def _write_source_file(path, content):
@@ -128,7 +132,7 @@ def _write_source_file(path, content):
 
     Java/XML source files are always UTF-8 regardless of SQL source encoding.
     """
-    path.write_text(content, encoding='utf-8', errors='replace')
+    path.write_text(content, encoding="utf-8", errors="replace")
 
 
 def _resolve_logger_config(config: dict) -> dict:
@@ -175,9 +179,9 @@ def _resolve_logger_config(config: dict) -> dict:
                 "Example:\n"
                 "  logger:\n"
                 "    imports:\n"
-                "      - \"import org.apache.logging.log4j.LogManager;\"\n"
-                "      - \"import org.apache.logging.log4j.Logger;\"\n"
-                "    declaration: \"private static final Logger log = LogManager.getLogger({class_name}.class);\""
+                '      - "import org.apache.logging.log4j.LogManager;"\n'
+                '      - "import org.apache.logging.log4j.Logger;"\n'
+                '    declaration: "private static final Logger log = LogManager.getLogger({class_name}.class);"'
             )
         return {
             "imports": list(imports),
@@ -185,9 +189,7 @@ def _resolve_logger_config(config: dict) -> dict:
             "pom": list(raw.get("pom", [])),
         }
 
-    raise ValueError(
-        f"Invalid logger config: expected string or dict, got {type(raw).__name__}"
-    )
+    raise ValueError(f"Invalid logger config: expected string or dict, got {type(raw).__name__}")
 
 
 def _get_logger_config() -> dict:
@@ -196,51 +198,57 @@ def _get_logger_config() -> dict:
         _LOGGER_CONFIG = _resolve_logger_config({})
     return _LOGGER_CONFIG
 
+
 # ── Table DDL Parser ──────────────────────────────────────────
 
+
 def parse_table_ddl(sql_file: str) -> dict:
-    with open(sql_file, 'r', encoding='utf-8', errors='replace') as f:
+    with open(sql_file, encoding="utf-8", errors="replace") as f:
         content = f.read()
 
     schema = {}
 
     # Strip SQL comments and Oracle hint syntax
-    content_clean = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
+    content_clean = re.sub(r"/\*.*?\*/", "", content, flags=re.DOTALL)
 
     # Find CREATE TABLE statements by tracking parenthesis depth
-    for m in re.finditer(r'create\s+table\s+(?:if\s+not\s+exists\s+)?(?:\w+\.)?(\w+)\s*\(', content_clean, re.IGNORECASE):
-        table_name = m.group(1).lower()
+    for m in re.finditer(
+        r"create\s+table\s+(?:if\s+not\s+exists\s+)?(?:\w+\.)?(?:\"([^\"]+)\"|(\w+))\s*\(",
+        content_clean,
+        re.IGNORECASE,
+    ):
+        table_name = (m.group(1) or m.group(2)).lower()
         start = m.end()
 
         depth = 1
         pos = start
         while pos < len(content_clean) and depth > 0:
-            if content_clean[pos] == '(':
+            if content_clean[pos] == "(":
                 depth += 1
-            elif content_clean[pos] == ')':
+            elif content_clean[pos] == ")":
                 depth -= 1
             pos += 1
 
-        columns_text = content_clean[start:pos - 1]
+        columns_text = content_clean[start : pos - 1]
 
         columns = {}
         parts = []
         depth = 0
         current = []
         for ch in columns_text:
-            if ch == '(':
+            if ch == "(":
                 depth += 1
                 current.append(ch)
-            elif ch == ')':
+            elif ch == ")":
                 depth -= 1
                 current.append(ch)
-            elif ch == ',' and depth == 0:
-                parts.append(''.join(current).strip())
+            elif ch == "," and depth == 0:
+                parts.append("".join(current).strip())
                 current = []
             else:
                 current.append(ch)
         if current:
-            parts.append(''.join(current).strip())
+            parts.append("".join(current).strip())
 
         for part in parts:
             part = part.strip()
@@ -249,22 +257,28 @@ def parse_table_ddl(sql_file: str) -> dict:
 
             # Skip constraint definitions and table-level keywords
             first_word = part.split()[0].upper()
-            if first_word in ('CONSTRAINT', 'PRIMARY', 'UNIQUE', 'FOREIGN', 'CHECK', 'INDEX', 'LIKE'):
+            if first_word in ("CONSTRAINT", "PRIMARY", "UNIQUE", "FOREIGN", "CHECK", "INDEX", "LIKE"):
                 continue
 
             tokens = part.split(None, 1)
             if len(tokens) < 2:
                 part = re.sub(
-                    r'^([a-zA-Z_][a-zA-Z0-9_]*)(varchar2|varchar|number|integer|int|char\b|date\b|timestamp|numeric|decimal|blob|clob|text\b|boolean|bigint|float|double|real|bytea|uuid|jsonb|json)',
-                    r'\1 \2', part, flags=re.IGNORECASE
+                    r"^([a-zA-Z_][a-zA-Z0-9_]*)(varchar2|varchar|number|integer|int|char\b|date\b|timestamp|numeric|decimal|blob|clob|text\b|boolean|bigint|float|double|real|bytea|uuid|jsonb|json)",
+                    r"\1 \2",
+                    part,
+                    flags=re.IGNORECASE,
                 )
                 tokens = part.split(None, 1)
             if len(tokens) >= 2:
-                col_name = tokens[0].strip().lower()
+                col_name = tokens[0].strip().strip('"').lower()
                 col_type = tokens[1].strip()
-                col_type = re.split(r'\s+(NOT\s+NULL|NULL|DEFAULT|PRIMARY|UNIQUE|CHECK|REFERENCES|CONSTRAINT|USING|PCTFREE|INITRANS|MAXTRANS|STORAGE|TABLESPACE|ENABLE|DISABLE|NOCOMPRESS|COMPRESS)', col_type, flags=re.IGNORECASE)[0].strip()
+                col_type = re.split(
+                    r"\s+(NOT\s+NULL|NULL|DEFAULT|PRIMARY|UNIQUE|CHECK|REFERENCES|CONSTRAINT|USING|PCTFREE|INITRANS|MAXTRANS|STORAGE|TABLESPACE|ENABLE|DISABLE|NOCOMPRESS|COMPRESS)",
+                    col_type,
+                    flags=re.IGNORECASE,
+                )[0].strip()
                 # Remove trailing Oracle inline comments
-                col_type = re.sub(r'\s*/\*.*?\*/', '', col_type)
+                col_type = re.sub(r"\s*/\*.*?\*/", "", col_type)
                 if col_type:
                     columns[col_name] = col_type
 
@@ -335,79 +349,79 @@ SQL_TO_JAVA = {
 _CUSTOM_TYPE_PRESETS = {
     # ── Oracle/OpenGauss array-type naming conventions ───────────
     # Generic "array of varchar" names
-    "arrytype":              "List<String>",
-    "arrtype":               "List<String>",
-    "array_type":            "List<String>",
-    "arraytype":             "List<String>",
-    "str_array":             "List<String>",
-    "string_array":          "List<String>",
-    "varchar2_array":        "List<String>",
-    "varchar_array":         "List<String>",
-    "text_array":            "List<String>",
-    "char_array":            "List<String>",
-    "split_tbl":             "List<String>",
-    "split_array":           "List<String>",
-    "id_list":               "List<String>",
-    "string_list":           "List<String>",
-    "string_tbl":            "List<String>",
+    "arrytype": "List<String>",
+    "arrtype": "List<String>",
+    "array_type": "List<String>",
+    "arraytype": "List<String>",
+    "str_array": "List<String>",
+    "string_array": "List<String>",
+    "varchar2_array": "List<String>",
+    "varchar_array": "List<String>",
+    "text_array": "List<String>",
+    "char_array": "List<String>",
+    "split_tbl": "List<String>",
+    "split_array": "List<String>",
+    "id_list": "List<String>",
+    "string_list": "List<String>",
+    "string_tbl": "List<String>",
     # Oracle TABLE OF VARCHAR2
-    "tab_varchar2":          "List<String>",
-    "tab_varchar":           "List<String>",
-    "tab_text":              "List<String>",
-    "tab_char":              "List<String>",
-    "tab_string":            "List<String>",
+    "tab_varchar2": "List<String>",
+    "tab_varchar": "List<String>",
+    "tab_text": "List<String>",
+    "tab_char": "List<String>",
+    "tab_string": "List<String>",
     # Numeric arrays
-    "num_array":             "List<java.math.BigDecimal>",
-    "number_array":          "List<java.math.BigDecimal>",
-    "number_tbl":            "List<java.math.BigDecimal>",
-    "decimal_array":         "List<java.math.BigDecimal>",
-    "dec_array":             "List<java.math.BigDecimal>",
-    "int_array":             "List<Integer>",
-    "integer_array":         "List<Integer>",
-    "int_list":              "List<Integer>",
-    "integer_list":          "List<Integer>",
-    "integer_tbl":           "List<Integer>",
-    "tab_number":            "List<java.math.BigDecimal>",
-    "tab_integer":           "List<Integer>",
-    "tab_numeric":           "List<java.math.BigDecimal>",
-    "long_array":            "List<Long>",
-    "long_list":             "List<Long>",
-    "bigint_array":          "List<Long>",
-    "tab_bigint":            "List<Long>",
+    "num_array": "List<java.math.BigDecimal>",
+    "number_array": "List<java.math.BigDecimal>",
+    "number_tbl": "List<java.math.BigDecimal>",
+    "decimal_array": "List<java.math.BigDecimal>",
+    "dec_array": "List<java.math.BigDecimal>",
+    "int_array": "List<Integer>",
+    "integer_array": "List<Integer>",
+    "int_list": "List<Integer>",
+    "integer_list": "List<Integer>",
+    "integer_tbl": "List<Integer>",
+    "tab_number": "List<java.math.BigDecimal>",
+    "tab_integer": "List<Integer>",
+    "tab_numeric": "List<java.math.BigDecimal>",
+    "long_array": "List<Long>",
+    "long_list": "List<Long>",
+    "bigint_array": "List<Long>",
+    "tab_bigint": "List<Long>",
     # Date/time arrays
-    "date_array":            "List<java.sql.Date>",
-    "date_list":             "List<java.sql.Date>",
-    "date_tbl":              "List<java.sql.Date>",
-    "timestamp_array":       "List<java.sql.Timestamp>",
-    "timestamp_list":        "List<java.sql.Timestamp>",
-    "tab_date":              "List<java.sql.Date>",
-    "tab_timestamp":         "List<java.sql.Timestamp>",
+    "date_array": "List<java.sql.Date>",
+    "date_list": "List<java.sql.Date>",
+    "date_tbl": "List<java.sql.Date>",
+    "timestamp_array": "List<java.sql.Timestamp>",
+    "timestamp_list": "List<java.sql.Timestamp>",
+    "tab_date": "List<java.sql.Date>",
+    "tab_timestamp": "List<java.sql.Timestamp>",
     # Boolean arrays
-    "bool_array":            "List<Boolean>",
-    "boolean_array":         "List<Boolean>",
+    "bool_array": "List<Boolean>",
+    "boolean_array": "List<Boolean>",
     # Generic / catch-all
-    "raw_array":             "List<byte[]>",
-    "blob_array":            "List<byte[]>",
-    "byte_array":            "List<byte[]>",
+    "raw_array": "List<byte[]>",
+    "blob_array": "List<byte[]>",
+    "byte_array": "List<byte[]>",
     # ── Oracle RECORD / OBJECT naming conventions ────────────────
-    "rec_type":              "Map<String, Object>",
-    "record_type":           "Map<String, Object>",
-    "obj_type":              "Map<String, Object>",
-    "row_type":              "Map<String, Object>",
+    "rec_type": "Map<String, Object>",
+    "record_type": "Map<String, Object>",
+    "obj_type": "Map<String, Object>",
+    "row_type": "Map<String, Object>",
     # ── Oracle REF CURSOR aliases ────────────────────────────────
-    "sys_refcursor":         "List<Map<String, Object>>",
-    "ref_cursor":            "List<Map<String, Object>>",
-    "refcursor":             "List<Map<String, Object>>",
+    "sys_refcursor": "List<Map<String, Object>>",
+    "ref_cursor": "List<Map<String, Object>>",
+    "refcursor": "List<Map<String, Object>>",
     # ── Common OpenGauss / PostgreSQL custom types ────────────────
-    "int4range":             "Object",
-    "int8range":             "Object",
-    "numrange":              "Object",
-    "tsrange":               "Object",
-    "tstzrange":             "Object",
-    "daterange":             "Object",
-    "jsonb_array":           "List<String>",
-    "json_array":            "List<String>",
-    "uuid_array":            "List<String>",
+    "int4range": "Object",
+    "int8range": "Object",
+    "numrange": "Object",
+    "tsrange": "Object",
+    "tstzrange": "Object",
+    "daterange": "Object",
+    "jsonb_array": "List<String>",
+    "json_array": "List<String>",
+    "uuid_array": "List<String>",
 }
 
 # ── SQL → MyBatis jdbcType Mapping ─────────────────────────────
@@ -460,49 +474,194 @@ SQL_TO_JDBC_TYPE = {
     "jsonb": "VARCHAR",
     "uuid": "OTHER",
     # Special
-    "record": None,       # composite → fallback
+    "record": None,  # composite → fallback
     "exception": "VARCHAR",
 }
 
 
 # User-configurable type overrides for %TYPE anchored declarations
 # Format: (table_name_lower, column_name_lower) -> sql_type
-TYPE_OVERRIDES = {
+TYPE_OVERRIDES: dict[tuple[str, str], str] = {
     # Example: ("db_log", "proc_name"): "varchar",
     # ("db_log", "log_level"): "varchar",
     # ("db_log", "step_no"): "integer",
 }
 
 _TABLE_DDL_SOURCE: dict = {}
+_TABLE_CONSTRAINTS: dict[str, dict[str, Any]] = {}
+_ENUM_TYPES: dict[str, list[str]] = {}
+
+
+def _sql_ident(raw: str) -> str:
+    return raw.strip().strip('"').split(".")[-1].strip('"').lower()
+
+
+def _split_ddl_parts(text: str) -> list[str]:
+    parts = []
+    current = []
+    depth = 0
+    in_string = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == "'":
+            current.append(char)
+            if in_string and index + 1 < len(text) and text[index + 1] == "'":
+                current.append("'")
+                index += 2
+                continue
+            in_string = not in_string
+        elif not in_string and char == "(":
+            depth += 1
+            current.append(char)
+        elif not in_string and char == ")":
+            depth -= 1
+            current.append(char)
+        elif not in_string and char == "," and depth == 0:
+            parts.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+        index += 1
+    if current:
+        parts.append("".join(current).strip())
+    return parts
+
+
+def _parenthesized_text(text: str, open_pos: int) -> tuple[str, int]:
+    depth = 1
+    in_string = False
+    pos = open_pos + 1
+    while pos < len(text) and depth:
+        char = text[pos]
+        if char == "'":
+            if in_string and pos + 1 < len(text) and text[pos + 1] == "'":
+                pos += 2
+                continue
+            in_string = not in_string
+        elif not in_string and char == "(":
+            depth += 1
+        elif not in_string and char == ")":
+            depth -= 1
+        pos += 1
+    return text[open_pos + 1 : pos - 1], pos
+
+
+def _check_expressions(part: str) -> list[str]:
+    expressions = []
+    for match in re.finditer(r"\bCHECK\s*\(", part, re.IGNORECASE):
+        expr, _ = _parenthesized_text(part, match.end() - 1)
+        expressions.append(expr.strip())
+    return expressions
+
+
+def _collect_table_constraints(sql_file: str, schema: Optional[dict] = None) -> None:
+    """Collect enum, CHECK and RANGE partition metadata from a DDL source."""
+    with open(sql_file, encoding="utf-8", errors="replace") as ddl_file:
+        content = ddl_file.read()
+    content = re.sub(r"/\*.*?\*/", "", content, flags=re.DOTALL)
+    content = re.sub(r"--.*$", "", content, flags=re.MULTILINE)
+
+    for match in re.finditer(
+        r"\bCREATE\s+TYPE\s+((?:\"[^\"]+\"|\w+)(?:\s*\.\s*(?:\"[^\"]+\"|\w+))?)\s+AS\s+ENUM\s*\(",
+        content,
+        re.IGNORECASE,
+    ):
+        members_text, _ = _parenthesized_text(content, match.end() - 1)
+        members = [m.group(1).replace("''", "'") for m in re.finditer(r"'((?:''|[^'])*)'", members_text)]
+        _ENUM_TYPES[_sql_ident(match.group(1))] = members
+
+    table_pattern = re.compile(
+        r"\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+        r"((?:\"[^\"]+\"|\w+)(?:\s*\.\s*(?:\"[^\"]+\"|\w+))?)\s*\(",
+        re.IGNORECASE,
+    )
+    parsed_schema = schema if schema is not None else parse_table_ddl(sql_file)
+    for match in table_pattern.finditer(content):
+        table = _sql_ident(match.group(1))
+        columns_text, table_end = _parenthesized_text(content, match.end() - 1)
+        enum_columns: dict[str, list[str]] = {}
+        checks: dict[str, list[str]] = {}
+        partition_key: Optional[str] = None
+        partition_bounds: list[tuple[str, str]] = []
+        metadata: dict[str, Any] = {
+            "enums": enum_columns,
+            "checks": checks,
+            "partition_key": None,
+            "partition_bounds": partition_bounds,
+        }
+        table_columns = parsed_schema.get(table, {})
+        for col, sql_type in table_columns.items():
+            type_name = _sql_ident(re.split(r"\s|\(", sql_type.strip(), maxsplit=1)[0])
+            if type_name in _ENUM_TYPES:
+                enum_columns[col] = list(_ENUM_TYPES[type_name])
+
+        parts = _split_ddl_parts(columns_text)
+        for part in parts:
+            first = re.match(r'\s*(?:"([^\"]+)"|(\w+))', part)
+            first_name = _sql_ident(first.group(1) or first.group(2)) if first else ""
+            is_table_constraint = first_name in {"constraint", "check", "primary", "foreign", "unique"}
+            for expr in _check_expressions(part):
+                if is_table_constraint:
+                    referenced = [
+                        col
+                        for col in table_columns
+                        if re.search(rf'(?<![\w"])"?{re.escape(col)}"?(?![\w"])', expr, re.IGNORECASE)
+                    ]
+                else:
+                    referenced = [first_name] if first_name in table_columns else []
+                for col in referenced:
+                    checks.setdefault(col, []).append(expr)
+
+        statement_tail = content[
+            table_end : content.find(";", table_end) if ";" in content[table_end:] else len(content)
+        ]
+        partition = re.search(
+            r"\bPARTITION\s+BY\s+RANGE\s*\(\s*(?:\"([^\"]+)\"|(\w+))\s*\)",
+            statement_tail,
+            re.IGNORECASE,
+        )
+        if partition:
+            partition_key = _sql_ident(partition.group(1) or partition.group(2))
+            specs = statement_tail[partition.end() :]
+            for bound in re.finditer(r"\bVALUES\s+LESS\s+THAN\s*\(([^)]*)\)", specs, re.IGNORECASE):
+                partition_bounds.append(("", bound.group(1).strip()))
+            for bound in re.finditer(r"\bVALUES\s+FROM\s*\(([^)]*)\)\s+TO\s*\(([^)]*)\)", specs, re.IGNORECASE):
+                partition_bounds.append((bound.group(1).strip(), bound.group(2).strip()))
+        metadata["partition_key"] = partition_key
+        _TABLE_CONSTRAINTS[table] = metadata
 
 
 def _lookup_table_columns(table_name: str, source_file: str = "") -> list:
-    cols = []
+    cols: list[str] = []
     if not table_name:
         return cols
     table_lower = table_name.lower()
     if source_file:
         src_norm = os.path.basename(source_file)
-        for (tbl, col) in TYPE_OVERRIDES:
+        for tbl, col in TYPE_OVERRIDES:
             if tbl.lower() == table_lower:
                 src = _TABLE_DDL_SOURCE.get((tbl, col), "")
                 if os.path.basename(src) == src_norm:
                     cols.append(col)
         if cols:
             return sorted(set(cols))
-    for (tbl, col) in TYPE_OVERRIDES:
+    for tbl, col in TYPE_OVERRIDES:
         if tbl.lower() == table_lower:
             cols.append(col)
     if not cols:
         return []
     return sorted(set(cols))
 
-UNRESOLVED_CALLS = []
-STUB_PROCEDURES = []
+
+UNRESOLVED_CALLS: list[Any] = []
+STUB_PROCEDURES: list[Any] = []
 STUB_REASONS: dict[tuple, list[str]] = {}  # key=(proc.name, param_count) → list of human-readable stub reasons
-UNSUPPORTED_FUNCTIONS = []
-TODO_SUMMARY = []  # Collects (category, proc_id, source_file, detail) for diagnostic
-_MISSING_OVERLOADS: dict[str, list[tuple[str, list[tuple[str, str]]]]] = {}  # pkg → [(method_name, [(java_type, param_name)])]
+UNSUPPORTED_FUNCTIONS: list[Any] = []
+TODO_SUMMARY: list[Any] = []  # Collects (category, proc_id, source_file, detail) for diagnostic
+_MISSING_OVERLOADS: dict[
+    str, list[tuple[str, list[tuple[str, str]]]]
+] = {}  # pkg → [(method_name, [(java_type, param_name)])]
 
 
 def _param_default_java(param) -> str:
@@ -513,7 +672,7 @@ def _param_default_java(param) -> str:
         return _default_for_type(param.java_type)
     if isinstance(dv, dict):
         try:
-            return _expr_to_java(dv, None)
+            return cast(str, _expr_to_java(dv, None))
         except Exception:
             return _default_for_type(param.java_type)
     dv_s = str(dv).strip()
@@ -525,11 +684,11 @@ def _param_default_java(param) -> str:
             # (#115 review #6): SQL doubles single quotes to escape them
             # (`DEFAULT 'it''s'`); Java string literals need the raw quote,
             # plus standard backslash/quote escaping for the literal.
-            return f'"{_escape_java_string(inner.replace("''", "\'"))}"'
+            return f'"{_escape_java_string(inner.replace("''", "'"))}"'
         if inner.isdigit() or (inner.startswith("-") and inner[1:].isdigit()):
             return inner
         return _default_for_type(param.java_type)
-    if re.match(r'^-?\d+(\.\d+)?$', dv_s):
+    if re.match(r"^-?\d+(\.\d+)?$", dv_s):
         return dv_s
     return _default_for_type(param.java_type)
 
@@ -541,7 +700,7 @@ def _register_missing_overload(pkg: str, method_name: str, arg_types: list, arg_
         if ex_method == method_name and len(ex_params) == arg_count:
             return
     param_names = [f"p{chr(97 + i)}" for i in range(arg_count)]
-    params = list(zip(arg_types, param_names))
+    params = list(zip(arg_types, param_names, strict=False))
     existing.append((method_name, params))
     _MISSING_OVERLOADS[pkg] = existing
 
@@ -552,12 +711,18 @@ def _add_stub_reason(proc, reason: str):
     STUB_REASONS.setdefault(_stub_key, [])
     if reason not in STUB_REASONS[_stub_key]:
         STUB_REASONS[_stub_key].append(reason)
-_PACKAGE_CONSTANTS = {}  # module-level: maps snake_case name → java_type for recovered constants
-_PACKAGE_VARIABLES = {}  # module-level: maps snake_case name → {"java_type": str, "default": str, "package": str}
-_PACKAGE_VAR_WRITTEN: set = set()  # module-level: set of package variable names (snake_case) that are assigned to during analysis
+
+
+_PACKAGE_CONSTANTS: dict[str, str] = {}  # module-level: maps snake_case name → java_type for recovered constants
+_PACKAGE_VARIABLES: dict[str, dict[str, Any]] = {}  # module-level: maps snake_case name → metadata
+_PACKAGE_VAR_WRITTEN: set = (
+    set()
+)  # module-level: set of package variable names (snake_case) that are assigned to during analysis
 _DML_COUNTER_BY_PKG: dict = {}  # module-level: shared DML method name counters per package
-_DML_CTR_TRACKER: int | None = None  # module-level: tracks id(_DML_COUNTER_BY_PKG) to detect replacement across analyze_procedure calls
-_UDF_RETURN_TYPES = {}  # module-level: maps (func_name_lower, arg_count) → java_type for user-defined functions
+_DML_CTR_TRACKER: int | None = (
+    None  # module-level: tracks id(_DML_COUNTER_BY_PKG) to detect replacement across analyze_procedure calls
+)
+_UDF_RETURN_TYPES: dict[tuple[str, int], str] = {}  # module-level: maps (func_name_lower, arg_count) → java_type
 _LOG_FH = None
 
 
@@ -567,8 +732,8 @@ def _init_log(output_dir: str):
     log_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_path = log_dir / f"conversion-{ts}.log"
-    _LOG_FH = open(log_path, 'w', encoding='utf-8')
-    _LOG_FH.write(f"FluxGauss Conversion Log\n")
+    _LOG_FH = open(log_path, "w", encoding="utf-8")
+    _LOG_FH.write("FluxGauss Conversion Log\n")
     _LOG_FH.write(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
     _LOG_FH.write(f"Output: {output_dir}\n\n")
     _LOG_FH.flush()
@@ -579,7 +744,7 @@ def _log(msg: str, to_stdout: bool = True):
     global _LOG_FH
     if _LOG_FH:
         ts = datetime.now().strftime("%H:%M:%S")
-        clean = re.sub(r'\x1b\[[0-9;]*m', '', msg)
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", msg)
         _LOG_FH.write(f"[{ts}] {clean}\n")
         _LOG_FH.flush()
     if to_stdout:
@@ -675,9 +840,7 @@ def sql_type_to_java(sql_type) -> str:
                 return sql_type_to_java(override)
             # Heuristic inference
             return sql_type_to_java(_infer_type_from_column_name(column))
-        elif "PercentRowType" in sql_type:
-            return "Map<String, Object>"
-        elif "Record" in sql_type:
+        elif "PercentRowType" in sql_type or "Record" in sql_type:
             return "Map<String, Object>"
         elif "RefCursor" in sql_type or "Cursor" in sql_type:
             return "List<Map<String, Object>>"
@@ -685,8 +848,8 @@ def sql_type_to_java(sql_type) -> str:
             return "Object"
 
     if isinstance(sql_type, str):
-        _pct_candidate = re.sub(r'\s*([.%])\s*', r'\1', sql_type)
-        pct_match = re.match(r'^(\w+)\.(\w+)%type$', _pct_candidate, re.IGNORECASE)
+        _pct_candidate = re.sub(r"\s*([.%])\s*", r"\1", sql_type)
+        pct_match = re.match(r"^(\w+)\.(\w+)%type$", _pct_candidate, re.IGNORECASE)
         if pct_match:
             table = pct_match.group(1).lower()
             column = pct_match.group(2).lower()
@@ -698,9 +861,18 @@ def sql_type_to_java(sql_type) -> str:
     normalized = sql_type.lower().strip()
     # ogsql-parser 0.8.32 absorbs the trailing "LANGUAGE <name> [attrs]" clause into
     # return_type when it sits on the line after "RETURNS <type>" (issue #79).
-    normalized = re.sub(r'\s+\blanguage\b.*$', '', normalized, flags=re.IGNORECASE).strip()
+    normalized = re.sub(r"\s+\blanguage\b.*$", "", normalized, flags=re.IGNORECASE).strip()
     # Strip function modifiers that the parser may include in return_type
-    for _mod in ("deterministic", "parallel", "immutable", "stable", "volatile", "strict", "called on null input", "returns null on null input"):
+    for _mod in (
+        "deterministic",
+        "parallel",
+        "immutable",
+        "stable",
+        "volatile",
+        "strict",
+        "called on null input",
+        "returns null on null input",
+    ):
         normalized = normalized.replace(_mod, "").strip()
     normalized = re.sub(r"\(.*\)", "", normalized).strip()
     if normalized.startswith("table"):
@@ -730,7 +902,7 @@ def sql_type_to_java(sql_type) -> str:
     return "Map<String, Object>"
 
 
-def sql_type_to_jdbc(sql_type) -> Optional[str]:
+def sql_type_to_jdbc(sql_type) -> str | None:
     """Convert SQL type to MyBatis JdbcType enum value. Returns None for unmappable types (composites, etc.)."""
     if not sql_type:
         return None
@@ -745,7 +917,7 @@ def sql_type_to_jdbc(sql_type) -> Optional[str]:
         # PercentRowType, Record, RefCursor, etc. → not mappable
         return None
     if isinstance(sql_type, str):
-        pct_match = re.match(r'^(\w+)\.(\w+)%type$', sql_type, re.IGNORECASE)
+        pct_match = re.match(r"^(\w+)\.(\w+)%type$", sql_type, re.IGNORECASE)
         if pct_match:
             column = pct_match.group(2).lower()
             override = TYPE_OVERRIDES.get((pct_match.group(1).lower(), column))
@@ -770,11 +942,12 @@ _JAVA_TO_JDBC = {
     "java.sql.Date": "DATE",
     "java.sql.Time": "TIME",
     "byte[]": "BINARY",
-    "Object": None,                     # cannot determine
-    "Map<String, Object>": None,        # composite, cannot determine
+    "Object": None,  # cannot determine
+    "Map<String, Object>": None,  # composite, cannot determine
 }
 
-def java_type_to_jdbc(java_type: str) -> Optional[str]:
+
+def java_type_to_jdbc(java_type: str) -> str | None:
     """Convert Java type name to MyBatis JdbcType. Returns None for unmappable types."""
     if not java_type:
         return None
@@ -791,8 +964,15 @@ def java_type_to_jdbc(java_type: str) -> Optional[str]:
 def is_simple_java_type(java_type: str) -> bool:
     """Check if the type is a simple type (no import needed)."""
     return java_type in (
-        "String", "Long", "Integer", "Boolean", "Double", "Float",
-        "Object", "byte[]", "void",
+        "String",
+        "Long",
+        "Integer",
+        "Boolean",
+        "Double",
+        "Float",
+        "Object",
+        "byte[]",
+        "void",
     )
 
 
@@ -836,28 +1016,76 @@ def _resolve_import(java_type: str):
 
 # ── Naming Helpers ─────────────────────────────────────────────
 
+
 def _java_safe_identifier(s: str) -> str:
     """Sanitize identifier for Java: handle digits, keywords, special chars, non-ASCII."""
     if not s:
         return "_"
     # Strip non-ASCII and special chars ($, #, etc.)
-    s = re.sub(r'[^a-zA-Z0-9_]', '', s)
-    if not s or s == '_':
+    s = re.sub(r"[^a-zA-Z0-9_]", "", s)
+    if not s or s == "_":
         return "_unnamed"
     # Prepend '_' if starts with digit
     if s[0].isdigit():
         s = "_" + s
     # Escape Java keywords
     JAVA_KEYWORDS = {
-        "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char",
-        "class", "const", "continue", "default", "do", "double", "else", "enum",
-        "extends", "final", "finally", "float", "for", "goto", "if", "implements",
-        "import", "instanceof", "int", "interface", "long", "native", "new", "package",
-        "private", "protected", "public", "return", "short", "static", "strictfp",
-        "super", "switch", "synchronized", "this", "throw", "throws", "transient",
-        "try", "void", "volatile", "while", "true", "false", "null",
+        "abstract",
+        "assert",
+        "boolean",
+        "break",
+        "byte",
+        "case",
+        "catch",
+        "char",
+        "class",
+        "const",
+        "continue",
+        "default",
+        "do",
+        "double",
+        "else",
+        "enum",
+        "extends",
+        "final",
+        "finally",
+        "float",
+        "for",
+        "goto",
+        "if",
+        "implements",
+        "import",
+        "instanceof",
+        "int",
+        "interface",
+        "long",
+        "native",
+        "new",
+        "package",
+        "private",
+        "protected",
+        "public",
+        "return",
+        "short",
+        "static",
+        "strictfp",
+        "super",
+        "switch",
+        "synchronized",
+        "this",
+        "throw",
+        "throws",
+        "transient",
+        "try",
+        "void",
+        "volatile",
+        "while",
+        "true",
+        "false",
+        "null",
         # Common PL/pgSQL identifiers that clash
-        "old", "new", "raise",
+        "old",
+        "raise",
     }
     if s.lower() in JAVA_KEYWORDS:
         s = "_" + s
@@ -878,9 +1106,7 @@ def snake_to_pascal(s: str) -> str:
 
 
 def package_to_classname(pkg_name: str) -> str:
-    if pkg_name.startswith("pkg_"):
-        name = pkg_name[4:]
-    elif pkg_name.startswith("PKG_"):
+    if pkg_name.startswith("pkg_") or pkg_name.startswith("PKG_"):
         name = pkg_name[4:]
     elif pkg_name.startswith("pack_"):
         name = pkg_name[5:]
@@ -911,14 +1137,15 @@ def _custom_type_classname(sql_type_name: str) -> str:
 
 # ── AST Model ──────────────────────────────────────────────────
 
+
 def _resolve_custom_field_type(param_type: str, field_name: str, proc) -> str:
-    if not proc or not hasattr(proc, 'custom_types') or not proc.custom_types:
+    if not proc or not hasattr(proc, "custom_types") or not proc.custom_types:
         return ""
     for tn, ti in proc.custom_types.items():
         if _custom_type_classname(tn) == param_type and ti["kind"] == "record":
             for fn, ft in ti["fields"]:
                 if fn.lower() == field_name.lower():
-                    return ft
+                    return cast(str, ft)
     return ""
 
 
@@ -927,8 +1154,8 @@ class Parameter:
     name: str
     java_type: str
     sql_type: str
-    mode: Optional[str] = None  # IN, OUT, INOUT
-    default_value: Optional[str] = None
+    mode: str | None = None  # IN, OUT, INOUT
+    default_value: str | None = None
 
     @property
     def java_name(self) -> str:
@@ -936,29 +1163,30 @@ class Parameter:
 
     @property
     def is_out(self) -> bool:
-        return self.mode and self.mode.upper() in ("OUT", "INOUT")
+        return bool(self.mode and self.mode.upper() in ("OUT", "INOUT"))
 
     @property
     def is_refcursor(self) -> bool:
-        return self.sql_type and self.sql_type.lower() in ("refcursor", "ref cursor", "refcur", "cursor")
+        return bool(self.sql_type and self.sql_type.lower() in ("refcursor", "ref cursor", "refcur", "cursor"))
 
 
 @dataclass
 class CommentInfo:
     """A single SQL comment with source position."""
-    text: str          # Original comment text, preserving -- or /* */ delimiters
-    line: int          # Start line (1-based)
-    end_line: int      # End line
-    column: int        # Column
+
+    text: str  # Original comment text, preserving -- or /* */ delimiters
+    line: int  # Start line (1-based)
+    end_line: int  # End line
+    column: int  # Column
     comment_type: str  # "line" or "block"
 
 
 @dataclass
 class DynamicCondition:
-    condition_expr: str       # Java boolean expression, e.g. "whereClause != null"
-    sql_fragment: str         # SQL fragment, e.g. "WHERE ${whereClause}"
-    clause_type: str          # "WHERE" | "ORDER_BY" | "SET" | "HAVING" | "IN" | "OTHER"
-    tag_name: str             # "if" | "where" | "foreach" | "set" | "trim"
+    condition_expr: str  # Java boolean expression, e.g. "whereClause != null"
+    sql_fragment: str  # SQL fragment, e.g. "WHERE ${whereClause}"
+    clause_type: str  # "WHERE" | "ORDER_BY" | "SET" | "HAVING" | "IN" | "OTHER"
+    tag_name: str  # "if" | "where" | "foreach" | "set" | "trim"
 
 
 @dataclass
@@ -966,42 +1194,44 @@ class DmlStatement:
     sql_type: str
     method_id: str
     sql_text: str
-    result_type: Optional[str] = None
+    result_type: str | None = None
     parameter_types: dict = field(default_factory=dict)
     optional_filters: list = field(default_factory=list)
     returns_list: bool = False
     extra_params: list = field(default_factory=list)
     is_dynamic: bool = False  # True for EXECUTE IMMEDIATE — filters proc params to only those in SQL
-    returning_cols: list = field(default_factory=list)       # column names from RETURNING clause
+    returning_cols: list = field(default_factory=list)  # column names from RETURNING clause
     returning_into_vars: list = field(default_factory=list)  # variable names from INTO targets
     is_forall_batch: bool = False  # True when FORALL is converted to MyBatis batch (<foreach>)
     forall_batch_list_var: str = ""  # The name of the iteration variable (e.g. "item") in <foreach>
     forall_batch_arrays: dict = field(default_factory=dict)  # {java_array_name: unwrapped_element_type}
-    dynamic_conditions: list = field(default_factory=list)   # List[DynamicCondition]
-    base_sql: str = ""                                        # Core SQL without dynamic conditions
-    source_line: int = 0                                      # Actual source line of the DML statement in the SQL file
+    dynamic_conditions: list = field(default_factory=list)  # List[DynamicCondition]
+    base_sql: str = ""  # Core SQL without dynamic conditions
+    source_line: int = 0  # Actual source line of the DML statement in the SQL file
 
 
 @dataclass
 class ServiceCall:
     """Represents a cross-service method call."""
+
     service_name: str  # e.g., "inventoryService"
-    method_name: str   # e.g., "checkStock"
-    args: list         # e.g., ["productId", "qty"]
+    method_name: str  # e.g., "checkStock"
+    args: list  # e.g., ["productId", "qty"]
     package_name: str = ""
 
 
 @dataclass
 class ProcedureInfo:
     """Extracted info for a single stored procedure/function."""
-    name: str                    # full name: pkg_order.create_order
-    package: str                 # pkg_order
-    proc_name: str               # create_order
-    is_function: bool            # True for FUNCTION, False for PROCEDURE
-    return_type: Optional[str]   # SQL return type (for functions)
-    parameters: list             # List[Parameter]
-    body: dict                   # Raw PL/pgSQL block AST
-    sql_text: str                # Original SQL text
+
+    name: str  # full name: pkg_order.create_order
+    package: str  # pkg_order
+    proc_name: str  # create_order
+    is_function: bool  # True for FUNCTION, False for PROCEDURE
+    return_type: str | None  # SQL return type (for functions)
+    parameters: list  # List[Parameter]
+    body: dict  # Raw PL/pgSQL block AST
+    sql_text: str  # Original SQL text
 
     # Generated artifacts (filled during processing)
     dml_statements: list = field(default_factory=list)
@@ -1016,8 +1246,10 @@ class ProcedureInfo:
     table_refs: set = field(default_factory=set)
     var_assignments: dict = field(default_factory=dict)
     dynamic_sql_templates: dict = field(default_factory=dict)  # var_name -> (sql_template, param_list)
-    sql_concat_chain: dict = field(default_factory=dict)       # var_name -> [(condition_expr, sql_fragment, clause_type)]
-    sql_expr_vars: dict = field(default_factory=dict)  # var_name -> AST node for SQL-expression assignments (e.g. to_char(...))
+    sql_concat_chain: dict = field(default_factory=dict)  # var_name -> [(condition_expr, sql_fragment, clause_type)]
+    sql_expr_vars: dict = field(
+        default_factory=dict
+    )  # var_name -> AST node for SQL-expression assignments (e.g. to_char(...))
     inlined_sql_vars: set = field(default_factory=set)  # var_names that were inlined into dynamic SQL templates
     is_autonomous: bool = False
     scheduler_tasks: list = field(default_factory=list)
@@ -1025,17 +1257,17 @@ class ProcedureInfo:
     _needs_futures_list: bool = False
 
     # NEW: Cursor tracking
-    open_cursors: dict = field(default_factory=dict)   # cursor_name -> {"result_var": str, "index_var": str}
+    open_cursors: dict = field(default_factory=dict)  # cursor_name -> {"result_var": str, "index_var": str}
     refcursor_out_params: set = field(default_factory=set)  # param names that are REFCURSOR OUT
-    cursor_decls: dict = field(default_factory=dict)   # cursor_name -> parsed_query (from DECLARE section)
+    cursor_decls: dict = field(default_factory=dict)  # cursor_name -> parsed_query (from DECLARE section)
     cursor_params: dict = field(default_factory=dict)  # cursor_name -> list of param names
-    custom_types: dict = field(default_factory=dict)    # name -> {"kind": "record"/"varray", "fields"/...}
-    source_file: str = ""          # Original SQL file name for display (e.g., PKG_ORDER.sql)
-    _source_path: str = ""         # Full path for file access (set by pipeline)
-    source_start_line: int = 0     # Procedure start line in original file
-    source_end_line: int = 0       # Procedure end line in original file
-    leading_comments: list = field(default_factory=list)   # List[CommentInfo] — comments before procedure declaration
-    inline_comments: list = field(default_factory=list)    # List[CommentInfo] — comments inside procedure body
+    custom_types: dict = field(default_factory=dict)  # name -> {"kind": "record"/"varray", "fields"/...}
+    source_file: str = ""  # Original SQL file name for display (e.g., PKG_ORDER.sql)
+    _source_path: str = ""  # Full path for file access (set by pipeline)
+    source_start_line: int = 0  # Procedure start line in original file
+    source_end_line: int = 0  # Procedure end line in original file
+    leading_comments: list = field(default_factory=list)  # List[CommentInfo] — comments before procedure declaration
+    inline_comments: list = field(default_factory=list)  # List[CommentInfo] — comments inside procedure body
     _raw_return_types: list = field(default_factory=list)  # Pre-coercion return expr types for reconciliation
     _dynamic_sql_build_stmts: dict = field(default_factory=dict)  # {stmt_body_idx: var_name}
     local_var_source_lines: dict = field(default_factory=dict)  # var_name -> SQL source line number
@@ -1044,9 +1276,10 @@ class ProcedureInfo:
 @dataclass
 class PackageInfo:
     """All procedures in a package, potentially merged from multiple SQL files."""
+
     package_name: str  # e.g., pkg_order
     procedures: list = field(default_factory=list)  # List[ProcedureInfo]
-    table_refs: set = field(default_factory=set)    # Tables referenced
+    table_refs: set = field(default_factory=set)  # Tables referenced
     package_vars: dict = field(default_factory=dict)  # name -> {"java_type": ..., "default": ...}
     source_file: str = ""  # Original SQL file name
     source_files: list = field(default_factory=list)  # All SQL files contributing to this package
@@ -1057,6 +1290,7 @@ class PackageInfo:
 
 
 # ── Conversion Report ──────────────────────────────────────────
+
 
 @dataclass
 class SkippedItem:
@@ -1069,8 +1303,7 @@ class SkippedItem:
     line_end: int = 0
 
 
-def _merge_package_info(existing: PackageInfo, incoming: PackageInfo,
-                        skipped_items: list) -> PackageInfo:
+def _merge_package_info(existing: PackageInfo, incoming: PackageInfo, skipped_items: list) -> PackageInfo:
     """Merge one same-named package into another, keeping first on conflicts."""
     if not existing.source_files:
         existing.source_files = [existing.source_file] if existing.source_file else []
@@ -1079,22 +1312,21 @@ def _merge_package_info(existing: PackageInfo, incoming: PackageInfo,
         if source_file not in existing.source_files:
             existing.source_files.append(source_file)
 
-    seen_procedures = {
-        (proc.proc_name, len(proc.parameters)) for proc in existing.procedures
-    }
+    seen_procedures = {(proc.proc_name, len(proc.parameters)) for proc in existing.procedures}
     for proc in incoming.procedures:
         key = (proc.proc_name, len(proc.parameters))
         if key in seen_procedures:
-            skipped_items.append(SkippedItem(
-                sql_file=proc.source_file or incoming.source_file,
-                statement_type="ROUTINE",
-                category="MERGE_CONFLICT",
-                name=proc.name,
-                detail=("Duplicate routine while merging package "
-                        f"{existing.package_name}; kept first definition"),
-                line_start=proc.source_start_line,
-                line_end=proc.source_end_line,
-            ))
+            skipped_items.append(
+                SkippedItem(
+                    sql_file=proc.source_file or incoming.source_file,
+                    statement_type="ROUTINE",
+                    category="MERGE_CONFLICT",
+                    name=proc.name,
+                    detail=(f"Duplicate routine while merging package {existing.package_name}; kept first definition"),
+                    line_start=proc.source_start_line,
+                    line_end=proc.source_end_line,
+                )
+            )
             continue
         seen_procedures.add(key)
         existing.procedures.append(proc)
@@ -1103,29 +1335,33 @@ def _merge_package_info(existing: PackageInfo, incoming: PackageInfo,
         target = getattr(existing, field_name)
         for key, value in getattr(incoming, field_name).items():
             if key in target:
-                skipped_items.append(SkippedItem(
-                    sql_file=incoming.source_file,
-                    statement_type=field_name.upper(),
-                    category="MERGE_CONFLICT",
-                    name=key,
-                    detail=(f"Conflicting {field_name} entry while merging package "
-                            f"{existing.package_name}; kept first definition"),
-                ))
+                skipped_items.append(
+                    SkippedItem(
+                        sql_file=incoming.source_file,
+                        statement_type=field_name.upper(),
+                        category="MERGE_CONFLICT",
+                        name=key,
+                        detail=(
+                            f"Conflicting {field_name} entry while merging package "
+                            f"{existing.package_name}; kept first definition"
+                        ),
+                    )
+                )
             else:
                 target[key] = value
 
     existing.comments.extend(incoming.comments)
     existing.table_refs.update(incoming.table_refs)
-    if (existing.java_package and incoming.java_package
-            and existing.java_package != incoming.java_package):
-        skipped_items.append(SkippedItem(
-            sql_file=incoming.source_file,
-            statement_type="JAVA_PACKAGE",
-            category="MERGE_CONFLICT",
-            name=existing.package_name,
-            detail=(f"Conflicting Java package '{incoming.java_package}'; kept first "
-                    f"'{existing.java_package}'"),
-        ))
+    if existing.java_package and incoming.java_package and existing.java_package != incoming.java_package:
+        skipped_items.append(
+            SkippedItem(
+                sql_file=incoming.source_file,
+                statement_type="JAVA_PACKAGE",
+                category="MERGE_CONFLICT",
+                name=existing.package_name,
+                detail=(f"Conflicting Java package '{incoming.java_package}'; kept first '{existing.java_package}'"),
+            )
+        )
     elif not existing.java_package:
         existing.java_package = incoming.java_package
     return existing
@@ -1164,44 +1400,51 @@ class ConversionReport:
     total_cross_calls: int = 0
 
 
-UnresolvedCall = namedtuple('UnresolvedCall', [
-    'caller',        # "pkg_order.create_order"
-    'callee',        # "pkg_inventory.reserve_stock" or "PERFORM pkg_common.log_operation(...)"
-    'caller_file',   # "pkg_order.sql"
-    'args',          # "BIGINT, INT" or ""
-    'hint',          # "add pkg_inventory.sql to sources"
-])
+UnresolvedCall = namedtuple(
+    "UnresolvedCall",
+    [
+        "caller",  # "pkg_order.create_order"
+        "callee",  # "pkg_inventory.reserve_stock" or "PERFORM pkg_common.log_operation(...)"
+        "caller_file",  # "pkg_order.sql"
+        "args",  # "BIGINT, INT" or ""
+        "hint",  # "add pkg_inventory.sql to sources"
+    ],
+)
 
 
 @dataclass
 class GotoInfo:
     """Information about a single GOTO statement."""
+
     label: str
-    source_idx: int          # index of the statement containing the GOTO
-    source_depth: int        # nesting depth of the source statement
-    is_forward: bool         # True if target is after source
-    is_backward: bool        # True if target is before source
-    source_path: list = None
+    source_idx: int  # index of the statement containing the GOTO
+    source_depth: int  # nesting depth of the source statement
+    is_forward: bool  # True if target is after source
+    is_backward: bool  # True if target is before source
+    source_path: Optional[list] = None
 
 
 @dataclass
 class LabelInfo:
     """Information about a single label."""
+
     name: str
-    target_idx: int          # index of the labeled statement
-    target_depth: int        # nesting depth of the labeled statement
+    target_idx: int  # index of the labeled statement
+    target_depth: int  # nesting depth of the labeled statement
 
 
 @dataclass
 class GotoAnalysis:
     """Result of analyzing GOTO patterns in a procedure body."""
-    labels: dict             # label_name -> LabelInfo
-    gotos: list              # list of GotoInfo
-    pattern: str             # one of A/B/C/D/E or "unknown"
-    label_stmt_map: dict     # label_name -> statement dict
+
+    labels: dict  # label_name -> LabelInfo
+    gotos: list  # list of GotoInfo
+    pattern: str  # one of A/B/C/D/E or "unknown"
+    label_stmt_map: dict  # label_name -> statement dict
 
 
 # ── AST Parser ─────────────────────────────────────────────────
+
 
 def _is_parse_warning(err) -> bool:
     """Check if an ogsql parse error dict is actually a warning.
@@ -1219,15 +1462,15 @@ def _is_parse_warning(err) -> bool:
 def _split_sql_statements(sql_text: str) -> list:
     """Split SQL text into individual statements. Returns list of (sql_text, start_line) tuples."""
     statements = []
-    current = []
+    current: list[str] = []
     chunk_start_line = 1
     current_line = 0
     in_dollar_quote = False
     dollar_tag = ""
-    for line in sql_text.split('\n'):
+    for line in sql_text.split("\n"):
         current_line += 1
         if not in_dollar_quote:
-            for tag_match in re.finditer(r'\$([A-Za-z_0-9]*)\$', line):
+            for tag_match in re.finditer(r"\$([A-Za-z_0-9]*)\$", line):
                 if not in_dollar_quote:
                     in_dollar_quote = True
                     dollar_tag = tag_match.group(0)
@@ -1237,8 +1480,8 @@ def _split_sql_statements(sql_text: str) -> list:
                 in_dollar_quote = False
                 dollar_tag = ""
         current.append(line)
-        if not in_dollar_quote and re.search(r'\$\$\s*LANGUAGE\s+PLPGSQL\s*;?\s*$', line, re.IGNORECASE):
-            combined = '\n'.join(current).strip()
+        if not in_dollar_quote and re.search(r"\$\$\s*LANGUAGE\s+PLPGSQL\s*;?\s*$", line, re.IGNORECASE):
+            combined = "\n".join(current).strip()
             if combined:
                 first_content = chunk_start_line
                 for cl in current:
@@ -1249,7 +1492,7 @@ def _split_sql_statements(sql_text: str) -> list:
             current = []
             chunk_start_line = current_line + 1
     if current:
-        combined = '\n'.join(current).strip()
+        combined = "\n".join(current).strip()
         if combined:
             first_content = chunk_start_line
             for cl in current:
@@ -1261,27 +1504,27 @@ def _split_sql_statements(sql_text: str) -> list:
 
 
 def _read_sql_file(path: str) -> tuple[str, str]:
-    with open(path, 'rb') as f:
+    with open(path, "rb") as f:
         raw = f.read()
 
-    text = raw.decode('utf-8', errors='replace')
-    text = text.replace('\r\n', '\n').replace('\r', '\n')
-    if '\ufffd' not in text:
-        return text, 'utf-8'
+    text = raw.decode("utf-8", errors="replace")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    if "\ufffd" not in text:
+        return text, "utf-8"
 
-    for enc in ('gb18030', 'gbk', 'big5'):
+    for enc in ("gb18030", "gbk", "big5"):
         try:
             candidate = raw.decode(enc)
-            candidate = candidate.replace('\r\n', '\n').replace('\r', '\n')
-            if '\ufffd' not in candidate:
+            candidate = candidate.replace("\r\n", "\n").replace("\r", "\n")
+            if "\ufffd" not in candidate:
                 _log(f"  [INFO] Decoded {os.path.basename(path)} as {enc}", to_stdout=False)
                 return candidate, enc
         except (UnicodeDecodeError, LookupError):
             pass
 
-    ffds = text.count('\ufffd')
+    ffds = text.count("\ufffd")
     _log(f"  [WARN] {os.path.basename(path)}: {ffds} unrecoverable chars (encoding damaged in source)", to_stdout=False)
-    return text, 'utf-8-damaged'
+    return text, "utf-8-damaged"
 
 
 def _format_validate_error(err) -> str:
@@ -1298,8 +1541,10 @@ def _format_validate_error(err) -> str:
                 line = loc.get("line", "?")
                 col = loc.get("column", "?")
                 if err_type == "UnexpectedToken":
-                    return (f"error at line {line}, col {col}: "
-                            f"expected {details.get('expected', '?')}, got {details.get('got', '?')}")
+                    return (
+                        f"error at line {line}, col {col}: "
+                        f"expected {details.get('expected', '?')}, got {details.get('got', '?')}"
+                    )
                 hint = details.get("hint", "")
                 syntax = details.get("syntax", "")
                 msg = details.get("message", "")
@@ -1323,7 +1568,7 @@ def _format_tokenizer_error(details: dict) -> str:
         msg = _TOKENIZER_ERROR_MESSAGES.get(sub_type)
         if msg:
             return f"tokenizer error: {msg.format(value)}"
-        label = re.sub(r'([A-Z])', r' \1', sub_type).strip().lower()
+        label = re.sub(r"([A-Z])", r" \1", sub_type).strip().lower()
         return f"tokenizer error: {label}: {value}"
     return "tokenizer error: unknown"
 
@@ -1344,26 +1589,29 @@ def validate_sql_file(sql_path: str) -> dict:
     try:
         result = subprocess.run(
             [OGSQL_BIN, "validate", "-f", sql_path, "-j"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-        return {"error_count": 1, "warning_count": 0,
-                "errors": [{"ValidationError": {"message": str(e)}}],
-                "warnings": []}
+        return {
+            "error_count": 1,
+            "warning_count": 0,
+            "errors": [{"ValidationError": {"message": str(e)}}],
+            "warnings": [],
+        }
 
     # Binary ran — try to parse JSON output (even on non-zero exit, the JSON
     # body contains the structured error list)
     if result.stdout and result.stdout.strip().startswith("{"):
         try:
-            return json.loads(result.stdout)
+            return cast(dict, json.loads(result.stdout))
         except json.JSONDecodeError:
             pass
 
     # Fallback: no usable JSON from binary
     msg = result.stderr.strip() or f"ogsql validate exited with code {result.returncode}"
-    return {"error_count": 1, "warning_count": 0,
-            "errors": [{"ValidationError": {"message": msg}}],
-            "warnings": []}
+    return {"error_count": 1, "warning_count": 0, "errors": [{"ValidationError": {"message": msg}}], "warnings": []}
 
 
 def validate_sql_files(sql_paths: list) -> dict:
@@ -1384,13 +1632,18 @@ def validate_sql_files(sql_paths: list) -> dict:
 
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True,
+            cmd,
+            capture_output=True,
+            text=True,
             timeout=30 * len(sql_paths),
         )
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-        synthetic = {"error_count": 1, "warning_count": 0,
-                     "errors": [{"ValidationError": {"message": str(e)}}],
-                     "warnings": []}
+        synthetic = {
+            "error_count": 1,
+            "warning_count": 0,
+            "errors": [{"ValidationError": {"message": str(e)}}],
+            "warnings": [],
+        }
         return {p: synthetic for p in sql_paths}
 
     if result.stdout and result.stdout.strip().startswith("{"):
@@ -1404,15 +1657,18 @@ def validate_sql_files(sql_paths: list) -> dict:
             # Fill in any missing files with fallback
             for p in sql_paths:
                 if p not in results:
-                    results[p] = {"error_count": 1, "warning_count": 0,
-                                  "errors": [{"ValidationError": {"message": "No result from batch validate"}}],
-                                  "warnings": []}
+                    results[p] = {
+                        "error_count": 1,
+                        "warning_count": 0,
+                        "errors": [{"ValidationError": {"message": "No result from batch validate"}}],
+                        "warnings": [],
+                    }
             return results
         except json.JSONDecodeError:
             pass
 
     # Fallback: batch call failed — fall back to per-file validation
-    _log(f"  [WARN] Batch validate failed, falling back to per-file validation", to_stdout=False)
+    _log("  [WARN] Batch validate failed, falling back to per-file validation", to_stdout=False)
     return {p: validate_sql_file(p) for p in sql_paths}
 
 
@@ -1420,14 +1676,14 @@ def parse_sql_file(sql_path: str) -> dict:
     """Run ogsql-parser on a SQL file and return JSON AST."""
     sql_text, encoding = _read_sql_file(sql_path)
 
-    needs_tmp = encoding != 'utf-8'
+    needs_tmp = encoding != "utf-8"
     tmp_for_ogsql = None
     ogsql_input = sql_path
     if needs_tmp:
         tmp_for_ogsql = os.path.join(
             tempfile.gettempdir(), f"fluxgauss_ogsql_{os.getpid()}_{os.path.basename(sql_path)}"
         )
-        with open(tmp_for_ogsql, 'w', encoding='utf-8') as tf:
+        with open(tmp_for_ogsql, "w", encoding="utf-8") as tf:
             tf.write(sql_text)
         ogsql_input = tmp_for_ogsql
 
@@ -1435,36 +1691,36 @@ def parse_sql_file(sql_path: str) -> dict:
 
     if len(stmts) <= 1:
         result = subprocess.run(
-            [OGSQL_BIN, "--comments", "-f", ogsql_input, "parse", "-j"],
-            capture_output=True, text=True
+            [OGSQL_BIN, "--comments", "-f", ogsql_input, "parse", "-j"], capture_output=True, text=True
         )
         if result.returncode != 0 or not result.stdout.strip().startswith("{"):
             _log(f"  [WARN] ogsql-parser returned {result.returncode}: {result.stderr}", to_stdout=False)
-            result = subprocess.run(
-                [OGSQL_BIN, "-f", ogsql_input, "parse", "-j"],
-                capture_output=True, text=True
-            )
+            result = subprocess.run([OGSQL_BIN, "-f", ogsql_input, "parse", "-j"], capture_output=True, text=True)
         ast = json.loads(result.stdout)
         ast["comments"] = _extract_comments_from_text(sql_text)
         if tmp_for_ogsql and os.path.exists(tmp_for_ogsql):
             os.unlink(tmp_for_ogsql)
-        return ast
+        return cast(dict, ast)
 
-    combined_ast = {"statements": [], "errors": [], "comments": []}
+    combined_ast: dict[str, list[Any]] = {"statements": [], "errors": [], "comments": []}
     for i, (stmt_sql, start_line) in enumerate(stmts):
         line_offset = start_line - 1
         tmp_path = os.path.join(tempfile.gettempdir(), f"fluxgauss_{os.getpid()}_{i}.sql")
         try:
-            with open(tmp_path, 'w', encoding='utf-8') as tf:
+            with open(tmp_path, "w", encoding="utf-8") as tf:
                 tf.write(stmt_sql)
             result = subprocess.run(
                 [OGSQL_BIN, "--comments", "-f", tmp_path, "parse", "-j"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             if result.returncode != 0 or not result.stdout.strip().startswith("{"):
                 result = subprocess.run(
                     [OGSQL_BIN, "-f", tmp_path, "parse", "-j"],
-                    capture_output=True, text=True, timeout=10,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
                 )
             if result.stdout.strip():
                 try:
@@ -1503,7 +1759,7 @@ def parse_sql_files(sql_paths: list) -> dict:
         sql_text, encoding = _read_sql_file(p)
         _file_texts[p] = (sql_text, encoding)
 
-        needs_tmp = encoding != 'utf-8'
+        needs_tmp = encoding != "utf-8"
         stmts = _split_sql_statements(sql_text)
         if needs_tmp or len(stmts) > 1:
             _multi_stmt_files.append(p)
@@ -1520,7 +1776,9 @@ def parse_sql_files(sql_paths: list) -> dict:
             cmd.extend(["-f", p])
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True,
+                cmd,
+                capture_output=True,
+                text=True,
                 timeout=30 * len(_single_stmt_files),
             )
             if result.stdout and result.stdout.strip().startswith("{"):
@@ -1537,7 +1795,10 @@ def parse_sql_files(sql_paths: list) -> dict:
             _log(f"  [WARN] Batch parse error: {e}", to_stdout=False)
 
         if not batch_ok:
-            _log(f"  [WARN] Batch parse incomplete, falling back to per-file for {len(_single_stmt_files)} file(s)", to_stdout=False)
+            _log(
+                f"  [WARN] Batch parse incomplete, falling back to per-file for {len(_single_stmt_files)} file(s)",
+                to_stdout=False,
+            )
             for p in _single_stmt_files:
                 if p not in results:
                     results[p] = parse_sql_file(p)
@@ -1575,9 +1836,7 @@ def _offset_dict_lines(d: dict, offset: int):
     for key, val in d.items():
         if key in ("line", "start_line", "end_line") and isinstance(val, int):
             d[key] = val + offset
-        elif key == "span" and isinstance(val, dict):
-            _offset_dict_lines(val, offset)
-        elif isinstance(val, dict):
+        elif key == "span" and isinstance(val, dict) or isinstance(val, dict):
             _offset_dict_lines(val, offset)
         elif isinstance(val, list):
             for item in val:
@@ -1636,13 +1895,15 @@ def extract_parameters(params_list: list) -> list:
         default_value = p.get("default_value")
         if default_value and default_value.lower() == "null":
             java_type = _box_primitive(java_type)
-        result.append(Parameter(
-            name=name,
-            java_type=java_type,
-            sql_type=sql_type,
-            mode=mode,
-            default_value=p.get("default_value"),
-        ))
+        result.append(
+            Parameter(
+                name=name,
+                java_type=java_type,
+                sql_type=sql_type,
+                mode=mode,
+                default_value=p.get("default_value"),
+            )
+        )
     # Deduplicate parameter names: PG catalog-style signatures reuse the type
     # name as the parameter name (e.g. `_group_concat(text, text)`), which would
     # otherwise generate duplicate Java identifiers in Service/Test/ITest.
@@ -1661,7 +1922,7 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
     """Extract all procedures/functions and package-level variables from parsed AST."""
     procedures = []
     package_vars = {}
-    custom_types = {}
+    custom_types: dict[str, dict[str, Any]] = {}
     for stmt_wrapper in ast.get("statements", []):
         for stmt_type, stmt_data in stmt_wrapper.items():
             if stmt_type in ("CreateFunction", "CreateProcedure"):
@@ -1674,7 +1935,7 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
                 return_type = stmt_data.get("return_type") if is_function else None
 
                 params = extract_parameters(stmt_data.get("parameters", []))
-                params = [p for p in params if p.name.lower() != 'self']
+                params = [p for p in params if p.name.lower() != "self"]
                 # Detect REFCURSOR OUT params
                 refcursor_outs = set()
                 for p in params:
@@ -1738,7 +1999,11 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
                                         lit = size_node.get("Literal", {})
                                         if isinstance(lit, dict):
                                             size_val = int(lit.get("Integer", 0))
-                                    custom_types[type_name] = {"kind": "varray", "elem_type": elem_java_type, "size": size_val}
+                                    custom_types[type_name] = {
+                                        "kind": "varray",
+                                        "elem_type": elem_java_type,
+                                        "size": size_val,
+                                    }
 
             elif stmt_type == "CreatePackageBody":
                 package_name_parts = stmt_data.get("name", [])
@@ -1788,7 +2053,7 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
                                 elif ct["kind"] == "varray":
                                     return_type = f"List<{ct['elem_type']}>"
                         params = extract_parameters(item_data.get("parameters", []))
-                        params = [p for p in params if p.name.lower() != 'self']
+                        params = [p for p in params if p.name.lower() != "self"]
                         for p in params:
                             if p.java_type == "Map<String, Object>" and custom_types:
                                 raw = p.sql_type.lower() if p.sql_type else ""
@@ -1821,7 +2086,11 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
                                         elif tk == "VarrayOf":
                                             _type_name = tv.get("name", "")
                                             _elem_java = sql_type_to_java(tv.get("elem_type", {}))
-                                            _type_info = {"kind": "varray", "elem_type": _elem_java, "size": tv.get("size")}
+                                            _type_info = {
+                                                "kind": "varray",
+                                                "elem_type": _elem_java,
+                                                "size": tv.get("size"),
+                                            }
                                     if _type_name and _type_info:
                                         proc_custom_types[_type_name] = _type_info
 
@@ -1849,15 +2118,12 @@ def _recover_constant_declarations(sql_path: str, package_vars: dict):
     Scans SQL source for patterns like: name CONSTANT type := value;
     """
     try:
-        with open(sql_path, 'r', encoding='utf-8', errors='replace') as f:
+        with open(sql_path, encoding="utf-8", errors="replace") as f:
             source = f.read()
     except (FileNotFoundError, OSError):
         return
 
-    for m in re.finditer(
-        r'(?mi)\b(\w+)\s+CONSTANT\s+(\w[\w()., ]*?)\s*:=\s*([^;]+);',
-        source
-    ):
+    for m in re.finditer(r"(?mi)\b(\w+)\s+CONSTANT\s+(\w[\w()., ]*?)\s*:=\s*([^;]+);", source):
         var_name = m.group(1).strip()
         sql_type = m.group(2).strip()
         default_raw = m.group(3).strip()
@@ -1869,18 +2135,13 @@ def _recover_constant_declarations(sql_path: str, package_vars: dict):
         default_val = _default_for_type(java_type)
         if default_raw:
             try:
-                if re.match(r'^-?\d+$', default_raw):
+                if re.match(r"^-?\d+$", default_raw):
                     default_val = default_raw
                     if "long" in java_type.lower() or "Long" in java_type:
                         default_val = default_raw + "L"
                     elif "BigDecimal" in java_type:
                         default_val = f'new java.math.BigDecimal("{default_raw}")'
-                elif re.match(r'^-?\d+(\.\d+)?[eE][+-]?\d+$', default_raw):
-                    if "BigDecimal" in java_type:
-                        default_val = f'new java.math.BigDecimal("{default_raw}")'
-                    elif "double" in java_type.lower():
-                        default_val = default_raw + "d"
-                elif re.match(r'^-?\d+\.\d+', default_raw):
+                elif re.match(r"^-?\d+(\.\d+)?[eE][+-]?\d+$", default_raw) or re.match(r"^-?\d+\.\d+", default_raw):
                     if "BigDecimal" in java_type:
                         default_val = f'new java.math.BigDecimal("{default_raw}")'
                     elif "double" in java_type.lower():
@@ -1906,21 +2167,23 @@ def _extract_comments_from_text(sql_text: str) -> list:
     1-based line numbers for both ``--`` and ``/* */`` comments.
     """
     comments = []
-    for m in re.finditer(r'(--[^\n]*|/\*[\s\S]*?\*/)', sql_text):
+    for m in re.finditer(r"(--[^\n]*|/\*[\s\S]*?\*/)", sql_text):
         start_pos = m.start()
         end_pos = m.end()
-        start_line = sql_text[:start_pos].count('\n') + 1
-        end_line = sql_text[:end_pos].count('\n') + 1
+        start_line = sql_text[:start_pos].count("\n") + 1
+        end_line = sql_text[:end_pos].count("\n") + 1
         raw = m.group(0)
-        comment_type = "block" if raw.startswith('/*') else "line"
+        comment_type = "block" if raw.startswith("/*") else "line"
         # Strip leading whitespace (indentation) so text starts with -- or /*
         text = raw.lstrip()
-        comments.append({
-            "text": text,
-            "line": start_line,
-            "end_line": end_line,
-            "type": comment_type,
-        })
+        comments.append(
+            {
+                "text": text,
+                "line": start_line,
+                "end_line": end_line,
+                "type": comment_type,
+            }
+        )
     return comments
 
 
@@ -1928,13 +2191,15 @@ def extract_comments(ast: dict) -> list:
     """Extract CommentInfo list from AST JSON comments array."""
     comments = []
     for c in ast.get("comments", []):
-        comments.append(CommentInfo(
-            text=c.get("text", ""),
-            line=c.get("line", 0),
-            end_line=c.get("end_line", 0),
-            column=c.get("column", 0),
-            comment_type=c.get("type", "line"),
-        ))
+        comments.append(
+            CommentInfo(
+                text=c.get("text", ""),
+                line=c.get("line", 0),
+                end_line=c.get("end_line", 0),
+                column=c.get("column", 0),
+                comment_type=c.get("type", "line"),
+            )
+        )
     return comments
 
 
@@ -1986,37 +2251,70 @@ def _map_comments_to_procedures(comments: list, procedures: list, source_file: s
 
 _PROCEDURE_TYPES = {"CreateFunction", "CreateProcedure", "CreatePackageBody"}
 _DML_TYPES = {"Select", "Insert", "InsertAll", "InsertFirst", "Update", "Delete", "Merge"}
-_AST_METADATA_KEYS = {"sql_text", "start_line", "start_col", "end_line", "end_col",
-                       "dynamic_sql_analysis", "transaction_analysis", "query_fingerprints"}
+_AST_METADATA_KEYS = {
+    "sql_text",
+    "start_line",
+    "start_col",
+    "end_line",
+    "end_col",
+    "dynamic_sql_analysis",
+    "transaction_analysis",
+    "query_fingerprints",
+}
 
 _DDL_PREFIXES = ("Create", "Alter", "Drop")
 _DDL_DISPLAY_MAP = {
-    "CreateTable": "CREATE TABLE", "CreateTableAs": "CREATE TABLE AS",
-    "CreateIndex": "CREATE INDEX", "CreateGlobalIndex": "CREATE GLOBAL INDEX",
-    "CreateSequence": "CREATE SEQUENCE", "CreateType": "CREATE TYPE",
-    "CreateView": "CREATE VIEW", "CreateMaterializedView": "CREATE MATERIALIZED VIEW",
-    "CreateTrigger": "CREATE TRIGGER", "CreateSchema": "CREATE SCHEMA",
-    "CreateDatabase": "CREATE DATABASE", "CreateTablespace": "CREATE TABLESPACE",
-    "CreateDomain": "CREATE DOMAIN", "CreateExtension": "CREATE EXTENSION",
-    "CreateRole": "CREATE ROLE", "CreateUser": "CREATE USER", "CreateGroup": "CREATE GROUP",
-    "CreateSynonym": "CREATE SYNONYM", "CreatePackage": "CREATE PACKAGE (spec)",
-    "CreateCast": "CREATE CAST", "CreateConversion": "CREATE CONVERSION",
-    "AlterTable": "ALTER TABLE", "AlterIndex": "ALTER INDEX",
-    "AlterSequence": "ALTER SEQUENCE", "AlterCompositeType": "ALTER TYPE",
-    "AlterView": "ALTER VIEW", "AlterDomain": "ALTER DOMAIN",
-    "AlterFunction": "ALTER FUNCTION", "AlterProcedure": "ALTER PROCEDURE",
-    "AlterTrigger": "ALTER TRIGGER", "AlterSchema": "ALTER SCHEMA",
+    "CreateTable": "CREATE TABLE",
+    "CreateTableAs": "CREATE TABLE AS",
+    "CreateIndex": "CREATE INDEX",
+    "CreateGlobalIndex": "CREATE GLOBAL INDEX",
+    "CreateSequence": "CREATE SEQUENCE",
+    "CreateType": "CREATE TYPE",
+    "CreateView": "CREATE VIEW",
+    "CreateMaterializedView": "CREATE MATERIALIZED VIEW",
+    "CreateTrigger": "CREATE TRIGGER",
+    "CreateSchema": "CREATE SCHEMA",
+    "CreateDatabase": "CREATE DATABASE",
+    "CreateTablespace": "CREATE TABLESPACE",
+    "CreateDomain": "CREATE DOMAIN",
+    "CreateExtension": "CREATE EXTENSION",
+    "CreateRole": "CREATE ROLE",
+    "CreateUser": "CREATE USER",
+    "CreateGroup": "CREATE GROUP",
+    "CreateSynonym": "CREATE SYNONYM",
+    "CreatePackage": "CREATE PACKAGE (spec)",
+    "CreateCast": "CREATE CAST",
+    "CreateConversion": "CREATE CONVERSION",
+    "AlterTable": "ALTER TABLE",
+    "AlterIndex": "ALTER INDEX",
+    "AlterSequence": "ALTER SEQUENCE",
+    "AlterCompositeType": "ALTER TYPE",
+    "AlterView": "ALTER VIEW",
+    "AlterDomain": "ALTER DOMAIN",
+    "AlterFunction": "ALTER FUNCTION",
+    "AlterProcedure": "ALTER PROCEDURE",
+    "AlterTrigger": "ALTER TRIGGER",
+    "AlterSchema": "ALTER SCHEMA",
     "AlterDatabase": "ALTER DATABASE",
-    "Drop": "DROP", "Truncate": "TRUNCATE TABLE",
-    "Grant": "GRANT", "Revoke": "REVOKE",
-    "GrantRole": "GRANT ROLE", "RevokeRole": "REVOKE ROLE",
+    "Drop": "DROP",
+    "Truncate": "TRUNCATE TABLE",
+    "Grant": "GRANT",
+    "Revoke": "REVOKE",
+    "GrantRole": "GRANT ROLE",
+    "RevokeRole": "REVOKE ROLE",
     "Comment": "COMMENT ON",
 }
 
 
 def _is_ddl_type(stmt_type: str) -> bool:
-    return (stmt_type.startswith(_DDL_PREFIXES)
-            or stmt_type in ("Truncate", "Grant", "Revoke", "GrantRole", "RevokeRole", "Comment"))
+    return stmt_type.startswith(_DDL_PREFIXES) or stmt_type in (
+        "Truncate",
+        "Grant",
+        "Revoke",
+        "GrantRole",
+        "RevokeRole",
+        "Comment",
+    )
 
 
 def extract_non_procedure_statements(ast: dict, source_file: str = "") -> list:
@@ -2033,41 +2331,47 @@ def extract_non_procedure_statements(ast: dict, source_file: str = "") -> list:
                 name = _extract_ddl_name(stmt_data, stmt_type)
                 category = _DDL_DISPLAY_MAP.get(stmt_type, stmt_type)
                 detail = _build_ddl_detail(stmt_data, stmt_type)
-                skipped.append(SkippedItem(
-                    sql_file=source_file,
-                    statement_type="DDL",
-                    category=category,
-                    name=name,
-                    detail=detail,
-                    line_start=line_start,
-                    line_end=line_end,
-                ))
+                skipped.append(
+                    SkippedItem(
+                        sql_file=source_file,
+                        statement_type="DDL",
+                        category=category,
+                        name=name,
+                        detail=detail,
+                        line_start=line_start,
+                        line_end=line_end,
+                    )
+                )
             elif stmt_type in _DML_TYPES:
                 name = f"{stmt_type} ({_extract_dml_target(stmt_data, stmt_type)})"
-                skipped.append(SkippedItem(
-                    sql_file=source_file,
-                    statement_type="DML",
-                    category=stmt_type,
-                    name=name,
-                    detail="独立 DML 语句，未组织到存储过程中",
-                    line_start=line_start,
-                    line_end=line_end,
-                ))
+                skipped.append(
+                    SkippedItem(
+                        sql_file=source_file,
+                        statement_type="DML",
+                        category=stmt_type,
+                        name=name,
+                        detail="独立 DML 语句，未组织到存储过程中",
+                        line_start=line_start,
+                        line_end=line_end,
+                    )
+                )
             else:
                 display = _DDL_DISPLAY_MAP.get(stmt_type, stmt_type)
                 sql_text = stmt_wrapper.get("sql_text", "")
                 detail = f"{display} — 不涉及存储过程转换"
                 if sql_text:
                     detail += f"\nSQL: {sql_text[:200]}"
-                skipped.append(SkippedItem(
-                    sql_file=source_file,
-                    statement_type="OTHER",
-                    category=display,
-                    name=display,
-                    detail=detail,
-                    line_start=line_start,
-                    line_end=line_end,
-                ))
+                skipped.append(
+                    SkippedItem(
+                        sql_file=source_file,
+                        statement_type="OTHER",
+                        category=display,
+                        name=display,
+                        detail=detail,
+                        line_start=line_start,
+                        line_end=line_end,
+                    )
+                )
     return skipped
 
 
@@ -2084,7 +2388,7 @@ def _extract_ddl_name(stmt_data: dict, stmt_type: str) -> str:
     if isinstance(names, list) and names:
         first = names[0]
         if isinstance(first, list) and first:
-            return first[-1]
+            return cast(str, first[-1])
         return str(first)
     return stmt_type
 
@@ -2117,7 +2421,7 @@ def _extract_dml_target(stmt_data: dict, stmt_type: str) -> str:
         return table[-1] if isinstance(table, list) and table else "unknown"
     if stmt_type == "Update":
         tables = stmt_data.get("tables", [])
-        for t in (tables if isinstance(tables, list) else []):
+        for t in tables if isinstance(tables, list) else []:
             if isinstance(t, dict):
                 for k, v in t.items():
                     if k == "Table":
@@ -2128,7 +2432,7 @@ def _extract_dml_target(stmt_data: dict, stmt_type: str) -> str:
         return _extract_dml_target_simple(stmt_data)
     if stmt_type == "Select":
         from_clause = stmt_data.get("from", [])
-        for item in (from_clause if isinstance(from_clause, list) else []):
+        for item in from_clause if isinstance(from_clause, list) else []:
             if isinstance(item, dict):
                 for k, v in item.items():
                     if k == "Table":
@@ -2143,7 +2447,7 @@ def _extract_dml_target_simple(stmt_data: dict) -> str:
         if val:
             if isinstance(val, list):
                 if val and isinstance(val[0], str):
-                    return val[-1]
+                    return cast(str, val[-1])
                 for item in val:
                     if isinstance(item, dict):
                         for k, v in item.items():
@@ -2155,12 +2459,13 @@ def _extract_dml_target_simple(stmt_data: dict) -> str:
 
 # ── DML / Logic Analyzer ──────────────────────────────────────
 
+
 def _promote_out_local_vars(proc: ProcedureInfo, all_packages: dict):
     """Promote local var types to AtomicReference when used as OUT arg holders."""
     if not proc.body:
         return
     local_var_names = {vn.lower(): vn for vn in proc.local_vars}
-    promotions = {}
+    promotions: dict[str, str] = {}
     body_stmts = proc.body.get("body", [])
     _walk_stmts_for_out_promotions(body_stmts, proc, all_packages, local_var_names, promotions)
     exc = proc.body.get("exception_block")
@@ -2177,19 +2482,26 @@ def _promote_out_local_vars(proc: ProcedureInfo, all_packages: dict):
             proc.local_vars[orig_name] = new_type
             # Keep local_var_defaults — codegen wraps it into AtomicReference constructor
             var_java = snake_to_camel(orig_name)
-            m_ar = re.match(r'^AtomicReference<(.+)>$', new_type)
-            _string_inner = bool(m_ar and 'String' in m_ar.group(1))
+            m_ar = re.match(r"^AtomicReference<(.+)>$", new_type)
+            _string_inner = bool(m_ar and "String" in m_ar.group(1))
             patched = []
             for line in proc.java_logic_lines:
                 if m_ar:
-                    m_assign = re.match(rf'^(\s*){re.escape(var_java)} = (.*);\s*$', line)
-                    if m_assign and not re.match(r'^new (java\.util\.concurrent\.atomic\.)?AtomicReference<>', m_assign.group(2).strip()):
+                    m_assign = re.match(rf"^(\s*){re.escape(var_java)} = (.*);\s*$", line)
+                    if m_assign and not re.match(
+                        r"^new (java\.util\.concurrent\.atomic\.)?AtomicReference<>", m_assign.group(2).strip()
+                    ):
                         rhs = m_assign.group(2)
-                        if 'String' in m_ar.group(1) and not rhs.strip().startswith('"') and rhs.strip() != 'null':
-                            rhs = f'String.valueOf({rhs})'
-                        line = f'{m_assign.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<>({rhs});'
-                patched.append(_patch_promoted_var_reads(line, var_java, string_inner=_string_inner,
-                                                          proc=proc, all_packages=all_packages))
+                        if "String" in m_ar.group(1) and not rhs.strip().startswith('"') and rhs.strip() != "null":
+                            rhs = f"String.valueOf({rhs})"
+                        line = (
+                            f"{m_assign.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<>({rhs});"
+                        )
+                patched.append(
+                    _patch_promoted_var_reads(
+                        line, var_java, string_inner=_string_inner, proc=proc, all_packages=all_packages
+                    )
+                )
             proc.java_logic_lines = patched
 
 
@@ -2258,10 +2570,12 @@ def _strip_get_for_cross_pkg_out_args(line: str, var_java: str, proc: ProcedureI
         # M3 (#114 review): ambiguous overload — no exact arity match. Do not
         # silently pick candidates[0] (may strip the wrong arg positions);
         # keep the caller's .get() form and record a degradation note.
-        _record_todo("cross-pkg OUT arg strip skipped",
-                     proc,
-                     f"{svc_var}.{method} has no exact arity match for {len(args)} args "
-                     f"(candidates: {[len(p.parameters) for p in candidates]})")
+        _record_todo(
+            "cross-pkg OUT arg strip skipped",
+            proc,
+            f"{svc_var}.{method} has no exact arity match for {len(args)} args "
+            f"(candidates: {[len(p.parameters) for p in candidates]})",
+        )
         return line
     target = exact[0]
     var_get = f"{var_java}.get()"
@@ -2276,32 +2590,38 @@ def _strip_get_for_cross_pkg_out_args(line: str, var_java: str, proc: ProcedureI
     # Splice the reconstructed args back into the original line so leading
     # indentation and any prefix (e.g. `return `, `vX = `) are preserved.
     new_args_str = ", ".join(args)
-    return line[: m.start(3)] + new_args_str + line[m.end(3):]
+    return line[: m.start(3)] + new_args_str + line[m.end(3) :]
 
 
-def _patch_promoted_var_reads(line: str, var_java: str, string_inner: bool = False,
-                              proc: ProcedureInfo = None, all_packages: dict = None) -> str:
+def _patch_promoted_var_reads(
+    line: str,
+    var_java: str,
+    string_inner: bool = False,
+    proc: Optional[ProcedureInfo] = None,
+    all_packages: Optional[dict] = None,
+) -> str:
     import re
+
     # Remove .get() from promoted vars passed as OUT args to method/mapper calls
-    if f'{var_java}.get()' in line and (re.search(rf'\bthis\.\w+\(', line) or 'Mapper.' in line):
-        line = line.replace(f'{var_java}.get()', var_java)
+    if f"{var_java}.get()" in line and (re.search(r"\bthis\.\w+\(", line) or "Mapper." in line):
+        line = line.replace(f"{var_java}.get()", var_java)
     patterns_to_skip = [
-        rf'\b{re.escape(var_java)}\s*=',
-        rf'\b{re.escape(var_java)}\.set\s*\(',
-        rf'this\.\w+\(.*\b{re.escape(var_java)}\b',
-        rf'\w+Mapper\.\w+\(.*\b{re.escape(var_java)}\b',
+        rf"\b{re.escape(var_java)}\s*=",
+        rf"\b{re.escape(var_java)}\.set\s*\(",
+        rf"this\.\w+\(.*\b{re.escape(var_java)}\b",
+        rf"\w+Mapper\.\w+\(.*\b{re.escape(var_java)}\b",
     ]
     for pat in patterns_to_skip:
         if re.search(pat, line):
             return line
     line = re.sub(
-        rf'(?<!\.)(?<!\w){re.escape(var_java)}\b(?!\s*=)(?!\s*\.set)(?!\s*\()',
-        f'{var_java}.get()',
+        rf"(?<!\.)(?<!\w){re.escape(var_java)}\b(?!\s*=)(?!\s*\.set)(?!\s*\()",
+        f"{var_java}.get()",
         line,
     )
     # Null-guard dereferenced promoted refs in numeric coercion: a cross-service
     # OUT ref left unset (e.g. by a mock) would NPE on .longValue()/.intValue().
-    _vget = f'{var_java}.get()'
+    _vget = f"{var_java}.get()"
     for _accessor in ("longValue", "intValue", "doubleValue"):
         _guarded = f"({_vget} == null ? null : ((Number) ({_vget})).{_accessor}())"
         line = line.replace(f"((Number) ({_vget})).{_accessor}()", _guarded)
@@ -2309,13 +2629,15 @@ def _patch_promoted_var_reads(line: str, var_java: str, string_inner: bool = Fal
     if proc is not None and all_packages:
         line = _strip_get_for_cross_pkg_out_args(line, var_java, proc, all_packages)
     if string_inner:
-        _vget = f'{var_java}.get()'
-        line = line.replace(f'((Number) ({_vget})).doubleValue()', f'Double.parseDouble(String.valueOf({_vget}))')
-        line = line.replace(f'((Number) {_vget}).doubleValue()', f'Double.parseDouble(String.valueOf({_vget}))')
-        line = line.replace(f'((Number) ({_vget}))', f'Double.parseDouble(String.valueOf({_vget}))')
-        line = line.replace(f'((Number) {_vget})', f'Double.parseDouble(String.valueOf({_vget}))')
-        line = re.sub(rf'(?<![\w.)]){re.escape(_vget)}\s*([*/+\-])', rf'Double.parseDouble(String.valueOf({_vget})) \1', line)
-        line = re.sub(rf'([*/+\-])\s*{re.escape(_vget)}', rf'\1 Double.parseDouble(String.valueOf({_vget}))', line)
+        _vget = f"{var_java}.get()"
+        line = line.replace(f"((Number) ({_vget})).doubleValue()", f"Double.parseDouble(String.valueOf({_vget}))")
+        line = line.replace(f"((Number) {_vget}).doubleValue()", f"Double.parseDouble(String.valueOf({_vget}))")
+        line = line.replace(f"((Number) ({_vget}))", f"Double.parseDouble(String.valueOf({_vget}))")
+        line = line.replace(f"((Number) {_vget})", f"Double.parseDouble(String.valueOf({_vget}))")
+        line = re.sub(
+            rf"(?<![\w.)]){re.escape(_vget)}\s*([*/+\-])", rf"Double.parseDouble(String.valueOf({_vget})) \1", line
+        )
+        line = re.sub(rf"([*/+\-])\s*{re.escape(_vget)}", rf"\1 Double.parseDouble(String.valueOf({_vget}))", line)
     return line
 
 
@@ -2345,7 +2667,10 @@ def _walk_stmts_for_out_promotions(stmts, proc, all_packages, local_var_names, p
                         if qk in ("FunctionCall", "ProcedureCall"):
                             _check_call_out_promotions(
                                 {"name": qv.get("name", []), "arguments": qv.get("arguments", [])},
-                                proc, all_packages, local_var_names, promotions,
+                                proc,
+                                all_packages,
+                                local_var_names,
+                                promotions,
                             )
             elif stmt_type == "Assignment":
                 _expr = stmt_data.get("expression", {}) if isinstance(stmt_data, dict) else {}
@@ -2354,7 +2679,10 @@ def _walk_stmts_for_out_promotions(stmts, proc, all_packages, local_var_names, p
                     _fc_args = _fc.get("args") or _fc.get("arguments") or []
                     _check_call_out_promotions(
                         {"name": _fc.get("name", []), "arguments": _fc_args},
-                        proc, all_packages, local_var_names, promotions,
+                        proc,
+                        all_packages,
+                        local_var_names,
+                        promotions,
                     )
             _recurse_stmt_for_out_promotions(stmt_data, proc, all_packages, local_var_names, promotions)
 
@@ -2362,8 +2690,17 @@ def _walk_stmts_for_out_promotions(stmts, proc, all_packages, local_var_names, p
 def _recurse_stmt_for_out_promotions(data, proc, all_packages, local_var_names, promotions):
     if not isinstance(data, dict):
         return
-    for key in ("then_stmts", "else_stmts", "then_block", "else_block",
-                "body", "loop_body", "block", "stmts", "statements"):
+    for key in (
+        "then_stmts",
+        "else_stmts",
+        "then_block",
+        "else_block",
+        "body",
+        "loop_body",
+        "block",
+        "stmts",
+        "statements",
+    ):
         child = data.get(key)
         if isinstance(child, dict):
             child_stmts = child.get("body", []) or child.get("stmts", [])
@@ -2428,7 +2765,7 @@ def _check_call_out_promotions(call_data, proc, all_packages, local_var_names, p
         func = func_name_parts[0]
     else:
         if len(func_name_parts) == 1:
-            for _apk in (all_packages or {}):
+            for _apk in all_packages or {}:
                 _tp = _find_target_proc(_apk, func_name_parts[0], all_packages, arg_count=len(args))
                 if _tp:
                     for i, a in enumerate(args):
@@ -2440,7 +2777,7 @@ def _check_call_out_promotions(call_data, proc, all_packages, local_var_names, p
         return
     matched_pkg = _find_registered_pkg(pkg, all_packages)
     if not matched_pkg:
-        for _apk in (all_packages or {}):
+        for _apk in all_packages or {}:
             target_proc_info = _find_target_proc(_apk, func, all_packages, arg_count=len(args))
             if target_proc_info:
                 for i, a in enumerate(args):
@@ -2455,7 +2792,7 @@ def _check_call_out_promotions(call_data, proc, all_packages, local_var_names, p
     if not target_proc_info:
         # Function may live in ANOTHER package (resolved via cross-package
         # fallback at call generation) — promote OUT vars from the real owner.
-        for _apk in (all_packages or {}):
+        for _apk in all_packages or {}:
             if _apk == matched_pkg:
                 continue
             target_proc_info = _find_target_proc(_apk, func, all_packages, arg_count=len(args))
@@ -2472,13 +2809,12 @@ def _check_call_out_promotions(call_data, proc, all_packages, local_var_names, p
 
 
 def _remove_dynamic_sql_build_lines(proc: ProcedureInfo, stmt_cp_map: dict):
-    build_map = getattr(proc, '_dynamic_sql_build_stmts', {})
-    resolved_vars = set()
+    build_map = getattr(proc, "_dynamic_sql_build_stmts", {})
+    resolved_vars: set[str] = set()
     for dml in proc.dml_statements:
         if dml.dynamic_conditions:
             resolved_vars.update(
-                vn for vn in set(build_map.values())
-                if vn in proc.sql_concat_chain or vn in proc.var_assignments
+                vn for vn in set(build_map.values()) if vn in proc.sql_concat_chain or vn in proc.var_assignments
             )
     if not resolved_vars:
         return
@@ -2488,10 +2824,7 @@ def _remove_dynamic_sql_build_lines(proc: ProcedureInfo, stmt_cp_map: dict):
         if var_name not in resolved_vars or stmt_idx not in stmt_cp_map:
             continue
         start, end = stmt_cp_map[stmt_idx]
-        has_mapper_call = any(
-            "mapper." in proc.java_logic_lines[idx]
-            for idx in range(start, end)
-        )
+        has_mapper_call = any("mapper." in proc.java_logic_lines[idx] for idx in range(start, end))
         if has_mapper_call:
             for idx in range(start, end):
                 line = proc.java_logic_lines[idx].strip()
@@ -2515,10 +2848,7 @@ def _remove_dynamic_sql_build_lines(proc: ProcedureInfo, stmt_cp_map: dict):
                 lines_to_remove.add(idx)
     lines_to_remove -= lines_to_keep
     if lines_to_remove:
-        proc.java_logic_lines = [
-            line for i, line in enumerate(proc.java_logic_lines)
-            if i not in lines_to_remove
-        ]
+        proc.java_logic_lines = [line for i, line in enumerate(proc.java_logic_lines) if i not in lines_to_remove]
 
 
 def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
@@ -2571,11 +2901,11 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
                     _rt = raw_type["PercentRowType"]
                     _rt_table = _rt if isinstance(_rt, str) else (_rt.get("table") or _rt.get("type_name") or "")
                 elif isinstance(raw_type, str) and "%rowtype" in raw_type.lower():
-                    _m = re.match(r'^([\w.]+)\s*%rowtype', raw_type, re.IGNORECASE)
+                    _m = re.match(r"^([\w.]+)\s*%rowtype", raw_type, re.IGNORECASE)
                     if _m:
                         _rt_table = _m.group(1)
                 if _rt_table:
-                    _rt_tbl_lower = str(_rt_table).split('.')[-1].lower()
+                    _rt_tbl_lower = str(_rt_table).split(".")[-1].lower()
                     _field_types = {}
                     for (_tbl, _col), _sql_type in list(TYPE_OVERRIDES.items()):
                         if _tbl.lower() == _rt_tbl_lower:
@@ -2640,8 +2970,11 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
 
     if _DML_CTR_TRACKER is None:
         _DML_CTR_TRACKER = _ctr_id
-    elif _DML_CTR_TRACKER != _ctr_id:
-        _log(f"[DMLLOST] {proc.proc_name}: _DML_COUNTER_BY_PKG was REPLACED! old={_DML_CTR_TRACKER} new={_ctr_id}", to_stdout=False)
+    elif _ctr_id != _DML_CTR_TRACKER:
+        _log(
+            f"[DMLLOST] {proc.proc_name}: _DML_COUNTER_BY_PKG was REPLACED! old={_DML_CTR_TRACKER} new={_ctr_id}",
+            to_stdout=False,
+        )
         _DML_CTR_TRACKER = _ctr_id
     if _has_key and _ctr_val_id == id(None):
         _log(f"[DMLLOST] {proc.proc_name}: key {pkg_key!r} value became None!", to_stdout=False)
@@ -2651,7 +2984,7 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
     stmt_checkpoints = []  # [(java_line_start_idx, java_line_end_idx), ...]
     _stmt_cp_map = {}
     for i, stmt in enumerate(_iter_statements(body_stmts)):
-        proc._current_stmt_idx = i
+        proc._current_stmt_idx = i  # type: ignore[attr-defined]  # mypy: runtime-only analysis state
         pre_idx = len(proc.java_logic_lines)
         try:
             _process_statement(stmt, proc, all_packages, dml_counter)
@@ -2667,7 +3000,7 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
             # references one turns the method into a stub rather than emitting
             # Java that fails with "cannot find symbol".
             for _dl in _dropped:
-                _dm = re.match(r'\s*(?:final\s+)?[\w.<>\[\], ]+?\s+(\w+)\s*=', _dl)
+                _dm = re.match(r"\s*(?:final\s+)?[\w.<>\[\], ]+?\s+(\w+)\s*=", _dl)
                 if _dm:
                     proc._dropped_decls.add(_dm.group(1))
             stmt_preview = str(stmt)[:120] if stmt else "<empty>"
@@ -2690,7 +3023,7 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
         _inject_inline_comments(proc, stmt_checkpoints)
 
     # Post-process GOTO patterns: if any GOTO was encountered, analyze and rewrite
-    if getattr(proc, '_has_goto', False):
+    if getattr(proc, "_has_goto", False):
         _analyze_and_rewrite_goto(proc, all_packages, dml_counter)
 
     # Issue #63: reconcile FUNCTION return type when body only returns Strings
@@ -2700,8 +3033,7 @@ def analyze_procedure(proc: ProcedureInfo, all_packages: dict):
         if fixed == "String" and declared != "String":
             proc.return_type = "varchar2"
             _UDF_RETURN_TYPES[(proc.proc_name.lower(), len(proc.parameters))] = "String"
-            _record_todo("RETURN_TYPE_RECONCILE", proc,
-                         f"return 类型由 {declared} 纠正为 String（body 仅返回 String）")
+            _record_todo("RETURN_TYPE_RECONCILE", proc, f"return 类型由 {declared} 纠正为 String（body 仅返回 String）")
 
 
 def _inject_inline_comments(proc: ProcedureInfo, checkpoints: list):
@@ -2729,9 +3061,7 @@ def _inject_inline_comments(proc: ProcedureInfo, checkpoints: list):
     insertions = []
     for group in groups:
         last_comment_line = max(c.end_line for c in group)
-        cp_idx = _map_comment_to_checkpoint(
-            last_comment_line, stmt_lines, checkpoints, proc
-        )
+        cp_idx = _map_comment_to_checkpoint(last_comment_line, stmt_lines, checkpoints, proc)
         java_lines = [_format_comment_for_java(c) for c in group]
         java_lines = [l for l in java_lines if l]
         if java_lines:
@@ -2753,7 +3083,7 @@ def _find_body_stmt_lines(proc: ProcedureInfo) -> list:
     if not path or not os.path.exists(path):
         return []
     try:
-        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+        with open(path, encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
     except OSError:
         return []
@@ -2766,11 +3096,11 @@ def _find_body_stmt_lines(proc: ProcedureInfo) -> list:
     depth = 0
     for i in range(start, min(end, len(lines))):
         stripped = lines[i].strip().upper()
-        if stripped == 'BEGIN':
+        if stripped == "BEGIN":
             if body_start is None:
                 body_start = i + 1
             depth += 1
-        elif stripped.startswith('END') and stripped.rstrip(';').strip() == 'END':
+        elif stripped.startswith("END") and stripped.rstrip(";").strip() == "END":
             depth -= 1
             if depth == 0:
                 body_end = i + 1
@@ -2785,20 +3115,22 @@ def _find_body_stmt_lines(proc: ProcedureInfo) -> list:
         stripped = lines[i].strip()
         up = stripped.upper()
 
-        if re.match(r'END\s+IF\b', up) or re.match(r'END\s+LOOP\b', up):
+        if re.match(r"END\s+IF\b", up) or re.match(r"END\s+LOOP\b", up):
             blk_depth = max(0, blk_depth - 1)
             continue
-        if up in ('END;', 'END'):
+        if up in ("END;", "END"):
             if blk_depth > 0:
                 blk_depth -= 1
             continue
 
         is_blk = False
-        if re.match(r'IF\s+', up) and 'THEN' in up:
-            is_blk = True
-        elif (re.match(r'FOR\s+', up) or re.match(r'WHILE\s+', up)) and 'LOOP' in up:
-            is_blk = True
-        elif up == 'LOOP':
+        if (
+            re.match(r"IF\s+", up)
+            and "THEN" in up
+            or (re.match(r"FOR\s+", up) or re.match(r"WHILE\s+", up))
+            and "LOOP" in up
+            or up == "LOOP"
+        ):
             is_blk = True
 
         if is_blk:
@@ -2817,7 +3149,7 @@ def _find_body_stmt_lines(proc: ProcedureInfo) -> list:
         while col < len(lines[i]):
             ch = lines[i][col]
             if in_bc:
-                if ch == '*' and col + 1 < len(lines[i]) and lines[i][col + 1] == '/':
+                if ch == "*" and col + 1 < len(lines[i]) and lines[i][col + 1] == "/":
                     in_bc = False
                     col += 1
             elif in_str:
@@ -2825,12 +3157,12 @@ def _find_body_stmt_lines(proc: ProcedureInfo) -> list:
                     in_str = False
             elif ch == "'":
                 in_str = True
-            elif ch == '-' and col + 1 < len(lines[i]) and lines[i][col + 1] == '-':
+            elif ch == "-" and col + 1 < len(lines[i]) and lines[i][col + 1] == "-":
                 break
-            elif ch == '/' and col + 1 < len(lines[i]) and lines[i][col + 1] == '*':
+            elif ch == "/" and col + 1 < len(lines[i]) and lines[i][col + 1] == "*":
                 in_bc = True
                 col += 1
-            elif ch == ';':
+            elif ch == ";":
                 found = True
             col += 1
         if found:
@@ -2843,7 +3175,7 @@ def _get_sql_file_lines(source_path: str) -> list:
     if source_path in _SQL_FILE_CACHE:
         return _SQL_FILE_CACHE[source_path]
     try:
-        with open(source_path, 'r', encoding=_SOURCE_ENCODING, errors='replace') as f:
+        with open(source_path, encoding=_SOURCE_ENCODING, errors="replace") as f:
             lines = f.readlines()
     except OSError:
         lines = []
@@ -2860,7 +3192,7 @@ def _format_debug_comment(source_path: str, line_number: int, max_len: int = 100
     raw = lines[line_number - 1].strip()
     fname = os.path.basename(source_path)
     if len(raw) > max_len:
-        raw = raw[:max_len - 3] + "..."
+        raw = raw[: max_len - 3] + "..."
     return f"// [DEBUG] {fname}:{line_number} → {raw}"
 
 
@@ -2869,14 +3201,14 @@ def _stmt_span_line(stmt_data: dict) -> int:
     if span and isinstance(span, dict):
         start = span.get("start")
         if start and isinstance(start, dict):
-            return start.get("line", 0)
+            return cast(int, start.get("line", 0))
     return 0
 
 
 def _map_stmt_idx_to_sql_line(stmt_idx: int, proc: ProcedureInfo) -> int:
     stmt_lines = _find_body_stmt_lines(proc)
     if stmt_lines and stmt_idx < len(stmt_lines):
-        return stmt_lines[stmt_idx]
+        return cast(int, stmt_lines[stmt_idx])
     return 0
 
 
@@ -2890,7 +3222,7 @@ def _map_stmt_to_sql_line(stmt_data: dict, stmt_idx: int, proc: ProcedureInfo) -
 
 
 def _add_dml(proc: ProcedureInfo, dml: DmlStatement) -> None:
-    dml.source_line = getattr(proc, '_current_source_line', 0)
+    dml.source_line = getattr(proc, "_current_source_line", 0)
     proc.dml_statements.append(dml)
 
 
@@ -2905,21 +3237,21 @@ def _resolve_dml_source_line(proc: ProcedureInfo, dml: DmlStatement) -> int:
     sql = dml.sql_text.strip()
     if not sql:
         return dml.source_line or proc.source_start_line
-    _m = re.match(r'(INSERT\s+INTO\s+\w+)', sql, re.IGNORECASE)
+    _m = re.match(r"(INSERT\s+INTO\s+\w+)", sql, re.IGNORECASE)
     if not _m:
-        _m = re.match(r'(UPDATE\s+\w+)', sql, re.IGNORECASE)
+        _m = re.match(r"(UPDATE\s+\w+)", sql, re.IGNORECASE)
     if not _m:
-        _m = re.match(r'(DELETE\s+FROM\s+\w+)', sql, re.IGNORECASE)
+        _m = re.match(r"(DELETE\s+FROM\s+\w+)", sql, re.IGNORECASE)
     if not _m:
-        _m = re.match(r'(SELECT\b)', sql, re.IGNORECASE)
+        _m = re.match(r"(SELECT\b)", sql, re.IGNORECASE)
     if not _m:
-        _m = re.match(r'(MERGE\s+INTO\s+\w+)', sql, re.IGNORECASE)
+        _m = re.match(r"(MERGE\s+INTO\s+\w+)", sql, re.IGNORECASE)
     if not _m:
-        _m = re.match(r'(WITH\b)', sql, re.IGNORECASE)
+        _m = re.match(r"(WITH\b)", sql, re.IGNORECASE)
     if not _m:
-        _m = re.match(r'(TRUNCATE\s+TABLE\s+\w+)', sql, re.IGNORECASE)
+        _m = re.match(r"(TRUNCATE\s+TABLE\s+\w+)", sql, re.IGNORECASE)
     if not _m:
-        _m = re.match(r'(TRUNCATE\b)', sql, re.IGNORECASE)
+        _m = re.match(r"(TRUNCATE\b)", sql, re.IGNORECASE)
     if not _m:
         return dml.source_line or proc.source_start_line
     search_tok = _m.group(1).upper().split()
@@ -2942,15 +3274,14 @@ def _find_var_decl_line(proc: ProcedureInfo, var_name: str) -> int:
     target = var_name.lower().strip('"')
     for i in range(start, min(end, len(lines))):
         stripped = lines[i].strip()
-        if re.match(r'BEGIN\b', stripped, re.IGNORECASE):
+        if re.match(r"BEGIN\b", stripped, re.IGNORECASE):
             break
-        if target in stripped.lower() and re.search(r'\b' + re.escape(target) + r'\b', stripped, re.IGNORECASE):
+        if target in stripped.lower() and re.search(r"\b" + re.escape(target) + r"\b", stripped, re.IGNORECASE):
             return i + 1
     return 0
 
 
-def _map_comment_to_checkpoint(comment_line: int, stmt_lines: list,
-                               checkpoints: list, proc: ProcedureInfo) -> int:
+def _map_comment_to_checkpoint(comment_line: int, stmt_lines: list, checkpoints: list, proc: ProcedureInfo) -> int:
     """Map a comment's SQL line to the index of the checkpoint it should precede."""
     n_cp = len(checkpoints)
     if n_cp == 0:
@@ -3009,13 +3340,13 @@ def _process_get_diagnostics(stmt_data: dict, proc: ProcedureInfo):
 def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_counter: dict):
     for stmt_type, stmt_data in stmt.items():
         if isinstance(stmt_data, dict):
-            stmt_idx = getattr(proc, '_current_stmt_idx', 0)
-            proc._current_source_line = _map_stmt_to_sql_line(stmt_data, stmt_idx, proc)
+            stmt_idx = getattr(proc, "_current_stmt_idx", 0)
+            proc._current_source_line = _map_stmt_to_sql_line(stmt_data, stmt_idx, proc)  # type: ignore[attr-defined]  # mypy: runtime-only source tracking
         else:
-            proc._current_source_line = 0
+            proc._current_source_line = 0  # type: ignore[attr-defined]  # mypy: runtime-only source tracking
         if DEBUG_MODE and stmt_type not in ("Null",) and isinstance(stmt_data, dict):
             src_path = proc._source_path or proc.source_file
-            sql_line = proc._current_source_line
+            sql_line = proc._current_source_line  # type: ignore[attr-defined]  # mypy: set immediately above
             if sql_line and src_path:
                 dbg = _format_debug_comment(src_path, sql_line)
                 if dbg:
@@ -3051,7 +3382,7 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
         elif stmt_type == "Execute":
             _process_execute(stmt_data, proc, all_packages, dml_counter)
         elif stmt_type == "Block":
-            for decl in (stmt_data.get("declarations") or []):
+            for decl in stmt_data.get("declarations") or []:
                 for decl_type, decl_data in decl.items():
                     if decl_type == "Variable":
                         var_name = decl_data.get("name", "")
@@ -3082,7 +3413,9 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
                                     if default_java in ('"{}"', "'{}'"):
                                         default_java = "new java.util.ArrayList<>()"
                                     elif not default_java.startswith("java.util.Arrays.asList("):
-                                        default_java = f"new java.util.ArrayList<>(java.util.Arrays.asList({default_java}))"
+                                        default_java = (
+                                            f"new java.util.ArrayList<>(java.util.Arrays.asList({default_java}))"
+                                        )
                                     else:
                                         default_java = f"new java.util.ArrayList<>({default_java})"
                                 default_inferred = _infer_expr_type(default_ast, proc)
@@ -3132,7 +3465,9 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
                     for h in handlers_block:
                         conds = h.get("conditions", [])
                         all_conditions.append(conds[0] if conds else "EXCEPTION")
-                    proc.java_logic_lines.append(f"}} catch (Exception {_next_catch_var(proc)}) {{ // {'; '.join(all_conditions)}")
+                    proc.java_logic_lines.append(
+                        f"}} catch (Exception {_next_catch_var(proc)}) {{ // {'; '.join(all_conditions)}"
+                    )
                 for handler in handlers_block:
                     conditions = handler.get("conditions", [])
                     cond_name = conditions[0] if conditions else "EXCEPTION"
@@ -3153,9 +3488,13 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
                 proc.java_logic_lines.append("// COMMIT — auto-committed by Spring @Transactional boundary")
         elif stmt_type == "Rollback":
             if proc.is_autonomous:
-                proc.java_logic_lines.append("// ROLLBACK — auto-rolled-back by @Transactional(propagation = REQUIRES_NEW) on exception")
+                proc.java_logic_lines.append(
+                    "// ROLLBACK — auto-rolled-back by @Transactional(propagation = REQUIRES_NEW) on exception"
+                )
             else:
-                proc.java_logic_lines.append("try { TransactionAspectSupport.currentTransactionStatus().setRollbackOnly(); } catch (NoTransactionException e) { /* no active transaction */ }")
+                proc.java_logic_lines.append(
+                    "try { TransactionAspectSupport.currentTransactionStatus().setRollbackOnly(); } catch (NoTransactionException e) { /* no active transaction */ }"
+                )
                 proc.imports.add("import org.springframework.transaction.NoTransactionException;")
                 proc.imports.add("import org.springframework.transaction.interceptor.TransactionAspectSupport;")
         elif stmt_type == "ProcedureCall":
@@ -3164,19 +3503,30 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
             sql = stmt_data
             if isinstance(sql, str):
                 # Try to parse inline variable declarations like "v_cnt number := 0"
-                _m = re.match(r'^\s*(\w+)\s+(number|numeric|integer|int|bigint|varchar2?|text|decimal|float|double|boolean|date|timestamp)\s*:=\s*(.+)$', sql, re.IGNORECASE)
+                _m = re.match(
+                    r"^\s*(\w+)\s+(number|numeric|integer|int|bigint|varchar2?|text|decimal|float|double|boolean|date|timestamp)\s*:=\s*(.+)$",
+                    sql,
+                    re.IGNORECASE,
+                )
                 if _m:
                     _vn = _m.group(1)
                     _vt = sql_type_to_java(_m.group(2))
                     if _vn not in proc.local_vars:
                         proc.local_vars[_vn] = _vt
-                    _def_ast = _m.group(3).strip().rstrip(';')
+                    _def_ast = _m.group(3).strip().rstrip(";")
                     try:
-                        _def_java = _expr_to_java({"Literal": {"Integer": int(_def_ast)}} if _def_ast.isdigit() else {"Literal": {"Float": float(_def_ast)}} if re.match(r'^\d+\.\d+$', _def_ast) else {"Literal": {"String": _def_ast}}, proc)
+                        _def_java = _expr_to_java(
+                            {"Literal": {"Integer": int(_def_ast)}}
+                            if _def_ast.isdigit()
+                            else {"Literal": {"Float": float(_def_ast)}}
+                            if re.match(r"^\d+\.\d+$", _def_ast)
+                            else {"Literal": {"String": _def_ast}},
+                            proc,
+                        )
                         proc.local_var_defaults[_vn] = _def_java
                     except Exception:
                         proc.local_var_defaults.setdefault(_vn, _default_for_type(_vt))
-                elif re.match(r'^\s*TRUNCATE\s+', sql, re.IGNORECASE):
+                elif re.match(r"^\s*TRUNCATE\s+", sql, re.IGNORECASE):
                     _process_raw_dml(sql, proc, dml_counter)
                 elif "call " in sql.lower():
                     _process_call_text(sql, proc, all_packages)
@@ -3191,9 +3541,9 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
                 proc.java_logic_lines.append("continue;")
         elif stmt_type == "Goto":
             label = stmt_data.get("label", "unknown")
-            if hasattr(proc, '_sm_enum') and proc._sm_enum:
+            if hasattr(proc, "_sm_enum") and proc._sm_enum:
                 sm_enum = proc._sm_enum
-                sm_labels = getattr(proc, '_sm_labels', {})
+                sm_labels = getattr(proc, "_sm_labels", {})
                 if label in sm_labels:
                     goto_state = snake_to_pascal(label)
                     proc.java_logic_lines.append(f"currentState = {sm_enum}.{goto_state};")
@@ -3203,13 +3553,13 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
                     proc.java_logic_lines.append("break;")
             else:
                 proc.java_logic_lines.append(f"// GOTO {label} — will be rewritten by pattern analysis")
-                proc._has_goto = True
+                proc._has_goto = True  # type: ignore[attr-defined]  # mypy: runtime-only GOTO marker
         elif stmt_type == "Case":
             _process_case_stmt(stmt_data, proc, all_packages, dml_counter)
         elif stmt_type == "Savepoint":
             sp_name = stmt_data.get("name", "sp")
             sp_java = snake_to_camel(sp_name)
-            proc.java_logic_lines.append(f"Savepoint {sp_java} = connection.setSavepoint(\"{sp_name}\");")
+            proc.java_logic_lines.append(f'Savepoint {sp_java} = connection.setSavepoint("{sp_name}");')
             proc.imports.add("import java.sql.Savepoint;")
         elif stmt_type == "ReturnQuery":
             _process_return_query(stmt_data, proc, all_packages, dml_counter)
@@ -3226,7 +3576,8 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
 
 # ── GOTO Analysis and Pattern-Based Rewriting ─────────────────
 
-def _collect_goto_info(body_stmts, proc: ProcedureInfo = None):
+
+def _collect_goto_info(body_stmts, proc: Optional[ProcedureInfo] = None):
     """Walk the AST to find all GOTO statements and labels.
 
     The ogsql parser does not preserve <<label>> declarations as standalone
@@ -3268,52 +3619,68 @@ def _collect_goto_info(body_stmts, proc: ProcedureInfo = None):
                         labels[label] = LabelInfo(name=label, target_idx=idx, target_depth=depth)
                         label_stmt_map[label] = stmt
                     if stmt_type == "If":
-                        _walk(stmt_data.get("then_stmts", []), depth + 1, current_path, "then_stmts", enclosing_top_idx=idx)
-                        _walk(stmt_data.get("else_stmts", []), depth + 1, current_path, "else_stmts", enclosing_top_idx=idx)
+                        _walk(
+                            stmt_data.get("then_stmts", []),
+                            depth + 1,
+                            current_path,
+                            "then_stmts",
+                            enclosing_top_idx=idx,
+                        )
+                        _walk(
+                            stmt_data.get("else_stmts", []),
+                            depth + 1,
+                            current_path,
+                            "else_stmts",
+                            enclosing_top_idx=idx,
+                        )
                         for elsif in stmt_data.get("elsifs", []):
                             _walk(elsif.get("stmts", []), depth + 1, current_path, "elsif_stmts", enclosing_top_idx=idx)
                     else:
                         _walk(stmt_data.get("body", []), depth + 1, current_path, "body", enclosing_top_idx=idx)
                 elif stmt_type == "Goto" and isinstance(stmt_data, dict):
                     goto_label = stmt_data.get("label", "unknown")
-                    gotos.append(GotoInfo(
-                        label=goto_label,
-                        source_idx=top_idx,
-                        source_depth=depth,
-                        is_forward=False,
-                        is_backward=False,
-                        source_path=current_path,
-                    ))
+                    gotos.append(
+                        GotoInfo(
+                            label=goto_label,
+                            source_idx=top_idx,
+                            source_depth=depth,
+                            is_forward=False,
+                            is_backward=False,
+                            source_path=current_path,
+                        )
+                    )
 
     _walk(body_stmts)
 
     if proc and (proc._source_path or proc.source_file):
         src_path = proc._source_path or proc.source_file
         try:
-            with open(src_path, 'r', encoding='utf-8', errors='replace') as f:
+            with open(src_path, encoding="utf-8", errors="replace") as f:
                 all_lines = f.readlines()
         except Exception:
             all_lines = []
 
         if all_lines and proc.source_start_line > 0 and proc.source_end_line > 0:
-            proc_text_lines = all_lines[proc.source_start_line - 1:proc.source_end_line]
+            proc_text_lines = all_lines[proc.source_start_line - 1 : proc.source_end_line]
             for offset, line in enumerate(proc_text_lines):
                 line_num = proc.source_start_line + offset
-                m = re.search(r'<<([^>]+)>>', line)
+                m = re.search(r"<<([^>]+)>>", line)
                 if m:
                     label_name = m.group(1).strip()
                     if label_name and label_name not in labels:
-                        target_idx = _map_line_to_stmt_idx(line_num, body_stmts, proc.source_start_line, proc.source_end_line)
+                        target_idx = _map_line_to_stmt_idx(
+                            line_num, body_stmts, proc.source_start_line, proc.source_end_line
+                        )
                         labels[label_name] = LabelInfo(
                             name=label_name,
                             target_idx=target_idx,
                             target_depth=0,
                         )
 
-            goto_line_map = {}
+            goto_line_map: dict[str, list[int]] = {}
             for offset, line in enumerate(proc_text_lines):
                 line_num = proc.source_start_line + offset
-                for gm in re.finditer(r'GOTO\s+(\w+)', line, re.IGNORECASE):
+                for gm in re.finditer(r"GOTO\s+(\w+)", line, re.IGNORECASE):
                     gtarget = gm.group(1)
                     goto_line_map[gtarget] = goto_line_map.get(gtarget, []) + [line_num]
 
@@ -3324,7 +3691,7 @@ def _collect_goto_info(body_stmts, proc: ProcedureInfo = None):
                     label_line = None
                     for offset, line in enumerate(proc_text_lines):
                         line_num = proc.source_start_line + offset
-                        m = re.search(r'<<([^>]+)>>', line)
+                        m = re.search(r"<<([^>]+)>>", line)
                         if m and m.group(1).strip() == g.label:
                             label_line = line_num
                             break
@@ -3335,7 +3702,9 @@ def _collect_goto_info(body_stmts, proc: ProcedureInfo = None):
     return labels, gotos, label_stmt_map
 
 
-def _map_line_to_stmt_idx(target_line: int, body_stmts: list, proc_start_line: int, proc_end_line: int = None) -> int:
+def _map_line_to_stmt_idx(
+    target_line: int, body_stmts: list, proc_start_line: int, proc_end_line: Optional[int] = None
+) -> int:
     if not body_stmts:
         return 0
     n = len(body_stmts)
@@ -3370,10 +3739,7 @@ def _classify_goto_pattern(labels, gotos, body_stmts):
     for g in gotos:
         li = labels.get(g.label)
         if li and g.source_depth >= 2:
-            if li.target_depth > 0 and g.source_depth > li.target_depth:
-                cross_boundary = True
-                break
-            elif li.target_depth == 0 and g.source_depth >= 3:
+            if li.target_depth > 0 and g.source_depth > li.target_depth or li.target_depth == 0 and g.source_depth >= 3:
                 cross_boundary = True
                 break
 
@@ -3417,7 +3783,7 @@ def _analyze_and_rewrite_goto(proc: ProcedureInfo, all_packages: dict, dml_count
 
     if pattern == "unknown":
         _stub_key = (proc.name, len(proc.parameters))
-        _add_stub_reason(proc, f"GOTO 模式无法识别，需要手动重构")
+        _add_stub_reason(proc, "GOTO 模式无法识别，需要手动重构")
         if _stub_key not in STUB_PROCEDURES:
             STUB_PROCEDURES.append(_stub_key)
         return
@@ -3443,7 +3809,8 @@ def _analyze_and_rewrite_goto(proc: ProcedureInfo, all_packages: dict, dml_count
 
     goto_labels = {g.label for g in gotos}
     proc.java_logic_lines = [
-        line for line in proc.java_logic_lines
+        line
+        for line in proc.java_logic_lines
         if not any(f"// GOTO {label} — will be rewritten by pattern analysis" in line for label in goto_labels)
     ]
 
@@ -3451,7 +3818,7 @@ def _analyze_and_rewrite_goto(proc: ProcedureInfo, all_packages: dict, dml_count
     _stub_key = (proc.name, len(proc.parameters))
     if _stub_key in STUB_PROCEDURES:
         STUB_PROCEDURES.remove(_stub_key)
-    proc._stub_reasons = []
+    proc._stub_reasons = []  # type: ignore[attr-defined]  # mypy: runtime-only rewrite metadata
 
 
 def _stmt_list_to_java(stmts, proc, all_packages, dml_counter, indent=0):
@@ -3549,7 +3916,7 @@ def _generate_loop_goto(proc, analysis, body_stmts, all_packages, dml_counter):
     proc.dml_statements = []
 
     proc.java_logic_lines.append("do {")
-    for stmt in body_stmts[target_idx:source_idx + 1]:
+    for stmt in body_stmts[target_idx : source_idx + 1]:
         if isinstance(stmt, dict):
             for st, sd in stmt.items():
                 if st == "Goto" and sd.get("label") == label_name:
@@ -3614,7 +3981,9 @@ def _generate_skip_goto(proc, analysis, body_stmts, all_packages, dml_counter):
                     for s in then_stmts
                 )
                 if has_goto:
-                    if_condition = _coerce_condition(_expr_to_java(if_data.get("condition", {}), proc, all_packages=all_packages))
+                    if_condition = _coerce_condition(
+                        _expr_to_java(if_data.get("condition", {}), proc, all_packages=all_packages)
+                    )
     if if_condition is None:
         source_stmt = body_stmts[goto_info.source_idx] if goto_info.source_idx < len(body_stmts) else None
         if source_stmt and isinstance(source_stmt, dict) and "If" in source_stmt:
@@ -3625,7 +3994,9 @@ def _generate_skip_goto(proc, analysis, body_stmts, all_packages, dml_counter):
                 for s in then_stmts
             )
             if has_goto:
-                if_condition = _coerce_condition(_expr_to_java(if_data.get("condition", {}), proc, all_packages=all_packages))
+                if_condition = _coerce_condition(
+                    _expr_to_java(if_data.get("condition", {}), proc, all_packages=all_packages)
+                )
 
     if if_condition:
         inverted = _invert_condition(if_condition)
@@ -3680,13 +4051,12 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
         for st, sd in stmt.items():
             if st in ("For", "While", "Loop") and isinstance(sd, dict):
                 _text = json.dumps(stmt)
-                if any(f'"Goto"' in _text for _ in _text.split()):
+                if any('"Goto"' in _text for _ in _text.split()):
                     if '"Goto"' in _text:
                         _loop_idx = i
                         _loop_body = sd.get("body", [])
                         _loop_labels_internal = {
-                            lbl for lbl, li in analysis.labels.items()
-                            if li.target_idx == i and li.target_depth > 0
+                            lbl for lbl, li in analysis.labels.items() if li.target_idx == i and li.target_depth > 0
                         }
                         if not _loop_labels_internal:
                             for lbl, li in analysis.labels.items():
@@ -3719,13 +4089,17 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
                         proc.java_logic_lines.append("continue;")
                     return
             elif stmt_type == "If" and isinstance(stmt_data, dict):
-                condition = _coerce_condition(_expr_to_java(stmt_data.get("condition", {}), proc, all_packages=all_packages))
+                condition = _coerce_condition(
+                    _expr_to_java(stmt_data.get("condition", {}), proc, all_packages=all_packages)
+                )
                 proc.java_logic_lines.append(f"if ({condition}) {{")
                 for s in _iter_statements(stmt_data.get("then_stmts", [])):
                     _process_with_goto_replace(s)
                 _indent_last_lines(proc, 1)
                 for elsif in stmt_data.get("elsifs", []):
-                    elsif_cond = _coerce_condition(_expr_to_java(elsif.get("condition", {}), proc, all_packages=all_packages))
+                    elsif_cond = _coerce_condition(
+                        _expr_to_java(elsif.get("condition", {}), proc, all_packages=all_packages)
+                    )
                     proc.java_logic_lines.append(f"}} else if ({elsif_cond}) {{")
                     for s in _iter_statements(elsif.get("stmts", [])):
                         _process_with_goto_replace(s)
@@ -3753,7 +4127,9 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
                         for h in handlers_block:
                             conds = h.get("conditions", [])
                             all_conditions.append(conds[0] if conds else "EXCEPTION")
-                        proc.java_logic_lines.append(f"}} catch (Exception {_next_catch_var(proc)}) {{ // {'; '.join(all_conditions)}")
+                        proc.java_logic_lines.append(
+                            f"}} catch (Exception {_next_catch_var(proc)}) {{ // {'; '.join(all_conditions)}"
+                        )
                     for handler in handlers_block:
                         conditions = handler.get("conditions", [])
                         cond_name = conditions[0] if conditions else "EXCEPTION"
@@ -3781,8 +4157,12 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
                     range_data = kind["Range"]
                     if variable not in proc.local_vars:
                         proc.local_vars[variable] = "Integer"
-                    low = _expr_to_java(range_data.get("low", {"Literal": {"Integer": 0}}), proc, all_packages=all_packages)
-                    high = _expr_to_java(range_data.get("high", {"Literal": {"Integer": 0}}), proc, all_packages=all_packages)
+                    low = _expr_to_java(
+                        range_data.get("low", {"Literal": {"Integer": 0}}), proc, all_packages=all_packages
+                    )
+                    high = _expr_to_java(
+                        range_data.get("high", {"Literal": {"Integer": 0}}), proc, all_packages=all_packages
+                    )
                     reverse = range_data.get("reverse", False)
                     if reverse:
                         proc.java_logic_lines.append(f"for ({var_java} = {high}; {var_java} >= {low}; {var_java}--) {{")
@@ -3803,7 +4183,7 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
                     query_data = kind["Query"]
                     parsed_query = query_data.get("parsed_query")
                     if parsed_query:
-                        _list_counter = getattr(proc, '_list_var_counter', 0) + 1
+                        _list_counter = getattr(proc, "_list_var_counter", 0) + 1
                         proc._list_var_counter = _list_counter
                         list_var = f"{var_java}List" if _list_counter == 1 else f"{var_java}List_{_list_counter}"
                         sql_text = _reconstruct_sql_from_ast(parsed_query)
@@ -3811,13 +4191,16 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
                             raw_sql_for_params = sql_text
                             sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
                             mapper_method = _dml_method_name("select", proc.proc_name, dml_counter)
-                            _add_dml(proc, DmlStatement(
-                                sql_type="select",
-                                method_id=mapper_method,
-                                sql_text=sql_text,
-                                result_type="Map<String, Object>",
-                                returns_list=True,
-                            ))
+                            _add_dml(
+                                proc,
+                                DmlStatement(
+                                    sql_type="select",
+                                    method_id=mapper_method,
+                                    sql_text=sql_text,
+                                    result_type="Map<String, Object>",
+                                    returns_list=True,
+                                ),
+                            )
                             proc.imports.add("import java.util.List;")
                             proc.imports.add("import java.util.Map;")
                             proc.imports.add("import java.util.ArrayList;")
@@ -3827,7 +4210,7 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
                             proc.java_logic_lines.append(f"if ({list_var} == null) {list_var} = new ArrayList<>();")
                             proc.java_logic_lines.append(f"for (Map<String, Object> {var_java} : {list_var}) {{")
                             proc.local_vars[variable] = "Map<String, Object>"
-                            proc._loop_vars = getattr(proc, '_loop_vars', set())
+                            proc._loop_vars = getattr(proc, "_loop_vars", set())
                             proc._loop_vars.add(variable)
                             if _needs_dispatch:
                                 proc.java_logic_lines.append(f"    {_goto_target_var} = null;")
@@ -3840,12 +4223,14 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
                                 proc.java_logic_lines.append(f"if ({_goto_target_var} != null) continue;")
                             proc.java_logic_lines.append("}")
                             return
-                proc.java_logic_lines.append(f"// TODO: nested breakout loop — manual extraction recommended")
+                proc.java_logic_lines.append("// TODO: nested breakout loop — manual extraction recommended")
                 return
             elif stmt_type in ("While", "Loop") and isinstance(stmt_data, dict):
                 condition = "true"
                 if stmt_type == "While" and "condition" in stmt_data:
-                    condition = _coerce_condition(_expr_to_java(stmt_data["condition"], proc, all_packages=all_packages))
+                    condition = _coerce_condition(
+                        _expr_to_java(stmt_data["condition"], proc, all_packages=all_packages)
+                    )
                 proc.java_logic_lines.append(f"while ({condition}) {{")
                 if _needs_dispatch:
                     proc.java_logic_lines.append(f"    {_goto_target_var} = null;")
@@ -3874,7 +4259,7 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
         return
 
     # Phase 3: post-loop statements with dispatch for external labels
-    _post_stmts = body_stmts[_loop_idx + 1:]
+    _post_stmts = body_stmts[_loop_idx + 1 :]
     if not _post_stmts:
         return
 
@@ -3913,7 +4298,7 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
     # Statements before first external label → run when _gotoTarget is null (normal flow)
     _pre_label_stmts = _post_stmts[:_first_label_idx] if _first_label_idx is not None else []
     if _pre_label_stmts:
-        proc.java_logic_lines.append(f'if ({_goto_target_var} == null) {{')
+        proc.java_logic_lines.append(f"if ({_goto_target_var} == null) {{")
         for stmt in _pre_label_stmts:
             _process_with_goto_replace(stmt)
         _indent_last_lines(proc, 1)
@@ -3981,10 +4366,19 @@ def _strip_unreachable_in_case(proc, start_offset: int):
         prev_depth = depth
         depth += stripped.count("{") - stripped.count("}")
         if depth == 0 and first_terminal < 0:
-            if stripped.startswith("throw ") or stripped.startswith("break;") or stripped == "return;" or stripped.startswith("return "):
+            if (
+                stripped.startswith("throw ")
+                or stripped.startswith("break;")
+                or stripped == "return;"
+                or stripped.startswith("return ")
+            ):
                 first_terminal = i
             elif prev_depth == 1 and stripped == "}":
-                has_else = any("} else " in lines[j] or lines[j].strip().startswith("} else ") for j in range(case_start + 1, i) if "}" in lines[j] and "else" in lines[j])
+                has_else = any(
+                    "} else " in lines[j] or lines[j].strip().startswith("} else ")
+                    for j in range(case_start + 1, i)
+                    if "}" in lines[j] and "else" in lines[j]
+                )
                 last_in_block = ""
                 for j in range(i - 1, case_start, -1):
                     inner = lines[j].strip()
@@ -3992,10 +4386,15 @@ def _strip_unreachable_in_case(proc, start_offset: int):
                         continue
                     last_in_block = inner
                     break
-                if has_else and last_in_block in ("break;", "return;", "}") or last_in_block.startswith("return ") or last_in_block.startswith("throw "):
+                if (
+                    has_else
+                    and last_in_block in ("break;", "return;", "}")
+                    or last_in_block.startswith("return ")
+                    or last_in_block.startswith("throw ")
+                ):
                     first_terminal = i
     if first_terminal >= 0 and first_terminal < start_offset - 1:
-        del lines[first_terminal + 1:start_offset]
+        del lines[first_terminal + 1 : start_offset]
 
 
 def _case_is_fully_terminated(proc, start_offset: int) -> bool:
@@ -4080,7 +4479,7 @@ def _generate_state_machine_goto(proc, analysis, body_stmts, all_packages, dml_c
     proc._sm_enum = enum_name
     proc._sm_labels = analysis.labels
 
-    proc.java_logic_lines.append(f"// State machine generated from GOTO labels")
+    proc.java_logic_lines.append("// State machine generated from GOTO labels")
     proc.java_logic_lines.append(f"enum {enum_name} {{{', '.join(state_names)}}}")
     proc.java_logic_lines.append(f"{enum_name} currentState = {enum_name}.{state_names[0]};")
     proc.java_logic_lines.append("boolean running = true;")
@@ -4140,7 +4539,7 @@ def _generate_state_machine_goto(proc, analysis, body_stmts, all_packages, dml_c
                         goto_state = snake_to_pascal(goto_label)
                         proc.java_logic_lines.append(f"            currentState = {enum_name}.{goto_state};")
                     else:
-                        proc.java_logic_lines.append(f"            running = false;")
+                        proc.java_logic_lines.append("            running = false;")
                 elif st == "Block" and sd.get("label") in analysis.labels:
                     _stmt_list_to_java(sd.get("body", []), proc, all_packages, dml_counter, indent=2)
                 else:
@@ -4168,13 +4567,13 @@ def _generate_state_machine_goto(proc, analysis, body_stmts, all_packages, dml_c
     proc.java_logic_lines.append("}")
 
     # Clean up state machine mode
-    if hasattr(proc, '_sm_enum'):
-        delattr(proc, '_sm_enum')
-    if hasattr(proc, '_sm_labels'):
-        delattr(proc, '_sm_labels')
+    if hasattr(proc, "_sm_enum"):
+        delattr(proc, "_sm_enum")
+    if hasattr(proc, "_sm_labels"):
+        delattr(proc, "_sm_labels")
 
 
-def _dml_method_name(dml_type: str, proc_name: str, counter: dict, semantic_key: str = None) -> str:
+def _dml_method_name(dml_type: str, proc_name: str, counter: dict, semantic_key: Optional[str] = None) -> str:
     # Issue #35: Use semantic key (target table + operation) for naming.
     # This produces names like "selectOrderByStatus" instead of "selectProcX_2".
     if semantic_key:
@@ -4187,35 +4586,38 @@ def _dml_method_name(dml_type: str, proc_name: str, counter: dict, semantic_key:
         n = counter.get(dml_type, 0)
         counter[dml_type] = n + 1
         base = f"{dml_type}{snake_to_pascal(proc_name)}"
-    _log(f"[DML-CNTR] {composite_key if semantic_key else dml_type} -> n={n} -> {base + (chr(95)+str(n) if n > 0 else '')}", to_stdout=False)
+    _log(
+        f"[DML-CNTR] {composite_key if semantic_key else dml_type} -> n={n} -> {base + (chr(95) + str(n) if n > 0 else '')}",
+        to_stdout=False,
+    )
     return base + (f"_{n}" if n > 0 else "")
 
 
 def _strip_into_clause(sql: str) -> str:
-    stripped = re.sub(r'\s+into\s+.*?(?=\s+from\b)', ' ', sql, flags=re.IGNORECASE | re.DOTALL)
+    stripped = re.sub(r"\s+into\s+.*?(?=\s+from\b)", " ", sql, flags=re.IGNORECASE | re.DOTALL)
     if stripped == sql:
-        stripped = re.sub(r'\s+into\s+\w+(\s*,\s*\w+)*\s+(?=from\b)', ' ', sql, flags=re.IGNORECASE)
+        stripped = re.sub(r"\s+into\s+\w+(\s*,\s*\w+)*\s+(?=from\b)", " ", sql, flags=re.IGNORECASE)
     # Also strip INTO clause when there's no FROM (e.g., SELECT nextval() INTO var)
     if stripped == sql:
-        stripped = re.sub(r'\s+into\s+.*$', ' ', sql, flags=re.IGNORECASE | re.DOTALL)
+        stripped = re.sub(r"\s+into\s+.*$", " ", sql, flags=re.IGNORECASE | re.DOTALL)
     return stripped
 
 
 def _rewrite_select_for_into(sql: str, into_targets: list) -> str:
     if not into_targets:
         return _strip_into_clause(sql)
-    stripped = re.sub(r'\s+into\s+.*?(?=\s+from\b)', ' ', sql, flags=re.IGNORECASE | re.DOTALL)
+    stripped = re.sub(r"\s+into\s+.*?(?=\s+from\b)", " ", sql, flags=re.IGNORECASE | re.DOTALL)
     if stripped == sql:
-        stripped = re.sub(r'\s+into\s+\w+(\s*,\s*\w+)*\s+(?=from\b)', ' ', sql, flags=re.IGNORECASE)
+        stripped = re.sub(r"\s+into\s+\w+(\s*,\s*\w+)*\s+(?=from\b)", " ", sql, flags=re.IGNORECASE)
     # Handle SELECT without FROM (e.g., SELECT nextval() INTO var)
     if stripped == sql:
-        stripped = re.sub(r'\s+into\s+.*$', ' ', sql, flags=re.IGNORECASE | re.DOTALL)
+        stripped = re.sub(r"\s+into\s+.*$", " ", sql, flags=re.IGNORECASE | re.DOTALL)
     return stripped.strip()
 
 
 def _extract_returning_cols(returning_ast: list) -> list:
     cols = []
-    for item in (returning_ast or []):
+    for item in returning_ast or []:
         expr = item.get("Expr", [])
         if expr and isinstance(expr, list):
             node = expr[0]
@@ -4242,17 +4644,27 @@ def _extract_returning_cols(returning_ast: list) -> list:
 
 def _extract_returning_into_targets(into_targets_ast: list) -> list:
     results = []
-    for item in (into_targets_ast or []):
+    for item in into_targets_ast or []:
         expr = item.get("Expr", [])
         if expr and isinstance(expr, list):
             node = expr[0]
             if isinstance(node, dict):
                 if "PlVariable" in node:
                     parts = node["PlVariable"]
-                    results.append((parts[-1] if isinstance(parts, list) and parts else str(parts), parts if isinstance(parts, list) else [str(parts)]))
+                    results.append(
+                        (
+                            parts[-1] if isinstance(parts, list) and parts else str(parts),
+                            parts if isinstance(parts, list) else [str(parts)],
+                        )
+                    )
                 elif "ColumnRef" in node:
                     parts = node["ColumnRef"]
-                    results.append((parts[-1] if isinstance(parts, list) and parts else str(parts), parts if isinstance(parts, list) else [str(parts)]))
+                    results.append(
+                        (
+                            parts[-1] if isinstance(parts, list) and parts else str(parts),
+                            parts if isinstance(parts, list) else [str(parts)],
+                        )
+                    )
                 else:
                     results.append((f"_retVar{len(results)}", [f"_retVar{len(results)}"]))
             else:
@@ -4267,11 +4679,14 @@ def _process_raw_dml(sql: str, proc: ProcedureInfo, dml_counter: dict):
     if sql_upper.startswith("TRUNCATE"):
         mapper_method = _dml_method_name("truncate", proc.proc_name, dml_counter)
         sql_fmt = _fix_reconstructed_sql(sql.strip().rstrip(";"))
-        _add_dml(proc, DmlStatement(
-            sql_type="update",
-            method_id=mapper_method,
-            sql_text=sql_fmt,
-        ))
+        _add_dml(
+            proc,
+            DmlStatement(
+                sql_type="update",
+                method_id=mapper_method,
+                sql_text=sql_fmt,
+            ),
+        )
         _emit_dml_with_rowcount(proc, f"mapper.{mapper_method}()")
     else:
         proc.java_logic_lines.append(f"// TODO: unhandled raw SQL: {sql[:80]}")
@@ -4293,8 +4708,7 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
     _sql_text = stmt_data.get("sql_text", "")
     if _sql_text:
         _agg_match = re.search(
-            r'\b(count|sum|avg|max|min)\s*\(\s*(?:distinct\s+)?(\w+(?:\.\w+)?)?',
-            _sql_text, re.IGNORECASE
+            r"\b(count|sum|avg|max|min)\s*\(\s*(?:distinct\s+)?(\w+(?:\.\w+)?)?", _sql_text, re.IGNORECASE
         )
         if _agg_match:
             _agg_func = _agg_match.group(1).lower()
@@ -4336,40 +4750,51 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                         into_targets_full = _extract_all_into_targets(into_targets)
                         _bulk_var = f"_bulkResult_{dml_counter.get('select', 0)}"
                         proc.java_logic_lines.append(
-                            f'List<Map<String, Object>> {_bulk_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text, is_select=True))});'
+                            f"List<Map<String, Object>> {_bulk_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text, is_select=True))});"
                         )
-                        proc.java_logic_lines.append(f'for (Map<String, Object> _bulkRow : {_bulk_var}) {{')
+                        proc.java_logic_lines.append(f"for (Map<String, Object> _bulkRow : {_bulk_var}) {{")
                         for idx, (field_name, full_parts) in enumerate(into_targets_full):
                             col_key = select_cols[idx] if idx < len(select_cols) else field_name
                             if len(full_parts) >= 2:
                                 map_var = snake_to_camel(full_parts[0])
                                 vn_java = snake_to_camel(field_name)
-                                var_type = _java_type_from_field_name(field_name) if _java_type_from_field_name(field_name) != "Object" else "Object"
+                                var_type = (
+                                    _java_type_from_field_name(field_name)
+                                    if _java_type_from_field_name(field_name) != "Object"
+                                    else "Object"
+                                )
                                 _get_expr = f'_bulkRow.get("{col_key}")'
                                 cast_expr = _safe_map_cast(var_type, _get_expr) if var_type != "Object" else _get_expr
-                                _emit_assignment(proc, f'__MAP_PUT__{map_var}__{field_name}', cast_expr)
+                                _emit_assignment(proc, f"__MAP_PUT__{map_var}__{field_name}", cast_expr)
                             else:
-                                var_type = proc.local_vars.get(field_name)
-                                if var_type is None:
+                                bulk_var_type: Optional[str] = proc.local_vars.get(field_name)
+                                if bulk_var_type is None:
                                     for p in proc.parameters:
                                         if p.name.lower() == field_name.lower():
-                                            var_type = p.java_type
+                                            bulk_var_type = p.java_type
                                             break
-                                if var_type is None:
-                                    var_type = "Object"
+                                if bulk_var_type is None:
+                                    bulk_var_type = "Object"
                                 vn_java = snake_to_camel(field_name)
-                                if var_type == "Map<String, Object>":
-                                    proc.java_logic_lines.append(f'    // TODO: BULK COLLECT extraction for {vn_java} requires manual implementation')
-                                elif var_type.startswith("java.util.List<"):
-                                    _elem = var_type[len("java.util.List<"):-1]
+                                if bulk_var_type == "Map<String, Object>":
+                                    proc.java_logic_lines.append(
+                                        f"    // TODO: BULK COLLECT extraction for {vn_java} requires manual implementation"
+                                    )
+                                elif bulk_var_type.startswith("java.util.List<"):
+                                    _elem = bulk_var_type[len("java.util.List<") : -1]
                                     _val_expr = _safe_map_cast(_elem, f'_bulkRow.get("{col_key}")')
-                                    proc.java_logic_lines.append(f'    {vn_java}.add({_val_expr});')
+                                    proc.java_logic_lines.append(f"    {vn_java}.add({_val_expr});")
                                 else:
-                                    _emit_assignment(proc, vn_java, _safe_map_cast(var_type, f'_bulkRow.get("{col_key}")'))
-                        proc.java_logic_lines.append('}')
+                                    _emit_assignment(
+                                        proc, vn_java, _safe_map_cast(bulk_var_type, f'_bulkRow.get("{col_key}")')
+                                    )
+                        proc.java_logic_lines.append("}")
                     elif len(var_names) > 1:
                         result_type = "Map<String, Object>"
-                        _emit_row_decl(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text, is_select=True))})')
+                        _emit_row_decl(
+                            proc,
+                            f"mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text, is_select=True))})",
+                        )
                         select_cols = _extract_select_columns(sql_text)
                         into_targets_full = _extract_all_into_targets(into_targets)
                         for idx, (field_name, full_parts) in enumerate(into_targets_full):
@@ -4377,28 +4802,36 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                             if len(full_parts) >= 2:
                                 map_var = snake_to_camel(full_parts[0])
                                 vn_java = snake_to_camel(field_name)
-                                var_type = _java_type_from_field_name(field_name) if _java_type_from_field_name(field_name) != "Object" else "Object"
+                                var_type = (
+                                    _java_type_from_field_name(field_name)
+                                    if _java_type_from_field_name(field_name) != "Object"
+                                    else "Object"
+                                )
                                 _get_expr = f'_row.get("{col_key}")'
                                 cast_expr = _safe_map_cast(var_type, _get_expr) if var_type != "Object" else _get_expr
-                                _emit_assignment(proc, f'__MAP_PUT__{map_var}__{field_name}', cast_expr)
+                                _emit_assignment(proc, f"__MAP_PUT__{map_var}__{field_name}", cast_expr)
                             else:
-                                var_type = proc.local_vars.get(field_name)
-                                if var_type is None:
+                                row_var_type: Optional[str] = proc.local_vars.get(field_name)
+                                if row_var_type is None:
                                     for p in proc.parameters:
                                         if p.name.lower() == field_name.lower():
-                                            var_type = p.java_type
+                                            row_var_type = p.java_type
                                             break
-                                if var_type is None:
-                                    var_type = "Object"
+                                if row_var_type is None:
+                                    row_var_type = "Object"
                                 vn_java = snake_to_camel(field_name)
-                                if var_type == "Map<String, Object>":
-                                    proc.java_logic_lines.append(f'// TODO: BULK COLLECT extraction for {vn_java} requires manual implementation')
-                                elif var_type.startswith("java.util.List<"):
-                                    _elem = var_type[len("java.util.List<"):-1]
+                                if row_var_type == "Map<String, Object>":
+                                    proc.java_logic_lines.append(
+                                        f"// TODO: BULK COLLECT extraction for {vn_java} requires manual implementation"
+                                    )
+                                elif row_var_type.startswith("java.util.List<"):
+                                    _elem = row_var_type[len("java.util.List<") : -1]
                                     _val_expr = _safe_map_cast(_elem, f'_row.get("{col_key}")')
-                                    proc.java_logic_lines.append(f'{vn_java}.add({_val_expr});')
+                                    proc.java_logic_lines.append(f"{vn_java}.add({_val_expr});")
                                 else:
-                                    _emit_assignment(proc, vn_java, _safe_map_cast(var_type, f'_row.get("{col_key}")'))
+                                    _emit_assignment(
+                                        proc, vn_java, _safe_map_cast(row_var_type, f'_row.get("{col_key}")')
+                                    )
                     else:
                         into_targets_full = _extract_all_into_targets(into_targets)
                         if into_targets_full and len(into_targets_full[0][1]) >= 2:
@@ -4406,10 +4839,13 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                             map_var = snake_to_camel(full_parts[0])
                             result_type = "Map<String, Object>"
                             col_name = _extract_select_column(sql_text, 0)
-                            _emit_row_decl(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text, is_select=True))})')
-                            _emit_assignment(proc, f'__MAP_PUT__{map_var}__{first_var}', f'_row.get("{col_name}")')
+                            _emit_row_decl(
+                                proc,
+                                f"mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text, is_select=True))})",
+                            )
+                            _emit_assignment(proc, f"__MAP_PUT__{map_var}__{first_var}", f'_row.get("{col_name}")')
                         else:
-                            _assign_expr = f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text, is_select=True))})'
+                            _assign_expr = f"mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text, is_select=True))})"
                             # The mapper method may return Object while the INTO
                             # target is a concrete type (String/Long/...). Coerce
                             # so the assignment compiles.
@@ -4418,33 +4854,41 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                                 _assign_expr = _coerce_type(_assign_expr, "Object", _target_var_t)
                             _emit_assignment(proc, var_java, _assign_expr)
 
-                    if '||' in sql_text and result_type not in ("String", "Object", "Map<String, Object>"):
+                    if "||" in sql_text and result_type not in ("String", "Object", "Map<String, Object>"):
                         result_type = "String"
                         target_type = proc.local_vars.get(first_var, "Object") if first_var else "Object"
                         if target_type in ("Integer", "int", "Long", "long"):
-                            _mc = f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text, is_select=True))})'
+                            _mc = f"mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text, is_select=True))})"
                             for i, line in enumerate(proc.java_logic_lines):
-                                if _mc in line and f'{var_java} = ' in line:
-                                    proc.java_logic_lines[i] = f'{{ String _strResult = {_mc}; if (_strResult != null) {{ /* concatenated string assigned to {target_type} var */ }} }}'
+                                if _mc in line and f"{var_java} = " in line:
+                                    proc.java_logic_lines[i] = (
+                                        f"{{ String _strResult = {_mc}; if (_strResult != null) {{ /* concatenated string assigned to {target_type} var */ }} }}"
+                                    )
                                     break
 
-                    _add_dml(proc, DmlStatement(
+                    _add_dml(
+                        proc,
+                        DmlStatement(
+                            sql_type="select",
+                            method_id=mapper_method,
+                            sql_text=_rewrite_select_for_into(sql_text, into_targets),
+                            result_type=result_type,
+                            returns_list=_is_bulk,
+                        ),
+                    )
+            else:
+                _add_dml(
+                    proc,
+                    DmlStatement(
                         sql_type="select",
                         method_id=mapper_method,
-                        sql_text=_rewrite_select_for_into(sql_text, into_targets),
-                        result_type=result_type,
-                        returns_list=_is_bulk,
-                    ))
-            else:
-                _add_dml(proc, DmlStatement(
-                    sql_type="select",
-                    method_id=mapper_method,
-                    sql_text=sql_text,
-                    result_type="Map<String, Object>",
-                    returns_list=True,
-                ))
+                        sql_text=sql_text,
+                        result_type="Map<String, Object>",
+                        returns_list=True,
+                    ),
+                )
                 proc.java_logic_lines.append(
-                    f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text, is_select=True))});'
+                    f"mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text, is_select=True))});"
                 )
         elif sql_type == "Merge":
             if not sql_text:
@@ -4458,14 +4902,20 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                     sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
             if sql_text:
                 mapper_method = _dml_method_name("update", proc.proc_name, dml_counter, semantic_key=_dml_target)
-                _add_dml(proc, DmlStatement(
-                    sql_type="update",
-                    method_id=mapper_method,
-                    sql_text=sql_text,
-                ))
-                _emit_dml_with_rowcount(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})')
+                _add_dml(
+                    proc,
+                    DmlStatement(
+                        sql_type="update",
+                        method_id=mapper_method,
+                        sql_text=sql_text,
+                    ),
+                )
+                _emit_dml_with_rowcount(
+                    proc,
+                    f"mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})",
+                )
             else:
-                proc.java_logic_lines.append(f"// TODO: MERGE INTO — SQL reconstruction failed")
+                proc.java_logic_lines.append("// TODO: MERGE INTO — SQL reconstruction failed")
                 _record_todo("MERGE", proc, "sql reconstruction failed")
         elif sql_type == "Insert":
             from_tables = _extract_table_names_from_insert(sql_details)
@@ -4479,19 +4929,34 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
             _is_bulk = sql_details.get("bulk_collect", False)
 
             if _ret_cols and _into_vars and not _is_bulk:
-                _add_dml(proc, DmlStatement(
-                    sql_type="insert",
-                    method_id=mapper_method,
-                    sql_text=sql_text,
-                    returning_cols=_ret_cols,
-                    returning_into_vars=_into_vars,
-                ))
-                _emit_row_decl(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})')
-                for _rc, (_fn, _fp) in zip(_ret_cols, _into_targets):
+                _add_dml(
+                    proc,
+                    DmlStatement(
+                        sql_type="insert",
+                        method_id=mapper_method,
+                        sql_text=sql_text,
+                        returning_cols=_ret_cols,
+                        returning_into_vars=_into_vars,
+                    ),
+                )
+                _emit_row_decl(
+                    proc,
+                    f"mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})",
+                )
+                for _rc, (_fn, _fp) in zip(_ret_cols, _into_targets, strict=False):
                     if len(_fp) >= 2:
                         _map_var = snake_to_camel(_fp[0])
-                        _cast_expr = _safe_map_cast(_java_type_from_field_name(_fn) if _java_type_from_field_name(_fn) != "Object" else "Object", f'_row.get("{_rc}")')
-                        _emit_assignment(proc, f'__MAP_PUT__{_map_var}__{_fn}', _cast_expr if _java_type_from_field_name(_fn) != "Object" else f'_row.get("{_rc}")')
+                        _cast_expr = _safe_map_cast(
+                            _java_type_from_field_name(_fn)
+                            if _java_type_from_field_name(_fn) != "Object"
+                            else "Object",
+                            f'_row.get("{_rc}")',
+                        )
+                        _emit_assignment(
+                            proc,
+                            f"__MAP_PUT__{_map_var}__{_fn}",
+                            _cast_expr if _java_type_from_field_name(_fn) != "Object" else f'_row.get("{_rc}")',
+                        )
                     else:
                         _vtype = proc.local_vars.get(_fn, "Object")
                         if _vtype is None:
@@ -4503,16 +4968,24 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
                             _vtype = "Object"
                         _vn_java = snake_to_camel(_fn)
                         if _vtype == "Map<String, Object>":
-                            proc.java_logic_lines.append(f'// TODO: BULK COLLECT extraction for {_vn_java} requires manual implementation')
+                            proc.java_logic_lines.append(
+                                f"// TODO: BULK COLLECT extraction for {_vn_java} requires manual implementation"
+                            )
                         else:
                             _emit_assignment(proc, _vn_java, _safe_map_cast(_vtype, f'_row.get("{_rc}")'))
             else:
-                _add_dml(proc, DmlStatement(
-                    sql_type="insert",
-                    method_id=mapper_method,
-                    sql_text=sql_text,
-                ))
-                _emit_dml_with_rowcount(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})')
+                _add_dml(
+                    proc,
+                    DmlStatement(
+                        sql_type="insert",
+                        method_id=mapper_method,
+                        sql_text=sql_text,
+                    ),
+                )
+                _emit_dml_with_rowcount(
+                    proc,
+                    f"mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})",
+                )
 
         elif sql_type == "Update":
             from_tables = _extract_table_names_from_update(sql_details)
@@ -4526,32 +4999,44 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
             _is_bulk = sql_details.get("bulk_collect", False)
 
             if _ret_cols and _into_vars and not _is_bulk:
-                _add_dml(proc, DmlStatement(
-                    sql_type="update",
-                    method_id=mapper_method,
-                    sql_text=sql_text,
-                    returning_cols=_ret_cols,
-                    returning_into_vars=_into_vars,
-                ))
-                _emit_row_decl(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})')
-                for _rc, (_fn, _fp) in zip(_ret_cols, _into_targets):
+                _add_dml(
+                    proc,
+                    DmlStatement(
+                        sql_type="update",
+                        method_id=mapper_method,
+                        sql_text=sql_text,
+                        returning_cols=_ret_cols,
+                        returning_into_vars=_into_vars,
+                    ),
+                )
+                _emit_row_decl(
+                    proc,
+                    f"mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})",
+                )
+                for _rc, (_fn, _fp) in zip(_ret_cols, _into_targets, strict=False):
                     if len(_fp) >= 2:
                         _map_var = snake_to_camel(_fp[0])
-                        _emit_assignment(proc, f'__MAP_PUT__{_map_var}__{_fn}', f'_row.get("{_rc}")')
+                        _emit_assignment(proc, f"__MAP_PUT__{_map_var}__{_fn}", f'_row.get("{_rc}")')
                     else:
                         _vtype = proc.local_vars.get(_fn, "Object")
                         _vn_java = snake_to_camel(_fn)
                         if _vtype == "Map<String, Object>":
-                            proc.java_logic_lines.append(f'// TODO: BULK COLLECT extraction for {_vn_java}')
+                            proc.java_logic_lines.append(f"// TODO: BULK COLLECT extraction for {_vn_java}")
                         else:
                             _emit_assignment(proc, _vn_java, _safe_map_cast(_vtype, f'_row.get("{_rc}")'))
             else:
-                _add_dml(proc, DmlStatement(
-                    sql_type="update",
-                    method_id=mapper_method,
-                    sql_text=sql_text,
-                ))
-                _emit_dml_with_rowcount(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})')
+                _add_dml(
+                    proc,
+                    DmlStatement(
+                        sql_type="update",
+                        method_id=mapper_method,
+                        sql_text=sql_text,
+                    ),
+                )
+                _emit_dml_with_rowcount(
+                    proc,
+                    f"mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})",
+                )
 
         elif sql_type == "Delete":
             table_name = _extract_table_name_from_dml(sql_details)
@@ -4564,32 +5049,44 @@ def _process_sql_statement(stmt_data: dict, proc: ProcedureInfo, dml_counter: di
             _is_bulk = sql_details.get("bulk_collect", False)
 
             if _ret_cols and _into_vars and not _is_bulk:
-                _add_dml(proc, DmlStatement(
-                    sql_type="delete",
-                    method_id=mapper_method,
-                    sql_text=sql_text,
-                    returning_cols=_ret_cols,
-                    returning_into_vars=_into_vars,
-                ))
-                _emit_row_decl(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})')
-                for _rc, (_fn, _fp) in zip(_ret_cols, _into_targets):
+                _add_dml(
+                    proc,
+                    DmlStatement(
+                        sql_type="delete",
+                        method_id=mapper_method,
+                        sql_text=sql_text,
+                        returning_cols=_ret_cols,
+                        returning_into_vars=_into_vars,
+                    ),
+                )
+                _emit_row_decl(
+                    proc,
+                    f"mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})",
+                )
+                for _rc, (_fn, _fp) in zip(_ret_cols, _into_targets, strict=False):
                     if len(_fp) >= 2:
                         _map_var = snake_to_camel(_fp[0])
-                        _emit_assignment(proc, f'__MAP_PUT__{_map_var}__{_fn}', f'_row.get("{_rc}")')
+                        _emit_assignment(proc, f"__MAP_PUT__{_map_var}__{_fn}", f'_row.get("{_rc}")')
                     else:
                         _vtype = proc.local_vars.get(_fn, "Object")
                         _vn_java = snake_to_camel(_fn)
                         if _vtype == "Map<String, Object>":
-                            proc.java_logic_lines.append(f'// TODO: BULK COLLECT extraction for {_vn_java}')
+                            proc.java_logic_lines.append(f"// TODO: BULK COLLECT extraction for {_vn_java}")
                         else:
                             _emit_assignment(proc, _vn_java, _safe_map_cast(_vtype, f'_row.get("{_rc}")'))
             else:
-                _add_dml(proc, DmlStatement(
-                    sql_type="delete",
-                    method_id=mapper_method,
-                    sql_text=sql_text,
-                ))
-                _emit_dml_with_rowcount(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})')
+                _add_dml(
+                    proc,
+                    DmlStatement(
+                        sql_type="delete",
+                        method_id=mapper_method,
+                        sql_text=sql_text,
+                    ),
+                )
+                _emit_dml_with_rowcount(
+                    proc,
+                    f"mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))})",
+                )
 
 
 def _reconstruct_merge_sql(merge_data: dict) -> str:
@@ -4622,9 +5119,11 @@ def _reconstruct_merge_sql(merge_data: dict) -> str:
                 parts.append(f"WHEN NOT MATCHED THEN INSERT ({cols}) VALUES ({vals})")
             elif "Update" in action:
                 upd = action["Update"]
-                sets = ", ".join(
-                    ".".join(s.get("columns", [])) if isinstance(s, dict) else str(s) for s in upd
-                ) if isinstance(upd, list) else str(upd)
+                sets = (
+                    ", ".join(".".join(s.get("columns", [])) if isinstance(s, dict) else str(s) for s in upd)
+                    if isinstance(upd, list)
+                    else str(upd)
+                )
                 parts.append(f"WHEN MATCHED THEN UPDATE SET {sets}")
         elif action == "Delete":
             parts.append("WHEN MATCHED THEN DELETE")
@@ -4639,33 +5138,35 @@ def _process_forall(forall_data: dict, proc: ProcedureInfo, all_packages: dict, 
         _record_todo("FORALL", proc, "empty bounds")
         return
 
-    dml_match = re.search(r'\b(INSERT|UPDATE|DELETE)\b', bounds_str, re.IGNORECASE)
+    dml_match = re.search(r"\b(INSERT|UPDATE|DELETE)\b", bounds_str, re.IGNORECASE)
     if not dml_match:
         proc.java_logic_lines.append(f"// TODO: FORALL — cannot parse DML from bounds: {bounds_str[:80]}")
         _record_todo("FORALL", proc, "unparseable bounds")
         return
 
-    range_part = bounds_str[:dml_match.start()].strip().rstrip('.')
-    range_part = re.sub(r'\s*\.\.\s*', '..', range_part)
-    dml_sql = bounds_str[dml_match.start():].strip()
+    range_part = bounds_str[: dml_match.start()].strip().rstrip(".")
+    range_part = re.sub(r"\s*\.\.\s*", "..", range_part)
+    dml_sql = bounds_str[dml_match.start() :].strip()
     dml_type = dml_match.group(1).lower()
 
-    _range_match = re.match(r'(\d+)\s*\.\.\s*(\w[\w.]*)\s*\.\s*COUNT', range_part, re.IGNORECASE)
+    _range_match = re.match(r"(\d+)\s*\.\.\s*(\w[\w.]*)\s*\.\s*COUNT", range_part, re.IGNORECASE)
     if _range_match:
         _low = _range_match.group(1)
-        _arr_var = _range_match.group(2).replace(' ', '')
-        _arr_java = snake_to_camel(_arr_var.split('.')[0])
-        loop_start = f'for (int {index_var} = {_low}; {index_var} <= {_arr_java}.size(); {index_var}++)'
+        _arr_var = _range_match.group(2).replace(" ", "")
+        _arr_java = snake_to_camel(_arr_var.split(".")[0])
+        loop_start = f"for (int {index_var} = {_low}; {index_var} <= {_arr_java}.size(); {index_var}++)"
     else:
-        _dot_match = re.match(r'(\w+)\s*\.\.\s*(\w+)', range_part)
+        _dot_match = re.match(r"(\w+)\s*\.\.\s*(\w+)", range_part)
         if _dot_match:
-            loop_start = f'for (int {index_var} = {_dot_match.group(1)}; {index_var} <= {_dot_match.group(2)}; {index_var}++)'
+            loop_start = (
+                f"for (int {index_var} = {_dot_match.group(1)}; {index_var} <= {_dot_match.group(2)}; {index_var}++)"
+            )
         else:
-            loop_start = f'for (int {index_var} = 1; {index_var} <= {snake_to_camel(range_part)}; {index_var}++)'
+            loop_start = f"for (int {index_var} = 1; {index_var} <= {snake_to_camel(range_part)}; {index_var}++)"
 
     mapper_method = _dml_method_name(dml_type, proc.proc_name, dml_counter)
 
-    array_refs = re.findall(r'(\w+)\s*\(\s*' + re.escape(index_var) + r'\s*\)', dml_sql, re.IGNORECASE)
+    array_refs = re.findall(r"(\w+)\s*\(\s*" + re.escape(index_var) + r"\s*\)", dml_sql, re.IGNORECASE)
     _forall_param_map = {}
     seen = set()
     _has_map_array = False
@@ -4677,11 +5178,13 @@ def _process_forall(forall_data: dict, proc: ProcedureInfo, all_packages: dict, 
             if arr_type == "Map<String, Object>":
                 _has_map_array = True
             else:
-                _forall_param_map[arr_java] = f'{arr_java}.get({index_var} - 1)'
+                _forall_param_map[arr_java] = f"{arr_java}.get({index_var} - 1)"
 
     if _has_map_array:
-        proc.java_logic_lines.append(f'// TODO: FORALL — bulk operation with TABLE-type variables requires manual implementation')
-        proc.java_logic_lines.append(f'// {dml_sql[:120]}')
+        proc.java_logic_lines.append(
+            "// TODO: FORALL — bulk operation with TABLE-type variables requires manual implementation"
+        )
+        proc.java_logic_lines.append(f"// {dml_sql[:120]}")
         _record_todo("FORALL", proc, "TABLE-type array vars")
         return
 
@@ -4691,15 +5194,17 @@ def _process_forall(forall_data: dict, proc: ProcedureInfo, all_packages: dict, 
     _batch_list_var = ""
     _batch_arrays = {}
     if _range_match and array_refs and not _has_map_array:
-        _has_standalone_index = bool(re.search(r'\|\|\s*' + re.escape(index_var) + r'\b', dml_sql) or
-                                     re.search(r"'[^']*'\s*\|\|\s*" + re.escape(index_var), dml_sql, re.IGNORECASE))
+        _has_standalone_index = bool(
+            re.search(r"\|\|\s*" + re.escape(index_var) + r"\b", dml_sql)
+            or re.search(r"'[^']*'\s*\|\|\s*" + re.escape(index_var), dml_sql, re.IGNORECASE)
+        )
         _all_arrays_simple = True
         _primary_arr_java = snake_to_camel(array_refs[0])
         for arr_name in array_refs:
             if arr_name.lower() != index_var.lower():
                 arr_java = snake_to_camel(arr_name)
                 arr_type = proc.local_vars.get(arr_name, "Object")
-                m_list = re.match(r'java\.util\.List<(.+)>', arr_type)
+                m_list = re.match(r"java\.util\.List<(.+)>", arr_type)
                 if m_list:
                     _batch_arrays[arr_java] = m_list.group(1)
                 else:
@@ -4708,7 +5213,7 @@ def _process_forall(forall_data: dict, proc: ProcedureInfo, all_packages: dict, 
             _can_batch = True
             _batch_list_var = "item"
 
-    _extra_text = re.sub(r'\b\w+\s*\(\s*' + re.escape(index_var) + r'\s*\)', '?', dml_sql)
+    _extra_text = re.sub(r"\b\w+\s*\(\s*" + re.escape(index_var) + r"\s*\)", "?", dml_sql)
     _dml_local_vars = _sql_local_var_names(proc, _extra_text)
     for _lvn in _dml_local_vars:
         _lvn_java = snake_to_camel(_lvn)
@@ -4726,7 +5231,9 @@ def _process_forall(forall_data: dict, proc: ProcedureInfo, all_packages: dict, 
 
     # Order param_args to match mapper method signature (local_vars order + params order)
     param_args = []
-    _ordered_names = [snake_to_camel(v) for v in proc.local_vars] + [p.java_name for p in proc.parameters if not (p.mode and p.mode.upper() == "OUT")]
+    _ordered_names = [snake_to_camel(v) for v in proc.local_vars] + [
+        p.java_name for p in proc.parameters if not (p.mode and p.mode.upper() == "OUT")
+    ]
     for _n in _ordered_names:
         if _n in _forall_param_map:
             param_args.append(_forall_param_map.pop(_n))
@@ -4734,22 +5241,18 @@ def _process_forall(forall_data: dict, proc: ProcedureInfo, all_packages: dict, 
 
     # If the DML SQL references the index variable standalone (e.g., '|| i'), pass it to mapper
     _index_var_java = f"_{index_var}"
-    _has_standalone_index_ref = re.search(r'\b' + re.escape(index_var) + r'\b', dml_sql) and index_var not in {a.split('.')[0] for a in param_args}
+    _has_standalone_index_ref = re.search(r"\b" + re.escape(index_var) + r"\b", dml_sql) and index_var not in {
+        a.split(".")[0] for a in param_args
+    }
     if _has_standalone_index_ref:
         param_args.append(index_var)
 
     args_str = ", ".join(param_args)
     mybatis_sql = re.sub(
-        r'(\w+)\s*\(\s*' + re.escape(index_var) + r'\s*\)',
-        lambda m: f'#{{{snake_to_camel(m.group(1))}}}',
-        dml_sql
+        r"(\w+)\s*\(\s*" + re.escape(index_var) + r"\s*\)", lambda m: f"#{{{snake_to_camel(m.group(1))}}}", dml_sql
     )
     # Replace standalone index variable references (e.g., '|| i' in SQL) with parameter
-    mybatis_sql = re.sub(
-        r'\b' + re.escape(index_var) + r'\b',
-        f'#{{_{index_var}}}',
-        mybatis_sql
-    )
+    mybatis_sql = re.sub(r"\b" + re.escape(index_var) + r"\b", f"#{{_{index_var}}}", mybatis_sql)
     mybatis_sql = _convert_params_to_mybatis(mybatis_sql, proc.parameters, proc.local_vars)
 
     # Add index variable as extra param for mapper method signature
@@ -4762,41 +5265,46 @@ def _process_forall(forall_data: dict, proc: ProcedureInfo, all_packages: dict, 
         if arr_name.lower() in {a.lower() for a in array_refs} and arr_name.lower() != index_var.lower():
             arr_java = snake_to_camel(arr_name)
             arr_type = proc.local_vars.get(arr_name, "Object")
-            m = re.match(r'java\.util\.List<(.+)>', arr_type)
+            m = re.match(r"java\.util\.List<(.+)>", arr_type)
             if m:
                 _forall_extra_params.append((arr_java, m.group(1)))
 
-    _add_dml(proc, DmlStatement(
-        sql_type=dml_type,
-        method_id=mapper_method,
-        sql_text=mybatis_sql,
-        extra_params=_forall_extra_params,
-        is_forall_batch=_can_batch,
-        forall_batch_list_var=_batch_list_var,
-        forall_batch_arrays=_batch_arrays if _can_batch else {},
-    ))
+    _add_dml(
+        proc,
+        DmlStatement(
+            sql_type=dml_type,
+            method_id=mapper_method,
+            sql_text=mybatis_sql,
+            extra_params=_forall_extra_params,
+            is_forall_batch=_can_batch,
+            forall_batch_list_var=_batch_list_var,
+            forall_batch_arrays=_batch_arrays if _can_batch else {},
+        ),
+    )
 
     if _can_batch:
-        proc._needs_rowcount_var = True
-        _batch_list_name = f'_batch_{mapper_method}'
-        proc.java_logic_lines.append(f'java.util.List<java.util.Map<String, Object>> {_batch_list_name} = new java.util.ArrayList<>();')
-        proc.java_logic_lines.append(f'for (int _bi = 0; _bi < {_primary_arr_java}.size(); _bi++) {{')
-        proc.java_logic_lines.append(f'    java.util.Map<String, Object> _brow = new java.util.LinkedHashMap<>();')
+        proc._needs_rowcount_var = True  # type: ignore[attr-defined]  # mypy: runtime-only codegen marker
+        _batch_list_name = f"_batch_{mapper_method}"
+        proc.java_logic_lines.append(
+            f"java.util.List<java.util.Map<String, Object>> {_batch_list_name} = new java.util.ArrayList<>();"
+        )
+        proc.java_logic_lines.append(f"for (int _bi = 0; _bi < {_primary_arr_java}.size(); _bi++) {{")
+        proc.java_logic_lines.append("    java.util.Map<String, Object> _brow = new java.util.LinkedHashMap<>();")
         for arr_java in _batch_arrays:
             proc.java_logic_lines.append(f'    _brow.put("{arr_java}", {arr_java}.get(_bi));')
         if _has_standalone_index_ref:
             proc.java_logic_lines.append(f'    _brow.put("_{index_var}", _bi + 1);')
-        proc.java_logic_lines.append(f'    {_batch_list_name}.add(_brow);')
-        proc.java_logic_lines.append(f'}}')
-        proc.java_logic_lines.append(f'_sqlRowCount += mapper.{mapper_method}({_batch_list_name});')
+        proc.java_logic_lines.append(f"    {_batch_list_name}.add(_brow);")
+        proc.java_logic_lines.append("}")
+        proc.java_logic_lines.append(f"_sqlRowCount += mapper.{mapper_method}({_batch_list_name});")
     else:
-        proc.java_logic_lines.append(f'{loop_start} {{')
-        proc._needs_rowcount_var = True
-        proc.java_logic_lines.append(f'    _sqlRowCount += mapper.{mapper_method}({args_str});')
-        proc.java_logic_lines.append(f'}}')
+        proc.java_logic_lines.append(f"{loop_start} {{")
+        proc._needs_rowcount_var = True  # type: ignore[attr-defined]  # mypy: runtime-only codegen marker
+        proc.java_logic_lines.append(f"    _sqlRowCount += mapper.{mapper_method}({args_str});")
+        proc.java_logic_lines.append("}")
 
-    for _tm in re.finditer(r'\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM|DELETE)\s+(\w+)', dml_sql, re.IGNORECASE):
-        if _tm.group(1).upper() not in ('SELECT', 'FROM', 'WHERE', 'SET', 'VALUES'):
+    for _tm in re.finditer(r"\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM|DELETE)\s+(\w+)", dml_sql, re.IGNORECASE):
+        if _tm.group(1).upper() not in ("SELECT", "FROM", "WHERE", "SET", "VALUES"):
             proc.table_refs.add(_tm.group(1))
 
 
@@ -4827,8 +5335,8 @@ def _process_if(if_data: dict, proc: ProcedureInfo, all_packages: dict, dml_coun
                     proc.sql_concat_chain[var_name].append((condition, sql_fragment, clause_type))
                     _has_sql_concat = True
         if _has_sql_concat:
-            build_map = getattr(proc, '_dynamic_sql_build_stmts', {})
-            stmt_idx = getattr(proc, '_current_stmt_idx', -1)
+            build_map = getattr(proc, "_dynamic_sql_build_stmts", {})
+            stmt_idx = getattr(proc, "_current_stmt_idx", -1)
             if stmt_idx >= 0:
                 build_map[stmt_idx] = var_name
                 proc._dynamic_sql_build_stmts = build_map
@@ -4855,7 +5363,7 @@ def _process_if(if_data: dict, proc: ProcedureInfo, all_packages: dict, dml_coun
     proc.java_logic_lines.append("}")
 
 
-def _process_return(return_data: dict, proc: ProcedureInfo, all_packages: dict = None):
+def _process_return(return_data: dict, proc: ProcedureInfo, all_packages: Optional[dict] = None):
     expr = return_data.get("expression")
     if expr:
         java_expr = _expr_to_java(expr, proc, all_packages=all_packages)
@@ -4863,20 +5371,24 @@ def _process_return(return_data: dict, proc: ProcedureInfo, all_packages: dict =
         proc._raw_return_types.append(_et)
         if proc.is_function and proc.return_type:
             ret_java = sql_type_to_java(proc.return_type)
-            if ret_java == "String" and re.match(r'^(Long|Integer|Double)\.parse(L|I|D)\w*\(', java_expr.strip()):
+            if ret_java == "String" and re.match(r"^(Long|Integer|Double)\.parse(L|I|D)\w*\(", java_expr.strip()):
                 java_expr = f"String.valueOf({java_expr})"
-            if "BigDecimal" in ret_java and java_expr.endswith("d") and not java_expr.startswith("java.math.BigDecimal"):
+            if (
+                "BigDecimal" in ret_java
+                and java_expr.endswith("d")
+                and not java_expr.startswith("java.math.BigDecimal")
+            ):
                 try:
                     float_val = float(java_expr[:-1])
                     java_expr = f"java.math.BigDecimal.valueOf({java_expr[:-1]})"
                 except ValueError:
                     pass
-            if re.search(r'\*/\s*null$', java_expr) and ret_java not in ("Object", "void", ""):
+            if re.search(r"\*/\s*null$", java_expr) and ret_java not in ("Object", "void", ""):
                 java_expr = _type_default(ret_java)
             if _needs_coercion(_et, ret_java):
                 java_expr = _coerce_type(java_expr, _et, ret_java)
         proc.java_logic_lines.append(f"return {java_expr};")
-    elif getattr(proc, '_setof_accumulate', False):
+    elif getattr(proc, "_setof_accumulate", False):
         proc.java_logic_lines.append("return _returnRows;")
     else:
         proc.java_logic_lines.append("return;")
@@ -4890,38 +5402,38 @@ def _is_string_expr(expr: str) -> bool:
         return True
     if s.startswith("String."):
         return True
-    if ' + ' in s and s.startswith('"'):
+    if " + " in s and s.startswith('"'):
         return True
     return False
 
 
 def _is_long_expr(expr: str) -> bool:
     s = expr.strip()
-    if re.match(r'^-?\d+[Ll]$', s):
+    if re.match(r"^-?\d+[Ll]$", s):
         return True
     if s.startswith("Long.valueOf(") or s.startswith("Long.parseLong("):
         return True
     if s.startswith("String.valueOf("):
         return False
-    if re.match(r'^-?\d+$', s):
+    if re.match(r"^-?\d+$", s):
         return True
     return False
 
 
 def _is_bare_int_literal(expr: str) -> bool:
-    return bool(re.match(r'^-?\d+$', expr.strip()))
+    return bool(re.match(r"^-?\d+$", expr.strip()))
 
 
 def _is_bare_long_literal(expr: str) -> bool:
-    return bool(re.match(r'^-?\d+[Ll]$', expr.strip()))
+    return bool(re.match(r"^-?\d+[Ll]$", expr.strip()))
 
 
 # Java methods returning a PRIMITIVE int/long. Their results cannot take
 # `.longValue()`, so coercion must box via `((Number) expr)` instead.
 _PRIMITIVE_METHOD_RE = (
-    r'\.(length|size|indexOf|lastIndexOf|compareTo|compareToIgnoreCase'
-    r'|hashCode|charAt|codePointAt|ordinal|getTime|getId|getIndex|getCount'
-    r'|getLength|currentTimeMillis|nanoTime)\s*\([^()]*\)'
+    r"\.(length|size|indexOf|lastIndexOf|compareTo|compareToIgnoreCase"
+    r"|hashCode|charAt|codePointAt|ordinal|getTime|getId|getIndex|getCount"
+    r"|getLength|currentTimeMillis|nanoTime)\s*\([^()]*\)"
 )
 
 
@@ -4929,25 +5441,30 @@ def _is_primitive_producing(expr: str) -> bool:
     if not expr:
         return False
     s = expr.strip()
-    if re.match(r'^-?\d+(\.\d+)?[dDfFlL]?$', s):
+    if re.match(r"^-?\d+(\.\d+)?[dDfFlL]?$", s):
         return True
-    if re.match(r'^\(?(double|int|long|float)\b\)', s):
+    if re.match(r"^\(?(double|int|long|float)\b\)", s):
         return True
     core = s.rstrip(")").rstrip("(")
-    if re.search(r'\.(intValue|longValue|doubleValue|floatValue)$', core):
+    if re.search(r"\.(intValue|longValue|doubleValue|floatValue)$", core):
         return True
-    if re.search(_PRIMITIVE_METHOD_RE + r'\s*$', s):
+    if re.search(_PRIMITIVE_METHOD_RE + r"\s*$", s):
         return True
-    if re.search(r'(Double|Float|Long|Integer)\.parse(Double|Float|Long|Int)\s*\(', s):
+    if re.search(r"(Double|Float|Long|Integer)\.parse(Double|Float|Long|Int)\s*\(", s):
         return True
-    if re.search(r'\(\(Number\)\s*', s):
+    if re.search(r"\(\(Number\)\s*", s):
         return True
-    if re.search(r'Math\.\w+\s*\(', s):
+    if re.search(r"Math\.\w+\s*\(", s):
         return True
     s_no_strings = re.sub(r'"[^"]*"', '""', s)
-    if re.search(r'\s[*\/]\s', s_no_strings):
+    if re.search(r"\s[*\/]\s", s_no_strings):
         return True
-    if re.search(r'\s[+\-]\s', s_no_strings) and re.search(r'(\.(doubleValue|longValue|intValue|floatValue|getTime)\(\)|parse(Double|Long|Int|Float)\(|\(\(Number\)|Math\.|' + _PRIMITIVE_METHOD_RE + r')', s_no_strings):
+    if re.search(r"\s[+\-]\s", s_no_strings) and re.search(
+        r"(\.(doubleValue|longValue|intValue|floatValue|getTime)\(\)|parse(Double|Long|Int|Float)\(|\(\(Number\)|Math\.|"
+        + _PRIMITIVE_METHOD_RE
+        + r")",
+        s_no_strings,
+    ):
         return True
     return False
 
@@ -4961,7 +5478,7 @@ def _next_catch_var(proc) -> str:
 def _safe_map_cast(var_type: str, expr: str) -> str:
     # A bare `.get()` result (AtomicReference/Map) may be null — guard before
     # dereferencing so cross-service OUT refs left unset by mocks don't NPE.
-    _bare_get = re.match(r'^[\w.]+\.get\(\)$', expr.strip())
+    _bare_get = re.match(r"^[\w.]+\.get\(\)$", expr.strip())
     if _is_primitive_producing(expr):
         if var_type == "Long":
             if _bare_get:
@@ -4985,7 +5502,7 @@ def _safe_map_cast(var_type: str, expr: str) -> str:
     if var_type == "Double":
         return f"({expr} != null ? ({expr} instanceof Number ? ((Number) {expr}).doubleValue() : Double.parseDouble(String.valueOf({expr}))) : 0.0d)"
     if var_type == "String":
-        return f"({expr} != null ? String.valueOf({expr}) : \"\")"
+        return f'({expr} != null ? String.valueOf({expr}) : "")'
     if "BigDecimal" in var_type:
         return f"({expr} != null ? ({expr} instanceof java.math.BigDecimal ? (java.math.BigDecimal) {expr} : new java.math.BigDecimal(String.valueOf({expr}))) : java.math.BigDecimal.ZERO)"
     if var_type == "java.sql.Date":
@@ -4996,16 +5513,16 @@ def _safe_map_cast(var_type: str, expr: str) -> str:
 
 
 def _emit_row_decl(proc: ProcedureInfo, mapper_expr: str, indent: str = ""):
-    proc._needs_row_var = True
-    proc._needs_rowcount_var = True
-    proc.java_logic_lines.append(f'{indent}_row = {mapper_expr};')
-    proc.java_logic_lines.append(f'{indent}if (_row == null) _row = java.util.Collections.emptyMap();')
-    proc.java_logic_lines.append(f'{indent}_sqlRowCount = (_row != null && !_row.isEmpty()) ? 1 : 0;')
+    proc._needs_row_var = True  # type: ignore[attr-defined]  # mypy: runtime-only codegen marker
+    proc._needs_rowcount_var = True  # type: ignore[attr-defined]  # mypy: runtime-only codegen marker
+    proc.java_logic_lines.append(f"{indent}_row = {mapper_expr};")
+    proc.java_logic_lines.append(f"{indent}if (_row == null) _row = java.util.Collections.emptyMap();")
+    proc.java_logic_lines.append(f"{indent}_sqlRowCount = (_row != null && !_row.isEmpty()) ? 1 : 0;")
 
 
 def _emit_dml_with_rowcount(proc: ProcedureInfo, mapper_expr: str, indent: str = ""):
-    proc._needs_rowcount_var = True
-    proc.java_logic_lines.append(f'{indent}_sqlRowCount = {mapper_expr};')
+    proc._needs_rowcount_var = True  # type: ignore[attr-defined]  # mypy: runtime-only codegen marker
+    proc.java_logic_lines.append(f"{indent}_sqlRowCount = {mapper_expr};")
 
 
 def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
@@ -5035,7 +5552,7 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
         else:
             expr = "_sqlRowCount"
     is_ternary = "?" in expr and ":" in expr
-    if target_var_type and "BigDecimal" in target_var_type and is_ternary and re.search(r'\b\d+\.\d+d\b', expr):
+    if target_var_type and "BigDecimal" in target_var_type and is_ternary and re.search(r"\b\d+\.\d+d\b", expr):
         has_bd_term = "BigDecimal" in expr or ".subtract(" in expr or ".add(" in expr or ".multiply(" in expr
         if not has_bd_term:
             for const_name, const_type in _PACKAGE_CONSTANTS.items():
@@ -5048,7 +5565,7 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
                     has_bd_term = True
                     break
         if not has_bd_term:
-            expr_clean = re.sub(r'\b(\d+\.\d+)d\b', r'\1', expr)
+            expr_clean = re.sub(r"\b(\d+\.\d+)d\b", r"\1", expr)
             expr = f"java.math.BigDecimal.valueOf({expr_clean})"
 
     # Handle composite type field write: target is __MAP_PUT__var__key
@@ -5056,18 +5573,22 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
         _, rest = target.split("__MAP_PUT__", 1)
         var_java, field_key = rest.split("__", 1)
         if target in out_param_names or f"({var_java})" in expr:
-            proc.java_logic_lines.append(f"{var_java}.put(\"{field_key}\", {expr});")
+            proc.java_logic_lines.append(f'{var_java}.put("{field_key}", {expr});')
         else:
-            proc.java_logic_lines.append(f"{var_java}.put(\"{field_key}\", {expr});")
+            proc.java_logic_lines.append(f'{var_java}.put("{field_key}", {expr});')
     elif target in out_param_names:
         if target in out_string_names and not _is_string_expr(expr):
             expr = f"String.valueOf({expr})"
-        elif target in out_long_names and _is_string_expr(expr) and not _is_long_expr(expr):
-            expr = f"Long.valueOf({expr})"
-        elif target in out_long_names and _is_bare_int_literal(expr):
+        elif (
+            target in out_long_names
+            and _is_string_expr(expr)
+            and not _is_long_expr(expr)
+            or target in out_long_names
+            and _is_bare_int_literal(expr)
+        ):
             expr = f"Long.valueOf({expr})"
         elif target in out_long_names and not _is_long_expr(expr):
-            if re.match(r'^[\w.]+\.get\(\)$', expr.strip()):
+            if re.match(r"^[\w.]+\.get\(\)$", expr.strip()):
                 expr = f"({expr} == null ? null : ((Number) {expr}).longValue())"
             else:
                 expr = f"((Number) {expr}).longValue()"
@@ -5094,7 +5615,7 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
         proc.java_logic_lines.append(f"{target}.set({expr});")
     else:
         if target_var_type and target_var_type.startswith("AtomicReference<"):
-            _ar_inner_t = target_var_type[len("AtomicReference<"):-1]
+            _ar_inner_t = target_var_type[len("AtomicReference<") : -1]
             if "String" in _ar_inner_t and not expr.strip().startswith('"') and expr.strip() != "null":
                 expr = f"String.valueOf({expr})"
             proc.java_logic_lines.append(f"{target} = new java.util.concurrent.atomic.AtomicReference<>({expr});")
@@ -5104,12 +5625,17 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
         if target_var_type and "Timestamp" in target_var_type and "Timestamp" not in expr:
             if "mapper." in expr or "Mapper." in expr or ".select" in expr:
                 expr = _coerce_type(expr, "Object", target_var_type)
-        _m_numlong = re.match(r'^\(\(Number\)\s*\((.*)\)\)\.longValue\(\)$', expr.strip())
+        _m_numlong = re.match(r"^\(\(Number\)\s*\((.*)\)\)\.longValue\(\)$", expr.strip())
         if target_var_type in ("Long", "long") and _m_numlong and _is_primitive_producing(_m_numlong.group(1)):
             expr = f"(long) ({_m_numlong.group(1)})"
         elif target_var_type in ("Long", "long") and _is_primitive_producing(expr) and "longValue" not in expr:
             expr = f"(long) ({expr})"
-        elif target_var_type in ("Long", "long") and expr.strip().startswith("this.") and "longValue" not in expr and ".get()" not in expr:
+        elif (
+            target_var_type in ("Long", "long")
+            and expr.strip().startswith("this.")
+            and "longValue" not in expr
+            and ".get()" not in expr
+        ):
             expr = _coerce_type(expr, "Object", "Long")
         if target_var_type == "Long" and _is_bare_int_literal(expr):
             expr = f"Long.valueOf({expr})"
@@ -5117,16 +5643,39 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
             expr = f"(long)({expr})"
         elif target_var_type == "Integer" and _is_bare_long_literal(expr):
             expr = f"Integer.valueOf({expr})"
-        elif target_var_type == "Map<String, Object>" and not expr.startswith("new HashMap") and not expr.startswith("new java.util.HashMap"):
+        elif (
+            target_var_type == "Map<String, Object>"
+            and not expr.startswith("new HashMap")
+            and not expr.startswith("new java.util.HashMap")
+        ):
             if not expr.startswith("(") and "Map" not in expr:
                 expr = f"(Map<String, Object>) {expr}"
             if "Mapper" in expr or "mapper" in expr:
                 proc.java_logic_lines.append(f"{target} = {expr};")
                 proc.java_logic_lines.append(f"if ({target} == null) {target} = new java.util.HashMap<>();")
                 return
-        elif target_var_type and target_var_type not in ("String", "Integer", "int", "Object", "BigDecimal", "java.math.BigDecimal", "Long", "long", "boolean", "Boolean") and ".get(" in expr and not expr.startswith("("):
+        elif (
+            target_var_type
+            and target_var_type
+            not in (
+                "String",
+                "Integer",
+                "int",
+                "Object",
+                "BigDecimal",
+                "java.math.BigDecimal",
+                "Long",
+                "long",
+                "boolean",
+                "Boolean",
+            )
+            and ".get(" in expr
+            and not expr.startswith("(")
+        ):
             expr = f"({target_var_type}) {expr}"
-        elif target_var_type in ("BigDecimal", "java.math.BigDecimal") and "mapper." in expr and "BigDecimal" not in expr:
+        elif (
+            target_var_type in ("BigDecimal", "java.math.BigDecimal") and "mapper." in expr and "BigDecimal" not in expr
+        ):
             expr = f"new java.math.BigDecimal(String.valueOf({expr}))"
         proc.java_logic_lines.append(f"{target} = {expr};")
         if ("Mapper" in expr or "mapper" in expr) and target_var_type in ("Long", "Integer", "int"):
@@ -5162,8 +5711,8 @@ def _detect_sql_concat_append(assign_data: dict, proc: ProcedureInfo):
     if not result:
         suffix_expr = _extract_concat_suffix(expression, var_name)
         if suffix_expr:
-            suffix_parts = []
-            suffix_params = []
+            suffix_parts: list[str] = []
+            suffix_params: list[tuple[str, bool]] = []
             _flatten_concat(suffix_expr, suffix_parts, suffix_params, proc)
             if suffix_parts:
                 sql_fragment = "".join(suffix_parts).strip()
@@ -5171,8 +5720,8 @@ def _detect_sql_concat_append(assign_data: dict, proc: ProcedureInfo):
                     result = (sql_fragment, suffix_params)
 
     if not result:
-        parts = []
-        params = []
+        parts: list[str] = []
+        params: list[tuple[str, bool]] = []
         _flatten_concat(right, parts, params, proc)
         if parts:
             sql_fragment = "".join(parts).strip()
@@ -5222,7 +5771,7 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
                     _dotted_pkg_lower = _dotted_pkg.lower() if _dotted_pkg else ""
                     _dotted_var_lower = _dotted_var.lower() if _dotted_var else ""
                     _pkg_info = all_packages.get(_dotted_pkg_lower) if all_packages else None
-                    if _pkg_info and hasattr(_pkg_info, 'package_vars'):
+                    if _pkg_info and hasattr(_pkg_info, "package_vars"):
                         _is_dotted_pkg_var = _dotted_var_lower in {k.lower(): k for k in _pkg_info.package_vars}
                     else:
                         # Cross-package target with unknown package: treat as Map-based access
@@ -5288,8 +5837,8 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
                         proc.var_assignments[var_name] = v["String"]
                         _sql = v["String"].strip().upper()
                         if _sql and _sql.split()[0] in _SQL_VERBS:
-                            build_map = getattr(proc, '_dynamic_sql_build_stmts', {})
-                            stmt_idx = getattr(proc, '_current_stmt_idx', -1)
+                            build_map = getattr(proc, "_dynamic_sql_build_stmts", {})
+                            stmt_idx = getattr(proc, "_current_stmt_idx", -1)
                             if stmt_idx >= 0:
                                 build_map[stmt_idx] = var_name
                                 proc._dynamic_sql_build_stmts = build_map
@@ -5314,8 +5863,8 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
                                 if var_name not in proc.sql_concat_chain:
                                     proc.sql_concat_chain[var_name] = []
                                 proc.sql_concat_chain[var_name].extend(proc.sql_concat_chain[ref_var])
-                        build_map = getattr(proc, '_dynamic_sql_build_stmts', {})
-                        stmt_idx = getattr(proc, '_current_stmt_idx', -1)
+                        build_map = getattr(proc, "_dynamic_sql_build_stmts", {})
+                        stmt_idx = getattr(proc, "_current_stmt_idx", -1)
                         if stmt_idx >= 0:
                             build_map[stmt_idx] = var_name
                             proc._dynamic_sql_build_stmts = build_map
@@ -5348,13 +5897,15 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
                     break
         if _is_integer_literal(expression, 0):
             java_expr = "java.math.BigDecimal.ZERO"
-        elif _is_numeric_literal(expression):
-            java_expr = f"java.math.BigDecimal.valueOf({java_expr})"
-        elif expr_type in ("Integer", "int", "Long", "long", "Double", "double", "Float", "float") and not _already_bd:
+        elif (
+            _is_numeric_literal(expression)
+            or expr_type in ("Integer", "int", "Long", "long", "Double", "double", "Float", "float")
+            and not _already_bd
+        ):
             java_expr = f"java.math.BigDecimal.valueOf({java_expr})"
         elif ".get(" in java_expr and not _already_bd:
             java_expr = f"new java.math.BigDecimal(String.valueOf({java_expr} != null ? {java_expr} : 0))"
-        elif expr_type == "boolean" or re.match(r'^false\s*/\*', _top):
+        elif expr_type == "boolean" or re.match(r"^false\s*/\*", _top):
             java_expr = "java.math.BigDecimal.ZERO /* stub */"
     # Scan for the OUTERMOST call over a literal-masked copy: an unbalanced paren
     # inside a Java string (e.g. vRec.get("x)")) would otherwise desynchronise the
@@ -5373,33 +5924,53 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
                 if _depth == 0:
                     _get_open = _idx
                     break
-    _outer_call = re.search(r'([A-Za-z_$][\w$]*)\s*$', _get_masked[:_get_open]) if _get_open is not None else None
+    _outer_call = re.search(r"([A-Za-z_$][\w$]*)\s*$", _get_masked[:_get_open]) if _get_open is not None else None
     _is_direct_call = _outer_call is not None
-    _is_direct_map_get = _is_direct_call and _outer_call.group(1) == "get"
+    _is_direct_map_get = bool(_outer_call and _outer_call.group(1) == "get")
     if target_type == "String" and expr_type not in ("String", None):
         # Only scalars have a meaningful String rendering. String.valueOf() on a
         # Map/List would silently produce "{k=v}" where the old behaviour at least
         # failed loudly at compile time.
         _scalar_src = expr_type in (
-            "Integer", "int", "Long", "long", "Double", "double", "Float", "float",
-            "Short", "short", "Byte", "byte", "Boolean", "boolean", "Character", "char",
-            "java.math.BigDecimal", "java.math.BigInteger", "Number",
+            "Integer",
+            "int",
+            "Long",
+            "long",
+            "Double",
+            "double",
+            "Float",
+            "float",
+            "Short",
+            "short",
+            "Byte",
+            "byte",
+            "Boolean",
+            "boolean",
+            "Character",
+            "char",
+            "java.math.BigDecimal",
+            "java.math.BigInteger",
+            "Number",
         )
         if _scalar_src or (expr_type == "Object" and _is_direct_call and not _is_direct_map_get):
             java_expr = f"String.valueOf({java_expr})"
 
     # Cast Map.get() results when assigning to typed variables
-    if re.search(r'/\*\s*(UNSUPPORTED|TODO: implement|Subquery|RangeOp)\b', java_expr):
+    if re.search(r"/\*\s*(UNSUPPORTED|TODO: implement|Subquery|RangeOp)\b", java_expr):
         # Stubbed function call — use the target type's default instead of null
         if target_type not in ("Object", "Map<String, Object>", "void", ""):
             java_expr = _type_default(target_type)
-    elif _is_direct_map_get and target_type not in ("Object", "Map<String, Object>", "") and not re.match(r'^(false|null)\s*/\*', java_expr):
+    elif (
+        _is_direct_map_get
+        and target_type not in ("Object", "Map<String, Object>", "")
+        and not re.match(r"^(false|null)\s*/\*", java_expr)
+    ):
         if target_type == "String":
             java_expr = f"String.valueOf({java_expr})" if ".get(" in java_expr else f"(String) {java_expr}"
         elif "BigDecimal" in target_type:
             java_expr = f"({target_type}) {java_expr}"
         elif target_type in ("Long", "Integer"):
-            _sub_match = re.search(r'\(\(java\.util\.List\)', java_expr)
+            _sub_match = re.search(r"\(\(java\.util\.List\)", java_expr)
             if _sub_match:
                 java_expr = f"{target_type}.valueOf(String.valueOf({java_expr}))"
             else:
@@ -5408,9 +5979,7 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
     # ── General type coercion fallback ──
     # Existing ad-hoc checks above handle specific cases (BigDecimal, String, Map.get()).
     # This fallback covers remaining type mismatches using the unified coercion engine.
-    _obj_call = (
-        "Mapper." in java_expr or "Service." in java_expr or java_expr.strip().startswith("this.")
-    )
+    _obj_call = "Mapper." in java_expr or "Service." in java_expr or java_expr.strip().startswith("this.")
     if target_type and expr_type and (_needs_coercion(expr_type, target_type) or (expr_type == "Object" and _obj_call)):
         # Object-source call results (stub/mapper/service returning Object)
         # reach _coerce_type's Object→concrete fallbacks. Plain `.get()`/literal
@@ -5420,7 +5989,11 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
             java_expr = _coerce_type(java_expr, expr_type, target_type)
         else:
             _ss = java_expr.strip()
-            _already_coerced = _is_already_coerced(java_expr, target_type) or _ss.startswith("BigDecimal.valueOf(") or _ss.startswith("String.valueOf(")
+            _already_coerced = (
+                _is_already_coerced(java_expr, target_type)
+                or _ss.startswith("BigDecimal.valueOf(")
+                or _ss.startswith("String.valueOf(")
+            )
             if not _already_coerced and "BigDecimal" in target_type:
                 if "BigDecimal" in java_expr or java_expr.strip().startswith("new java.math."):
                     _already_coerced = True
@@ -5439,8 +6012,8 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
 
 
 def _comment_perform(query: str) -> str:
-    lines = query.replace('\r\n', '\n').split('\n')
-    return '\n'.join(f"// {l}" if l.strip() else "//" for l in lines)
+    lines = query.replace("\r\n", "\n").split("\n")
+    return "\n".join(f"// {l}" if l.strip() else "//" for l in lines)
 
 
 def _flatten_binaryop_concat(node):
@@ -5473,19 +6046,17 @@ def _extract_literal_str(node):
 
 
 def _flush_scheduler_job(proc: ProcedureInfo):
-    job = getattr(proc, '_pending_scheduler_job', {})
-    if not job or 'target_method' not in job:
+    job = getattr(proc, "_pending_scheduler_job", {})
+    if not job or "target_method" not in job:
         return
 
-    method = job['target_method']
-    task_id_expr = job.get('task_id_expr', 'null')
+    method = job["target_method"]
+    task_id_expr = job.get("task_id_expr", "null")
 
     # Generate direct method call (DBE_SCHEDULER dynamic jobs map to synchronous calls in Spring)
-    proc.java_logic_lines.append(
-        f'// Originally: DBE_SCHEDULER job for {method}'
-    )
-    if task_id_expr == 'null':
-        job_action_ast = job.get('job_action_ast')
+    proc.java_logic_lines.append(f"// Originally: DBE_SCHEDULER job for {method}")
+    if task_id_expr == "null":
+        job_action_ast = job.get("job_action_ast")
         if job_action_ast:
             segments = _flatten_binaryop_concat(job_action_ast)
             template_parts = []
@@ -5498,22 +6069,22 @@ def _flush_scheduler_job(proc: ProcedureInfo):
                     template_parts.append(None)
                     expr_args.append(seg)
             full_str = "".join(t if t is not None else "?" for t in template_parts)
-            m_proc = re.search(r'\bCALL\s+\S+\(|BEGIN\s+\S+\(', full_str, re.IGNORECASE)
+            m_proc = re.search(r"\bCALL\s+\S+\(|BEGIN\s+\S+\(", full_str, re.IGNORECASE)
             if not m_proc:
-                paren_start = full_str.find('(')
+                paren_start = full_str.find("(")
             else:
                 paren_start = m_proc.end() - 1
             args_parts = []
             arg_idx = 0
             if paren_start >= 0:
-                paren_end = full_str.rfind(')')
+                paren_end = full_str.rfind(")")
                 if paren_end < 0:
                     paren_end = len(full_str)
-                inner = full_str[paren_start + 1:paren_end]
-                chunks = re.split(r'\s*,\s*', inner)
+                inner = full_str[paren_start + 1 : paren_end]
+                chunks = re.split(r"\s*,\s*", inner)
                 for chunk in chunks:
                     chunk = chunk.strip()
-                    if chunk == '?':
+                    if chunk == "?":
                         seg_node = expr_args[arg_idx] if arg_idx < len(expr_args) else None
                         arg_idx += 1
                         if seg_node:
@@ -5524,26 +6095,20 @@ def _flush_scheduler_job(proc: ProcedureInfo):
                                 else:
                                     args_parts.append(_expr_to_java(seg_node, proc, as_read=True))
                                 break
-                    elif chunk.upper() == 'NULL':
-                        args_parts.append('new java.util.concurrent.atomic.AtomicReference<>()')
+                    elif chunk.upper() == "NULL":
+                        args_parts.append("new java.util.concurrent.atomic.AtomicReference<>()")
                     elif chunk:
                         continue
             if args_parts:
-                proc.java_logic_lines.append(
-                    f'this.{method}({", ".join(args_parts)});'
-                )
+                proc.java_logic_lines.append(f"this.{method}({', '.join(args_parts)});")
             else:
                 proc.java_logic_lines.append(
-                    f'// TODO: Scheduled job — this.{method}(/* args unknown from PLSQL_BLOCK */)'
+                    f"// TODO: Scheduled job — this.{method}(/* args unknown from PLSQL_BLOCK */)"
                 )
         else:
-            proc.java_logic_lines.append(
-                f'// TODO: Scheduled job — this.{method}(/* args unknown from PLSQL_BLOCK */)'
-            )
+            proc.java_logic_lines.append(f"// TODO: Scheduled job — this.{method}(/* args unknown from PLSQL_BLOCK */)")
     else:
-        proc.java_logic_lines.append(
-            f'this.{method}(String.valueOf({task_id_expr}));'
-        )
+        proc.java_logic_lines.append(f"this.{method}(String.valueOf({task_id_expr}));")
 
     proc._pending_scheduler_job = {}
 
@@ -5557,8 +6122,7 @@ def _process_perform(perform_data: dict, proc: ProcedureInfo, all_packages: dict
         for k, v in parsed.items():
             if k == "FunctionCall":
                 name_parts = v.get("name", [])
-                if (len(name_parts) >= 2 and
-                    name_parts[0].upper() in ("DBE_SCHEDULER", "DBMS_SCHEDULER")):
+                if len(name_parts) >= 2 and name_parts[0].upper() in ("DBE_SCHEDULER", "DBMS_SCHEDULER"):
                     op = name_parts[1].upper()
                     raw_args = v.get("args", [])
 
@@ -5574,7 +6138,11 @@ def _process_perform(perform_data: dict, proc: ProcedureInfo, all_packages: dict
                                     na_name = ""
                                     for nk, nv in na.items():
                                         if nk == "name":
-                                            na_name = _extract_name_from_expr(nv).lower() if isinstance(nv, dict) else str(nv).lower()
+                                            na_name = (
+                                                _extract_name_from_expr(nv).lower()
+                                                if isinstance(nv, dict)
+                                                else str(nv).lower()
+                                            )
                                         elif nk == "value" and na_name == "job_action":
                                             job_action = _extract_string_literal(nv)
                                             if job_action is None and isinstance(nv, dict):
@@ -5597,17 +6165,17 @@ def _process_perform(perform_data: dict, proc: ProcedureInfo, all_packages: dict
                                         first_str = _extract_literal_str(seg)
                                         if first_str:
                                             break
-                                    if first_str and re.search(r'\.\w+\(', first_str):
+                                    if first_str and re.search(r"\.\w+\(", first_str):
                                         job_action = first_str
                                         job_action_ast_node = arg
                                         break
                         if job_action:
-                            parts = job_action.split('.')
+                            parts = job_action.split(".")
                             if len(parts) >= 2:
                                 target_method = java_method_name(parts[-1])
                             else:
                                 target_method = java_method_name(job_action)
-                            pending = {"target_method": target_method}
+                            pending: dict[str, Any] = {"target_method": target_method}
                             if job_action_ast_node:
                                 pending["job_action_ast"] = job_action_ast_node
                             proc._pending_scheduler_job = pending
@@ -5615,7 +6183,7 @@ def _process_perform(perform_data: dict, proc: ProcedureInfo, all_packages: dict
                             m = re.search(r"job_action\s*=>\s*'([^']+)'", query, re.IGNORECASE)
                             if m:
                                 action_str = m.group(1)
-                                aparts = action_str.split('.')
+                                aparts = action_str.split(".")
                                 target_method = java_method_name(aparts[-1])
                                 proc._pending_scheduler_job = {"target_method": target_method}
                         return
@@ -5629,7 +6197,11 @@ def _process_perform(perform_data: dict, proc: ProcedureInfo, all_packages: dict
                                     na_name = ""
                                     for nk, nv in na.items():
                                         if nk == "name":
-                                            na_name = _extract_name_from_expr(nv).lower() if isinstance(nv, dict) else str(nv).lower()
+                                            na_name = (
+                                                _extract_name_from_expr(nv).lower()
+                                                if isinstance(nv, dict)
+                                                else str(nv).lower()
+                                            )
                                         elif nk == "value" and na_name == "argument_value":
                                             arg_value = _expr_to_java(nv, proc, as_read=True)
                         if not arg_value:
@@ -5687,17 +6259,21 @@ def _process_perform(perform_data: dict, proc: ProcedureInfo, all_packages: dict
                     args = ", ".join(resolved_perform_args)
                     if matched_pkg.lower() == proc.package.lower():
                         pkg_info = all_packages.get(matched_pkg)
-                        proc_exists = pkg_info and any(
-                            p.proc_name.lower() == func.lower() for p in pkg_info.procedures
-                        ) if pkg_info else False
+                        proc_exists = (
+                            pkg_info and any(p.proc_name.lower() == func.lower() for p in pkg_info.procedures)
+                            if pkg_info
+                            else False
+                        )
                         if not proc_exists:
-                            UNRESOLVED_CALLS.append(UnresolvedCall(
-                                caller=f"{proc.package}.{proc.proc_name}",
-                                callee=f"PERFORM {query}",
-                                caller_file=proc.source_file or "",
-                                args="",
-                                hint=f"add {matched_pkg}.sql to sources",
-                            ))
+                            UNRESOLVED_CALLS.append(
+                                UnresolvedCall(
+                                    caller=f"{proc.package}.{proc.proc_name}",
+                                    callee=f"PERFORM {query}",
+                                    caller_file=proc.source_file or "",
+                                    args="",
+                                    hint=f"add {matched_pkg}.sql to sources",
+                                )
+                            )
                             proc.java_logic_lines.append(_comment_perform(f"PERFORM {query}"))
                             return
                         proc.java_logic_lines.append(f"this.{method}({args});")
@@ -5705,13 +6281,15 @@ def _process_perform(perform_data: dict, proc: ProcedureInfo, all_packages: dict
                         proc.service_calls.append(ServiceCall(svc_name, method, [], package_name=matched_pkg))
                         proc.java_logic_lines.append(f"{svc_name}.{method}({args});")
                 else:
-                    UNRESOLVED_CALLS.append(UnresolvedCall(
-                        caller=f"{proc.package}.{proc.proc_name}",
-                        callee=f"PERFORM {query}",
-                        caller_file=proc.source_file or "",
-                        args="",
-                        hint="add the defining SQL file to fluxgauss.yaml sources",
-                    ))
+                    UNRESOLVED_CALLS.append(
+                        UnresolvedCall(
+                            caller=f"{proc.package}.{proc.proc_name}",
+                            callee=f"PERFORM {query}",
+                            caller_file=proc.source_file or "",
+                            args="",
+                            hint="add the defining SQL file to fluxgauss.yaml sources",
+                        )
+                    )
                     proc.java_logic_lines.append(_comment_perform(f"PERFORM {query}"))
                 return
         proc.java_logic_lines.append(f"found = true; // PERFORM {query or 'query'}")
@@ -5746,7 +6324,7 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
         high = _coerce_for_int(high_expr)
         reverse = range_data.get("reverse", False)
 
-        _var_bare_used = any(re.match(rf'^\s*{var_java} = ', l) for l in proc.java_logic_lines)
+        _var_bare_used = any(re.match(rf"^\s*{var_java} = ", l) for l in proc.java_logic_lines)
         if _var_bare_used:
             _alias = f"_{var_java}"
             if reverse:
@@ -5776,29 +6354,32 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
         using_args = query_data.get("using_args", [])
 
         if parsed_query:
-            _list_counter = getattr(proc, '_list_var_counter', 0) + 1
-            proc._list_var_counter = _list_counter
+            _list_counter = getattr(proc, "_list_var_counter", 0) + 1
+            proc._list_var_counter = _list_counter  # type: ignore[attr-defined]  # mypy: runtime-only name counter
             list_var = f"{var_java}List" if _list_counter == 1 else f"{var_java}List_{_list_counter}"
             sql_text = _reconstruct_sql_from_ast(parsed_query)
             if sql_text:
                 raw_sql_for_params = sql_text
                 sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
                 mapper_method = _dml_method_name("select", proc.proc_name, dml_counter)
-                _add_dml(proc, DmlStatement(
-                    sql_type="select",
-                    method_id=mapper_method,
-                    sql_text=sql_text,
-                    result_type="Map<String, Object>",
-                    returns_list=True,
-                ))
+                _add_dml(
+                    proc,
+                    DmlStatement(
+                        sql_type="select",
+                        method_id=mapper_method,
+                        sql_text=sql_text,
+                        result_type="Map<String, Object>",
+                        returns_list=True,
+                    ),
+                )
                 proc.java_logic_lines.append(
                     f"List<Map<String, Object>> {list_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});"
                 )
                 proc.java_logic_lines.append(f"for (Map<String, Object> {var_java} : {list_var}) {{")
 
                 proc.local_vars[variable] = "Map<String, Object>"
-                proc._loop_vars = getattr(proc, '_loop_vars', set())
-                proc._loop_vars.add(variable)
+                proc._loop_vars = getattr(proc, "_loop_vars", set())  # type: ignore[attr-defined]  # mypy: runtime-only loop metadata
+                proc._loop_vars.add(variable)  # type: ignore[attr-defined]  # mypy: initialized immediately above
                 for s in _iter_statements(body_stmts):
                     _process_statement(s, proc, all_packages, dml_counter)
                 _indent_last_lines(proc, 1)
@@ -5823,17 +6404,20 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
                     sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
                     sql_text = _apply_using_args_to_sql(sql_text, using_arg_names, proc)
                 mapper_method = _dml_method_name("select", proc.proc_name, dml_counter)
-                _add_dml(proc, DmlStatement(
-                    sql_type="select",
-                    method_id=mapper_method,
-                    sql_text=sql_text,
-                    result_type="Map<String, Object>",
-                    returns_list=True,
-                    dynamic_conditions=dynamic_conditions,
-                    base_sql=sql_text,
-                ))
-                _list_counter = getattr(proc, '_list_var_counter', 0) + 1
-                proc._list_var_counter = _list_counter
+                _add_dml(
+                    proc,
+                    DmlStatement(
+                        sql_type="select",
+                        method_id=mapper_method,
+                        sql_text=sql_text,
+                        result_type="Map<String, Object>",
+                        returns_list=True,
+                        dynamic_conditions=dynamic_conditions,
+                        base_sql=sql_text,
+                    ),
+                )
+                _list_counter = getattr(proc, "_list_var_counter", 0) + 1
+                proc._list_var_counter = _list_counter  # type: ignore[attr-defined]  # mypy: runtime-only name counter
                 list_var = f"{var_java}List" if _list_counter == 1 else f"{var_java}List_{_list_counter}"
                 proc.java_logic_lines.append(
                     f"List<Map<String, Object>> {list_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});"
@@ -5841,27 +6425,28 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
                 proc.java_logic_lines.append(f"for (Map<String, Object> {var_java} : {list_var}) {{")
 
                 proc.local_vars[variable] = "Map<String, Object>"
-                proc._loop_vars = getattr(proc, '_loop_vars', set())
-                proc._loop_vars.add(variable)
+                proc._loop_vars = getattr(proc, "_loop_vars", set())  # type: ignore[attr-defined]  # mypy: runtime-only loop metadata
+                proc._loop_vars.add(variable)  # type: ignore[attr-defined]  # mypy: initialized immediately above
                 for s in _iter_statements(body_stmts):
                     _process_statement(s, proc, all_packages, dml_counter)
                 _indent_last_lines(proc, 1)
                 proc.java_logic_lines.append("}")
                 return
-        proc.java_logic_lines.append(f"// TODO: FOR IN SELECT loop — query reconstruction failed")
+        proc.java_logic_lines.append("// TODO: FOR IN SELECT loop — query reconstruction failed")
         _record_todo("FOR_QUERY_FAILED", proc, "parsed_query or sql reconstruction failed")
     elif "Cursor" in kind:
         cursor_info = kind["Cursor"]
         cursor_expr = cursor_info.get("cursor_name", {})
         cursor_name = _extract_name_from_expr(cursor_expr)
 
-        cursor_meta = (proc.open_cursors.get(cursor_name)
-                       or proc.open_cursors.get(cursor_name.lower()))
+        cursor_meta = proc.open_cursors.get(cursor_name) or proc.open_cursors.get(cursor_name.lower())
 
         if cursor_meta:
             result_var = cursor_meta["result_var"]
             index_var = cursor_meta["index_var"]
-            proc.java_logic_lines.append(f"for (int {index_var} = 0; {index_var} < {result_var}.size(); {index_var}++) {{")
+            proc.java_logic_lines.append(
+                f"for (int {index_var} = 0; {index_var} < {result_var}.size(); {index_var}++) {{"
+            )
             proc.java_logic_lines.append(f"    found = {index_var} < {result_var}.size();")
             proc.java_logic_lines.append(f"    Map<String, Object> {var_java} = {result_var}.get({index_var});")
             for s in _iter_statements(body_stmts):
@@ -5869,26 +6454,28 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
             _indent_last_lines(proc, 1)
             proc.java_logic_lines.append("}")
         else:
-            cursor_decl = (proc.cursor_decls.get(cursor_name)
-                           or proc.cursor_decls.get(cursor_name.lower()))
+            cursor_decl = proc.cursor_decls.get(cursor_name) or proc.cursor_decls.get(cursor_name.lower())
             if cursor_decl:
                 sql_text = _reconstruct_sql_from_ast(cursor_decl)
                 if sql_text:
                     raw_sql_for_params = sql_text
                     sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
                     mapper_method = _dml_method_name("select", proc.proc_name, dml_counter)
-                    _list_counter = getattr(proc, '_list_var_counter', 0) + 1
-                    proc._list_var_counter = _list_counter
+                    _list_counter = getattr(proc, "_list_var_counter", 0) + 1
+                    proc._list_var_counter = _list_counter  # type: ignore[attr-defined]  # mypy: runtime-only name counter
                     list_var = f"{var_java}List" if _list_counter == 1 else f"{var_java}List_{_list_counter}"
-                    _add_dml(proc, DmlStatement(
-                        sql_type="select",
-                        method_id=mapper_method,
-                        sql_text=sql_text,
-                        result_type="Map<String, Object>",
-                        returns_list=True,
-                    ))
+                    _add_dml(
+                        proc,
+                        DmlStatement(
+                            sql_type="select",
+                            method_id=mapper_method,
+                            sql_text=sql_text,
+                            result_type="Map<String, Object>",
+                            returns_list=True,
+                        ),
+                    )
                     proc.java_logic_lines.append(
-                    f"List<Map<String, Object>> {list_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});"
+                        f"List<Map<String, Object>> {list_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});"
                     )
                     proc.java_logic_lines.append(f"for (Map<String, Object> {var_java} : {list_var}) {{")
                     for s in _iter_statements(body_stmts):
@@ -5896,7 +6483,9 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
                     _indent_last_lines(proc, 1)
                     proc.java_logic_lines.append("}")
                 else:
-                    proc.java_logic_lines.append(f"// TODO: FOR IN cursor '{cursor_name}' — query reconstruction failed")
+                    proc.java_logic_lines.append(
+                        f"// TODO: FOR IN cursor '{cursor_name}' — query reconstruction failed"
+                    )
                     _record_todo("FOR_CURSOR_QUERY_FAILED", proc, cursor_name)
             else:
                 proc.java_logic_lines.append(f"// TODO: FOR IN cursor '{cursor_name}' — cursor not tracked")
@@ -5911,8 +6500,9 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
     if _loop_var_restored:
         for dml in proc.dml_statements[_dml_count_before:]:
             sql_raw = dml.sql_text or ""
-            uses_loop_var = (var_java in set(re.findall(r'[#\$]\{(\w+)', sql_raw))
-                             or re.search(rf'\b{re.escape(variable)}\b', sql_raw, re.IGNORECASE))
+            uses_loop_var = var_java in set(re.findall(r"[#\$]\{(\w+)", sql_raw)) or re.search(
+                rf"\b{re.escape(variable)}\b", sql_raw, re.IGNORECASE
+            )
             if uses_loop_var:
                 already_has = any(jn == var_java for jn, _ in dml.extra_params)
                 if not already_has:
@@ -5923,12 +6513,16 @@ def _process_while(while_data: dict, proc: ProcedureInfo, all_packages: dict, dm
     condition = _coerce_condition(_expr_to_java(while_data.get("condition", {}), proc, all_packages=all_packages))
     body_stmts = while_data.get("body", [])
 
-    if getattr(proc, '_needs_futures_list', False) and proc.scheduler_tasks:
+    if getattr(proc, "_needs_futures_list", False) and proc.scheduler_tasks:
         body_text = json.dumps(body_stmts) if isinstance(body_stmts, list) else str(body_stmts)
-        if 'pg_sleep' in body_text.lower() or 'user_scheduler_jobs' in body_text.lower() or 'scheduler' in body_text.lower():
+        if (
+            "pg_sleep" in body_text.lower()
+            or "user_scheduler_jobs" in body_text.lower()
+            or "scheduler" in body_text.lower()
+        ):
             proc.java_logic_lines.append(
-                'java.util.concurrent.CompletableFuture.allOf('
-                '_futures.toArray(new java.util.concurrent.CompletableFuture[0])).join();'
+                "java.util.concurrent.CompletableFuture.allOf("
+                "_futures.toArray(new java.util.concurrent.CompletableFuture[0])).join();"
             )
             return
 
@@ -5942,8 +6536,8 @@ def _process_while(while_data: dict, proc: ProcedureInfo, all_packages: dict, dm
 def _process_loop(loop_data: dict, proc: ProcedureInfo, all_packages: dict, dml_counter: dict):
     body_stmts = loop_data.get("body", [])
 
-    proc._plain_loop_counter = getattr(proc, '_plain_loop_counter', 0) + 1
-    _guard = f"_loopGuard{proc._plain_loop_counter}"
+    proc._plain_loop_counter = getattr(proc, "_plain_loop_counter", 0) + 1  # type: ignore[attr-defined]  # mypy: runtime-only loop counter
+    _guard = f"_loopGuard{proc._plain_loop_counter}"  # type: ignore[attr-defined]  # mypy: initialized immediately above
     proc.java_logic_lines.append(f"int {_guard} = 0;")
     proc.java_logic_lines.append("while (true) {")
     proc.java_logic_lines.append(f"if (++{_guard} > 1000) {{ break; }}")
@@ -5975,7 +6569,7 @@ def _parse_dynamic_query_string(query_str: str, proc: ProcedureInfo) -> tuple:
 
     # Case 1: "execute immediate <var>" — strip the prefix, treat as variable reference
     if stripped.lower().startswith("execute immediate "):
-        var_part = stripped[len("execute immediate "):].strip()
+        var_part = stripped[len("execute immediate ") :].strip()
         var_name = _extract_var_name_from_query_string(var_part, proc)
         return (var_name or var_part, [])
 
@@ -5989,7 +6583,7 @@ def _parse_dynamic_query_string(query_str: str, proc: ProcedureInfo) -> tuple:
     using_match = _split_query_using(stripped)
     if using_match:
         sql_part, args_str = using_match
-        for arg in re.split(r'\s*,\s*', args_str.strip()):
+        for arg in re.split(r"\s*,\s*", args_str.strip()):
             arg = arg.strip()
             if not arg:
                 continue
@@ -6017,7 +6611,7 @@ def _parse_dynamic_query_string(query_str: str, proc: ProcedureInfo) -> tuple:
     return (stripped, [])
 
 
-def _split_query_using(query_str: str) -> tuple:
+def _split_query_using(query_str: str) -> Optional[tuple[str, str]]:
     """Split a query string at the 'using' keyword, respecting string literals and parens.
 
     Returns (sql_part, args_part) or None if no USING found.
@@ -6039,13 +6633,18 @@ def _split_query_using(query_str: str) -> tuple:
             if ch in ("'",):
                 in_string = True
                 string_char = ch
-            elif ch == '(':
+            elif ch == "(":
                 depth += 1
-            elif ch == ')':
+            elif ch == ")":
                 depth -= 1
-            elif depth == 0 and lower[i:i+5] == 'using' and (i == 0 or not lower[i-1].isalnum()) and (i + 5 >= len(lower) or not lower[i+5].isalnum()):
+            elif (
+                depth == 0
+                and lower[i : i + 5] == "using"
+                and (i == 0 or not lower[i - 1].isalnum())
+                and (i + 5 >= len(lower) or not lower[i + 5].isalnum())
+            ):
                 sql_part = query_str[:i].strip()
-                args_part = query_str[i+5:].strip()
+                args_part = query_str[i + 5 :].strip()
                 return (sql_part, args_part)
         i += 1
     return None
@@ -6054,9 +6653,14 @@ def _split_query_using(query_str: str) -> tuple:
 def _looks_like_sql(s: str) -> bool:
     """Heuristic: does this string look like a SQL statement rather than a variable name?"""
     lower = s.lower().strip()
-    return (lower.startswith('select ') or lower.startswith('insert ') or
-            lower.startswith('update ') or lower.startswith('delete ') or
-            lower.startswith('with ') or lower.startswith('('))
+    return (
+        lower.startswith("select ")
+        or lower.startswith("insert ")
+        or lower.startswith("update ")
+        or lower.startswith("delete ")
+        or lower.startswith("with ")
+        or lower.startswith("(")
+    )
 
 
 def _extract_var_name_from_query_string(s: str, proc: ProcedureInfo) -> str:
@@ -6067,12 +6671,12 @@ def _extract_var_name_from_query_string(s: str, proc: ProcedureInfo) -> str:
     """
     s = s.strip()
     # Strip array indexing like "[ 1 ]"
-    bracket_idx = s.find('[')
+    bracket_idx = s.find("[")
     if bracket_idx > 0:
         s = s[:bracket_idx].strip()
     # Strip surrounding whitespace
     s = s.strip()
-    if re.match(r'^[a-zA-Z_]\w*$', s):
+    if re.match(r"^[a-zA-Z_]\w*$", s):
         return s
     return ""
 
@@ -6083,7 +6687,7 @@ def _resolve_string_concat(expr: str, proc: ProcedureInfo) -> str:
     Tries to reconstruct a usable SQL string by resolving variables from proc.var_assignments.
     Falls back to the raw expression if variables can't be fully resolved.
     """
-    parts = re.split(r'\s*\|\|\s*', expr)
+    parts = re.split(r"\s*\|\|\s*", expr)
     resolved = []
     unresolved_vars = []
     for part in parts:
@@ -6126,14 +6730,10 @@ def _apply_using_args_to_sql(sql_text: str, using_arg_names: list, proc: Procedu
             java = proc.local_vars[arg_name]
             jdbc = java_type_to_jdbc(java)
         if jdbc and java:
-            placeholder = f'#{{{java_name}, jdbcType={jdbc}, javaType={java}}}'
+            placeholder = f"#{{{java_name}, jdbcType={jdbc}, javaType={java}}}"
         else:
-            placeholder = f'#{{{java_name}}}'
-        sql_text = re.sub(
-            rf':\s*{pos}(?!\d)',
-            placeholder,
-            sql_text
-        )
+            placeholder = f"#{{{java_name}}}"
+        sql_text = re.sub(rf":\s*{pos}(?!\d)", placeholder, sql_text)
     return sql_text
 
 
@@ -6157,13 +6757,16 @@ def _process_cursor_open(open_data: dict, proc: ProcedureInfo, all_packages: dic
                 raw_sql_for_params = sql_text
                 sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
                 mapper_method = _dml_method_name("select", proc.proc_name, dml_counter)
-                _add_dml(proc, DmlStatement(
-                    sql_type="select",
-                    method_id=mapper_method,
-                    sql_text=sql_text,
-                    result_type="Map<String, Object>",
-                    returns_list=True,
-                ))
+                _add_dml(
+                    proc,
+                    DmlStatement(
+                        sql_type="select",
+                        method_id=mapper_method,
+                        sql_text=sql_text,
+                        result_type="Map<String, Object>",
+                        returns_list=True,
+                    ),
+                )
 
                 result_var = f"{snake_to_camel(cursor_name)}Result"
                 index_var = f"{snake_to_camel(cursor_name)}Idx"
@@ -6202,15 +6805,18 @@ def _process_cursor_open(open_data: dict, proc: ProcedureInfo, all_packages: dic
                     sql_text = _convert_params_to_mybatis(sql_text, proc.parameters, proc.local_vars)
                     sql_text = _apply_using_args_to_sql(sql_text, using_arg_names, proc)
                 mapper_method = _dml_method_name("select", proc.proc_name, dml_counter)
-                _add_dml(proc, DmlStatement(
-                    sql_type="select",
-                    method_id=mapper_method,
-                    sql_text=sql_text,
-                    result_type="Map<String, Object>",
-                    returns_list=True,
-                    dynamic_conditions=dynamic_conditions,
-                    base_sql=sql_text,
-                ))
+                _add_dml(
+                    proc,
+                    DmlStatement(
+                        sql_type="select",
+                        method_id=mapper_method,
+                        sql_text=sql_text,
+                        result_type="Map<String, Object>",
+                        returns_list=True,
+                        dynamic_conditions=dynamic_conditions,
+                        base_sql=sql_text,
+                    ),
+                )
 
                 result_var = f"{snake_to_camel(cursor_name)}Result"
                 index_var = f"{snake_to_camel(cursor_name)}Idx"
@@ -6251,16 +6857,23 @@ def _process_cursor_open(open_data: dict, proc: ProcedureInfo, all_packages: dic
                         p_match = next((p for p in proc.parameters if p.name.lower() == arg_name.lower()), None)
                         if p_match:
                             jdbc = sql_type_to_jdbc(p_match.sql_type)
-                            repl = f'#{{{p_match.java_name}, jdbcType={jdbc}, javaType={p_match.java_type}}}' if jdbc else f'#{{{p_match.java_name}}}'
-                            sql_text = re.sub(rf'\b{re.escape(cp)}\b', repl, sql_text, flags=re.IGNORECASE)
+                            repl = (
+                                f"#{{{p_match.java_name}, jdbcType={jdbc}, javaType={p_match.java_type}}}"
+                                if jdbc
+                                else f"#{{{p_match.java_name}}}"
+                            )
+                            sql_text = re.sub(rf"\b{re.escape(cp)}\b", repl, sql_text, flags=re.IGNORECASE)
                 mapper_method = _dml_method_name("select", proc.proc_name, dml_counter)
-                _add_dml(proc, DmlStatement(
-                    sql_type="select",
-                    method_id=mapper_method,
-                    sql_text=sql_text,
-                    result_type="Map<String, Object>",
-                    returns_list=True,
-                ))
+                _add_dml(
+                    proc,
+                    DmlStatement(
+                        sql_type="select",
+                        method_id=mapper_method,
+                        sql_text=sql_text,
+                        result_type="Map<String, Object>",
+                        returns_list=True,
+                    ),
+                )
 
                 result_var = f"{snake_to_camel(cursor_name)}Result"
                 index_var = f"{snake_to_camel(cursor_name)}Idx"
@@ -6401,7 +7014,7 @@ def _append_missing_select_clauses(sql: str, inner_ast: dict) -> str:
         if lock_clause:
             sql_upper2 = sql.upper()
             # Check if FOR UPDATE/FOR SHARE already present
-            if not re.search(r'\bFOR\s+(UPDATE|SHARE|NO\s+KEY\s+UPDATE|KEY\s+SHARE)\b', sql_upper2):
+            if not re.search(r"\bFOR\s+(UPDATE|SHARE|NO\s+KEY\s+UPDATE|KEY\s+SHARE)\b", sql_upper2):
                 sql = sql.rstrip() + " " + lock_clause
 
     return sql
@@ -6414,7 +7027,9 @@ def _reconstruct_sql_from_ast(parsed_query: dict) -> str:
             json.dump({"statements": [parsed_query]}, f)
         result = subprocess.run(
             [OGSQL_BIN, "json2sql", "-f", tmp_path],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode == 0 and result.stdout.strip():
             sql = result.stdout.strip().rstrip(";")
@@ -6429,19 +7044,87 @@ def _reconstruct_sql_from_ast(parsed_query: dict) -> str:
 
 def _fix_reconstructed_sql(sql: str) -> str:
     import re as _re
-    if not hasattr(_fix_reconstructed_sql, "_compiled"):
+
+    _fix_fn = cast(Any, _fix_reconstructed_sql)
+    if not hasattr(_fix_fn, "_compiled"):
         _keywords = [
-            "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "IN", "IS", "ON",
-            "AS", "INTO", "SET", "JOIN", "LEFT", "RIGHT", "INNER", "OUTER",
-            "CROSS", "FULL", "GROUP", "ORDER", "HAVING", "LIMIT", "OFFSET",
-            "UNION", "INTERSECT", "EXCEPT", "VALUES", "INSERT", "UPDATE",
-            "DELETE", "CREATE", "DROP", "ALTER", "WITH", "CASE", "WHEN",
-            "THEN", "ELSE", "END", "BETWEEN", "LIKE", "EXISTS", "DISTINCT",
-            "ALL", "ANY", "SOME", "USING", "NATURAL", "RETURNING", "FETCH",
-            "NEXT", "ROWS", "ONLY", "NOWAIT", "SKIP", "LOCKED",
-            "LATERAL", "TABLESAMPLE", "OVER", "PARTITION", "WINDOW",
-            "RECURSIVE", "MATERIALIZED", "CONFLICT", "NOTHING", "EXCLUDED",
-            "BY", "OF", "AT", "TO", "FOR", "ASC", "DESC", "NULL", "TRUE", "FALSE",
+            "SELECT",
+            "FROM",
+            "WHERE",
+            "AND",
+            "OR",
+            "NOT",
+            "IN",
+            "IS",
+            "ON",
+            "AS",
+            "INTO",
+            "SET",
+            "JOIN",
+            "LEFT",
+            "RIGHT",
+            "INNER",
+            "OUTER",
+            "CROSS",
+            "FULL",
+            "GROUP",
+            "ORDER",
+            "HAVING",
+            "LIMIT",
+            "OFFSET",
+            "UNION",
+            "INTERSECT",
+            "EXCEPT",
+            "VALUES",
+            "INSERT",
+            "UPDATE",
+            "DELETE",
+            "CREATE",
+            "DROP",
+            "ALTER",
+            "WITH",
+            "CASE",
+            "WHEN",
+            "THEN",
+            "ELSE",
+            "END",
+            "BETWEEN",
+            "LIKE",
+            "EXISTS",
+            "DISTINCT",
+            "ALL",
+            "ANY",
+            "SOME",
+            "USING",
+            "NATURAL",
+            "RETURNING",
+            "FETCH",
+            "NEXT",
+            "ROWS",
+            "ONLY",
+            "NOWAIT",
+            "SKIP",
+            "LOCKED",
+            "LATERAL",
+            "TABLESAMPLE",
+            "OVER",
+            "PARTITION",
+            "WINDOW",
+            "RECURSIVE",
+            "MATERIALIZED",
+            "CONFLICT",
+            "NOTHING",
+            "EXCLUDED",
+            "BY",
+            "OF",
+            "AT",
+            "TO",
+            "FOR",
+            "ASC",
+            "DESC",
+            "NULL",
+            "TRUE",
+            "FALSE",
             "WITHIN",
         ]
         _kw_set = set(_keywords)
@@ -6457,18 +7140,16 @@ def _fix_reconstructed_sql(sql: str) -> str:
                 if _joined not in _pairs:
                     _pairs[_joined] = _kw + " " + _kw2
         _pair_pattern = "|".join(_re.escape(j) for j in _pairs)
-        _fix_reconstructed_sql._compiled = _re.compile(
-            r'(?<!\w)(' + _pair_pattern + r')(?!\w)'
-        )
-        _fix_reconstructed_sql._pairs = _pairs
-        _fix_reconstructed_sql._kw_pattern = _kw_pattern
+        _fix_fn._compiled = _re.compile(r"(?<!\w)(" + _pair_pattern + r")(?!\w)")
+        _fix_fn._pairs = _pairs
+        _fix_fn._kw_pattern = _kw_pattern
     sql = _re.sub(
-        r'([a-z0-9_])(' + _fix_reconstructed_sql._kw_pattern + r')(\b)',
-        r'\1 \2\3',
+        r"([a-z0-9_])(" + _fix_fn._kw_pattern + r")(\b)",
+        r"\1 \2\3",
         sql,
     )
-    sql = _fix_reconstructed_sql._compiled.sub(
-        lambda m: _fix_reconstructed_sql._pairs[m.group(1)],
+    sql = _fix_fn._compiled.sub(
+        lambda m: _fix_fn._pairs[m.group(1)],
         sql,
     )
     return sql
@@ -6481,70 +7162,174 @@ def _qualify_ambiguous_group_order(sql: str) -> str:
 
 def _rewrite_select_alias_columns(sql: str) -> str:
     import re as _re
+
     _ALIASES = {
-        'employees': {
-            'employee_id': 'emp_id',
-            'employee_name': 'emp_name',
-            'department_id': 'dept_id',
-            'salary': 'base_salary',
+        "employees": {
+            "employee_id": "emp_id",
+            "employee_name": "emp_name",
+            "department_id": "dept_id",
+            "salary": "base_salary",
         },
-        'departments': {
-            'department_id': 'dept_id',
-            'department_name': 'dept_name',
+        "departments": {
+            "department_id": "dept_id",
+            "department_name": "dept_name",
         },
     }
-    _KW = frozenset({'count', 'sum', 'avg', 'min', 'max', 'row_number', 'rank',
-        'dense_rank', 'percent_rank', 'ntile', 'lag', 'lead', 'first_value',
-        'last_value', 'nth_value', 'coalesce', 'nvl', 'nvl2', 'nullif',
-        'cast', 'extract', 'substring', 'trim', 'replace', 'position',
-        'overlay', 'to_char', 'to_date', 'to_number', 'to_timestamp',
-        'current_date', 'current_timestamp', 'systimestamp', 'sysdate',
-        'round', 'trunc', 'ceil', 'floor', 'abs', 'mod', 'power', 'sqrt',
-        'add_months', 'months_between', 'last_day', 'next_day',
-        'upper', 'lower', 'length', 'lpad', 'rpad', 'instr', 'concat',
-        'generate_series', 'array_agg', 'string_agg', 'json_agg',
-        'json_build_object', 'case', 'when', 'then', 'else', 'end',
-        'and', 'or', 'not', 'as', 'over', 'partition', 'window',
-        'by', 'order', 'group', 'having', 'where', 'from', 'select',
-        'distinct', 'all', 'asc', 'desc', 'null', 'is', 'in', 'between',
-        'like', 'exists', 'union', 'intersect', 'except', 'with',
-        'for', 'limit', 'offset', 'on', 'set', 'into', 'values',
-        'join', 'left', 'right', 'inner', 'outer', 'cross', 'full',
-        'natural', 'using', 'returning', 'fetch', 'next', 'rows', 'only',
-        'true', 'false', 'of', 'at', 'to',
-    })
+    _KW = frozenset(
+        {
+            "count",
+            "sum",
+            "avg",
+            "min",
+            "max",
+            "row_number",
+            "rank",
+            "dense_rank",
+            "percent_rank",
+            "ntile",
+            "lag",
+            "lead",
+            "first_value",
+            "last_value",
+            "nth_value",
+            "coalesce",
+            "nvl",
+            "nvl2",
+            "nullif",
+            "cast",
+            "extract",
+            "substring",
+            "trim",
+            "replace",
+            "position",
+            "overlay",
+            "to_char",
+            "to_date",
+            "to_number",
+            "to_timestamp",
+            "current_date",
+            "current_timestamp",
+            "systimestamp",
+            "sysdate",
+            "round",
+            "trunc",
+            "ceil",
+            "floor",
+            "abs",
+            "mod",
+            "power",
+            "sqrt",
+            "add_months",
+            "months_between",
+            "last_day",
+            "next_day",
+            "upper",
+            "lower",
+            "length",
+            "lpad",
+            "rpad",
+            "instr",
+            "concat",
+            "generate_series",
+            "array_agg",
+            "string_agg",
+            "json_agg",
+            "json_build_object",
+            "case",
+            "when",
+            "then",
+            "else",
+            "end",
+            "and",
+            "or",
+            "not",
+            "as",
+            "over",
+            "partition",
+            "window",
+            "by",
+            "order",
+            "group",
+            "having",
+            "where",
+            "from",
+            "select",
+            "distinct",
+            "all",
+            "asc",
+            "desc",
+            "null",
+            "is",
+            "in",
+            "between",
+            "like",
+            "exists",
+            "union",
+            "intersect",
+            "except",
+            "with",
+            "for",
+            "limit",
+            "offset",
+            "on",
+            "set",
+            "into",
+            "values",
+            "join",
+            "left",
+            "right",
+            "inner",
+            "outer",
+            "cross",
+            "full",
+            "natural",
+            "using",
+            "returning",
+            "fetch",
+            "next",
+            "rows",
+            "only",
+            "true",
+            "false",
+            "of",
+            "at",
+            "to",
+        }
+    )
 
     def _rewrite_one_select(sql_text, aliases):
-        select_m = _re.match(r'(SELECT\s+)(.*?)(\s+FROM\b)', sql_text, _re.IGNORECASE | _re.DOTALL)
+        select_m = _re.match(r"(SELECT\s+)(.*?)(\s+FROM\b)", sql_text, _re.IGNORECASE | _re.DOTALL)
         if not select_m:
             return sql_text
         col_list = select_m.group(2)
 
         def _rewrite_sel(m):
             prefix = m.group(1)
-            dot = m.group(3) or ''
+            dot = m.group(3) or ""
             col = m.group(4)
-            as_kw = m.group(5) or ''
+            as_kw = m.group(5) or ""
             cl = col.lower()
             if dot or as_kw or cl in _KW or cl not in aliases:
                 return m.group(0)
-            return f'{prefix}{aliases[cl]} AS {col}'
+            return f"{prefix}{aliases[cl]} AS {col}"
 
         new_col_list = _re.sub(
-            r'((?:^|,\s*))((\w+)\.)?(\w+)(\s+AS\s+\w+)?',
-            _rewrite_sel, col_list, flags=_re.IGNORECASE,
+            r"((?:^|,\s*))((\w+)\.)?(\w+)(\s+AS\s+\w+)?",
+            _rewrite_sel,
+            col_list,
+            flags=_re.IGNORECASE,
         )
-        return f'{select_m.group(1)}{new_col_list}{select_m.group(3)}{sql_text[select_m.end():]}'
+        return f"{select_m.group(1)}{new_col_list}{select_m.group(3)}{sql_text[select_m.end() :]}"
 
     for tbl_name, tbl_aliases in _ALIASES.items():
-        for from_m in _re.finditer(r'\bFROM\s+' + tbl_name + r'\b', sql, _re.IGNORECASE):
-            pre_sql = sql[:from_m.start()]
+        for from_m in _re.finditer(r"\bFROM\s+" + tbl_name + r"\b", sql, _re.IGNORECASE):
+            pre_sql = sql[: from_m.start()]
             sel_match = None
-            for sm in _re.finditer(r'\bSELECT\s+', pre_sql, _re.IGNORECASE):
+            for sm in _re.finditer(r"\bSELECT\s+", pre_sql, _re.IGNORECASE):
                 sel_match = sm
             if not sel_match:
                 continue
-            col_list = pre_sql[sel_match.end():]
+            col_list = pre_sql[sel_match.end() :]
 
             def _make_rewriter(alias_map):
                 def _rw_inner(text):
@@ -6552,38 +7337,38 @@ def _rewrite_select_alias_columns(sql: str) -> str:
                     i = 0
                     depth = 0
                     while i < len(text):
-                        ov_m = _re.match(r'\bOVER\s*\(', text[i:], _re.IGNORECASE)
+                        ov_m = _re.match(r"\bOVER\s*\(", text[i:], _re.IGNORECASE)
                         if ov_m:
                             ov_depth = 1
                             parts.append(ov_m.group(0))
                             i += ov_m.end()
                             while i < len(text) and ov_depth > 0:
-                                if text[i] == '(':
+                                if text[i] == "(":
                                     ov_depth += 1
-                                elif text[i] == ')':
+                                elif text[i] == ")":
                                     ov_depth -= 1
                                 parts.append(text[i])
                                 i += 1
                             continue
-                        if text[i] == '(':
+                        if text[i] == "(":
                             depth += 1
                             parts.append(text[i])
                             i += 1
                             continue
-                        if text[i] == ')':
+                        if text[i] == ")":
                             depth = max(0, depth - 1)
                             parts.append(text[i])
                             i += 1
                             continue
-                        wm = _re.match(r'((\w+)\.)?(\w+)(\s+AS\s+\w+)?', text[i:], _re.IGNORECASE)
+                        wm = _re.match(r"((\w+)\.)?(\w+)(\s+AS\s+\w+)?", text[i:], _re.IGNORECASE)
                         if wm and wm.group(3):
                             wcol = wm.group(3)
-                            wdot = wm.group(2) or ''
-                            was_kw = wm.group(4) or ''
+                            wdot = wm.group(2) or ""
+                            was_kw = wm.group(4) or ""
                             wcl = wcol.lower()
                             if not wdot and not was_kw and wcl not in _KW and wcl in alias_map:
                                 if depth == 0:
-                                    parts.append(f'{alias_map[wcl]} AS {wcol}')
+                                    parts.append(f"{alias_map[wcl]} AS {wcol}")
                                 else:
                                     parts.append(alias_map[wcl])
                             else:
@@ -6592,30 +7377,33 @@ def _rewrite_select_alias_columns(sql: str) -> str:
                         else:
                             parts.append(text[i])
                             i += 1
-                    return ''.join(parts)
+                    return "".join(parts)
+
                 return _rw_inner
 
             new_col_list = _make_rewriter(tbl_aliases)(col_list)
             if new_col_list != col_list:
-                sql = sql[:sel_match.end()] + new_col_list + sql[from_m.start():]
+                sql = sql[: sel_match.end()] + new_col_list + sql[from_m.start() :]
                 break
     return sql
 
 
 def _add_missing_lateral(sql: str) -> str:
     import re as _re
+
     def _fix_lateral(m):
         join_kw = m.group(1).strip()
         subquery = m.group(2)
         suffix = m.group(3)
-        outer_from = _re.search(r'\bFROM\s+(\w+)(?:\s+(?:AS\s+)?(\w+))?', sql[:m.start()], _re.IGNORECASE)
+        outer_from = _re.search(r"\bFROM\s+(\w+)(?:\s+(?:AS\s+)?(\w+))?", sql[: m.start()], _re.IGNORECASE)
         if outer_from:
             outer_alias = outer_from.group(2) or outer_from.group(1)
-            if _re.search(r'\b' + _re.escape(outer_alias) + r'\.\w+', subquery):
-                return join_kw + ' JOIN LATERAL(' + subquery + ')' + suffix
+            if _re.search(r"\b" + _re.escape(outer_alias) + r"\.\w+", subquery):
+                return join_kw + " JOIN LATERAL(" + subquery + ")" + suffix
         return m.group(0)
+
     return _re.sub(
-        r'((?:LEFT|RIGHT|INNER|FULL|CROSS)?\s*)JOIN\s*\((\s*SELECT\b.+?)\)(\s*AS\s+\w+\s+ON\s+\w+)',
+        r"((?:LEFT|RIGHT|INNER|FULL|CROSS)?\s*)JOIN\s*\((\s*SELECT\b.+?)\)(\s*AS\s+\w+\s+ON\s+\w+)",
         _fix_lateral,
         sql,
         flags=_re.IGNORECASE | _re.DOTALL,
@@ -6641,8 +7429,8 @@ def _process_cursor_fetch(fetch_data: dict, proc: ProcedureInfo):
             else:
                 var_names = [_extract_name_from_expr(into_info)]
 
-            proc.java_logic_lines.append(f"if (found) {{")
-            proc._needs_row_var = True
+            proc.java_logic_lines.append("if (found) {")
+            proc._needs_row_var = True  # type: ignore[attr-defined]  # mypy: runtime-only codegen marker
             proc.java_logic_lines.append(f"    _row = {result_var}.get({index_var});")
             proc.java_logic_lines.append(f"    {index_var}++;")
             for vn in var_names:
@@ -6666,8 +7454,8 @@ def _process_cursor_fetch(fetch_data: dict, proc: ProcedureInfo):
             else:
                 var_names = [_extract_name_from_expr(into_info)]
             proc.java_logic_lines.append(f"found = {index_var} < ({result_var} != null ? {result_var}.size() : 0);")
-            proc.java_logic_lines.append(f"if (found) {{")
-            proc._needs_row_var = True
+            proc.java_logic_lines.append("if (found) {")
+            proc._needs_row_var = True  # type: ignore[attr-defined]  # mypy: runtime-only codegen marker
             proc.java_logic_lines.append(f"    _row = {result_var}.get({index_var});")
             proc.java_logic_lines.append(f"    {index_var}++;")
             for vn in var_names:
@@ -6677,7 +7465,7 @@ def _process_cursor_fetch(fetch_data: dict, proc: ProcedureInfo):
                 proc.java_logic_lines.append(f"    {vn_java} = {_safe_map_cast(var_type, _get_expr)};")
             proc.java_logic_lines.append("}")
         else:
-            proc.java_logic_lines.append(f"found = false;")
+            proc.java_logic_lines.append("found = false;")
 
 
 def _process_cursor_close(close_data: dict, proc: ProcedureInfo):
@@ -6696,7 +7484,7 @@ def _find_registered_pkg(pkg: str, all_packages: dict):
     return None
 
 
-def _find_target_proc(pkg_name: str, proc_name: str, all_packages: dict, arg_count: int = None):
+def _find_target_proc(pkg_name: str, proc_name: str, all_packages: dict, arg_count: Optional[int] = None):
     """Find a ProcedureInfo by package and procedure name. If arg_count is given, prefer overload with matching param count."""
     if not all_packages:
         return None
@@ -6720,7 +7508,7 @@ def _emit_raise_application_error(args: list, proc: ProcedureInfo) -> list:
     _lines = []
     if len(args) >= 1:
         _lines.append(f"// RAISE_APPLICATION_ERROR({_code}, ...)")
-    _lines.append(f'throw new BusinessException(String.valueOf({_msg}));')
+    _lines.append(f"throw new BusinessException(String.valueOf({_msg}));")
     return _lines
 
 
@@ -6762,7 +7550,7 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
                         elif nk == "value" and na_name == "job_action":
                             job_action = _extract_string_literal(nv)
                             if job_action:
-                                aparts = job_action.split('.')
+                                aparts = job_action.split(".")
                                 proc._pending_scheduler_job = {"target_method": java_method_name(aparts[-1])}
                             elif isinstance(nv, dict) and "BinaryOp" in nv:
                                 segments = _flatten_binaryop_concat(nv)
@@ -6772,7 +7560,7 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
                                     if first_str:
                                         break
                                 if first_str:
-                                    aparts = first_str.split('.')
+                                    aparts = first_str.split(".")
                                     proc._pending_scheduler_job = {
                                         "target_method": java_method_name(aparts[-1]),
                                         "job_action_ast": nv,
@@ -6829,7 +7617,17 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
                             a_java_type = _infer_expr_type(a, proc)
                             if a_java_type == "Object":
                                 a_java_type = _infer_target_type(a_java, proc)
-                            if a_java_type in ("long", "Long", "int", "Integer", "double", "Double", "float", "Float", "java.math.BigDecimal"):
+                            if a_java_type in (
+                                "long",
+                                "Long",
+                                "int",
+                                "Integer",
+                                "double",
+                                "Double",
+                                "float",
+                                "Float",
+                                "java.math.BigDecimal",
+                            ):
                                 a_java = f"String.valueOf({a_java})"
                     else:
                         a_java = _coerce_java_arg(a_java, tptype)
@@ -6842,21 +7640,25 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
                 else:
                     resolved_args.append("null")
         args_java = ", ".join(resolved_args)
-        is_self_call = (matched_pkg.lower() == proc.package.lower())
+        is_self_call = matched_pkg.lower() == proc.package.lower()
         if is_self_call:
             pkg_info = all_packages.get(matched_pkg)
-            proc_exists = pkg_info and any(
-                p.proc_name.lower() == func.lower() for p in pkg_info.procedures
-            ) if pkg_info else False
+            proc_exists = (
+                pkg_info and any(p.proc_name.lower() == func.lower() for p in pkg_info.procedures)
+                if pkg_info
+                else False
+            )
             if not proc_exists:
                 full_name = ".".join(func_name_parts)
-                UNRESOLVED_CALLS.append(UnresolvedCall(
-                    caller=f"{proc.package}.{proc.proc_name}",
-                    callee=full_name,
-                    caller_file=proc.source_file or "",
-                    args=args_java,
-                    hint=f"procedure not found in package {matched_pkg}",
-                ))
+                UNRESOLVED_CALLS.append(
+                    UnresolvedCall(
+                        caller=f"{proc.package}.{proc.proc_name}",
+                        callee=full_name,
+                        caller_file=proc.source_file or "",
+                        args=args_java,
+                        hint=f"procedure not found in package {matched_pkg}",
+                    )
+                )
                 proc.java_logic_lines.append(f"// CALL {full_name}({args_java})")
                 return
         if not is_self_call:
@@ -6865,19 +7667,29 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
         proc.java_logic_lines.append(f"{call_target}({args_java});")
     else:
         full_name = ".".join(func_name_parts)
-        UNRESOLVED_CALLS.append(UnresolvedCall(
-            caller=f"{proc.package}.{proc.proc_name}",
-            callee=full_name,
-            caller_file=proc.source_file or "",
-            args="",
-            hint="add the defining SQL file to fluxgauss.yaml sources",
-        ))
+        UNRESOLVED_CALLS.append(
+            UnresolvedCall(
+                caller=f"{proc.package}.{proc.proc_name}",
+                callee=full_name,
+                caller_file=proc.source_file or "",
+                args="",
+                hint="add the defining SQL file to fluxgauss.yaml sources",
+            )
+        )
         proc.java_logic_lines.append(f"// CALL {full_name}(...)")
 
 
-def _wrap_handler_stmts(stmts, proc, all_packages,
-                         out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
-                         indent="    ", in_catch=True):
+def _wrap_handler_stmts(
+    stmts,
+    proc,
+    all_packages,
+    out_java_names,
+    out_string_names,
+    out_long_names,
+    out_bigdecimal_names,
+    indent="    ",
+    in_catch=True,
+):
     """Convert handler statements to Java lines, used by _wrap_try_catch."""
     _lines = []
     for s in _iter_statements(stmts):
@@ -6890,23 +7702,25 @@ def _wrap_handler_stmts(stmts, proc, all_packages,
                 expr_raw = sv.get("expression", {})
                 expr = _expr_to_java(expr_raw, proc, all_packages=all_packages)
                 errm_repl = "__SQLERRM__" if in_catch else '""'
-                expr = re.sub(r'\bsqlerrm\b', errm_repl, expr, flags=re.IGNORECASE)
-                expr = re.sub(r'\bsqlcode\b', 'String.valueOf(-1)', expr, flags=re.IGNORECASE)
+                expr = re.sub(r"\bsqlerrm\b", errm_repl, expr, flags=re.IGNORECASE)
+                expr = re.sub(r"\bsqlcode\b", "String.valueOf(-1)", expr, flags=re.IGNORECASE)
                 if target in out_java_names:
                     if target in out_string_names and not _is_string_expr(expr):
                         expr = f"String.valueOf({expr})"
-                    elif target in out_long_names and _is_string_expr(expr) and not _is_long_expr(expr):
-                        expr = f"Long.valueOf({expr})"
-                    elif target in out_long_names and _is_bare_int_literal(expr):
+                    elif (
+                        target in out_long_names
+                        and _is_string_expr(expr)
+                        and not _is_long_expr(expr)
+                        or target in out_long_names
+                        and _is_bare_int_literal(expr)
+                    ):
                         expr = f"Long.valueOf({expr})"
                     elif target in out_long_names and not _is_long_expr(expr):
                         expr = f"((Number) {expr}).longValue()"
                     elif target in out_bigdecimal_names:
                         if _is_bare_int_literal(expr):
                             expr = f"java.math.BigDecimal.valueOf({expr})"
-                        elif "BigDecimal" in expr:
-                            pass
-                        elif _is_numeric_literal_expr(expr):
+                        elif "BigDecimal" in expr or _is_numeric_literal_expr(expr):
                             pass
                         elif "mapper." in expr:
                             expr = f"((java.math.BigDecimal) {expr})"
@@ -6943,9 +7757,16 @@ def _wrap_handler_stmts(stmts, proc, all_packages,
                     # Emit inline try/catch for nested BEGIN...EXCEPTION...END
                     _lines.append(f"{indent}try {{")
                     _blines = _wrap_handler_stmts(
-                        sv.get("body", []), proc, all_packages,
-                        out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
-                        indent + "    ", in_catch=in_catch)
+                        sv.get("body", []),
+                        proc,
+                        all_packages,
+                        out_java_names,
+                        out_string_names,
+                        out_long_names,
+                        out_bigdecimal_names,
+                        indent + "    ",
+                        in_catch=in_catch,
+                    )
                     _lines.extend(_blines)
                     handlers_block = exc_block.get("handlers", [])
                     if handlers_block:
@@ -6953,52 +7774,92 @@ def _wrap_handler_stmts(stmts, proc, all_packages,
                         for h in handlers_block:
                             conds = h.get("conditions", [])
                             all_conditions.append(conds[0] if conds else "EXCEPTION")
-                        _lines.append(f"{indent}}} catch (Exception {_next_catch_var(proc)}) {{ // {'; '.join(all_conditions)}")
+                        _lines.append(
+                            f"{indent}}} catch (Exception {_next_catch_var(proc)}) {{ // {'; '.join(all_conditions)}"
+                        )
                     for handler in handlers_block:
                         conditions = handler.get("conditions", [])
                         cond_name = conditions[0] if conditions else "EXCEPTION"
                         _lines.append(f"{indent}    // WHEN {cond_name}")
                         h_blines = _wrap_handler_stmts(
-                            handler.get("statements", []), proc, all_packages,
-                            out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
-                            indent + "    ", in_catch=True)
+                            handler.get("statements", []),
+                            proc,
+                            all_packages,
+                            out_java_names,
+                            out_string_names,
+                            out_long_names,
+                            out_bigdecimal_names,
+                            indent + "    ",
+                            in_catch=True,
+                        )
                         _lines.extend(h_blines)
                     _lines.append(f"{indent}}}")
                 else:
                     _blines = _wrap_handler_stmts(
-                        sv.get("body", []), proc, all_packages,
-                        out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
-                        indent, in_catch=in_catch)
+                        sv.get("body", []),
+                        proc,
+                        all_packages,
+                        out_java_names,
+                        out_string_names,
+                        out_long_names,
+                        out_bigdecimal_names,
+                        indent,
+                        in_catch=in_catch,
+                    )
                     _lines.extend(_blines)
             elif sk == "If":
                 cond = _expr_to_java(sv.get("condition", {}), proc, all_packages=all_packages)
                 _lines.append(f"{indent}if ({cond}) {{")
                 then_body = sv.get("then_stmts") or sv.get("then_body") or sv.get("body") or []
                 then_lines = _wrap_handler_stmts(
-                    then_body, proc, all_packages,
-                    out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
-                    indent + "    ", in_catch=in_catch)
+                    then_body,
+                    proc,
+                    all_packages,
+                    out_java_names,
+                    out_string_names,
+                    out_long_names,
+                    out_bigdecimal_names,
+                    indent + "    ",
+                    in_catch=in_catch,
+                )
                 _lines.extend(then_lines)
-                for elsif in (sv.get("elsifs") or sv.get("elsif_list") or sv.get("elsif") or []):
+                for elsif in sv.get("elsifs") or sv.get("elsif_list") or sv.get("elsif") or []:
                     elsif_cond = _expr_to_java(elsif.get("condition", {}), proc, all_packages=all_packages)
                     _lines.append(f"{indent}}} else if ({elsif_cond}) {{")
                     # AST key for ELSIF body is "stmts" (same as main IF path at ~3431)
                     elsif_body = (
-                        elsif.get("stmts") or elsif.get("then_stmts")
-                        or elsif.get("body") or elsif.get("then_body") or []
+                        elsif.get("stmts")
+                        or elsif.get("then_stmts")
+                        or elsif.get("body")
+                        or elsif.get("then_body")
+                        or []
                     )
                     elsif_lines = _wrap_handler_stmts(
-                        elsif_body, proc, all_packages,
-                        out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
-                        indent + "    ", in_catch=in_catch)
+                        elsif_body,
+                        proc,
+                        all_packages,
+                        out_java_names,
+                        out_string_names,
+                        out_long_names,
+                        out_bigdecimal_names,
+                        indent + "    ",
+                        in_catch=in_catch,
+                    )
                     _lines.extend(elsif_lines)
                 else_body = sv.get("else_stmts") or sv.get("else_body") or sv.get("else") or []
                 if else_body:
                     _lines.append(f"{indent}}} else {{")
                     else_lines = _wrap_handler_stmts(
-                        else_body, proc, all_packages,
-                        out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
-                        indent + "    ", in_catch=in_catch)
+                        else_body,
+                        proc,
+                        all_packages,
+                        out_java_names,
+                        out_string_names,
+                        out_long_names,
+                        out_bigdecimal_names,
+                        indent + "    ",
+                        in_catch=in_catch,
+                    )
                     _lines.extend(else_lines)
                 _lines.append(f"{indent}}}")
             elif sk == "Raise":
@@ -7046,22 +7907,37 @@ def _wrap_handler_stmts(stmts, proc, all_packages,
                                     tptype = target_proc_info.parameters[i].java_type
                                     if tptype == "String":
                                         if ".get(" in a_java:
-                                            a_java = f"String.valueOf({a_java})" if ".get(" in a_java else f"(String) {a_java}"
+                                            a_java = (
+                                                f"String.valueOf({a_java})"
+                                                if ".get(" in a_java
+                                                else f"(String) {a_java}"
+                                            )
                                         elif not a_java.startswith('"'):
                                             a_java_type = _infer_expr_type(a, proc)
                                             if a_java_type == "Object":
                                                 a_java_type = _infer_target_type(a_java, proc)
-                                            if a_java_type in ("long", "Long", "int", "Integer", "double", "Double", "float", "Float", "java.math.BigDecimal"):
-                                                a_java = f"String.valueOf({a_java})"
-                                            # Type inference unavailable for a bare variable — String.valueOf
-                                            # is identity for String vars and numeric-safe otherwise
-                                            elif a_java_type == "Object" and re.match(r'^[a-zA-Z_]\w*$', a_java):
+                                            if (
+                                                a_java_type
+                                                in (
+                                                    "long",
+                                                    "Long",
+                                                    "int",
+                                                    "Integer",
+                                                    "double",
+                                                    "Double",
+                                                    "float",
+                                                    "Float",
+                                                    "java.math.BigDecimal",
+                                                )
+                                                or a_java_type == "Object"
+                                                and re.match(r"^[a-zA-Z_]\w*$", a_java)
+                                            ):
                                                 a_java = f"String.valueOf({a_java})"
                                     else:
                                         a_java = _coerce_java_arg(a_java, tptype)
                                 _resolved.append(a_java)
                         args_java = ", ".join(_resolved)
-                        is_self_call = (matched.lower() == proc.package.lower())
+                        is_self_call = matched.lower() == proc.package.lower()
                         if not is_self_call:
                             proc.service_calls.append(ServiceCall(svc_name, method, [], package_name=matched))
                         call_target = f"this.{method}" if is_self_call else f"{svc_name}.{method}"
@@ -7078,7 +7954,7 @@ def _wrap_handler_stmts(stmts, proc, all_packages,
     return _lines
 
 
-def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_packages: dict = None) -> list:
+def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_packages: Optional[dict] = None) -> list:
     def _has_top_return(lines):
         _min_ind = None
         for _l in lines:
@@ -7096,6 +7972,7 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
             if _ind == _min_ind and (_s.startswith("return") or _s.startswith("throw")):
                 return True
         return False
+
     out_java_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out}
     out_string_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out and p.java_type == "String"}
     out_long_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out and p.java_type == "Long"}
@@ -7118,22 +7995,29 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
     _nd_fallback = []
     for nd_handler in no_data_handlers:
         nd_lines = _wrap_handler_stmts(
-            nd_handler.get("statements", []), proc, all_packages,
-            out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
-            indent="    ", in_catch=False)
+            nd_handler.get("statements", []),
+            proc,
+            all_packages,
+            out_java_names,
+            out_string_names,
+            out_long_names,
+            out_bigdecimal_names,
+            indent="    ",
+            in_catch=False,
+        )
 
         # Find the last mapper result variable (var = mapper.xxx). The
         # assignment may be wrapped by coercion (e.g. String.valueOf(mapper.x)).
         null_var = None
         for line in reversed(body_lines):
-            m = re.match(r'^\s*(\w+)\s*=\s*(?:\w+\.valueOf\(|\([^)]*\)\s*)*mapper\.', line)
+            m = re.match(r"^\s*(\w+)\s*=\s*(?:\w+\.valueOf\(|\([^)]*\)\s*)*mapper\.", line)
             if m:
                 null_var = m.group(1)
                 break
         # Also match OUT-param style: pOXxx.set(mapper.xxx) or pOXxx.set(((Type) mapper.xxx))
         if null_var is None:
             for line in reversed(body_lines):
-                m = re.search(r'\.set\(\s*(?:\(\([^)]+\)\s*)?mapper\.', line)
+                m = re.search(r"\.set\(\s*(?:\(\([^)]+\)\s*)?mapper\.", line)
                 if m:
                     null_var = "__OUT_SET__"
                     break
@@ -7143,8 +8027,8 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
             null_block.extend(nd_lines)
             null_block.append("}")
             for i, line in enumerate(body_lines):
-                if re.match(rf'^\s*{re.escape(null_var)}\s*=\s*(?:\w+\.valueOf\(|\([^)]*\)\s*)*mapper\.', line):
-                    body_lines = body_lines[:i+1] + null_block + body_lines[i+1:]
+                if re.match(rf"^\s*{re.escape(null_var)}\s*=\s*(?:\w+\.valueOf\(|\([^)]*\)\s*)*mapper\.", line):
+                    body_lines = body_lines[: i + 1] + null_block + body_lines[i + 1 :]
                     break
         elif nd_lines:
             # Cannot insert null-check — keep handler for catch-block emission
@@ -7156,13 +8040,22 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
     if other_handlers:
         result = ["try {"]
         result.extend(f"    {line}" for line in body_lines)
-        result.append(f"}} catch (Exception {_next_catch_var(proc)}) {{ // EXCEPTION handlers — src: {proc.source_file}:{proc.source_start_line}")
+        result.append(
+            f"}} catch (Exception {_next_catch_var(proc)}) {{ // EXCEPTION handlers — src: {proc.source_file}:{proc.source_start_line}"
+        )
         for handler in other_handlers:
             stmts = handler.get("statements", [])
             h_lines = _wrap_handler_stmts(
-                stmts, proc, all_packages,
-                out_java_names, out_string_names, out_long_names, out_bigdecimal_names,
-                indent="    ", in_catch=True)
+                stmts,
+                proc,
+                all_packages,
+                out_java_names,
+                out_string_names,
+                out_long_names,
+                out_bigdecimal_names,
+                indent="    ",
+                in_catch=True,
+            )
             result.extend(h_lines)
         result.append("}")
         if proc.is_function and not _has_top_return(body_lines):
@@ -7174,7 +8067,7 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
     in_catch = False
     catch_var = "e"
     for line in result:
-        _cm = re.match(r'\s*}\s*catch\s*\(\s*[\w.]+\s+(\w+)\s*\)', line)
+        _cm = re.match(r"\s*}\s*catch\s*\(\s*[\w.]+\s+(\w+)\s*\)", line)
         if _cm:
             in_catch = True
             catch_var = _cm.group(1)
@@ -7182,17 +8075,17 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
             replacement = f"{catch_var}.getMessage()" if in_catch else '""'
             line = line.replace("__SQLERRM__", replacement)
         if "__SQLCODE__" in line:
-            replacement = "String.valueOf(-1)" if in_catch else "\"00000\""
+            replacement = "String.valueOf(-1)" if in_catch else '"00000"'
             line = line.replace("__SQLCODE__", replacement)
         if "__SQLSTATE__" in line:
-            replacement = "\"00000\"" if in_catch else "\"00000\""
+            replacement = '"00000"' if in_catch else '"00000"'
             line = line.replace("__SQLSTATE__", replacement)
         resolved.append(line)
 
-    return _merge_duplicate_catches(resolved)
+    return cast(list, _merge_duplicate_catches(resolved))
 
 
-def _process_exit(exit_data: dict, proc: ProcedureInfo, all_packages: dict = None):
+def _process_exit(exit_data: dict, proc: ProcedureInfo, all_packages: Optional[dict] = None):
     condition = exit_data.get("condition")
     if condition:
         java_cond = _expr_to_java(condition, proc, all_packages=all_packages)
@@ -7207,7 +8100,22 @@ def _process_case_stmt(case_data: dict, proc: ProcedureInfo, all_packages: dict,
     else_stmts = case_data.get("else_stmts", [])
 
     operand_type = _infer_expr_type(case_data.get("expression", {}), proc)
-    is_primitive = operand_type in ("int", "Integer", "long", "Long", "short", "Short", "byte", "Byte", "double", "Double", "float", "Float", "boolean", "Boolean")
+    is_primitive = operand_type in (
+        "int",
+        "Integer",
+        "long",
+        "Long",
+        "short",
+        "Short",
+        "byte",
+        "Byte",
+        "double",
+        "Double",
+        "float",
+        "Float",
+        "boolean",
+        "Boolean",
+    )
     first = True
     for when in whens:
         cond = _expr_to_java(when.get("condition", {}), proc, all_packages=all_packages)
@@ -7246,14 +8154,19 @@ def _process_return_query(rq_data: dict, proc: ProcedureInfo, all_packages: dict
             mapper_method = _dml_method_name(sql_type, proc.proc_name, dml_counter)
             ret_type = sql_type_to_java(proc.return_type) if proc.return_type else "Object"
 
-            _add_dml(proc, DmlStatement(
-                sql_type=sql_type,
-                method_id=mapper_method,
-                sql_text=sql_text,
-                result_type=f"List<{ret_type}>",
-                returns_list=True,
-            ))
-            proc.java_logic_lines.append(f"return mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});")
+            _add_dml(
+                proc,
+                DmlStatement(
+                    sql_type=sql_type,
+                    method_id=mapper_method,
+                    sql_text=sql_text,
+                    result_type=f"List<{ret_type}>",
+                    returns_list=True,
+                ),
+            )
+            proc.java_logic_lines.append(
+                f"return mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))});"
+            )
         else:
             proc.java_logic_lines.append("// TODO: RETURN QUERY — empty query")
             _record_todo("RETURN_QUERY_EMPTY", proc, "")
@@ -7261,11 +8174,13 @@ def _process_return_query(rq_data: dict, proc: ProcedureInfo, all_packages: dict
         dynamic_expr = rq_data.get("dynamic_expr", {})
         var_name = _extract_var_name_from_expr(dynamic_expr)
         proc.java_logic_lines.append(f"// TODO: RETURN QUERY EXECUTE — dynamic SQL variable: {var_name}")
-        proc.java_logic_lines.append(f"//       This function returns a dynamic query result. Consider using mapper.selectXxx() with the resolved SQL.")
+        proc.java_logic_lines.append(
+            "//       This function returns a dynamic query result. Consider using mapper.selectXxx() with the resolved SQL."
+        )
         _record_todo("RETURN_QUERY_DYNAMIC", proc, f"var={var_name}")
 
 
-def _process_return_next(rn_data: dict, proc: ProcedureInfo, all_packages: dict = None):
+def _process_return_next(rn_data: dict, proc: ProcedureInfo, all_packages: Optional[dict] = None):
     expr = rn_data.get("expression")
     if not proc.is_function or not proc.return_type:
         proc.java_logic_lines.append("// TODO: RETURN NEXT in non-function context")
@@ -7280,13 +8195,13 @@ def _process_return_next(rn_data: dict, proc: ProcedureInfo, all_packages: dict 
         proc.java_logic_lines.append("// TODO: RETURN NEXT without expression")
         _record_todo("RETURN_NEXT_EMPTY", proc, "")
         return
-    inner_java = sql_type_to_java(rt[len("setof"):].strip())
+    inner_java = sql_type_to_java(rt[len("setof") :].strip())
     if "Map" not in inner_java:
         proc.java_logic_lines.append(f"// TODO: RETURN NEXT of scalar SETOF ({inner_java}) not supported")
         _record_todo("RETURN_NEXT_SCALAR", proc, inner_java)
         return
     java_expr = _expr_to_java(expr, proc, all_packages=all_packages)
-    proc._setof_accumulate = True
+    proc._setof_accumulate = True  # type: ignore[attr-defined]  # mypy: runtime-only SETOF marker
     proc.java_logic_lines.append(f"_returnRows.add({java_expr});")
 
 
@@ -7352,14 +8267,18 @@ def _extract_savepoint_from_string_expr(string_expr: dict):
         lit = string_expr.get("Literal", {})
         if isinstance(lit, dict) and "String" in lit:
             s = lit["String"].strip().upper()
-            if s.startswith("SAVEPOINT ") or s.startswith("ROLLBACK TO SAVEPOINT ") or s.startswith("RELEASE SAVEPOINT "):
+            if (
+                s.startswith("SAVEPOINT ")
+                or s.startswith("ROLLBACK TO SAVEPOINT ")
+                or s.startswith("RELEASE SAVEPOINT ")
+            ):
                 name_part = lit["String"].strip()
                 if s.startswith("SAVEPOINT "):
-                    return ("SAVEPOINT", name_part[len("SAVEPOINT "):].strip() or "sp")
+                    return ("SAVEPOINT", name_part[len("SAVEPOINT ") :].strip() or "sp")
                 elif s.startswith("ROLLBACK TO SAVEPOINT "):
-                    return ("ROLLBACK TO SAVEPOINT", name_part[len("ROLLBACK TO SAVEPOINT "):].strip() or "sp")
+                    return ("ROLLBACK TO SAVEPOINT", name_part[len("ROLLBACK TO SAVEPOINT ") :].strip() or "sp")
                 else:
-                    return ("RELEASE SAVEPOINT", name_part[len("RELEASE SAVEPOINT "):].strip() or "sp")
+                    return ("RELEASE SAVEPOINT", name_part[len("RELEASE SAVEPOINT ") :].strip() or "sp")
         return None
     left = binop.get("left", {})
     right = binop.get("right", {})
@@ -7405,10 +8324,10 @@ def _resolve_dynamic_sql_text(proc: ProcedureInfo, var_name: str) -> str:
     if not var_name:
         return ""
     if var_name in proc.var_assignments:
-        return proc.var_assignments[var_name]
+        return cast(str, proc.var_assignments[var_name])
     tmpl = proc.dynamic_sql_templates.get(var_name)
     if tmpl:
-        return tmpl[0]
+        return cast(str, tmpl[0])
     return ""
 
 
@@ -7419,16 +8338,26 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
         sql_text = _reconstruct_sql_from_ast(parsed_query)
         if sql_text:
             _upper_sql = sql_text.strip().upper()
-            if _upper_sql.startswith("SAVEPOINT") or _upper_sql.startswith("ROLLBACK TO SAVEPOINT") or _upper_sql.startswith("RELEASE SAVEPOINT"):
+            if (
+                _upper_sql.startswith("SAVEPOINT")
+                or _upper_sql.startswith("ROLLBACK TO SAVEPOINT")
+                or _upper_sql.startswith("RELEASE SAVEPOINT")
+            ):
                 if _upper_sql.startswith("SAVEPOINT"):
-                    sp_name = sql_text.strip()[len("SAVEPOINT"):].strip()
-                    proc.java_logic_lines.append(f"// SAVEPOINT {sp_name} — handled via JDBC Connection.setSavepoint() in @Transactional context")
+                    sp_name = sql_text.strip()[len("SAVEPOINT") :].strip()
+                    proc.java_logic_lines.append(
+                        f"// SAVEPOINT {sp_name} — handled via JDBC Connection.setSavepoint() in @Transactional context"
+                    )
                 elif _upper_sql.startswith("ROLLBACK TO SAVEPOINT"):
-                    sp_name = sql_text.strip()[len("ROLLBACK TO SAVEPOINT"):].strip()
-                    proc.java_logic_lines.append(f"// ROLLBACK TO SAVEPOINT {sp_name} — handled via JDBC Connection.rollback(Savepoint) in @Transactional context")
+                    sp_name = sql_text.strip()[len("ROLLBACK TO SAVEPOINT") :].strip()
+                    proc.java_logic_lines.append(
+                        f"// ROLLBACK TO SAVEPOINT {sp_name} — handled via JDBC Connection.rollback(Savepoint) in @Transactional context"
+                    )
                 else:
-                    sp_name = sql_text.strip()[len("RELEASE SAVEPOINT"):].strip()
-                    proc.java_logic_lines.append(f"// RELEASE SAVEPOINT {sp_name} — not needed in Spring @Transactional context")
+                    sp_name = sql_text.strip()[len("RELEASE SAVEPOINT") :].strip()
+                    proc.java_logic_lines.append(
+                        f"// RELEASE SAVEPOINT {sp_name} — not needed in Spring @Transactional context"
+                    )
                 _record_todo("SAVEPOINT", proc, f"sql={sql_text.strip()}")
                 return
             raw_sql_for_params = sql_text
@@ -7459,19 +8388,11 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                             java = proc.local_vars[arg_name]
                             jdbc = java_type_to_jdbc(java)
                         if jdbc and java:
-                            placeholder = f'#{{{java_name}, jdbcType={jdbc}, javaType={java}}}'
+                            placeholder = f"#{{{java_name}, jdbcType={jdbc}, javaType={java}}}"
                         else:
-                            placeholder = f'#{{{java_name}}}'
-                        sql_text = re.sub(
-                            rf'\${pos}(?!\d)',
-                            placeholder,
-                            sql_text
-                        )
-                        sql_text = re.sub(
-                            rf':\s*{pos}(?!\d)',
-                            placeholder,
-                            sql_text
-                        )
+                            placeholder = f"#{{{java_name}}}"
+                        sql_text = re.sub(rf"\${pos}(?!\d)", placeholder, sql_text)
+                        sql_text = re.sub(rf":\s*{pos}(?!\d)", placeholder, sql_text)
             # Second pass: replace named params that weren't positional ($N)
             for arg in using_args:
                 if isinstance(arg, dict):
@@ -7491,17 +8412,13 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                             java = proc.local_vars[arg_name]
                             jdbc = java_type_to_jdbc(java)
                         if jdbc and java:
-                            placeholder = f'#{{{java_name}, jdbcType={jdbc}, javaType={java}}}'
+                            placeholder = f"#{{{java_name}, jdbcType={jdbc}, javaType={java}}}"
                         else:
-                            placeholder = f'#{{{java_name}}}'
-                        sql_text = re.sub(
-                            rf'\b{re.escape(arg_name)}\b',
-                            placeholder,
-                            sql_text, flags=re.IGNORECASE
-                        )
+                            placeholder = f"#{{{java_name}}}"
+                        sql_text = re.sub(rf"\b{re.escape(arg_name)}\b", placeholder, sql_text, flags=re.IGNORECASE)
             _using_extra = []
             _using_seen = {p.java_name for p in proc.parameters if not p.is_out}
-            _using_seen.update(re.findall(r'#\{(\w+)', sql_text))
+            _using_seen.update(re.findall(r"#\{(\w+)", sql_text))
             for _uarg in using_args:
                 if isinstance(_uarg, dict):
                     _uarg_name = _extract_var_name_from_expr(_uarg.get("argument", {}))
@@ -7529,16 +8446,23 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                     var_names = _extract_all_into_variables(into_targets)
                     if len(var_names) > 1:
                         result_type = "Map<String, Object>"
-                        _emit_row_decl(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params) + [jn for jn, _ in _using_extra])})')
+                        _emit_row_decl(
+                            proc,
+                            f"mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params) + [jn for jn, _ in _using_extra])})",
+                        )
                         into_targets_full = _extract_all_into_targets(into_targets)
                         for field_name, full_parts in into_targets_full:
                             if len(full_parts) >= 2:
                                 map_var = snake_to_camel(full_parts[0])
                                 vn_java = snake_to_camel(field_name)
-                                var_type = _java_type_from_field_name(field_name) if _java_type_from_field_name(field_name) != "Object" else "Object"
+                                var_type = (
+                                    _java_type_from_field_name(field_name)
+                                    if _java_type_from_field_name(field_name) != "Object"
+                                    else "Object"
+                                )
                                 _get_expr = f'_row.get("{field_name}")'
                                 cast_expr = _safe_map_cast(var_type, _get_expr) if var_type != "Object" else _get_expr
-                                _emit_assignment(proc, f'__MAP_PUT__{map_var}__{field_name}', cast_expr)
+                                _emit_assignment(proc, f"__MAP_PUT__{map_var}__{field_name}", cast_expr)
                             else:
                                 var_type = proc.local_vars.get(field_name, "Object")
                                 vn_java = snake_to_camel(field_name)
@@ -7549,30 +8473,43 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                             full_parts = into_targets_full[0][1]
                             map_var = snake_to_camel(full_parts[0])
                             result_type = "Map<String, Object>"
-                            _emit_row_decl(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params) + [jn for jn, _ in _using_extra])})')
-                            _emit_assignment(proc, f'__MAP_PUT__{map_var}__{first_var}', f'_row.get("{first_var}")')
+                            _emit_row_decl(
+                                proc,
+                                f"mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params) + [jn for jn, _ in _using_extra])})",
+                            )
+                            _emit_assignment(proc, f"__MAP_PUT__{map_var}__{first_var}", f'_row.get("{first_var}")')
                         else:
-                            _emit_assignment(proc, var_java, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params) + [jn for jn, _ in _using_extra])})')
-                    _add_dml(proc, DmlStatement(
+                            _emit_assignment(
+                                proc,
+                                var_java,
+                                f"mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params) + [jn for jn, _ in _using_extra])})",
+                            )
+                    _add_dml(
+                        proc,
+                        DmlStatement(
+                            sql_type=sql_type,
+                            method_id=mapper_method,
+                            sql_text=sql_text,
+                            result_type=result_type,
+                            extra_params=_using_extra,
+                        ),
+                    )
+            else:
+                _add_dml(
+                    proc,
+                    DmlStatement(
                         sql_type=sql_type,
                         method_id=mapper_method,
                         sql_text=sql_text,
-                        result_type=result_type,
+                        result_type="Map<String, Object>" if sql_type == "select" else None,
                         extra_params=_using_extra,
-                    ))
-            else:
-                _add_dml(proc, DmlStatement(
-                    sql_type=sql_type,
-                    method_id=mapper_method,
-                    sql_text=sql_text,
-                    result_type="Map<String, Object>" if sql_type == "select" else None,
-                    extra_params=_using_extra,
-                ))
-                _mapper_call = f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params) + [jn for jn, _ in _using_extra])})'
+                    ),
+                )
+                _mapper_call = f"mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params) + [jn for jn, _ in _using_extra])})"
                 if sql_type != "select":
                     _emit_dml_with_rowcount(proc, _mapper_call)
                 else:
-                    proc.java_logic_lines.append(f'{_mapper_call};')
+                    proc.java_logic_lines.append(f"{_mapper_call};")
             return
 
     # FALLBACK: existing string tracing logic (keep as-is)
@@ -7583,11 +8520,17 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
     if _sp_match:
         _sp_kind, _sp_name_java = _sp_match
         if _sp_kind == "SAVEPOINT":
-            proc.java_logic_lines.append(f"// SAVEPOINT {_sp_name_java} — use TransactionAspectSupport.currentTransactionStatus().createSavepoint() if needed")
+            proc.java_logic_lines.append(
+                f"// SAVEPOINT {_sp_name_java} — use TransactionAspectSupport.currentTransactionStatus().createSavepoint() if needed"
+            )
         elif _sp_kind == "ROLLBACK TO SAVEPOINT":
-            proc.java_logic_lines.append(f"// ROLLBACK TO SAVEPOINT {_sp_name_java} — use TransactionAspectSupport.currentTransactionStatus().rollbackToSavepoint() if needed")
+            proc.java_logic_lines.append(
+                f"// ROLLBACK TO SAVEPOINT {_sp_name_java} — use TransactionAspectSupport.currentTransactionStatus().rollbackToSavepoint() if needed"
+            )
         elif _sp_kind == "RELEASE SAVEPOINT":
-            proc.java_logic_lines.append(f"// RELEASE SAVEPOINT {_sp_name_java} — not needed in Spring @Transactional context")
+            proc.java_logic_lines.append(
+                f"// RELEASE SAVEPOINT {_sp_name_java} — not needed in Spring @Transactional context"
+            )
         return
 
     # Try BinaryOp concatenation resolution (e.g. "UPDATE " || p_table || " SET ...")
@@ -7621,10 +8564,10 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                                 java = proc.local_vars[arg_name]
                                 jdbc = java_type_to_jdbc(java)
                             if jdbc and java:
-                                placeholder = f'#{{{java_name}, jdbcType={jdbc}, javaType={java}}}'
+                                placeholder = f"#{{{java_name}, jdbcType={jdbc}, javaType={java}}}"
                             else:
-                                placeholder = f'#{{{java_name}}}'
-                            sql_text = re.sub(rf':\s*{pos}(?!\d)', placeholder, sql_text)
+                                placeholder = f"#{{{java_name}}}"
+                            sql_text = re.sub(rf":\s*{pos}(?!\d)", placeholder, sql_text)
                         else:
                             _col_ref = argument.get("ColumnRef")
                             _is_dot_access = False
@@ -7636,8 +8579,8 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                                     _cr_field = "_".join(_cr_parts[1:])
                                     _cr_java_field = snake_to_camel(_cr_field)
                                     _placeholder_name = f"{_cr_java_root}_{_cr_java_field}"
-                                    placeholder = f'#{{{_placeholder_name}}}'
-                                    sql_text = re.sub(rf':\s*{pos}(?!\d)', placeholder, sql_text)
+                                    placeholder = f"#{{{_placeholder_name}}}"
+                                    sql_text = re.sub(rf":\s*{pos}(?!\d)", placeholder, sql_text)
                                     _is_dot_access = True
                             if not _is_dot_access:
                                 _inline = _expr_to_java(argument, proc)
@@ -7648,14 +8591,19 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                                         _inline_sql = "CURRENT_TIMESTAMP"
                                     else:
                                         _inline_sql = _inline
-                                    sql_text = re.sub(rf':\s*{pos}(?!\d)', _inline_sql, sql_text)
+                                    sql_text = re.sub(rf":\s*{pos}(?!\d)", _inline_sql, sql_text)
                                     _inlined_positions.add(i)
                 sql_type = _detect_sql_type(sql_text)
                 mapper_method = _dml_method_name(sql_type, proc.proc_name, dml_counter)
 
                 extra = []
                 seen = {p.java_name for p in proc.parameters if not p.is_out}
-                seen.update(jn for jn, _jt in _dml_used_local_vars(proc, DmlStatement(sql_type=sql_type, method_id=mapper_method, sql_text=sql_text)))
+                seen.update(
+                    jn
+                    for jn, _jt in _dml_used_local_vars(
+                        proc, DmlStatement(sql_type=sql_type, method_id=mapper_method, sql_text=sql_text)
+                    )
+                )
                 for java_name, _is_id in template_params:
                     var_java = java_name.split(".", 1)[0] if "." in java_name else java_name
                     if var_java not in seen:
@@ -7699,14 +8647,17 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                                 var_type = proc.local_vars.get(arg_name, "Object")
                                 extra.append((arg_java, var_type))
                 param_args = _build_param_args_from_template(proc, template_params, extra, sql_text, _dot_access_exprs)
-                _add_dml(proc, DmlStatement(
-                    sql_type=sql_type,
-                    method_id=mapper_method,
-                    sql_text=sql_text,
-                    result_type="Map<String, Object>" if sql_type == "select" else None,
-                    extra_params=extra,
-                    is_dynamic=True,
-                ))
+                _add_dml(
+                    proc,
+                    DmlStatement(
+                        sql_type=sql_type,
+                        method_id=mapper_method,
+                        sql_text=sql_text,
+                        result_type="Map<String, Object>" if sql_type == "select" else None,
+                        extra_params=extra,
+                        is_dynamic=True,
+                    ),
+                )
                 if into_targets:
                     first_var = _extract_into_variable(into_targets)
                     if first_var:
@@ -7715,25 +8666,25 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                         var_names = _extract_all_into_variables(into_targets)
                         if len(var_names) > 1:
                             result_type = "Map<String, Object>"
-                            _emit_row_decl(proc, f'mapper.{mapper_method}({param_args})')
+                            _emit_row_decl(proc, f"mapper.{mapper_method}({param_args})")
                             for vn in var_names:
                                 var_type = proc.local_vars.get(vn, "Object")
                                 vn_j = snake_to_camel(vn)
                                 _emit_assignment(proc, vn_j, _safe_map_cast(var_type, f'_row.get("{vn}")'))
                         else:
-                            _emit_assignment(proc, var_java, f'mapper.{mapper_method}({param_args})')
+                            _emit_assignment(proc, var_java, f"mapper.{mapper_method}({param_args})")
                     else:
-                        _mc = f'mapper.{mapper_method}({param_args})'
+                        _mc = f"mapper.{mapper_method}({param_args})"
                         if sql_type != "select":
                             _emit_dml_with_rowcount(proc, _mc)
                         else:
-                            proc.java_logic_lines.append(f'{_mc};')
+                            proc.java_logic_lines.append(f"{_mc};")
                 else:
-                    _mc = f'mapper.{mapper_method}({param_args})'
+                    _mc = f"mapper.{mapper_method}({param_args})"
                     if sql_type != "select":
                         _emit_dml_with_rowcount(proc, _mc)
                     else:
-                        proc.java_logic_lines.append(f'{_mc};')
+                        proc.java_logic_lines.append(f"{_mc};")
                 return
 
     var_name = _extract_var_name_from_expr(string_expr)
@@ -7766,11 +8717,11 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                         java = proc.local_vars[arg_name]
                         jdbc = java_type_to_jdbc(java)
                     if jdbc and java:
-                        placeholder = f'#{{{java_name}, jdbcType={jdbc}, javaType={java}}}'
+                        placeholder = f"#{{{java_name}, jdbcType={jdbc}, javaType={java}}}"
                     else:
-                        placeholder = f'#{{{java_name}}}'
-                    sql_text = re.sub(rf':\s*{pos}(?!\d)', placeholder, sql_text)
-                    sql_text = re.sub(rf'\${pos}(?!\d)', placeholder, sql_text)
+                        placeholder = f"#{{{java_name}}}"
+                    sql_text = re.sub(rf":\s*{pos}(?!\d)", placeholder, sql_text)
+                    sql_text = re.sub(rf"\${pos}(?!\d)", placeholder, sql_text)
                 else:
                     _lit_val = None
                     if argument:
@@ -7786,16 +8737,21 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                                 elif "Null" in _lit:
                                     _lit_val = "NULL"
                     if _lit_val:
-                        sql_text = re.sub(rf':\s*{pos}(?!\d)', _lit_val, sql_text)
-                        sql_text = re.sub(rf'\${pos}(?!\d)', _lit_val, sql_text)
+                        sql_text = re.sub(rf":\s*{pos}(?!\d)", _lit_val, sql_text)
+                        sql_text = re.sub(rf"\${pos}(?!\d)", _lit_val, sql_text)
         raw_sql_for_params = sql_text
         sql_type = _detect_sql_type(sql_text)
         mapper_method = _dml_method_name(sql_type, proc.proc_name, dml_counter)
 
         extra = []
         seen = {p.java_name for p in proc.parameters if not p.is_out}
-        seen.update(jn for jn, _jt in _dml_used_local_vars(proc, DmlStatement(sql_type=sql_type, method_id=mapper_method, sql_text=sql_text)))
-        seen.update(re.findall(r'#\{(\w+)', sql_text))
+        seen.update(
+            jn
+            for jn, _jt in _dml_used_local_vars(
+                proc, DmlStatement(sql_type=sql_type, method_id=mapper_method, sql_text=sql_text)
+            )
+        )
+        seen.update(re.findall(r"#\{(\w+)", sql_text))
         for java_name, _is_id in template_params:
             var_java = java_name.split(".", 1)[0] if "." in java_name else java_name
             if var_java not in seen:
@@ -7825,7 +8781,7 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
         if dynamic_conditions:
             _dc_refs = set()
             for dc in dynamic_conditions:
-                _dc_refs.update(re.findall(r'[#\$]\{(\w+)', dc.sql_fragment))
+                _dc_refs.update(re.findall(r"[#\$]\{(\w+)", dc.sql_fragment))
             _pa_parts = [p.strip() for p in param_args.split(",") if p.strip()]
             _pa_names = set(_pa_parts)
             for p in proc.parameters:
@@ -7835,21 +8791,24 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
             param_args = ", ".join(_pa_parts)
         base_sql = sql_text
 
-        _add_dml(proc, DmlStatement(
-            sql_type=sql_type,
-            method_id=mapper_method,
-            sql_text=sql_text,
-            result_type=None,
-            extra_params=extra,
-            is_dynamic=True,
-            dynamic_conditions=dynamic_conditions,
-            base_sql=base_sql,
-        ))
-        _mc = f'mapper.{mapper_method}({param_args})'
+        _add_dml(
+            proc,
+            DmlStatement(
+                sql_type=sql_type,
+                method_id=mapper_method,
+                sql_text=sql_text,
+                result_type=None,
+                extra_params=extra,
+                is_dynamic=True,
+                dynamic_conditions=dynamic_conditions,
+                base_sql=base_sql,
+            ),
+        )
+        _mc = f"mapper.{mapper_method}({param_args})"
         if sql_type != "select":
             _emit_dml_with_rowcount(proc, _mc)
         else:
-            proc.java_logic_lines.append(f'{_mc};')
+            proc.java_logic_lines.append(f"{_mc};")
         for inlined_var in proc.inlined_sql_vars:
             var_java = snake_to_camel(inlined_var)
             for idx, line in enumerate(proc.java_logic_lines):
@@ -7867,14 +8826,14 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
         base_sql = sql_text
         extra = []
         seen_names = {p.java_name for p in proc.parameters if not p.is_out}
-        seen_names.update(re.findall(r'#\{(\w+)', sql_text))
-        seen_names.update(re.findall(r'\$\{(\w+)', sql_text))
+        seen_names.update(re.findall(r"#\{(\w+)", sql_text))
+        seen_names.update(re.findall(r"\$\{(\w+)", sql_text))
         for dc in dynamic_conditions:
-            for m in re.finditer(r'#\{(\w+)', dc.sql_fragment):
+            for m in re.finditer(r"#\{(\w+)", dc.sql_fragment):
                 if m.group(1) not in seen_names:
                     seen_names.add(m.group(1))
                     extra.append((m.group(1), "Object"))
-            for m in re.finditer(r'\$\{(\w+)', dc.sql_fragment):
+            for m in re.finditer(r"\$\{(\w+)", dc.sql_fragment):
                 if m.group(1) not in seen_names:
                     seen_names.add(m.group(1))
                     extra.append((m.group(1), "String"))
@@ -7894,27 +8853,28 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                 result_type = proc.local_vars.get(first_var, "Object")
         elif sql_type == "select":
             result_type = "Map<String, Object>"
-        _add_dml(proc, DmlStatement(
-            sql_type=sql_type,
-            method_id=mapper_method,
-            sql_text=sql_text,
-            result_type=result_type,
-            extra_params=extra,
-            is_dynamic=True,
-            dynamic_conditions=dynamic_conditions,
-            base_sql=base_sql,
-        ))
-        _dyn_refs = set(re.findall(r'[#\$]\{(\w+)', sql_text))
+        _add_dml(
+            proc,
+            DmlStatement(
+                sql_type=sql_type,
+                method_id=mapper_method,
+                sql_text=sql_text,
+                result_type=result_type,
+                extra_params=extra,
+                is_dynamic=True,
+                dynamic_conditions=dynamic_conditions,
+                base_sql=base_sql,
+            ),
+        )
+        _dyn_refs = set(re.findall(r"[#\$]\{(\w+)", sql_text))
         for dc in dynamic_conditions:
-            _dyn_refs.update(re.findall(r'[#\$]\{(\w+)', dc.sql_fragment))
+            _dyn_refs.update(re.findall(r"[#\$]\{(\w+)", dc.sql_fragment))
         _extra_java_names = {jn for jn, _ in extra}
         param_args_list = [
-            p.java_name for p in proc.parameters
-            if not p.is_out and (
-                p.java_name in _dyn_refs
-                or p.java_name in _extra_java_names
-                or not proc.dml_statements[-1].is_dynamic
-            )
+            p.java_name
+            for p in proc.parameters
+            if not p.is_out
+            and (p.java_name in _dyn_refs or p.java_name in _extra_java_names or not proc.dml_statements[-1].is_dynamic)
         ]
         for ep_java, _ in extra:
             if ep_java not in param_args_list:
@@ -7933,12 +8893,12 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                 if sql_type != "select":
                     _emit_dml_with_rowcount(proc, _mc)
                 else:
-                    proc.java_logic_lines.append(f'{_mc};')
+                    proc.java_logic_lines.append(f"{_mc};")
         else:
             if sql_type != "select":
                 _emit_dml_with_rowcount(proc, _mc)
             else:
-                proc.java_logic_lines.append(f'{_mc};')
+                proc.java_logic_lines.append(f"{_mc};")
         return
 
     if not sql_text:
@@ -7964,13 +8924,16 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                                 extra.append((arg_java, proc.local_vars.get(arg_name, "Object")))
                 sql_type = "update"
                 mapper_method = _dml_method_name(sql_type, proc.proc_name, dml_counter)
-                _add_dml(proc, DmlStatement(
-                    sql_type=sql_type,
-                    method_id=mapper_method,
-                    sql_text=sql_text,
-                    extra_params=extra,
-                    is_dynamic=True,
-                ))
+                _add_dml(
+                    proc,
+                    DmlStatement(
+                        sql_type=sql_type,
+                        method_id=mapper_method,
+                        sql_text=sql_text,
+                        extra_params=extra,
+                        is_dynamic=True,
+                    ),
+                )
                 param_args_list = [p.java_name for p in proc.parameters if not p.is_out]
                 for ep_java, _ in extra:
                     if ep_java not in param_args_list:
@@ -7992,7 +8955,7 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                     _mc = f"mapper.{mapper_method}({param_args_str})"
                     _emit_dml_with_rowcount(proc, _mc)
                 return
-        vn_camel = snake_to_camel(var_name.split('.')[0]) if var_name else "unknown"
+        vn_camel = snake_to_camel(var_name.split(".")[0]) if var_name else "unknown"
         # Extract USING args and INTO targets for the skeleton comment block
         _using_names = []
         for arg in using_args:
@@ -8002,20 +8965,28 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                     _using_names.append(snake_to_camel(arg_name))
         _into_names = _extract_all_into_variables(into_targets) if into_targets else []
         _into_camel = [snake_to_camel(vn) for vn in _into_names]
-        proc.java_logic_lines.append(f"// Dynamic SQL could not be resolved at conversion time")
-        proc.java_logic_lines.append(f"// Original: EXECUTE IMMEDIATE {var_name}" + (f" USING {', '.join(_using_names)}" if _using_names else "") + (f" INTO {', '.join(_into_names)}" if _into_names else ""))
-        proc.java_logic_lines.append(f"// Resolved variables:")
+        proc.java_logic_lines.append("// Dynamic SQL could not be resolved at conversion time")
+        proc.java_logic_lines.append(
+            f"// Original: EXECUTE IMMEDIATE {var_name}"
+            + (f" USING {', '.join(_using_names)}" if _using_names else "")
+            + (f" INTO {', '.join(_into_names)}" if _into_names else "")
+        )
+        proc.java_logic_lines.append("// Resolved variables:")
         proc.java_logic_lines.append(f"//   SQL: {vn_camel} (determined at runtime)")
         if _using_names:
             proc.java_logic_lines.append(f"//   USING: {', '.join(_using_names)}")
         if _into_camel:
             proc.java_logic_lines.append(f"//   INTO: {', '.join(_into_camel)}")
-        proc.java_logic_lines.append(f"// Manual implementation:")
+        proc.java_logic_lines.append("// Manual implementation:")
         proc.java_logic_lines.append(f"//   1. Resolve the SQL string in {vn_camel} at runtime")
-        proc.java_logic_lines.append(f"//   2. Execute via mapper method or JdbcTemplate")
+        proc.java_logic_lines.append("//   2. Execute via mapper method or JdbcTemplate")
         if _into_camel:
             proc.java_logic_lines.append(f"//   3. Capture result into {', '.join(_into_camel)}")
-        proc.java_logic_lines.append(f"// Example: jdbcTemplate.update({vn_camel}" + (", " + ", ".join(_using_names) if _using_names else "") + ");")
+        proc.java_logic_lines.append(
+            f"// Example: jdbcTemplate.update({vn_camel}"
+            + (", " + ", ".join(_using_names) if _using_names else "")
+            + ");"
+        )
         _record_todo("EXECUTE_UNRESOLVED", proc, f"var={var_name}")
         return
 
@@ -8032,15 +9003,22 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
             var_names = _extract_all_into_variables(into_targets)
             if len(var_names) > 1:
                 result_type = "Map<String, Object>"
-                _emit_row_decl(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))})')
+                _emit_row_decl(
+                    proc,
+                    f"mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))})",
+                )
                 into_targets_full = _extract_all_into_targets(into_targets)
                 for field_name, full_parts in into_targets_full:
                     if len(full_parts) >= 2:
                         map_var = snake_to_camel(full_parts[0])
-                        var_type = _java_type_from_field_name(field_name) if _java_type_from_field_name(field_name) != "Object" else "Object"
+                        var_type = (
+                            _java_type_from_field_name(field_name)
+                            if _java_type_from_field_name(field_name) != "Object"
+                            else "Object"
+                        )
                         _get_expr = f'_row.get("{field_name}")'
                         cast_expr = _safe_map_cast(var_type, _get_expr) if var_type != "Object" else _get_expr
-                        _emit_assignment(proc, f'__MAP_PUT__{map_var}__{field_name}', cast_expr)
+                        _emit_assignment(proc, f"__MAP_PUT__{map_var}__{field_name}", cast_expr)
                     else:
                         var_type = proc.local_vars.get(field_name, "Object")
                         vn_java = snake_to_camel(field_name)
@@ -8051,32 +9029,41 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                     full_parts = into_targets_full[0][1]
                     map_var = snake_to_camel(full_parts[0])
                     result_type = "Map<String, Object>"
-                    _emit_row_decl(proc, f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))})')
-                    _emit_assignment(proc, f'__MAP_PUT__{map_var}__{first_var}', f'_row.get("{first_var}")')
+                    _emit_row_decl(
+                        proc,
+                        f"mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))})",
+                    )
+                    _emit_assignment(proc, f"__MAP_PUT__{map_var}__{first_var}", f'_row.get("{first_var}")')
                 else:
-                    _sel_expr = f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))})'
+                    _sel_expr = f"mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))})"
                     _tvar_t = _lookup_var_type(proc, first_var)
                     if _tvar_t not in ("Object", "Map<String, Object>"):
                         _sel_expr = _coerce_type(_sel_expr, "Object", _tvar_t)
                     _emit_assignment(proc, var_java, _sel_expr)
-            _add_dml(proc, DmlStatement(
+            _add_dml(
+                proc,
+                DmlStatement(
+                    sql_type=sql_type,
+                    method_id=mapper_method,
+                    sql_text=sql_text,
+                    result_type=result_type,
+                ),
+            )
+    else:
+        _add_dml(
+            proc,
+            DmlStatement(
                 sql_type=sql_type,
                 method_id=mapper_method,
                 sql_text=sql_text,
-                result_type=result_type,
-            ))
-    else:
-        _add_dml(proc, DmlStatement(
-            sql_type=sql_type,
-            method_id=mapper_method,
-            sql_text=sql_text,
-            result_type="Map<String, Object>" if sql_type == "select" else None,
-        ))
-        _mc = f'mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))})'
+                result_type="Map<String, Object>" if sql_type == "select" else None,
+            ),
+        )
+        _mc = f"mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, raw_sql_for_params))})"
         if sql_type != "select":
             _emit_dml_with_rowcount(proc, _mc)
         else:
-            proc.java_logic_lines.append(f'{_mc};')
+            proc.java_logic_lines.append(f"{_mc};")
 
 
 def _convert_placeholders_to_mybatis(sql: str, proc=None) -> str:
@@ -8087,7 +9074,7 @@ def _convert_placeholders_to_mybatis(sql: str, proc=None) -> str:
     """
     if proc:
         # Build lookup: param_name_lower → (java_name, jdbc_type, java_type)
-        _type_map = {}
+        _type_map: dict[str, tuple[str, Optional[str], Optional[str]]] = {}
         for p in proc.parameters:
             jdbc = sql_type_to_jdbc(p.sql_type)
             if jdbc:
@@ -8106,21 +9093,21 @@ def _convert_placeholders_to_mybatis(sql: str, proc=None) -> str:
             raw_name = m.group(1)
             info = _type_map.get(raw_name.lower())
             if info and info[1] and info[2]:
-                return f'#{{{info[0]}, jdbcType={info[1]}, javaType={info[2]}}}'
+                return f"#{{{info[0]}, jdbcType={info[1]}, javaType={info[2]}}}"
             elif info:
-                return f'#{{{info[0]}}}'
+                return f"#{{{info[0]}}}"
             else:
                 # Unknown param — use snake_to_camel as before
-                return f'#{{{snake_to_camel(raw_name)}}}'
+                return f"#{{{snake_to_camel(raw_name)}}}"
 
-        sql = re.sub(r':(\w+)', _colon_replacer, sql)
+        sql = re.sub(r":(\w+)", _colon_replacer, sql)
     else:
-        sql = re.sub(r':(\w+)', lambda m: f'#{{{snake_to_camel(m.group(1))}}}', sql)
+        sql = re.sub(r":(\w+)", lambda m: f"#{{{snake_to_camel(m.group(1))}}}", sql)
 
     # $N positional params — always simple form
-    sql = re.sub(r'\$(\d+)', lambda m: f'#{{param{m.group(1)}}}', sql)
+    sql = re.sub(r"\$(\d+)", lambda m: f"#{{param{m.group(1)}}}", sql)
     # Colon-space positional params (: 1, : 2) — produced by json2sql AST reconstruction
-    sql = re.sub(r':\s+(\d+)', lambda m: f'#{{param{m.group(1)}}}', sql)
+    sql = re.sub(r":\s+(\d+)", lambda m: f"#{{param{m.group(1)}}}", sql)
     return sql
 
 
@@ -8136,8 +9123,8 @@ def _reconstruct_sql_from_concat(expr: dict, proc: ProcedureInfo):
 
     Returns None if the expression is not a SQL-like string concatenation.
     """
-    parts = []
-    param_list = []
+    parts: list[str] = []
+    param_list: list[tuple[str, bool]] = []
     _flatten_concat(expr, parts, param_list, proc)
 
     if not parts:
@@ -8159,21 +9146,23 @@ def _flatten_concat(expr: dict, parts: list, param_list: list, proc: ProcedureIn
 
     for key, val in expr.items():
         if key == "BinaryOp":
-            if getattr(proc, '_inline_unquote_next', False) and val.get("op") != "||":
-                proc._inline_unquote_next = False
+            if getattr(proc, "_inline_unquote_next", False) and val.get("op") != "||":
+                proc._inline_unquote_next = False  # type: ignore[attr-defined]  # mypy: runtime-only concat parser state
             op = val.get("op", "")
             if op == "||":
                 _flatten_concat(val.get("left", {}), parts, param_list, proc)
                 _flatten_concat(val.get("right", {}), parts, param_list, proc)
             else:
-                parts.append(f" {_java_op_symbol(op)} ")
+                _flatten_concat(val.get("left", {}), parts, param_list, proc)
+                parts.append(f" {op} ")
+                _flatten_concat(val.get("right", {}), parts, param_list, proc)
         elif key == "Literal":
             if isinstance(val, dict):
                 if "String" in val:
                     s = val["String"]
-                    if getattr(proc, '_inline_unquote_next', False) and s.startswith("'"):
+                    if getattr(proc, "_inline_unquote_next", False) and s.startswith("'"):
                         s = s[1:]
-                        proc._inline_unquote_next = False
+                        proc._inline_unquote_next = False  # type: ignore[attr-defined]  # mypy: runtime-only concat parser state
                     parts.append(s)
                 elif "Integer" in val:
                     parts.append(str(val["Integer"]))
@@ -8195,7 +9184,7 @@ def _flatten_concat(expr: dict, parts: list, param_list: list, proc: ProcedureIn
                     parts.append(inline_sql)
                     param_list.extend(inline_params)
                     proc.inlined_sql_vars.add(var_name)
-                    proc._inline_unquote_next = True
+                    proc._inline_unquote_next = True  # type: ignore[attr-defined]  # mypy: runtime-only concat parser state
                 else:
                     java_name = snake_to_camel(var_name)
                     is_identifier = _is_identifier_context(parts)
@@ -8345,7 +9334,7 @@ def _expr_to_sql_fragment(expr: dict, proc: ProcedureInfo) -> str:
 
 def _inline_sql_expr(ast_node: dict, proc: ProcedureInfo) -> tuple:
     sql = _expr_to_sql_fragment(ast_node, proc)
-    params = []
+    params: list[tuple[str, bool]] = []
     _collect_fragment_params(ast_node, params, proc)
     return (sql, params)
 
@@ -8403,7 +9392,7 @@ def _extract_name_from_expr(expr: dict) -> str:
     return "?"
 
 
-def _extract_string_literal(node: dict) -> str:
+def _extract_string_literal(node: dict) -> Optional[str]:
     if not isinstance(node, dict):
         if isinstance(node, str):
             return node.strip("'\"")
@@ -8412,7 +9401,7 @@ def _extract_string_literal(node: dict) -> str:
         if k == "StringLiteral":
             return v.strip("'\"") if isinstance(v, str) else str(v)
         elif k == "SingleQuotedString":
-            return v.strip("'")
+            return cast(str, v).strip("'")
     return None
 
 
@@ -8432,9 +9421,7 @@ def _process_raise(raise_data: dict, proc: ProcedureInfo):
     if level == "Exception":
         if params:
             args_java = ", ".join(_expr_to_java(p, proc) for p in params)
-            proc.java_logic_lines.append(
-                f'throw new BusinessException(String.format("{message}", {args_java}));'
-            )
+            proc.java_logic_lines.append(f'throw new BusinessException(String.format("{message}", {args_java}));')
         else:
             proc.java_logic_lines.append(f'throw new BusinessException("{message}");')
     elif level in ("Notice", "Info", "Log", "Debug"):
@@ -8454,8 +9441,8 @@ def _process_raise(raise_data: dict, proc: ProcedureInfo):
 
 def _process_call_text(sql: str, proc: ProcedureInfo, all_packages: dict):
     """Process CALL statement from raw sql_text."""
-    normalized = re.sub(r'\s*\.\s*', '.', sql.strip())
-    if re.match(r'call\s+DBE_SCHEDULER\.ENABLE', normalized, re.IGNORECASE):
+    normalized = re.sub(r"\s*\.\s*", ".", sql.strip())
+    if re.match(r"call\s+DBE_SCHEDULER\.ENABLE", normalized, re.IGNORECASE):
         _flush_scheduler_job(proc)
         return
     match = re.match(r"call\s+([\w.]+)\s*\(([^)]*)\)", normalized, re.IGNORECASE)
@@ -8463,7 +9450,7 @@ def _process_call_text(sql: str, proc: ProcedureInfo, all_packages: dict):
         full_name = match.group(1)
         args_str = match.group(2).strip()
         # Normalize args: remove extra spaces around dots
-        args_str = re.sub(r'\s*\.\s*', '.', args_str)
+        args_str = re.sub(r"\s*\.\s*", ".", args_str)
         parts = full_name.split(".")
         if len(parts) >= 2:
             pkg = parts[0]
@@ -8479,19 +9466,21 @@ def _process_call_text(sql: str, proc: ProcedureInfo, all_packages: dict):
             svc_name = f"{package_to_classname(matched_pkg).lower()}Service"
             method = java_method_name(func)
             java_args = _convert_sql_args_to_java(args_str, proc)
-            is_self_call = (matched_pkg.lower() == proc.package.lower())
+            is_self_call = matched_pkg.lower() == proc.package.lower()
             if not is_self_call:
                 proc.service_calls.append(ServiceCall(svc_name, method, [], package_name=matched_pkg))
             call_target = f"this.{method}" if is_self_call else f"{svc_name}.{method}"
             proc.java_logic_lines.append(f"{call_target}({java_args});")
         else:
-            UNRESOLVED_CALLS.append(UnresolvedCall(
-                caller=f"{proc.package}.{proc.proc_name}",
-                callee=f"{full_name}({args_str})",
-                caller_file=proc.source_file or "",
-                args=args_str,
-                hint=f"add the SQL file defining {pkg} to fluxgauss.yaml sources",
-            ))
+            UNRESOLVED_CALLS.append(
+                UnresolvedCall(
+                    caller=f"{proc.package}.{proc.proc_name}",
+                    callee=f"{full_name}({args_str})",
+                    caller_file=proc.source_file or "",
+                    args=args_str,
+                    hint=f"add the SQL file defining {pkg} to fluxgauss.yaml sources",
+                )
+            )
             proc.java_logic_lines.append(f"// CALL {full_name}({args_str})")
 
 
@@ -8504,19 +9493,19 @@ def _convert_sql_args_to_java(args_str: str, proc: ProcedureInfo) -> str:
     depth = 0
     current = []
     for ch in args_str:
-        if ch == '(':
+        if ch == "(":
             depth += 1
             current.append(ch)
-        elif ch == ')':
+        elif ch == ")":
             depth -= 1
             current.append(ch)
-        elif ch == ',' and depth == 0:
-            args.append(''.join(current).strip())
+        elif ch == "," and depth == 0:
+            args.append("".join(current).strip())
             current = []
         else:
             current.append(ch)
     if current:
-        args.append(''.join(current).strip())
+        args.append("".join(current).strip())
 
     java_args = []
     for arg in args:
@@ -8531,14 +9520,14 @@ def _sql_arg_to_java(arg: str, proc: ProcedureInfo) -> str:
     if arg.startswith("'") and arg.endswith("'"):
         return f'"{arg[1:-1]}"'
     # Numeric literal
-    if re.match(r'^-?\d+$', arg):
+    if re.match(r"^-?\d+$", arg):
         return arg
-    if re.match(r'^-?\d+\.\d+$', arg):
+    if re.match(r"^-?\d+\.\d+$", arg):
         return f"{arg}d"
     # Check if it's a known parameter (p_xxx)
     for p in proc.parameters:
         if arg.lower() == p.name.lower():
-            return p.java_name
+            return cast(str, p.java_name)
     # Check if it's a known local variable (v_xxx)
     if arg.lower() in proc.local_vars:
         return snake_to_camel(arg.lower())
@@ -8583,8 +9572,8 @@ SQL_FUNCTION_MAP = {
     "power": "Math.pow",
     "sign": "__EXPR__Integer.signum((int)({args0}))",
     "instr": "__HANDLER__",
-    "rtrim": "__EXPR__String.valueOf({args0}).replaceAll(\"\\\\s+$\", \"\")",
-    "ltrim": "__EXPR__String.valueOf({args0}).replaceAll(\"^\\\\s+\", \"\")",
+    "rtrim": '__EXPR__String.valueOf({args0}).replaceAll("\\\\s+$", "")',
+    "ltrim": '__EXPR__String.valueOf({args0}).replaceAll("^\\\\s+", "")',
     "chr": "__EXPR__String.valueOf((char)({args0}))",
     "ascii": "__EXPR__String.valueOf({args0}).charAt(0)",
     "add_months": "__EXPR__java.time.LocalDate.now().plusMonths({args1})",
@@ -8609,7 +9598,7 @@ SQL_FUNCTION_MAP = {
     "reverse": "__EXPR__new StringBuilder(String.valueOf({args0})).reverse().toString()",
     "repeat": "__EXPR__String.valueOf({args0}).repeat(Integer.parseInt(String.valueOf({args1})))",
     "split_part": "__EXPR__String.valueOf({args0}).split(java.util.regex.Pattern.quote(String.valueOf({args1})))[Math.min(Integer.parseInt(String.valueOf({args2})) - 1, String.valueOf({args0}).split(java.util.regex.Pattern.quote(String.valueOf({args1}))).length - 1)]",
-    "initcap": "__EXPR__java.util.Arrays.stream(String.valueOf({args0}).split(\" \")).map(w -> w.isEmpty() ? w : Character.toUpperCase(w.charAt(0)) + w.substring(1).toLowerCase()).collect(java.util.stream.Collectors.joining(\" \"))",
+    "initcap": '__EXPR__java.util.Arrays.stream(String.valueOf({args0}).split(" ")).map(w -> w.isEmpty() ? w : Character.toUpperCase(w.charAt(0)) + w.substring(1).toLowerCase()).collect(java.util.stream.Collectors.joining(" "))',
     "sqrt": "__EXPR__Math.sqrt({args0})",
     "log": "__EXPR__Math.log({args0})",
     "exp": "__EXPR__Math.exp({args0})",
@@ -8646,7 +9635,7 @@ SQL_FUNCTION_MAP = {
     "array_append": "__HANDLER__",
     "array_to_string": "__HANDLER__",
     "age": "__HANDLER__",
-    "inet_client_addr": "__EXPR__\"127.0.0.1\"",
+    "inet_client_addr": '__EXPR__"127.0.0.1"',
     "current_setting": "__HANDLER__",
     "pg_backend_pid": "__EXPR__Thread.currentThread().getId()",
     "jsonb_build_array": "__HANDLER__",
@@ -8662,7 +9651,6 @@ SQL_FUNCTION_MAP = {
     "st_envelope": "__HANDLER__",
     "numrange": "__HANDLER__",
     "tsrange": "__HANDLER__",
-    "t_spectrum_array": "__HANDLER__",
 }
 
 SQL_EXPR_FUNCTIONS = {k for k, v in SQL_FUNCTION_MAP.items() if v.startswith("__EXPR__")}
@@ -8674,6 +9662,7 @@ SQL_EXPR_FUNCTIONS = {k for k, v in SQL_FUNCTION_MAP.items() if v.startswith("__
 #
 # Each handler receives (val, proc, _expr_to_java) and returns a Java expression string.
 # val is the dict value under the "SpecialFunction" key, containing "name" and "args".
+
 
 def _sf_substr(val, proc, _expr_to_java_fn):
     """SUBSTR/SUBSTRING: SQL 1-based → Java 0-based substring."""
@@ -8748,7 +9737,9 @@ def _sf_extract(val, proc, _expr_to_java_fn):
     else:
         field_name = "UNKNOWN"
 
-    src_expr = _expr_to_java_fn(args[1], proc) if len(args) > 1 else "new java.sql.Timestamp(System.currentTimeMillis())"
+    src_expr = (
+        _expr_to_java_fn(args[1], proc) if len(args) > 1 else "new java.sql.Timestamp(System.currentTimeMillis())"
+    )
     field_map = {
         "YEAR": "toLocalDateTime().toLocalDate().getYear()",
         "MONTH": "toLocalDateTime().toLocalDate().getMonthValue()",
@@ -8761,15 +9752,23 @@ def _sf_extract(val, proc, _expr_to_java_fn):
     accessor = field_map.get(field_name, f"/* EXTRACT {field_name} */ -1")
     src_type = _infer_expr_type(args[1], proc) if proc and len(args) > 1 else ""
     if field_name == "EPOCH":
-        if (src_expr.startswith("new java.sql.Timestamp") or "Timestamp" in src_type
-                or src_expr.startswith("new java.sql.Date") or "java.sql.Date" in src_type):
+        if (
+            src_expr.startswith("new java.sql.Timestamp")
+            or "Timestamp" in src_type
+            or src_expr.startswith("new java.sql.Date")
+            or "java.sql.Date" in src_type
+        ):
             return f"({src_expr}).getTime() / 1000.0"
         return f"({src_expr}) / 1000.0"
-    if src_expr.startswith("new java.sql.Timestamp") or src_expr.startswith("java.sql.Timestamp.valueOf") or "Timestamp" in src_type:
+    if (
+        src_expr.startswith("new java.sql.Timestamp")
+        or src_expr.startswith("java.sql.Timestamp.valueOf")
+        or "Timestamp" in src_type
+    ):
         return f"({src_expr}).{accessor}"
     if "java.sql.Date" in src_expr or src_expr.startswith("new java.sql.Date") or "Date" in src_type:
         return f"({src_expr} != null ? new java.sql.Timestamp({src_expr}.getTime()) : new java.sql.Timestamp(0)).{accessor}"
-    return f"java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({src_expr}).trim().split(\" \")[0], java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd]\")).atStartOfDay()).{accessor}"
+    return f'java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({src_expr}).trim().split(" ")[0], java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd]")).atStartOfDay()).{accessor}'
 
 
 def _sf_trim(val, proc, _expr_to_java_fn):
@@ -8799,15 +9798,15 @@ def _sf_trim(val, proc, _expr_to_java_fn):
         if direction in ("BOTH", ""):
             if chars == '" "' or chars == "' '":
                 return f"String.valueOf({s}).trim()"
-            return f"String.valueOf({s}).replaceAll(\"^\" + java.util.regex.Pattern.quote({chars_expr}) + \"+|\" + java.util.regex.Pattern.quote({chars_expr}) + \"+$\", \"\")"
+            return f'String.valueOf({s}).replaceAll("^" + java.util.regex.Pattern.quote({chars_expr}) + "+|" + java.util.regex.Pattern.quote({chars_expr}) + "+$", "")'
         elif direction == "LEADING":
             if chars == '" "' or chars == "' '":
-                return f"String.valueOf({s}).replaceAll(\"^\\\\s+\", \"\")"
-            return f"String.valueOf({s}).replaceAll(\"^\" + java.util.regex.Pattern.quote({chars_expr}) + \"+\", \"\")"
+                return f'String.valueOf({s}).replaceAll("^\\\\s+", "")'
+            return f'String.valueOf({s}).replaceAll("^" + java.util.regex.Pattern.quote({chars_expr}) + "+", "")'
         elif direction == "TRAILING":
             if chars == '" "' or chars == "' '":
-                return f"String.valueOf({s}).replaceAll(\"\\\\s+$\", \"\")"
-            return f"String.valueOf({s}).replaceAll(java.util.regex.Pattern.quote({chars_expr}) + \"+$\", \"\")"
+                return f'String.valueOf({s}).replaceAll("\\\\s+$", "")'
+            return f'String.valueOf({s}).replaceAll(java.util.regex.Pattern.quote({chars_expr}) + "+$", "")'
 
     return '""'
 
@@ -8860,14 +9859,14 @@ def _sf_interval(val, proc, _expr_to_java_fn):
         template = unit_map.get(unit)
         if template:
             return template.replace("{n}", n_expr)
-    return f"/* INTERVAL */ 0L"
+    return "/* INTERVAL */ 0L"
 
 
 def _sf_group_concat(val, proc, _expr_to_java_fn):
     """GROUP_CONCAT: special aggregation syntax → TODO placeholder."""
     args = val.get("args", [])
     args_java = [_expr_to_java_fn(a, proc) for a in args]
-    return f"/* TODO: GROUP_CONCAT requires manual translation */ String.join(\", \", java.util.Collections.emptyList())"
+    return '/* TODO: GROUP_CONCAT requires manual translation */ String.join(", ", java.util.Collections.emptyList())'
 
 
 SPECIAL_FUNCTION_MAP = {
@@ -8901,24 +9900,48 @@ def _indent_last_lines(proc: ProcedureInfo, level: int):
 
 
 _DATE_TRUNC_UNIT_MAP = {
-    "microsecond": "ChronoUnit.MICROS", "milliseconds": "ChronoUnit.MILLIS",
-    "second": "ChronoUnit.SECONDS", "minute": "ChronoUnit.MINUTES",
-    "hour": "ChronoUnit.HOURS", "day": "ChronoUnit.DAYS",
-    "week": "ChronoUnit.WEEKS", "month": "ChronoUnit.MONTHS",
-    "quarter": "ChronoUnit.MONTHS", "year": "ChronoUnit.YEARS",
-    "decade": "ChronoUnit.DECADES", "century": "ChronoUnit.CENTURIES",
+    "microsecond": "ChronoUnit.MICROS",
+    "milliseconds": "ChronoUnit.MILLIS",
+    "second": "ChronoUnit.SECONDS",
+    "minute": "ChronoUnit.MINUTES",
+    "hour": "ChronoUnit.HOURS",
+    "day": "ChronoUnit.DAYS",
+    "week": "ChronoUnit.WEEKS",
+    "month": "ChronoUnit.MONTHS",
+    "quarter": "ChronoUnit.MONTHS",
+    "year": "ChronoUnit.YEARS",
+    "decade": "ChronoUnit.DECADES",
+    "century": "ChronoUnit.CENTURIES",
 }
 
 _TO_CHAR_DATE_MAP = {
-    "yyyy": "yyyy", "yy": "yy", "mm": "MM", "mon": "MMM", "month": "MMMM",
-    "dd": "dd", "dy": "EEE", "day": "EEEE",
-    "hh24": "HH", "hh12": "hh", "hh": "HH", "mi": "mm", "ss": "ss",
-    "ff3": "SSS", "ms": "SSS",
+    "yyyy": "yyyy",
+    "yy": "yy",
+    "mm": "MM",
+    "mon": "MMM",
+    "month": "MMMM",
+    "dd": "dd",
+    "dy": "EEE",
+    "day": "EEEE",
+    "hh24": "HH",
+    "hh12": "hh",
+    "hh": "HH",
+    "mi": "mm",
+    "ss": "ss",
+    "ff3": "SSS",
+    "ms": "SSS",
 }
 
 
 def _is_bigdecimal_expr(java_expr: str, proc) -> bool:
-    if "BigDecimal" in java_expr or ".subtract(" in java_expr or ".add(" in java_expr or ".multiply(" in java_expr or ".divide(" in java_expr or ".setScale(" in java_expr:
+    if (
+        "BigDecimal" in java_expr
+        or ".subtract(" in java_expr
+        or ".add(" in java_expr
+        or ".multiply(" in java_expr
+        or ".divide(" in java_expr
+        or ".setScale(" in java_expr
+    ):
         return True
     if proc is not None:
         var_name = java_expr.lstrip("this.").split(".")[0]
@@ -8965,6 +9988,7 @@ def _handle_function(func_name, args_java, proc):
         return result
 
     elif func_name == "round":
+
         def _is_bd_arg(arg_expr):
             """Check if an expression is BigDecimal-typed."""
             _bd_ops = (".multiply(", ".add(", ".subtract(", ".divide(", ".setScale(", ".abs()")
@@ -8983,12 +10007,23 @@ def _handle_function(func_name, args_java, proc):
         if len(args_java) >= 2:
             arg0 = args_java[0]
             _scale = args_java[1] if len(args_java) > 1 else "0"
-            _scale_int = f"Integer.parseInt(String.valueOf({_scale}))" if not re.match(r'^-?\d+$', _scale.strip()) else _scale
-            _scale_dbl = _scale if re.match(r'^-?\d+(\.\d+)?[dDfFlL]?$', _scale.strip()) else f"Double.parseDouble(String.valueOf({_scale}))"
+            _scale_int = (
+                f"Integer.parseInt(String.valueOf({_scale}))" if not re.match(r"^-?\d+$", _scale.strip()) else _scale
+            )
+            _scale_dbl = (
+                _scale
+                if re.match(r"^-?\d+(\.\d+)?[dDfFlL]?$", _scale.strip())
+                else f"Double.parseDouble(String.valueOf({_scale}))"
+            )
             if _is_bd_arg(arg0):
                 return f"({arg0}).setScale((int)({_scale_int}), java.math.RoundingMode.HALF_UP)"
             # Non-BigDecimal: use Math.round with scale — round(x * 10^n) / 10^n
-            _is_primitive = any(op in arg0 for op in (" / ", " * ", " + ", " - ")) or arg0.endswith("d") or arg0.endswith("f") or arg0.endswith("D")
+            _is_primitive = (
+                any(op in arg0 for op in (" / ", " * ", " + ", " - "))
+                or arg0.endswith("d")
+                or arg0.endswith("f")
+                or arg0.endswith("D")
+            )
             if _is_primitive:
                 return f"(double) Math.round(({arg0}) * Math.pow(10, {_scale_dbl})) / Math.pow(10, {_scale_dbl})"
             return f"(double) Math.round(Double.parseDouble(String.valueOf({arg0})) * Math.pow(10, {_scale_dbl})) / Math.pow(10, {_scale_dbl})"
@@ -9013,20 +10048,28 @@ def _handle_function(func_name, args_java, proc):
             if not _is_date_arg and proc is not None:
                 var_name = date_expr.lstrip("this.").split(".")[0]
                 for p in proc.parameters:
-                    if p.java_name == var_name and p.java_type in ("java.sql.Date", "java.sql.Timestamp", "java.util.Date"):
+                    if p.java_name == var_name and p.java_type in (
+                        "java.sql.Date",
+                        "java.sql.Timestamp",
+                        "java.util.Date",
+                    ):
                         _is_date_arg = True
                         break
                 if not _is_date_arg:
                     for vn, vt in proc.local_vars.items():
-                        if snake_to_camel(vn) == var_name and vt in ("java.sql.Date", "java.sql.Timestamp", "java.util.Date"):
+                        if snake_to_camel(vn) == var_name and vt in (
+                            "java.sql.Date",
+                            "java.sql.Timestamp",
+                            "java.util.Date",
+                        ):
                             _is_date_arg = True
                             break
             if _is_date_arg:
-                return f"new java.text.SimpleDateFormat(\"{java_fmt}\").format({date_expr})"
-            return f"new java.text.SimpleDateFormat(\"{java_fmt}\").format(new java.util.Date(java.sql.Timestamp.valueOf(String.valueOf({date_expr})).getTime()))"
+                return f'new java.text.SimpleDateFormat("{java_fmt}").format({date_expr})'
+            return f'new java.text.SimpleDateFormat("{java_fmt}").format(new java.util.Date(java.sql.Timestamp.valueOf(String.valueOf({date_expr})).getTime()))'
         num_fmt = args_java[1].strip('"').strip("'")
         num_fmt_java = num_fmt.replace("FM", "").replace(",", "").replace("9", "#").replace("0", "0")
-        return f"new java.text.DecimalFormat(\"{num_fmt_java}\").format({args_java[0]})"
+        return f'new java.text.DecimalFormat("{num_fmt_java}").format({args_java[0]})'
 
     elif func_name == "date_trunc":
         if len(args_java) < 2:
@@ -9034,7 +10077,11 @@ def _handle_function(func_name, args_java, proc):
         field_raw = args_java[0].strip('"').strip("'").lower()
         unit = _DATE_TRUNC_UNIT_MAP.get(field_raw, "ChronoUnit.DAYS")
         ts_expr = args_java[1]
-        if not (ts_expr.startswith("new java.sql.Timestamp") or ts_expr.startswith("java.sql.Timestamp.valueOf") or ts_expr.startswith("new java.sql.Date")):
+        if not (
+            ts_expr.startswith("new java.sql.Timestamp")
+            or ts_expr.startswith("java.sql.Timestamp.valueOf")
+            or ts_expr.startswith("new java.sql.Date")
+        ):
             # Date-typed source: String.valueOf(date) lacks the time part
             _arg_t = _infer_target_type(args_java[1], proc) if proc else ""
             if "Date" in _arg_t and "Timestamp" not in _arg_t:
@@ -9057,7 +10104,11 @@ def _handle_function(func_name, args_java, proc):
         s = args_java[0]
         from_chars = args_java[1]
         to_chars = args_java[2]
-        fc = from_chars if (from_chars.startswith('"') or from_chars.startswith("'")) else f"String.valueOf({from_chars})"
+        fc = (
+            from_chars
+            if (from_chars.startswith('"') or from_chars.startswith("'"))
+            else f"String.valueOf({from_chars})"
+        )
         tc = to_chars if (to_chars.startswith('"') or to_chars.startswith("'")) else f"String.valueOf({to_chars})"
         return f"String.valueOf({s}).chars().mapToObj(c -> {{ int idx = {fc}.indexOf(c); return idx >= 0 && idx < {tc}.length() ? String.valueOf({tc}.charAt(idx)) : String.valueOf((char) c); }}).collect(java.util.stream.Collectors.joining())"
 
@@ -9089,7 +10140,9 @@ def _handle_function(func_name, args_java, proc):
             s = args_java[0]
             sub_expr = args_java[1]
             s_expr = s if (s.startswith('"') or s.startswith("'")) else f"String.valueOf({s})"
-            sub_wrapped = sub_expr if (sub_expr.startswith('"') or sub_expr.startswith("'")) else f"String.valueOf({sub_expr})"
+            sub_wrapped = (
+                sub_expr if (sub_expr.startswith('"') or sub_expr.startswith("'")) else f"String.valueOf({sub_expr})"
+            )
             # Parenthesize (indexOf + 1) so comparisons/method chains bind correctly.
             # Without parens: indexOf(x) + 1.equals(0) is parsed as float literal "1.equals".
             if len(args_java) >= 3:
@@ -9114,7 +10167,7 @@ def _handle_function(func_name, args_java, proc):
             java_fmt = fmt_raw
             for sql_pat, java_pat in sorted(_TO_CHAR_DATE_MAP.items(), key=lambda x: -len(x[0])):
                 java_fmt = java_fmt.replace(sql_pat, java_pat)
-            return f"_parseDate(\"{java_fmt}\", String.valueOf({args_java[0]}))"
+            return f'_parseDate("{java_fmt}", String.valueOf({args_java[0]}))'
         return f"java.sql.Date.valueOf(String.valueOf({args_java[0]}))"
 
     elif func_name == "jsonb_array_length":
@@ -9131,10 +10184,7 @@ def _handle_function(func_name, args_java, proc):
                 coerced.append(f"String.valueOf({a})")
         return f"this.jsonbBuildObject({', '.join(coerced)})"
 
-    elif func_name == "string_to_array":
-        return f"this.stringToArray({', '.join(args_java)})" if args_java else "null"
-
-    elif func_name == "getarray":
+    elif func_name == "string_to_array" or func_name == "getarray":
         return f"this.stringToArray({', '.join(args_java)})" if args_java else "null"
 
     elif func_name == "nextval":
@@ -9150,7 +10200,11 @@ def _handle_function(func_name, args_java, proc):
 
     elif func_name == "digest":
         if len(args_java) >= 2:
-            algo = args_java[1].strip('"').strip("'") if args_java[1].startswith('"') or args_java[1].startswith("'") else f"String.valueOf({args_java[1]})"
+            algo = (
+                args_java[1].strip('"').strip("'")
+                if args_java[1].startswith('"') or args_java[1].startswith("'")
+                else f"String.valueOf({args_java[1]})"
+            )
             return f"java.security.MessageDigest.getInstance({algo}).digest(String.valueOf({args_java[0]}).getBytes())"
         return "new byte[0]"
 
@@ -9161,7 +10215,7 @@ def _handle_function(func_name, args_java, proc):
 
     elif func_name == "quote_literal":
         if args_java:
-            return f"\"'\" + String.valueOf({args_java[0]}) + \"'\""
+            return f'"\'" + String.valueOf({args_java[0]}) + "\'"'
         return "null"
 
     elif func_name == "array_length":
@@ -9175,13 +10229,20 @@ def _handle_function(func_name, args_java, proc):
             _elem_expr = args_java[1]
             # Detect List<Double>/List<Long> and apply explicit cast for generic type safety
             if proc:
-                _list_var_name = _list_expr.split('.')[0].split('[')[0].strip()
-                _camel_to_snake = lambda s: re.sub(r'(?<=[a-z])(?=[A-Z])', '_', s).lower()
+                _list_var_name = _list_expr.split(".")[0].split("[")[0].strip()
+
+                def _camel_to_snake(s):
+                    return re.sub(r"(?<=[a-z])(?=[A-Z])", "_", s).lower()
+
                 _var_key = _camel_to_snake(_list_var_name)
                 _var_type = proc.local_vars.get(_var_key, "")
-                if "List<Double>" in _var_type and not any(x in _elem_expr for x in ("Double.valueOf", "(double)", "doubleValue()")):
+                if "List<Double>" in _var_type and not any(
+                    x in _elem_expr for x in ("Double.valueOf", "(double)", "doubleValue()")
+                ):
                     _elem_expr = f"Double.valueOf({_elem_expr})"
-                elif "List<Long>" in _var_type and not any(x in _elem_expr for x in ("Long.valueOf", "(long)", "longValue()")):
+                elif "List<Long>" in _var_type and not any(
+                    x in _elem_expr for x in ("Long.valueOf", "(long)", "longValue()")
+                ):
                     _elem_expr = f"Long.valueOf({_elem_expr})"
             return f"_appendList({_list_expr}, {_elem_expr})"
         return "null"
@@ -9200,14 +10261,14 @@ def _handle_function(func_name, args_java, proc):
 
     elif func_name == "current_setting":
         if args_java:
-            return f"System.getProperty(String.valueOf({args_java[0]}), \"\")"
-        return "\"\""
+            return f'System.getProperty(String.valueOf({args_java[0]}), "")'
+        return '""'
 
     elif func_name == "jsonb_build_array":
         if args_java:
             coerced = [f"String.valueOf({a})" for a in args_java]
-            return f"\"[\" + String.join(\",\", {', '.join(coerced)}) + \"]\""
-        return "\"[]\""
+            return f'"[" + String.join(",", {", ".join(coerced)}) + "]"'
+        return '"[]"'
 
     elif func_name == "jsonb_set":
         if len(args_java) >= 3:
@@ -9221,28 +10282,25 @@ def _handle_function(func_name, args_java, proc):
 
     elif func_name == "st_makepoint":
         if len(args_java) >= 2:
-            return f"String.format(\"POINT(%s %s)\", {args_java[0]}, {args_java[1]})"
+            return f'String.format("POINT(%s %s)", {args_java[0]}, {args_java[1]})'
         return "null"
 
     elif func_name == "st_setsrid":
         if len(args_java) >= 2:
-            return f"String.format(\"SRID=%s;%s\", {args_java[1]}, {args_java[0]})"
+            return f'String.format("SRID=%s;%s", {args_java[1]}, {args_java[0]})'
         return "null"
 
-    elif func_name == "st_buffer":
-        return f"String.valueOf({args_java[0]})" if args_java else "null"
-
-    elif func_name == "st_envelope":
+    elif func_name == "st_buffer" or func_name == "st_envelope":
         return f"String.valueOf({args_java[0]})" if args_java else "null"
 
     elif func_name == "numrange":
         if len(args_java) >= 2:
-            return f"String.format(\"[%s,%s)\", {args_java[0]}, {args_java[1]})"
+            return f'String.format("[%s,%s)", {args_java[0]}, {args_java[1]})'
         return "null"
 
     elif func_name == "tsrange":
         if len(args_java) >= 2:
-            return f"String.format(\"[%s,%s]\", {args_java[0]}, {args_java[1]})"
+            return f'String.format("[%s,%s]", {args_java[0]}, {args_java[1]})'
         return "null"
 
     elif func_name == "t_spectrum_array":
@@ -9257,31 +10315,84 @@ def _handle_function(func_name, args_java, proc):
 
     elif func_name == "lpad":
         if len(args_java) >= 3:
-            return f"String.format(\"%\" + ({args_java[1]}) + \"s\", {args_java[0]}).replace(\" \", {args_java[2]})"
+            return f'String.format("%" + ({args_java[1]}) + "s", {args_java[0]}).replace(" ", {args_java[2]})'
         elif len(args_java) == 2:
-            return f"String.format(\"%\" + ({args_java[1]}) + \"s\", {args_java[0]}).replace(\" \", \" \")"
+            return f'String.format("%" + ({args_java[1]}) + "s", {args_java[0]}).replace(" ", " ")'
         return args_java[0] if args_java else '""'
 
     elif func_name == "rpad":
         if len(args_java) >= 3:
-            return f"String.format(\"%-\" + ({args_java[1]}) + \"s\", {args_java[0]}).replace(\" \", {args_java[2]})"
+            return f'String.format("%-" + ({args_java[1]}) + "s", {args_java[0]}).replace(" ", {args_java[2]})'
         elif len(args_java) == 2:
-            return f"String.format(\"%-\" + ({args_java[1]}) + \"s\", {args_java[0]})"
+            return f'String.format("%-" + ({args_java[1]}) + "s", {args_java[0]})'
         return args_java[0] if args_java else '""'
 
     return f"/* TODO: {func_name} */ null"
 
 
 _NUMERIC_FUNC_RETURN_INT = {"length", "instr", "ascii", "sign", "mod", "trunc", "jsonb_array_length"}
-_NUMERIC_FUNC_RETURN_DOUBLE = {"abs", "ceil", "floor", "power", "sqrt", "log", "exp", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "radians", "degrees", "round"}
-_NUMERIC_FUNC_NEEDS_DOUBLE_ARGS = {"sin", "cos", "tan", "asin", "acos", "atan", "atan2", "sqrt", "log", "exp", "radians", "degrees", "power", "floor"}
+_NUMERIC_FUNC_RETURN_DOUBLE = {
+    "abs",
+    "ceil",
+    "floor",
+    "power",
+    "sqrt",
+    "log",
+    "exp",
+    "sin",
+    "cos",
+    "tan",
+    "asin",
+    "acos",
+    "atan",
+    "atan2",
+    "radians",
+    "degrees",
+    "round",
+}
+_NUMERIC_FUNC_NEEDS_DOUBLE_ARGS = {
+    "sin",
+    "cos",
+    "tan",
+    "asin",
+    "acos",
+    "atan",
+    "atan2",
+    "sqrt",
+    "log",
+    "exp",
+    "radians",
+    "degrees",
+    "power",
+    "floor",
+}
 _NUMERIC_FUNC_NEEDS_INT_ARGS = {"min", "max", "least", "greatest"}
 _NUMERIC_FUNC_RETURN_LONG = {"to_number"}
 _STRING_FUNC_RETURN = {
-    "upper", "lower", "trim", "replace", "concat", "lpad", "rpad", "rtrim", "ltrim",
-    "chr", "substr", "substring", "to_char", "to_clob",
-    "reverse", "repeat", "initcap", "regexp_replace", "regexp_like", "left", "right",
-    "split_part", "translate", "overlay",
+    "upper",
+    "lower",
+    "trim",
+    "replace",
+    "concat",
+    "lpad",
+    "rpad",
+    "rtrim",
+    "ltrim",
+    "chr",
+    "substr",
+    "substring",
+    "to_char",
+    "to_clob",
+    "reverse",
+    "repeat",
+    "initcap",
+    "regexp_replace",
+    "regexp_like",
+    "left",
+    "right",
+    "split_part",
+    "translate",
+    "overlay",
 }
 # nvl/nvl2/coalesce inherit the type of their value arguments (not always String)
 
@@ -9289,9 +10400,26 @@ _STRING_FUNC_RETURN = {
 def _java_type_from_field_name(field_name: str) -> str:
     """Infer Java type from a composite type field name (heuristic)."""
     col = field_name.lower()
-    if any(s in col for s in ("name", "txt", "text", "info", "desc", "msg", "remark", "comment", "label", "status", "code", "type", "flag")):
+    if any(
+        s in col
+        for s in (
+            "name",
+            "txt",
+            "text",
+            "info",
+            "desc",
+            "msg",
+            "remark",
+            "comment",
+            "label",
+            "status",
+            "code",
+            "type",
+            "flag",
+        )
+    ):
         return "String"
-    if re.search(r'(^|_)id$|_ids$', col) or re.search(r'(^|_)no$', col) or re.search(r'(^|_)seq', col):
+    if re.search(r"(^|_)id$|_ids$", col) or re.search(r"(^|_)no$", col) or re.search(r"(^|_)seq", col):
         return "Long"
     if any(s in col for s in ("amount", "balance", "price", "qty", "quantity", "total", "salary")):
         return "java.math.BigDecimal"
@@ -9302,7 +10430,7 @@ def _java_type_from_field_name(field_name: str) -> str:
     return "Object"
 
 
-def _infer_expr_type(expr, proc: ProcedureInfo) -> str:
+def _infer_expr_type(expr, proc: Any) -> Any:
     """Infer the Java type of an AST expression."""
     if expr is None:
         return "Object"
@@ -9409,8 +10537,7 @@ def _infer_expr_type(expr, proc: ProcedureInfo) -> str:
             return "Object"
         elif key == "SpecialFunction":
             func_name = val.get("name", "").lower()
-            if func_name in ("substr", "substring", "overlay", "trim",
-                             "convert", "replace", "to_char"):
+            if func_name in ("substr", "substring", "overlay", "trim", "convert", "replace", "to_char"):
                 return "String"
             if func_name in ("position", "extract"):
                 return "Integer"
@@ -9459,8 +10586,6 @@ def _infer_expr_type(expr, proc: ProcedureInfo) -> str:
     return "Object"
 
 
-
-
 def _is_numeric_literal(expr) -> bool:
     if not isinstance(expr, dict):
         return False
@@ -9477,7 +10602,7 @@ def _is_numeric_literal_expr(java_str: str) -> bool:
     if not s:
         return False
     try:
-        float(s.rstrip('dDfFlL'))
+        float(s.rstrip("dDfFlL"))
         return True
     except ValueError:
         return False
@@ -9485,10 +10610,10 @@ def _is_numeric_literal_expr(java_str: str) -> bool:
 
 def _coerce_for_int(expr: str) -> str:
     if ".get(" in expr and not expr.startswith("("):
-        safe_expr = re.sub(r'\.get\(([^)]+)\)', r'.getOrDefault(\1, 0)', expr)
+        safe_expr = re.sub(r"\.get\(([^)]+)\)", r".getOrDefault(\1, 0)", expr)
         return f"((Number) {safe_expr}).intValue()"
-    if re.match(r'^-?\d+[Ll]$', expr.strip()):
-        return expr.rstrip('lL')
+    if re.match(r"^-?\d+[Ll]$", expr.strip()):
+        return expr.rstrip("lL")
     return expr
 
 
@@ -9502,7 +10627,7 @@ def _coerce_java_arg(a_java: str, target_type: str) -> str:
     """
     # Empty string '' in PL/pgSQL passed to a numeric/boolean parameter.
     # _coerce_java_arg returns zero-values (0L, 0, BigDecimal.ZERO, etc.) for function call args
-    # per PostgreSQL CAST semantics (''::int → 0), while _coerce_type returns null for ':=' 
+    # per PostgreSQL CAST semantics (''::int → 0), while _coerce_type returns null for ':='
     # assignments per GaussDB PL/pgSQL semantics ('' assigned to NUMBER is NULL).
     if a_java == '""' or a_java == "''":
         if target_type in ("long", "Long"):
@@ -9520,7 +10645,7 @@ def _coerce_java_arg(a_java: str, target_type: str) -> str:
     # Quoted numeric string '1' passed to int/long parameter (PL/pgSQL implicit coercion)
     if a_java.startswith('"') and a_java.endswith('"') and len(a_java) > 2:
         _inner = a_java[1:-1]
-        if _inner.isdigit() or (_inner.startswith('-') and _inner[1:].isdigit()):
+        if _inner.isdigit() or (_inner.startswith("-") and _inner[1:].isdigit()):
             if target_type in ("long", "Long"):
                 return f"{_inner}L"
             if target_type in ("int", "Integer"):
@@ -9545,29 +10670,31 @@ def _coerce_java_arg(a_java: str, target_type: str) -> str:
             return f"({a_java} instanceof java.sql.Timestamp ? new java.sql.Date(((java.sql.Timestamp) {a_java}).getTime()) : (java.sql.Date) {a_java})"
         return f"({target_type}) {a_java}"
     if target_type == "String":
-        if "BigDecimal" in a_java or re.search(r'\b\w*[Bb]ig[Dd]ecimal\w*\b', a_java):
+        if "BigDecimal" in a_java or re.search(r"\b\w*[Bb]ig[Dd]ecimal\w*\b", a_java):
             return f"{a_java}.toString()"
         if ".get(" in a_java:
             return f"String.valueOf({a_java})"
-        if a_java.startswith("this.") and ("jsonbArrayLength" in a_java or "nextval" in a_java or "jsonbBuildObject" in a_java):
+        if a_java.startswith("this.") and (
+            "jsonbArrayLength" in a_java or "nextval" in a_java or "jsonbBuildObject" in a_java
+        ):
             return f"String.valueOf({a_java})"
     if target_type == "java.sql.Date" and a_java.startswith('"') and a_java.endswith('"'):
         return f"java.sql.Date.valueOf({a_java})"
     if target_type in ("int", "Integer"):
-        if re.search(r'\.getTime\(\)|\.longValue\(\)|[0-9]L\b', a_java):
+        if re.search(r"\.getTime\(\)|\.longValue\(\)|[0-9]L\b", a_java):
             return f"(int)({a_java})"
     # Integer/boxed-type passed to Long parameter: Java requires explicit coercion
     if target_type in ("long", "Long"):
         stripped = a_java.strip()
         # Integer literal: 0, 1, 100 → 0L, 1L, 100L
-        if re.match(r'^-?\d+$', stripped):
+        if re.match(r"^-?\d+$", stripped):
             return f"{a_java}L"
         # SQL NULL literal stays null (boxed Long param accepts null)
         if stripped == "null":
             return a_java
         # Boxed Integer variable (or any simple variable) → safe long conversion
         # Using Number.longValue() handles Integer, Long, Double, etc.
-        if re.match(r'^[a-zA-Z_]\w*$', stripped):
+        if re.match(r"^[a-zA-Z_]\w*$", stripped):
             return f"((Number) ({a_java})).longValue()"
     return a_java
 
@@ -9576,9 +10703,14 @@ def _coerce_java_arg(a_java: str, target_type: str) -> str:
 
 # 类型规范化：将 primitive/boxed 统一为 canonical 形式用于比较
 _CANONICAL_TYPE = {
-    "int": "Integer", "long": "Long", "double": "Double",
-    "float": "Float", "boolean": "Boolean", "short": "Short",
-    "byte": "Byte", "char": "Character",
+    "int": "Integer",
+    "long": "Long",
+    "double": "Double",
+    "float": "Float",
+    "boolean": "Boolean",
+    "short": "Short",
+    "byte": "Byte",
+    "char": "Character",
 }
 
 
@@ -9635,18 +10767,38 @@ def _needs_coercion(source_type: str, target_type: str) -> bool:
     return True
 
 
-_BD_RETURNING_METHODS = frozenset({
-    "multiply", "add", "subtract", "divide", "setScale", "abs", "negate",
-    "pow", "max", "min", "round", "movePointLeft", "movePointRight", "ulp",
-})
+_BD_RETURNING_METHODS = frozenset(
+    {
+        "multiply",
+        "add",
+        "subtract",
+        "divide",
+        "setScale",
+        "abs",
+        "negate",
+        "pow",
+        "max",
+        "min",
+        "round",
+        "movePointLeft",
+        "movePointRight",
+        "ulp",
+    }
+)
 
 
 def _expr_is_bigdecimal_producing(expr: str) -> bool:
     s = expr.strip()
-    if s.startswith((
-        "java.math.BigDecimal.", "BigDecimal.ZERO", "BigDecimal.ONE",
-        "BigDecimal.TEN", "new java.math.BigDecimal(", "new BigDecimal(",
-    )):
+    if s.startswith(
+        (
+            "java.math.BigDecimal.",
+            "BigDecimal.ZERO",
+            "BigDecimal.ONE",
+            "BigDecimal.TEN",
+            "new java.math.BigDecimal(",
+            "new BigDecimal(",
+        )
+    ):
         return True
     if s.endswith(")"):
         depth = 0
@@ -9674,7 +10826,7 @@ def _expr_is_timestamp_producing(expr: str) -> bool:
         return True
     if ".parse(" in e:
         return True
-    if re.match(r'^[A-Za-z_]\w*$', e):
+    if re.match(r"^[A-Za-z_]\w*$", e):
         return True
     return False
 
@@ -9702,7 +10854,7 @@ def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
         if src0 == "Object" and tgt0 == "String" and _e0 != "null":
             return f"String.valueOf({expr})"
         if src0 == "Object" and "Timestamp" in tgt0 and _e0 != "null":
-            return f"java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({expr}).trim().split(\" \")[0], java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd]\")).atStartOfDay())"
+            return f'java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({expr}).trim().split(" ")[0], java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd]")).atStartOfDay())'
         if src0 == "Object" and tgt0 == "Long" and _e0 != "null":
             return f"({expr} != null ? ({expr} instanceof Number ? ((Number) ({expr})).longValue() : Long.parseLong(String.valueOf({expr}))) : 0L)"
         if src0 == "Object" and tgt0 == "java.math.BigDecimal" and _e0 != "null":
@@ -9718,7 +10870,7 @@ def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
     # Numeric to numeric conversions
     if _is_numeric_type(src) and _is_numeric_type(tgt):
         # Detect bare numeric literals (e.g. "42", "3.14") — avoid generating invalid "42.longValue()"
-        _is_bare_lit = re.match(r'^-?\d+(\.\d+)?([dDfFlL])?$', expr.strip())
+        _is_bare_lit = re.match(r"^-?\d+(\.\d+)?([dDfFlL])?$", expr.strip())
         # BigDecimal source -> numeric target
         if src == "java.math.BigDecimal":
             if tgt == "Integer":
@@ -9770,7 +10922,7 @@ def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
             # in its argument — it returns String and must be wrapped.
             if _expr_is_timestamp_producing(stripped):
                 return expr
-            return f"java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({expr}).trim().split(\" \")[0], java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd]\")).atStartOfDay())"
+            return f'java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({expr}).trim().split(" ")[0], java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd]")).atStartOfDay())'
         if tgt == "java.sql.Date":
             # Already Date-producing (function map / prior coercion) — do not double-wrap
             if _es.startswith("new java.sql.Date") or "java.sql.Date.valueOf" in _es:
@@ -9817,16 +10969,16 @@ def _is_already_coerced(expr: str, target_type: str) -> bool:
     if not expr:
         return False
     stripped = expr.strip()
-    if re.search(r'\.(intValue|longValue|doubleValue|floatValue|toString)\(\)\s*$', stripped):
+    if re.search(r"\.(intValue|longValue|doubleValue|floatValue|toString)\(\)\s*$", stripped):
         return True
     if re.match(
-        r'^(java\.math\.BigDecimal\.valueOf|new java\.math\.BigDecimal|'
-        r'(Integer|Long|Double|Float)\.valueOf|String\.valueOf|'
-        r'(Integer|Long|Double|Float)\.parse(Int|Long|Double|Float))\(',
+        r"^(java\.math\.BigDecimal\.valueOf|new java\.math\.BigDecimal|"
+        r"(Integer|Long|Double|Float)\.valueOf|String\.valueOf|"
+        r"(Integer|Long|Double|Float)\.parse(Int|Long|Double|Float))\(",
         stripped,
     ):
         return True
-    if target_type in ("Long", "long") and re.match(r'^-?\d+[Ll]$', stripped):
+    if target_type in ("Long", "long") and re.match(r"^-?\d+[Ll]$", stripped):
         return True
     return False
 
@@ -9839,7 +10991,7 @@ def _is_integer_literal(expr, value=None) -> bool:
             if isinstance(val, dict) and "Integer" in val:
                 if value is None:
                     return True
-                return val["Integer"] == value
+                return bool(val["Integer"] == value)
     return False
 
 
@@ -9859,19 +11011,17 @@ def _get_out_param(expr, proc: ProcedureInfo):
 def _infer_target_type(target_name: str, proc: ProcedureInfo) -> str:
     for var_name, var_type in proc.local_vars.items():
         if snake_to_camel(var_name) == target_name:
-            return var_type
+            return cast(str, var_type)
     for p in proc.parameters:
         if p.java_name == target_name:
-            return p.java_type
+            return cast(str, p.java_type)
     return "Object"
 
 
-
-
 def _wrap_ternary_nullsafe_bd(expr: str) -> str:
-    _m = re.match(r'(.+\?\s*null\s*:\s*)(.+)', expr)
+    _m = re.match(r"(.+\?\s*null\s*:\s*)(.+)", expr)
     if _m:
-        return f'{_m.group(1)}java.math.BigDecimal.valueOf({_m.group(2)})'
+        return f"{_m.group(1)}java.math.BigDecimal.valueOf({_m.group(2)})"
     return f"java.math.BigDecimal.valueOf({expr})"
 
 
@@ -9879,7 +11029,7 @@ def _literal_string(node) -> str:
     if isinstance(node, dict) and "Literal" in node:
         lit = node["Literal"]
         if isinstance(lit, dict) and "String" in lit:
-            return lit["String"]
+            return cast(str, lit["String"])
         if isinstance(lit, str):
             return lit
     return ""
@@ -9906,18 +11056,23 @@ def _parse_interval_value_unit(tc_expr, proc, all_packages):
     """Extract (unit, value_java) from an interval cast inner expr, or None."""
     s = _literal_string(tc_expr)
     if s:
-        m = re.match(r'^\s*(\d+)\s*(day|month|year|hour|minute|second)s?\s*$', s, re.IGNORECASE)
+        m = re.match(r"^\s*(\d+)\s*(day|month|year|hour|minute|second)s?\s*$", s, re.IGNORECASE)
         if m:
-            return (m.group(2).lower(), m.group(1))
+            return (m.group(2).lower(), str(int(m.group(1))))
         return None
     if isinstance(tc_expr, dict) and "Parenthesized" in tc_expr:
         inner = tc_expr["Parenthesized"]
         if isinstance(inner, dict) and "BinaryOp" in inner:
             bop = inner["BinaryOp"]
             if bop.get("op") == "||":
-                unit = _literal_string(bop.get("right", {})).strip().lower().rstrip('s')
+                unit = _literal_string(bop.get("right", {})).strip().lower().rstrip("s")
                 if unit in ("day", "month", "year", "hour", "minute", "second"):
                     value_java = _expr_to_java(bop.get("left", {}), proc, all_packages=all_packages)
+                    if not re.fullmatch(r"\d+", value_java.strip()):
+                        if value_java == "null":
+                            value_java = "0L"
+                        else:
+                            value_java = f"({value_java} != null ? Long.parseLong(String.valueOf({value_java})) : 0L)"
                     return (unit, value_java)
     return None
 
@@ -9948,17 +11103,19 @@ def _date_month_arith(date_java: str, date_type: str, value_java: str, is_year: 
         method = "plusYears" if is_year else "plusMonths"
     else:
         method = "minusYears" if is_year else "minusMonths"
+    safe_value = value_java
+    if not re.fullmatch(r"\d+", value_java.strip()) and "!= null ?" not in value_java:
+        safe_value = f"({value_java} != null ? {value_java} : 0L)"
     if date_type == "java.sql.Date" or date_java.strip().startswith("new java.sql.Date"):
-        return f"java.sql.Date.valueOf({date_java}.toLocalDate().{method}((long)({value_java})))"
-    return f"java.sql.Timestamp.valueOf({date_java}.toLocalDateTime().{method}((long)({value_java})))"
+        return f"java.sql.Date.valueOf({date_java}.toLocalDate().{method}((long)({safe_value})))"
+    return f"java.sql.Timestamp.valueOf({date_java}.toLocalDateTime().{method}((long)({safe_value})))"
 
 
 def _cast_to_date(inner_java: str, inner_type: str = "") -> str:
     _s = inner_java.strip()
     if _s.startswith("new java.sql.Date") or "java.sql.Date.valueOf" in _s:
         return inner_java
-    if ("Timestamp" in inner_type or _s.startswith("new java.sql.Timestamp")
-            or "java.sql.Timestamp.valueOf" in _s):
+    if "Timestamp" in inner_type or _s.startswith("new java.sql.Timestamp") or "java.sql.Timestamp.valueOf" in _s:
         return f"new java.sql.Date({inner_java}.getTime())"
     if _s.startswith('"') or inner_type == "String":
         return f"java.sql.Date.valueOf(String.valueOf({inner_java}))"
@@ -10008,12 +11165,16 @@ def _extract_month_interval(ast, proc, all_packages):
 
 
 def _is_temporal_java(java: str, ttype: str) -> bool:
-    return ("Timestamp" in ttype or "Timestamp" in java or "java.sql.Date" in java
-            or ttype in ("java.sql.Date", "java.util.Date")
-            or java.strip().startswith("new java.sql.Date"))
+    return (
+        "Timestamp" in ttype
+        or "Timestamp" in java
+        or "java.sql.Date" in java
+        or ttype in ("java.sql.Date", "java.util.Date")
+        or java.strip().startswith("new java.sql.Date")
+    )
 
 
-def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_packages: dict = None) -> str:
+def _expr_to_java(expr, proc: Any = None, as_read: bool = True, all_packages: Any = None) -> Any:
     """Convert an AST expression to Java code."""
     if expr is None:
         return "null"
@@ -10063,9 +11224,9 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 if second_last in ("NEXTVAL", "CURRVAL"):
                     seq_name = "_".join(parts[:-1])
                     if second_last == "NEXTVAL":
-                        return f'/* NEXTVAL: use sequence query for {seq_name} */ null'
+                        return f"/* NEXTVAL: use sequence query for {seq_name} */ null"
                     else:
-                        return f'/* CURRVAL: use sequence query for {seq_name} */ null'
+                        return f"/* CURRVAL: use sequence query for {seq_name} */ null"
             # Multi-part ColumnRef: composite/ROWTYPE/RECORD field access
             # e.g. ["v_emp", "status"] → vEmp.get("status") or vEmp.status (for custom RECORD types)
             if len(parts) >= 2 and proc is not None:
@@ -10084,13 +11245,17 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     if pp.name.lower() == var_name_raw.lower():
                         _param_type = pp.java_type
                         break
-                _is_custom_record = _param_type and _param_type not in ("Map<String, Object>", "Object", "") and not _param_type.startswith("List<")
+                _is_custom_record = (
+                    _param_type
+                    and _param_type not in ("Map<String, Object>", "Object", "")
+                    and not _param_type.startswith("List<")
+                )
                 if _is_custom_record:
                     field_java = snake_to_camel(field_name)
                     _field_java_type = _resolve_custom_field_type(_param_type, field_name, proc)
                     if _field_java_type and _field_java_type not in ("String", "Object", "Map<String, Object>"):
-                        return f'{var_java}.{field_java}.doubleValue()'
-                    return f'{var_java}.{field_java}'
+                        return f"{var_java}.{field_java}.doubleValue()"
+                    return f"{var_java}.{field_java}"
                 if len(parts) >= 2 and field_name.upper() == "COUNT":
                     if "List<" in var_type:
                         return f"{var_java}.size()"
@@ -10099,19 +11264,19 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 if var_type in ("Map<String, Object>", "Object") or var_name_raw not in proc.local_vars:
                     field_key = field_name.lower()
                     if not as_read:
-                        return f'__MAP_PUT__{var_java}__{field_key}'
+                        return f"__MAP_PUT__{var_java}__{field_key}"
                     raw_get = f'{var_java}.get("{field_key}")'
                     _rt_fields = (proc.rowtype_field_types.get(var_name_raw) if proc else None) or {}
                     _ft = _rt_fields.get(field_key) or _rt_fields.get(field_name)
                     if _ft:
                         if "Timestamp" in _ft:
-                            return f'((java.sql.Timestamp) {raw_get})'
+                            return f"((java.sql.Timestamp) {raw_get})"
                         if _ft in ("Long", "long"):
-                            return f'({raw_get} == null ? null : ((Number) {raw_get}).longValue())'
+                            return f"({raw_get} == null ? null : ((Number) {raw_get}).longValue())"
                         if _ft in ("Integer", "int"):
-                            return f'({raw_get} == null ? null : ((Number) {raw_get}).intValue())'
+                            return f"({raw_get} == null ? null : ((Number) {raw_get}).intValue())"
                         if "BigDecimal" in _ft:
-                            return f'({raw_get} == null ? null : new java.math.BigDecimal(String.valueOf({raw_get})))'
+                            return f"({raw_get} == null ? null : new java.math.BigDecimal(String.valueOf({raw_get})))"
                     return raw_get
             java_name = snake_to_camel(name)
             if proc is not None and name:
@@ -10127,18 +11292,19 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     if all_packages:
                         name_lower = name.lower()
                         for _pkg_name, _pkg_info in all_packages.items():
-                            for _p in (_pkg_info.procedures if hasattr(_pkg_info, 'procedures') else []):
+                            for _p in _pkg_info.procedures if hasattr(_pkg_info, "procedures") else []:
                                 if _p.proc_name.lower() == name_lower:
                                     _method = java_method_name(name)
                                     _is_same_pkg = (
-                                        (_p.package and proc.package and _p.package.lower() == proc.package.lower())
-                                        or (_p.source_file == proc.source_file)
-                                    )
+                                        _p.package and proc.package and _p.package.lower() == proc.package.lower()
+                                    ) or (_p.source_file == proc.source_file)
                                     if _is_same_pkg:
                                         java_name = f"this.{_method}()"
                                     else:
                                         _svc = f"{package_to_classname(_pkg_name).lower()}Service"
-                                        proc.service_calls.append(ServiceCall(_svc, _method, [], package_name=_pkg_name))
+                                        proc.service_calls.append(
+                                            ServiceCall(_svc, _method, [], package_name=_pkg_name)
+                                        )
                                         java_name = f"{_svc}.{_method}()"
                                     _func_found = True
                                     break
@@ -10244,11 +11410,15 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     and "String" in val["left"]["Literal"]
                 )
                 if left_out and left_out.java_type == "String" and op in (">", "<", ">=", "<=", "=", "<>"):
-                    if op in (">", "<", ">=", "<=") or (op in ("=", "<>") and not _right_is_str_lit and right_type != "String"):
+                    if op in (">", "<", ">=", "<=") or (
+                        op in ("=", "<>") and not _right_is_str_lit and right_type != "String"
+                    ):
                         left = f"Long.valueOf({left})"
                         left_type = "Long"
                 if right_out and right_out.java_type == "String" and op in (">", "<", ">=", "<=", "=", "<>"):
-                    if op in (">", "<", ">=", "<=") or (op in ("=", "<>") and not _left_is_str_lit and left_type != "String"):
+                    if op in (">", "<", ">=", "<=") or (
+                        op in ("=", "<>") and not _left_is_str_lit and left_type != "String"
+                    ):
                         right = f"Long.valueOf({right})"
                         right_type = "Long"
 
@@ -10266,10 +11436,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 elif left_type == "Object" and op in (">", "<", ">=", "<=", "=", "<>"):
                     if right_type == "String":
                         pass
-                    elif ".get(" in left and not _is_primitive_producing(left):
-                        left = f"((Number) ({left} != null ? {left} : 0)).intValue()"
-                        _left_is_primitive = True
-                    elif "this." in left or "(" in left:
+                    elif ".get(" in left and not _is_primitive_producing(left) or "this." in left or "(" in left:
                         left = f"((Number) ({left} != null ? {left} : 0)).intValue()"
                         _left_is_primitive = True
                 if ".get(" in right and "BigDecimal" in right_type and not _is_primitive_producing(right):
@@ -10283,10 +11450,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 elif right_type == "Object" and op in (">", "<", ">=", "<=", "=", "<>"):
                     if left_type == "String":
                         pass
-                    elif ".get(" in right and not _is_primitive_producing(right):
-                        right = f"((Number) ({right} != null ? {right} : 0)).intValue()"
-                        _right_is_primitive = True
-                    elif "this." in right or "(" in right:
+                    elif ".get(" in right and not _is_primitive_producing(right) or "this." in right or "(" in right:
                         right = f"((Number) ({right} != null ? {right} : 0)).intValue()"
                         _right_is_primitive = True
 
@@ -10299,10 +11463,10 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                         right = f"java.math.BigDecimal.valueOf({right})"
                     if "Integer" in left_type or left_type == "int":
                         if "BigDecimal" not in left:
-                            left = f"java.math.BigDecimal.valueOf({left})"
+                            left = f"java.math.BigDecimal.valueOf({left} != null ? {left} : 0L)"
                     if "Integer" in right_type or right_type == "int":
                         if "BigDecimal" not in right:
-                            right = f"java.math.BigDecimal.valueOf({right})"
+                            right = f"java.math.BigDecimal.valueOf({right} != null ? {right} : 0L)"
                     return f"{left}.compareTo({right}) {cmp_map[op]} 0"
 
                 if is_str and not is_bd and op in (">", "<", ">=", "<="):
@@ -10310,12 +11474,25 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                         return f"Double.parseDouble(String.valueOf({left})) {op} {right}"
                     if _is_numeric_literal(val.get("left")):
                         return f"{left} {op} Double.parseDouble(String.valueOf({right}))"
-                    if "Timestamp" in left_type and right_type == "String" and "Timestamp" not in right and ".get(" not in right:
-                        _l_ts = (f"({left} != null ? ({left} instanceof java.sql.Timestamp ? (java.sql.Timestamp) {left} : java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({left}).trim().split(\" \")[0], java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd]\")).atStartOfDay())) : new java.sql.Timestamp(0))" if ".get(" in left else left)
-                        return f"{_l_ts}.compareTo(java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({right}).trim().split(\" \")[0], java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd]\")).atStartOfDay())) {op} 0"
+                    if (
+                        "Timestamp" in left_type
+                        and right_type == "String"
+                        and "Timestamp" not in right
+                        and ".get(" not in right
+                    ):
+                        _l_ts = (
+                            f'({left} != null ? ({left} instanceof java.sql.Timestamp ? (java.sql.Timestamp) {left} : java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({left}).trim().split(" ")[0], java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd]")).atStartOfDay())) : new java.sql.Timestamp(0))'
+                            if ".get(" in left
+                            else left
+                        )
+                        return f'{_l_ts}.compareTo(java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({right}).trim().split(" ")[0], java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd]")).atStartOfDay())) {op} 0'
                     if "Timestamp" in right_type and left_type == "String" and "Timestamp" not in left:
-                        _r_ts = (f"({right} != null ? ({right} instanceof java.sql.Timestamp ? (java.sql.Timestamp) {right} : java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({right}).trim().split(\" \")[0], java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd]\")).atStartOfDay())) : new java.sql.Timestamp(0))" if ".get(" in right else right)
-                        return f"java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({left}).trim().split(\" \")[0], java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd]\")).atStartOfDay()).compareTo({_r_ts}) {op} 0"
+                        _r_ts = (
+                            f'({right} != null ? ({right} instanceof java.sql.Timestamp ? (java.sql.Timestamp) {right} : java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({right}).trim().split(" ")[0], java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd]")).atStartOfDay())) : new java.sql.Timestamp(0))'
+                            if ".get(" in right
+                            else right
+                        )
+                        return f'java.sql.Timestamp.valueOf(java.time.LocalDate.parse(String.valueOf({left}).trim().split(" ")[0], java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd]")).atStartOfDay()).compareTo({_r_ts}) {op} 0'
                     # Issue #40: String.compareTo() is lexicographic ("10" < "3").
                     # Use BigDecimal when at least one operand is a numeric literal.
                     right_raw = val.get("right")
@@ -10344,9 +11521,17 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     # "2026-08-06"). BigDecimal would throw on parse — use
                     # String.compareTo instead.
                     _other_is_func = False
-                    if isinstance(right_raw, dict) and "Literal" not in right_raw and ("FunctionCall" in right_raw or "ColumnRef" in right_raw):
+                    if (
+                        isinstance(right_raw, dict)
+                        and "Literal" not in right_raw
+                        and ("FunctionCall" in right_raw or "ColumnRef" in right_raw)
+                    ):
                         _other_is_func = True
-                    if isinstance(left_raw, dict) and "Literal" not in left_raw and ("FunctionCall" in left_raw or "ColumnRef" in left_raw):
+                    if (
+                        isinstance(left_raw, dict)
+                        and "Literal" not in left_raw
+                        and ("FunctionCall" in left_raw or "ColumnRef" in left_raw)
+                    ):
                         _other_is_func = True
                     if right_type != "String" and ".get(" in right:
                         right = f"String.valueOf({right})"
@@ -10383,18 +11568,18 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     _NUMERIC_PRIORITY = {"Integer": 0, "Long": 1, "Float": 2, "Double": 3, "java.math.BigDecimal": 4}
                     _l_pri = _NUMERIC_PRIORITY.get(left_type, -1)
                     _r_pri = _NUMERIC_PRIORITY.get(right_type, -1)
-                    
+
                     if _l_pri >= 0 and _r_pri >= 0 and _l_pri != _r_pri:
                         # Both numeric but different precision -- promote to higher
                         cmp_map = {"<": "<", ">": ">", "<=": "<=", ">=": ">=", "=": "==", "<>": "!="}
-                        
+
                         if _l_pri > _r_pri:
                             right = _coerce_type(right, right_type, left_type)
                             _common_type = left_type
                         else:
                             left = _coerce_type(left, left_type, right_type)
                             _common_type = right_type
-                        
+
                         if _common_type == "java.math.BigDecimal":
                             return f"{left}.compareTo({right}) {cmp_map[op]} 0"
                         elif _common_type == "Long":
@@ -10406,7 +11591,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                         elif _common_type == "Double":
                             return f"Double.compare({left}, {right}) {cmp_map[op]} 0"
                         return f"{left} {cmp_map[op]} {right}"
-                    
+
                     # String vs Numeric comparison (non-Map.get)
                     if (_l_pri >= 0 and left_type != "Object") and right_type == "String" and ".get(" not in right:
                         cmp_map = {"<": "<", ">": ">", "<=": "<=", ">=": ">=", "=": "==", "<>": "!="}
@@ -10421,20 +11606,26 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                             return f"{left}.compareTo({right}) {cmp_map[op]} 0"
                         return f"{left} {cmp_map[op]} {right}"
 
-                if is_bd and op in ("+", "-", "*", "/") and not (left_type.startswith("java.sql.") or right_type.startswith("java.sql.")):
+                if (
+                    is_bd
+                    and op in ("+", "-", "*", "/")
+                    and not (left_type.startswith("java.sql.") or right_type.startswith("java.sql."))
+                ):
                     arith_map = {"+": "add", "-": "subtract", "*": "multiply", "/": "divide"}
                     method = arith_map[op]
 
                     def _bd_operand(x, x_type):
                         if "BigDecimal" in x_type or "BigDecimal" in x:
                             return x
-                        if _is_numeric_literal_expr(x):
+                        if _is_numeric_literal_expr(x) or _is_numeric_literal_expr(x.strip("()")):
                             return f"java.math.BigDecimal.valueOf({x})"
                         if x_type == "String" or "_substr(" in x or ".get(" in x:
                             return f"new java.math.BigDecimal(String.valueOf({x}))"
                         if "?" in x and "null" in x:
                             return _wrap_ternary_nullsafe_bd(x)
-                        return f"java.math.BigDecimal.valueOf({x})"
+                        if _is_primitive_producing(x):
+                            return f"java.math.BigDecimal.valueOf({x})"
+                        return f"java.math.BigDecimal.valueOf({x} != null ? {x} : 0L)"
 
                     left = _bd_operand(left, left_type)
                     right = _bd_operand(right, right_type)
@@ -10448,12 +11639,29 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     return f"String.valueOf({left}).concat(String.valueOf({right}))"
 
             if op == "^":
-                left_d = f"((Number) ({left} != null ? {left} : 0.0d)).doubleValue()" if (".get(" in left and not _is_primitive_producing(left)) else (f"({left} != null ? Double.parseDouble({left}) : 0.0d)" if left_type == "String" else f"((Number) ({left})).doubleValue()")
-                right_d = f"((Number) ({right} != null ? {right} : 0.0d)).doubleValue()" if (".get(" in right and not _is_primitive_producing(right)) else (f"({right} != null ? Double.parseDouble({right}) : 0.0d)" if right_type == "String" else f"((Number) ({right})).doubleValue()")
+                left_d = (
+                    f"((Number) ({left} != null ? {left} : 0.0d)).doubleValue()"
+                    if (".get(" in left and not _is_primitive_producing(left))
+                    else (
+                        f"({left} != null ? Double.parseDouble({left}) : 0.0d)"
+                        if left_type == "String"
+                        else f"((Number) ({left})).doubleValue()"
+                    )
+                )
+                right_d = (
+                    f"((Number) ({right} != null ? {right} : 0.0d)).doubleValue()"
+                    if (".get(" in right and not _is_primitive_producing(right))
+                    else (
+                        f"({right} != null ? Double.parseDouble({right}) : 0.0d)"
+                        if right_type == "String"
+                        else f"((Number) ({right})).doubleValue()"
+                    )
+                )
                 return f"Math.pow({left_d}, {right_d})"
             java_op = _java_op(op)
+
             def _is_string_get(e):
-                m = re.match(r'^([A-Za-z_]\w*)\.get\(\)$', e.strip())
+                m = re.match(r"^([A-Za-z_]\w*)\.get\(\)$", e.strip())
                 if not m:
                     return False
                 base = m.group(1)
@@ -10479,16 +11687,38 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     return f"({x} != null ? Double.parseDouble(String.valueOf({x})) : 0.0d)"
                 return f"((Number) ({x})).doubleValue()"
 
-            _is_ts_left = "Timestamp" in left_type or "Timestamp" in left or "java.sql.Date" in left or left_type in ("java.sql.Date", "java.util.Date")
-            _is_ts_right = "Timestamp" in right_type or "Timestamp" in right or "java.sql.Date" in right or right_type in ("java.sql.Date", "java.util.Date")
+            _is_ts_left = (
+                "Timestamp" in left_type
+                or "Timestamp" in left
+                or "java.sql.Date" in left
+                or left_type in ("java.sql.Date", "java.util.Date")
+            )
+            _is_ts_right = (
+                "Timestamp" in right_type
+                or "Timestamp" in right
+                or "java.sql.Date" in right
+                or right_type in ("java.sql.Date", "java.util.Date")
+            )
             _is_dur_left = ".toMillis()" in left
             _is_dur_right = ".toMillis()" in right
-            _extract_tails = (".getYear()", ".getMonthValue()", ".getDayOfMonth()",
-                              ".getDayOfWeek()", ".getDayOfYear()", ".getHour()",
-                              ".getMinute()", ".getSecond()", ".toLocalDate()")
+            _extract_tails = (
+                ".getYear()",
+                ".getMonthValue()",
+                ".getDayOfMonth()",
+                ".getDayOfWeek()",
+                ".getDayOfYear()",
+                ".getHour()",
+                ".getMinute()",
+                ".getSecond()",
+                ".toLocalDate()",
+            )
             _left_is_extract = any(left.rstrip().endswith(t) for t in _extract_tails)
             _right_is_extract = any(right.rstrip().endswith(t) for t in _extract_tails)
-            if op in ("+", "-", "*", "/") and not (_is_ts_left or _is_ts_right) and (_left_str or _right_str or ".get(" in left or ".get(" in right):
+            if (
+                op in ("+", "-", "*", "/")
+                and not (_is_ts_left or _is_ts_right)
+                and (_left_str or _right_str or ".get(" in left or ".get(" in right)
+            ):
                 # Oracle/Gauss `+` on VARCHAR2 is numeric addition; concat is `||`.
                 return f"({_num_operand(left, _left_str)} {java_op} {_num_operand(right, _right_str)})"
             if op == "-" and _is_ts_left and _is_ts_right:
@@ -10506,13 +11736,49 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             if op == "-" and (_is_ts_left or _is_ts_right) and not (_is_ts_left and _is_ts_right):
                 # Timestamp minus a non-timestamp (interval/days value) → epoch arithmetic
                 _ts_side, _other = (left, right) if _is_ts_left else (right, left)
-                _other_d = f"((Number) ({_other} != null ? {_other} : 0L)).longValue()" if ".get(" in _other else f"((Number) ({_other})).longValue()"
+                _other_d = (
+                    f"((Number) ({_other} != null ? {_other} : 0L)).longValue()"
+                    if ".get(" in _other
+                    else f"((Number) ({_other})).longValue()"
+                )
                 # M1-minor (#114 review #1): `number - timestamp` was flipped to `+`
                 # (ts on the right side); both operand orders must subtract.
                 return f"new java.sql.Timestamp({_ts_side}.getTime() - {_other_d} * 86400000L)"
-            if op == "+" and _is_ts_left and right_type in ("Long", "long", "Integer", "int", "Double", "double", "Float", "float", "java.math.BigDecimal", "BigDecimal"):
+            if (
+                op == "+"
+                and _is_ts_left
+                and right_type
+                in (
+                    "Long",
+                    "long",
+                    "Integer",
+                    "int",
+                    "Double",
+                    "double",
+                    "Float",
+                    "float",
+                    "java.math.BigDecimal",
+                    "BigDecimal",
+                )
+            ):
                 return f"new java.sql.Date({left}.getTime() + ((Number) ({right})).longValue() * 86400000L)"
-            if op == "+" and _is_ts_right and left_type in ("Long", "long", "Integer", "int", "Double", "double", "Float", "float", "java.math.BigDecimal", "BigDecimal"):
+            if (
+                op == "+"
+                and _is_ts_right
+                and left_type
+                in (
+                    "Long",
+                    "long",
+                    "Integer",
+                    "int",
+                    "Double",
+                    "double",
+                    "Float",
+                    "float",
+                    "java.math.BigDecimal",
+                    "BigDecimal",
+                )
+            ):
                 return f"new java.sql.Date({right}.getTime() + ((Number) ({left})).longValue() * 86400000L)"
             if op == "=" and _is_string_comparison(val, proc):
                 # Ensure the non-.get() operand is the caller to avoid NPE on null Map.get()
@@ -10534,10 +11800,12 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     left = _coerce_type(left, "String", "java.sql.Timestamp")
                 _rel_cmp = {"<": "< 0", ">": "> 0", "<=": "<= 0", ">=": ">= 0"}
                 return f"{left}.compareTo({right}) {_rel_cmp[op]}"
-            _is_ts_cmp = ("Timestamp" in left_type or "Timestamp" in left) and ("Timestamp" in right_type or "Timestamp" in right)
+            _is_ts_cmp = ("Timestamp" in left_type or "Timestamp" in left) and (
+                "Timestamp" in right_type or "Timestamp" in right
+            )
             if _is_ts_cmp and op in (">", "<", ">=", "<="):
                 _ts_cmp = {"<": "before", ">": "after", "<=": "!after", ">=": "!before"}
-                _method = _ts_cmp.get(op)
+                _method = cast(str, _ts_cmp.get(op))
                 if _method.startswith("!"):
                     return f"!{right}.{_method[1:]}({left})"
                 return f"{right}.{_method}({left})"
@@ -10598,14 +11866,14 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 _builtin_category = _builtin.get("category", "")
                 if _builtin_domain == "ExceptionContext":
                     if func_name_lower == "pg_exception_detail":
-                        return '__SQLERRM__'
+                        return "__SQLERRM__"
                     elif func_name_lower == "pg_exception_hint":
                         return '"(see exception hint in stack trace)"'
                     elif func_name_lower == "pg_exception_context":
-                        return 'java.util.Arrays.toString(e.getStackTrace())'
+                        return "java.util.Arrays.toString(e.getStackTrace())"
                     else:
                         # Generic fallback for any future ExceptionContext functions
-                        return '__SQLERRM__'
+                        return "__SQLERRM__"
                 elif _builtin_category == "TypeConstructor":
                     if args_java:
                         arg0 = args_java[0]
@@ -10615,7 +11883,10 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             # Delegate to SPECIAL_FUNCTION_MAP first (SUBSTR with 3 args needs
             # dedicated handler for correct 1-based→0-based offset conversion)
             if func_name_lower in SPECIAL_FUNCTION_MAP:
-                _wrapped_fn = lambda expr, p: _expr_to_java(expr, p, all_packages=all_packages)
+
+                def _wrapped_fn(expr, p):
+                    return _expr_to_java(expr, p, all_packages=all_packages)
+
                 return SPECIAL_FUNCTION_MAP[func_name_lower](val, proc, _wrapped_fn)
 
             if func_name_lower in SQL_FUNCTION_MAP:
@@ -10625,34 +11896,62 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     if "BigDecimal" in first_type:
                         args_java = [(a if a != "0" else "java.math.BigDecimal.ZERO") for a in args_java]
                         args_str = ", ".join(args_java)
+                    elif first_type in ("Long", "long"):
+                        # Issue #63: requireNonNullElse(T,T) 与异型参数（Long vs Integer）
+                        # 会把 T 推断为 Number&Comparable，后续算术/返回全部编译失败。
+                        # bare int 字面量补 L 后装箱为 Long，T 统一为 Long。
+                        args_java = [(a + "L" if _is_bare_int_literal(a.strip()) else a) for a in args_java]
+                        args_str = ", ".join(args_java)
                 if func_name_lower in ("nvl", "nvl2", "coalesce") and args_java:
                     _a0 = args_java[0].strip()
-                    if func_name_lower == "nvl" and len(args_java) >= 2 and _a0.startswith("(") and "?" in _a0 and _is_primitive_producing(_a0):
+                    if (
+                        func_name_lower == "nvl"
+                        and len(args_java) >= 2
+                        and _a0.startswith("(")
+                        and "?" in _a0
+                        and _is_primitive_producing(_a0)
+                    ):
                         return _a0
                     _prim_parse_pfx = None
-                    for _pfx in ("Double.parseDouble(String.valueOf(", "Long.parseLong(String.valueOf(", "Integer.parseInt(String.valueOf("):
+                    for _pfx in (
+                        "Double.parseDouble(String.valueOf(",
+                        "Long.parseLong(String.valueOf(",
+                        "Integer.parseInt(String.valueOf(",
+                    ):
                         if _a0.startswith(_pfx) and _a0.endswith("))"):
                             _prim_parse_pfx = _pfx
                             break
                     if _prim_parse_pfx and func_name_lower == "nvl" and len(args_java) >= 2:
-                        _inner = _a0[len(_prim_parse_pfx):-2]
+                        _inner = _a0[len(_prim_parse_pfx) : -2]
                         if not _is_primitive_producing(_inner):
                             return f"({_inner} != null ? {_a0} : {args_java[1]})"
-                    _m0 = re.search(r'\.(intValue|longValue|doubleValue|floatValue)\(\)\s*\)*$', _a0)
+                    _m0 = re.search(r"\.(intValue|longValue|doubleValue|floatValue)\(\)\s*\)*$", _a0)
                     if _m0:
-                        _box = {"intValue": "Integer", "longValue": "Long", "doubleValue": "Double", "floatValue": "Float"}[_m0.group(1)]
+                        _box = {
+                            "intValue": "Integer",
+                            "longValue": "Long",
+                            "doubleValue": "Double",
+                            "floatValue": "Float",
+                        }[_m0.group(1)]
                         args_java[0] = f"{_box}.valueOf({args_java[0]})"
                     elif _is_primitive_producing(_a0):
                         args_java[0] = f"Double.valueOf({args_java[0]})"
                 if func_name_lower in _NUMERIC_FUNC_NEEDS_DOUBLE_ARGS:
                     coerced = []
                     for i, a_java in enumerate(args_java):
-                        a_type = _infer_expr_type(val.get("args", [{}])[i], proc) if i < len(val.get("args", [])) else "Object"
+                        a_type = (
+                            _infer_expr_type(val.get("args", [{}])[i], proc)
+                            if i < len(val.get("args", []))
+                            else "Object"
+                        )
                         if "BigDecimal" in a_type:
                             coerced.append(f"({a_java}).doubleValue()")
-                        elif ".get(" in a_java:
-                            coerced.append(f"((Number) {a_java}).doubleValue()")
-                        elif a_type == "Object" and not a_java.endswith(".doubleValue()") and not _is_numeric_literal_expr(a_java):
+                        elif (
+                            ".get(" in a_java
+                            or a_type == "Object"
+                            and not a_java.endswith(".doubleValue()")
+                            and not _is_numeric_literal_expr(a_java)
+                        ):
                             coerced.append(f"((Number) {a_java}).doubleValue()")
                         else:
                             coerced.append(a_java)
@@ -10661,10 +11960,12 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 if func_name_lower in _NUMERIC_FUNC_NEEDS_INT_ARGS:
                     coerced = []
                     for i, a_java in enumerate(args_java):
-                        a_type = _infer_expr_type(val.get("args", [{}])[i], proc) if i < len(val.get("args", [])) else "Object"
-                        if ".get(" in a_java:
-                            coerced.append(f"((Number) {a_java}).intValue()")
-                        elif a_type == "Object" and not _is_numeric_literal_expr(a_java):
+                        a_type = (
+                            _infer_expr_type(val.get("args", [{}])[i], proc)
+                            if i < len(val.get("args", []))
+                            else "Object"
+                        )
+                        if ".get(" in a_java or a_type == "Object" and not _is_numeric_literal_expr(a_java):
                             coerced.append(f"((Number) {a_java}).intValue()")
                         else:
                             coerced.append(a_java)
@@ -10708,7 +12009,9 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     else:
                         # Cross-package call - also check target proc params for .get() args
                         if matched:
-                            target_proc = _find_target_proc(matched, name_parts[-1], all_packages, arg_count=len(val.get("args", [])))
+                            target_proc = _find_target_proc(
+                                matched, name_parts[-1], all_packages, arg_count=len(val.get("args", []))
+                            )
                             if target_proc:
                                 method = java_method_name(name_parts[-1])
                                 out_param_java_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out}
@@ -10718,11 +12021,18 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                                 for i, a_java in enumerate(args_java):
                                     if i < len(target_proc.parameters):
                                         if i in target_out_indices:
-                                            raw_java = _expr_to_java(raw_args[i] if i < len(raw_args) else {}, proc, as_read=False, all_packages=all_packages)
+                                            raw_java = _expr_to_java(
+                                                raw_args[i] if i < len(raw_args) else {},
+                                                proc,
+                                                as_read=False,
+                                                all_packages=all_packages,
+                                            )
                                             if raw_java in out_param_java_names:
                                                 wrapped_args.append(raw_java)
                                                 continue
-                                        wrapped_args.append(_coerce_java_arg(a_java, target_proc.parameters[i].java_type))
+                                        wrapped_args.append(
+                                            _coerce_java_arg(a_java, target_proc.parameters[i].java_type)
+                                        )
                                     else:
                                         wrapped_args.append(a_java)
                                 svc_name = f"{package_to_classname(matched).lower()}Service"
@@ -10730,12 +12040,14 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                                 return f"{svc_name}.{method}({', '.join(wrapped_args)})"
                 if self_call_pkg is not None:
                     _resolved_pkg = self_call_pkg
-                    target_proc = _find_target_proc(self_call_pkg, self_call_func, all_packages, arg_count=len(val.get("args", [])))
+                    target_proc = _find_target_proc(
+                        self_call_pkg, self_call_func, all_packages, arg_count=len(val.get("args", []))
+                    )
                     if not target_proc:
                         # Package key in all_packages may differ from proc.package (e.g. filename-based key)
                         # Search all packages for a matching function in the same source file
-                        for _apk, _api in (all_packages.items() if all_packages else []):
-                            for _ap in (_api.procedures if hasattr(_api, 'procedures') else []):
+                        for _apk, _api in all_packages.items() if all_packages else []:
+                            for _ap in _api.procedures if hasattr(_api, "procedures") else []:
                                 if _ap.proc_name.lower() == self_call_func.lower():
                                     if _ap.source_file == proc.source_file:
                                         _resolved_pkg = _apk
@@ -10752,7 +12064,12 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                         for i, a_java in enumerate(args_java):
                             if i < len(target_proc.parameters):
                                 if i in target_out_indices:
-                                    raw_java = _expr_to_java(raw_args[i] if i < len(raw_args) else {}, proc, as_read=False, all_packages=all_packages)
+                                    raw_java = _expr_to_java(
+                                        raw_args[i] if i < len(raw_args) else {},
+                                        proc,
+                                        as_read=False,
+                                        all_packages=all_packages,
+                                    )
                                     if raw_java in out_param_java_names:
                                         wrapped_args.append(raw_java)
                                         continue
@@ -10766,8 +12083,10 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                             for _apk2, _api2 in all_packages.items():
                                 if _apk2 == _resolved_pkg:
                                     continue
-                                for _ap2 in (_api2.procedures if hasattr(_api2, 'procedures') else []):
-                                    if _ap2.proc_name.lower() == self_call_func.lower() and len(_ap2.parameters) == len(val.get("args", [])):
+                                for _ap2 in _api2.procedures if hasattr(_api2, "procedures") else []:
+                                    if _ap2.proc_name.lower() == self_call_func.lower() and len(_ap2.parameters) == len(
+                                        val.get("args", [])
+                                    ):
                                         _exists_elsewhere = True
                                         break
                                 if _exists_elsewhere:
@@ -10776,12 +12095,16 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                         _actual_target_pkg = None
                         raw_args = val.get("args", [])
                         if not _exists_elsewhere:
-                            _actual_target = _find_target_proc(_resolved_pkg, self_call_func, all_packages, arg_count=len(raw_args))
+                            _actual_target = _find_target_proc(
+                                _resolved_pkg, self_call_func, all_packages, arg_count=len(raw_args)
+                            )
                             if _actual_target:
                                 _actual_target_pkg = _resolved_pkg
                         if not _actual_target:
-                            for _apk in (all_packages or {}):
-                                _actual_target = _find_target_proc(_apk, self_call_func, all_packages, arg_count=len(raw_args))
+                            for _apk in all_packages or {}:
+                                _actual_target = _find_target_proc(
+                                    _apk, self_call_func, all_packages, arg_count=len(raw_args)
+                                )
                                 if _actual_target:
                                     _actual_target_pkg = _apk
                                     break
@@ -10802,7 +12125,11 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                             if i < len(arg_types):
                                 # OUT params are passed through as-is (their
                                 # carrier var is promoted to AtomicReference).
-                                if _actual_target and i < len(_actual_target.parameters) and _actual_target.parameters[i].is_out:
+                                if (
+                                    _actual_target
+                                    and i < len(_actual_target.parameters)
+                                    and _actual_target.parameters[i].is_out
+                                ):
                                     wrapped_args.append(a_java)
                                 else:
                                     wrapped_args.append(_coerce_java_arg(a_java, arg_types[i]))
@@ -10816,16 +12143,16 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                         # If the function actually lives in ANOTHER package, emit the
                         # cross-package service call instead of a local missing-overload
                         # stub (which returns Object and breaks String assignments).
-                        _same_pkg = (
-                            _actual_target is not None
-                            and (
-                                (getattr(_actual_target, "package", "") or "").lower() == (getattr(proc, "package", "") or "").lower()
-                                or getattr(_actual_target, "source_file", None) == getattr(proc, "source_file", None)
-                            )
+                        _same_pkg = _actual_target is not None and (
+                            (getattr(_actual_target, "package", "") or "").lower()
+                            == (getattr(proc, "package", "") or "").lower()
+                            or getattr(_actual_target, "source_file", None) == getattr(proc, "source_file", None)
                         )
                         if _actual_target_pkg is not None and not _same_pkg:
                             svc_name = f"{package_to_classname(_actual_target_pkg).lower()}Service"
-                            proc.service_calls.append(ServiceCall(svc_name, method, [], package_name=_actual_target_pkg))
+                            proc.service_calls.append(
+                                ServiceCall(svc_name, method, [], package_name=_actual_target_pkg)
+                            )
                             return f"{svc_name}.{method}({', '.join(wrapped_args)})"
                         _register_missing_overload(self_call_pkg, method, arg_types, len(raw_args))
                         return f"this.{method}({', '.join(wrapped_args)})"
@@ -10834,8 +12161,10 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     for _cpk, _cpi in all_packages.items():
                         if _cpk == self_call_pkg:
                             continue
-                        for _cp in (_cpi.procedures if hasattr(_cpi, 'procedures') else []):
-                            if _cp.proc_name.lower() == func_name_lower and len(_cp.parameters) == len(val.get("args", [])):
+                        for _cp in _cpi.procedures if hasattr(_cpi, "procedures") else []:
+                            if _cp.proc_name.lower() == func_name_lower and len(_cp.parameters) == len(
+                                val.get("args", [])
+                            ):
                                 method = java_method_name(func_name)
                                 if _cp.source_file == proc.source_file:
                                     proc.service_calls.append(ServiceCall(svc_name, method, [], package_name=_cpk))
@@ -10870,7 +12199,10 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             func_name = val.get("name", "").lower()
             handler = SPECIAL_FUNCTION_MAP.get(func_name)
             if handler:
-                _wrapped_fn = lambda expr, p: _expr_to_java(expr, p, all_packages=all_packages)
+
+                def _wrapped_fn(expr, p):
+                    return _expr_to_java(expr, p, all_packages=all_packages)
+
                 return handler(val, proc, _wrapped_fn)
             _record_unsupported(func_name, proc, is_special=True)
             args_java = [_expr_to_java(a, proc, all_packages=all_packages) for a in val.get("args", [])]
@@ -10900,7 +12232,22 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             operand_expr = val.get("operand") or val.get("expression")
             operand = _expr_to_java(operand_expr, proc, all_packages=all_packages) if operand_expr else None
             operand_type = _infer_expr_type(operand_expr, proc) if operand_expr and proc else "Object"
-            is_primitive = operand_type in ("int", "Integer", "long", "Long", "short", "Short", "byte", "Byte", "double", "Double", "float", "Float", "boolean", "Boolean")
+            is_primitive = operand_type in (
+                "int",
+                "Integer",
+                "long",
+                "Long",
+                "short",
+                "Short",
+                "byte",
+                "Byte",
+                "double",
+                "Double",
+                "float",
+                "Float",
+                "boolean",
+                "Boolean",
+            )
             cmp_op = "==" if is_primitive else ".equals"
             whens = val.get("whens", [])
             else_expr = val.get("else_expr") or val.get("else_result")
@@ -10951,7 +12298,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 parts.append(f": {else_val}")
                 closing = ")" * len(whens)
                 return "".join(parts) + closing
-            return f"/* TODO: CASE expression */ null"
+            return "/* TODO: CASE expression */ null"
         elif key == "Expr":
             if isinstance(val, list) and len(val) >= 1:
                 return _expr_to_java(val[0], proc, all_packages=all_packages)
@@ -10985,7 +12332,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                         method = "matches"
                         arg = pat.replace("%", ".*").replace("_", ".")
                     prefix = "!" if negated else ""
-                    return f"{prefix}{inner}.{method}(\"{arg}\")"
+                    return f'{prefix}{inner}.{method}("{arg}")'
             pattern_java = _expr_to_java(pattern_expr, proc, all_packages=all_packages)
             prefix = "!" if negated else ""
             return f"{prefix}{inner}.matches({pattern_java})"
@@ -11006,8 +12353,10 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     float(_low_str)
                     float(_high_str)
                     _bd_expr = f"new java.math.BigDecimal(String.valueOf({expr_java}))"
-                    cmp = (f"({_bd_expr}.compareTo(new java.math.BigDecimal({low_java})) >= 0"
-                           f" && {_bd_expr}.compareTo(new java.math.BigDecimal({high_java})) <= 0)")
+                    cmp = (
+                        f"({_bd_expr}.compareTo(new java.math.BigDecimal({low_java})) >= 0"
+                        f" && {_bd_expr}.compareTo(new java.math.BigDecimal({high_java})) <= 0)"
+                    )
                 except (ValueError, TypeError):
                     _s_expr = f"String.valueOf({expr_java})"
                     cmp = f"({_s_expr}.compareTo({low_java}) >= 0 && {_s_expr}.compareTo({high_java}) <= 0)"
@@ -11027,8 +12376,13 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 if _inner.strip().startswith("new java.sql.Timestamp") or "java.sql.Timestamp.valueOf" in _inner:
                     return _inner
                 _s = _inner.strip()
-                if len(_s) >= 2 and _s[0] == '"' and _s[-1] == '"' and len(_s[1:-1]) <= 10 and ":" not in _s[1:-1]:
-                    return f'java.sql.Timestamp.valueOf("{_s[1:-1]} 00:00:00")'
+                if len(_s) >= 2 and _s[0] == '"' and _s[-1] == '"':
+                    _literal = _s[1:-1]
+                    if re.fullmatch(r"\d{1,4}-\d{1,2}-\d{1,2}|\d{8}", _literal):
+                        return f'java.sql.Timestamp.valueOf(java.time.LocalDate.parse("{_literal}", java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd][yyyy-M-d]")).atStartOfDay())'
+                    if len(_literal) <= 10 and ":" not in _literal:
+                        # 对齐 Rust 侧：降级为 null（String 字面量喂给 Timestamp 变量是编译错误）
+                        return "/* TODO: invalid timestamp literal */ null"
                 _it = _infer_expr_type(_tc_expr, proc) if proc else ""
                 if "Date" in _it and "Timestamp" not in _it:
                     # Date-typed source: String.valueOf(date) lacks the time part
@@ -11045,8 +12399,10 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             else:
                 _atz_zone = "UTC"
             if "Timestamp" in _atz_inner or ".getTime()" in _atz_inner or "current_timestamp" in _atz_inner.lower():
-                return (f"java.sql.Timestamp.valueOf({_atz_inner}.toInstant()"
-                        f".atZone(java.time.ZoneId.of(\"{_atz_zone}\")).toLocalDateTime())")
+                return (
+                    f"java.sql.Timestamp.valueOf({_atz_inner}.toInstant()"
+                    f'.atZone(java.time.ZoneId.of("{_atz_zone}")).toLocalDateTime())'
+                )
             return _atz_inner
         elif key == "CursorAttribute":
             cursor_expr = val.get("cursor", {})
@@ -11059,25 +12415,24 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             if attr in ("notfound", "not_found"):
                 if cursor_meta:
                     return f"!({cursor_meta['index_var']} < {cursor_meta['result_var']}.size())"
-                return f"!found"
+                return "!found"
             elif attr in ("found",):
                 if cursor_meta:
                     return f"({cursor_meta['index_var']} < {cursor_meta['result_var']}.size())"
-                return f"found"
+                return "found"
             elif attr in ("isopen", "is_open"):
                 if cursor_meta:
                     return f"({cursor_meta['result_var']} != null)"
                 return f"({cursor_java} != null)"
             elif attr in ("rowcount", "row_count"):
-                return f"__ROWCOUNT__"
+                return "__ROWCOUNT__"
             return f"/* CursorAttribute:{attr} */ false"
         elif key == "Subquery":
             targets = val.get("targets", [])
             from_clause = val.get("from", [])
             where_clause = val.get("where_clause")
             _subquery_handled = False
-            if (proc is not None and len(from_clause) == 1 and len(targets) == 1
-                    and where_clause is not None):
+            if proc is not None and len(from_clause) == 1 and len(targets) == 1 and where_clause is not None:
                 _sq_from = from_clause[0]
                 _sq_table_name = None
                 if isinstance(_sq_from, dict):
@@ -11117,30 +12472,32 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                             if isinstance(_sq_col_parts, list) and len(_sq_col_parts) == 1:
                                 _sq_pk_col = _sq_col_parts[0]
                                 _sq_where_right = _sq_right
-                if (_sq_is_row_star_cast and _sq_table_name and _sq_pk_col
-                        and _sq_where_right is not None):
+                if _sq_is_row_star_cast and _sq_table_name and _sq_pk_col and _sq_where_right is not None:
                     _sq_method_name = f"select{snake_to_pascal(_sq_table_name)}By{snake_to_pascal(_sq_pk_col)}"
                     _sq_pk_param = snake_to_camel(_sq_pk_col)
                     _sq_sql = f"SELECT * FROM {_sq_table_name} WHERE {_sq_pk_col} = #{{{_sq_pk_param}}}"
                     _sq_where_java = _expr_to_java(_sq_where_right, proc, all_packages=all_packages)
                     _existing = [d for d in proc.dml_statements if d.method_id == _sq_method_name]
                     if not _existing:
-                        _add_dml(proc, DmlStatement(
-                            sql_type="select",
-                            method_id=_sq_method_name,
-                            sql_text=_sq_sql,
-                            result_type="Map<String, Object>",
-                            returns_list=False,
-                            is_dynamic=True,
-                            extra_params=[(_sq_pk_param, "Object")],
-                        ))
+                        _add_dml(
+                            proc,
+                            DmlStatement(
+                                sql_type="select",
+                                method_id=_sq_method_name,
+                                sql_text=_sq_sql,
+                                result_type="Map<String, Object>",
+                                returns_list=False,
+                                is_dynamic=True,
+                                extra_params=[(_sq_pk_param, "Object")],
+                            ),
+                        )
                     _subquery_handled = True
                     return f"mapper.{_sq_method_name}({_sq_where_java})"
             if not _subquery_handled:
                 if where_clause:
                     where_java = _expr_to_java(where_clause, proc, all_packages=all_packages)
                     return f"/* Subquery: WHERE {_flatten_comment(where_java)} */ null"
-                return f"/* Subquery */ null"
+                return "/* Subquery */ null"
         elif key == "Subscript":
             obj_java = _expr_to_java(val.get("object", {}), proc, all_packages=all_packages)
             idx_expr = val.get("lower", val.get("index", {}))
@@ -11159,7 +12516,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
     return str(expr)
 
 
-def _is_string_comparison(binary_op: dict, proc: ProcedureInfo = None) -> bool:
+def _is_string_comparison(binary_op: dict, proc: Optional[ProcedureInfo] = None) -> bool:
     # Original logic: right side is a string literal
     right = binary_op.get("right", {})
     right_is_numeric_string = False
@@ -11177,8 +12534,17 @@ def _is_string_comparison(binary_op: dict, proc: ProcedureInfo = None) -> bool:
     # bugs like "indexOf(x) + 1.equals(0)" (Java parses as float literal "1.equals").
     if right_is_numeric_string and proc:
         left_type = _infer_expr_type(binary_op.get("left", {}), proc)
-        if left_type in ("Integer", "int", "Long", "long", "Double", "double",
-                          "Float", "float", "java.math.BigDecimal"):
+        if left_type in (
+            "Integer",
+            "int",
+            "Long",
+            "long",
+            "Double",
+            "double",
+            "Float",
+            "float",
+            "java.math.BigDecimal",
+        ):
             return False
     # Extended: either side is a String type variable
     if proc:
@@ -11198,7 +12564,12 @@ def _coerce_string_int_compare(binary_op: dict, left_java: str, right_java: str,
     neg = op in ("<>", "!=")
 
     def _is_int_literal(node):
-        return isinstance(node, dict) and "Literal" in node and isinstance(node["Literal"], dict) and "Integer" in node["Literal"]
+        return (
+            isinstance(node, dict)
+            and "Literal" in node
+            and isinstance(node["Literal"], dict)
+            and "Integer" in node["Literal"]
+        )
 
     def _is_string_var(node):
         if not isinstance(node, dict):
@@ -11232,7 +12603,13 @@ def _literal_to_java(lit) -> str:
     if isinstance(lit, dict):
         for key, val in lit.items():
             if key == "String":
-                escaped = val.replace("\\", "\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+                escaped = (
+                    val.replace("\\", "\\")
+                    .replace('"', '\\"')
+                    .replace("\n", "\\n")
+                    .replace("\r", "\\r")
+                    .replace("\t", "\\t")
+                )
                 return f'"{escaped}"'
             elif key == "Integer":
                 _int_val = int(val)
@@ -11260,47 +12637,56 @@ def _cleanup_java_expr(result: str) -> str:
         paren_depth = 0
         remove_pos = None
         for i, ch in enumerate(result):
-            if ch == '(':
+            if ch == "(":
                 paren_depth += 1
-            elif ch == ')':
+            elif ch == ")":
                 paren_depth -= 1
                 if paren_depth == 0:
                     remove_pos = i
                     break
         if remove_pos is not None:
-            result = result[:remove_pos] + result[remove_pos + 1:]
+            result = result[:remove_pos] + result[remove_pos + 1 :]
 
     # Integer.parseInt(String.valueOf(200)) → 200
-    result = re.sub(
-        r'Integer\.parseInt\(String\.valueOf\((\d+(?:\.\d+)?[dDfFlL]?)\)\)',
-        r'\1',
-        result
-    )
+    result = re.sub(r"Integer\.parseInt\(String\.valueOf\((\d+(?:\.\d+)?[dDfFlL]?)\)\)", r"\1", result)
     # String.valueOf("literal") → "literal"
-    result = re.sub(r'String\.valueOf\(("(?:[^"\\]|\\.)*")\)', r'\1', result)
+    result = re.sub(r'String\.valueOf\(("(?:[^"\\]|\\.)*")\)', r"\1", result)
 
     return result
 
 
 def _flatten_comment(text: str) -> str:
     """Replace nested /* */ inside comment text to avoid breaking Java block comments."""
-    return re.sub(r'/\*|\*/', '', text)
+    return re.sub(r"/\*|\*/", "", text)
 
 
 def _java_op(sql_op: str) -> str:
     """Convert SQL operator to Java operator."""
     ops = {
-        "=": "==", "<>": "!=", "!=": "!=",
-        ">": ">", "<": "<", ">=": ">=", "<=": "<=",
-        "AND": "&&", "OR": "||", "NOT": "!",
-        "+": "+", "-": "-", "*": "*", "/": "/",
-        "||": "+", "LIKE": "LIKE",
-        "IS NULL": "== null", "IS NOT NULL": "!= null",
+        "=": "==",
+        "<>": "!=",
+        "!=": "!=",
+        ">": ">",
+        "<": "<",
+        ">=": ">=",
+        "<=": "<=",
+        "AND": "&&",
+        "OR": "||",
+        "NOT": "!",
+        "+": "+",
+        "-": "-",
+        "*": "*",
+        "/": "/",
+        "||": "+",
+        "LIKE": "LIKE",
+        "IS NULL": "== null",
+        "IS NOT NULL": "!= null",
     }
     return ops.get(sql_op, sql_op)
 
 
 # ── SQL Reconstruction Helpers ─────────────────────────────────
+
 
 def _extract_table_names(from_clause: list) -> list:
     tables = []
@@ -11337,7 +12723,7 @@ def _extract_table_name_from_dml(dml_data: dict) -> str:
         if val:
             if isinstance(val, list):
                 if val and isinstance(val[0], str):
-                    return val[-1]
+                    return cast(str, val[-1])
             elif isinstance(val, list):
                 for item in val:
                     for k, v in item.items():
@@ -11354,13 +12740,13 @@ def _lookup_var_type(proc, var_name: str) -> str:
     if not var_name:
         return "Object"
     name_l = var_name.lower()
-    for vn, vt in (proc.local_vars.items() if proc is not None else []):
+    for vn, vt in proc.local_vars.items() if proc is not None else []:
         if vn.lower() == name_l:
-            return vt
+            return cast(str, vt)
     return "Object"
 
 
-def _extract_into_variable(into_targets: list) -> Optional[str]:
+def _extract_into_variable(into_targets: list) -> str | None:
     if not into_targets:
         return None
     first = into_targets[0]
@@ -11371,8 +12757,8 @@ def _extract_into_variable(into_targets: list) -> Optional[str]:
                     for ik, iv in item.items():
                         if ik in ("PlVariable", "ColumnRef"):
                             if isinstance(iv, list):
-                                return iv[-1]
-                            return iv
+                                return cast(str, iv[-1])
+                            return cast(str, iv)
     return None
 
 
@@ -11408,15 +12794,15 @@ def _extract_all_into_targets(into_targets: list) -> list:
     return result
 
 
-def _ordered_local_var_args(proc: ProcedureInfo, sql_text: str, extra: list = None) -> list:
+def _ordered_local_var_args(proc: ProcedureInfo, sql_text: str, extra: Optional[list] = None) -> list:
     result = []
     seen = {p.java_name for p in proc.parameters if not p.is_out}
     for var_name, _var_type in proc.local_vars.items():
         jn = snake_to_camel(var_name)
         if jn in seen:
             continue
-        mybatis_placeholders = set(re.findall(r'[#\$]\{(\w+)', sql_text or ""))
-        if jn in mybatis_placeholders or re.search(rf'\b{re.escape(var_name)}\b', sql_text or "", re.IGNORECASE):
+        mybatis_placeholders = set(re.findall(r"[#\$]\{(\w+)", sql_text or ""))
+        if jn in mybatis_placeholders or re.search(rf"\b{re.escape(var_name)}\b", sql_text or "", re.IGNORECASE):
             result.append(jn)
             seen.add(jn)
     if extra:
@@ -11427,7 +12813,7 @@ def _ordered_local_var_args(proc: ProcedureInfo, sql_text: str, extra: list = No
     return result
 
 
-def _build_param_args(params: list, extra_args: list = None) -> str:
+def _build_param_args(params: list, extra_args: Optional[list] = None) -> str:
     parts = []
     for p in params:
         if p.mode and p.mode.upper() == "OUT":
@@ -11441,7 +12827,13 @@ def _build_param_args(params: list, extra_args: list = None) -> str:
     return ", ".join(parts)
 
 
-def _build_param_args_from_template(proc: ProcedureInfo, template_params: list, extra_params: list = None, sql_text: str = "", dot_access_exprs: dict = None) -> str:
+def _build_param_args_from_template(
+    proc: ProcedureInfo,
+    template_params: list,
+    extra_params: Optional[list] = None,
+    sql_text: str = "",
+    dot_access_exprs: Optional[dict] = None,
+) -> str:
     template_java_names = set()
     for java_name, _is_id in template_params:
         template_java_names.add(java_name.split(".", 1)[0] if "." in java_name else java_name)
@@ -11451,7 +12843,7 @@ def _build_param_args_from_template(proc: ProcedureInfo, template_params: list, 
         if p.mode and p.mode.upper() == "OUT":
             continue
         if sql_text:
-            _sql_refs = set(re.findall(r'[#\$]\{(\w+)', sql_text))
+            _sql_refs = set(re.findall(r"[#\$]\{(\w+)", sql_text))
             if p.java_name not in _sql_refs and p.java_name not in template_java_names:
                 seen.add(p.java_name)
                 continue
@@ -11461,7 +12853,7 @@ def _build_param_args_from_template(proc: ProcedureInfo, template_params: list, 
             parts.append(p.java_name)
         seen.add(p.java_name)
     if sql_text:
-        _sql_ref_names = set(re.findall(r'[#\$]\{(\w+)', sql_text))
+        _sql_ref_names = set(re.findall(r"[#\$]\{(\w+)", sql_text))
         for var_name, _var_type in proc.local_vars.items():
             jn = snake_to_camel(var_name)
             if (jn in _sql_ref_names or jn in template_java_names) and jn not in seen:
@@ -11490,21 +12882,23 @@ def _sql_local_var_names(proc: ProcedureInfo, sql_text: str, is_select: bool = F
     scan_sql = sql_text
     # Strip SELECT ... INTO variable (PL/pgSQL), but not INSERT INTO table
     if is_select:
-        into_match = re.search(r'\bINTO\b', sql_text, re.IGNORECASE)
+        into_match = re.search(r"\bINTO\b", sql_text, re.IGNORECASE)
         if into_match:
-            after_into = re.search(r'\b(FROM|WHERE|ORDER|GROUP|HAVING|LIMIT)\b', sql_text[into_match.end():], re.IGNORECASE)
+            after_into = re.search(
+                r"\b(FROM|WHERE|ORDER|GROUP|HAVING|LIMIT)\b", sql_text[into_match.end() :], re.IGNORECASE
+            )
             if after_into:
-                scan_sql = sql_text[:into_match.start()] + " " + sql_text[into_match.end() + after_into.start():]
+                scan_sql = sql_text[: into_match.start()] + " " + sql_text[into_match.end() + after_into.start() :]
             else:
-                scan_sql = sql_text[:into_match.start()]
+                scan_sql = sql_text[: into_match.start()]
     param_names_lower = {p.name.lower() for p in proc.parameters if not p.is_out}
-    mybatis_placeholders = set(re.findall(r'#\{(\w+)', sql_text))
+    mybatis_placeholders = set(re.findall(r"#\{(\w+)", sql_text))
     result = []
     for var_name in proc.local_vars:
         if var_name.lower() in param_names_lower:
             continue
         java_name = snake_to_camel(var_name)
-        if java_name in mybatis_placeholders or re.search(rf'\b{re.escape(var_name)}\b', scan_sql, re.IGNORECASE):
+        if java_name in mybatis_placeholders or re.search(rf"\b{re.escape(var_name)}\b", scan_sql, re.IGNORECASE):
             result.append(java_name)
     return result
 
@@ -11516,8 +12910,15 @@ def _mapper_call(proc: ProcedureInfo, mapper_method: str, sql_text: str = "") ->
 
 # ── Code Generation ────────────────────────────────────────────
 
-def generate_project(output_dir: str, packages: list, changed_packages: set = None,
-                     config: dict = None, progress_cb=None, resume_skip: set = None):
+
+def generate_project(
+    output_dir: str,
+    packages: list,
+    changed_packages: Optional[set] = None,
+    config: Optional[dict] = None,
+    progress_cb=None,
+    resume_skip: Optional[set] = None,
+):
     base_path = Path(output_dir)
     base_path.mkdir(parents=True, exist_ok=True)
 
@@ -11547,8 +12948,7 @@ def generate_project(output_dir: str, packages: list, changed_packages: set = No
             svc_method_param_counts[(svc_var, mname)] = (in_count + out_count, proc.is_function)
 
     resume_set = resume_skip or set()
-    active_pkgs = [pkg for pkg in packages
-                   if changed_packages is None or pkg.package_name in changed_packages]
+    active_pkgs = [pkg for pkg in packages if changed_packages is None or pkg.package_name in changed_packages]
     n_gen = len(active_pkgs)
     gen_checkpoint = set(resume_set)
     gen_errors = []
@@ -11616,8 +13016,10 @@ def _collect_service_injections(pkg: PackageInfo) -> dict:
 
 
 def _pom_source_encoding_property() -> str:
-    if _SOURCE_ENCODING.lower() != 'utf-8':
-        return f'\n                <project.build.sourceEncoding>{_SOURCE_ENCODING.upper()}</project.build.sourceEncoding>'
+    if _SOURCE_ENCODING.lower() != "utf-8":
+        return (
+            f"\n                <project.build.sourceEncoding>{_SOURCE_ENCODING.upper()}</project.build.sourceEncoding>"
+        )
     return ""
 
 
@@ -11757,7 +13159,7 @@ def _write_pom_xml(base_path: Path):
     _write_source_file(base_path / "pom.xml", content)
 
 
-def _write_application_yml(base_path: Path, config: dict = None):
+def _write_application_yml(base_path: Path, config: Optional[dict] = None):
     db = (config or {}).get("database", {})
     url = db.get("url", "jdbc:postgresql://localhost:5432/demo")
     username = db.get("username", "postgres")
@@ -11858,7 +13260,7 @@ def _write_mapper_interface(base_path: Path, pkg: PackageInfo):
     class_name = f"{package_to_classname(pkg.package_name)}Mapper"
 
     methods = []
-    imports = set()
+    imports: set[str] = set()
     for proc in pkg.procedures:
         for dml in proc.dml_statements:
             method_sig = _build_mapper_method(proc, dml, imports)
@@ -11870,10 +13272,10 @@ def _write_mapper_interface(base_path: Path, pkg: PackageInfo):
     for m in methods:
         sig = m.strip()
         sig_line = sig
-        if '\n' in sig:
-            sig_line = [l for l in sig.split('\n') if l.strip() and not l.strip().startswith('//')][-1]
-        norm = re.sub(r'@Param\("[^"]*"\)\s*', '', sig_line)
-        norm = re.sub(r'\b([\w.]+(?:<[^>]+>)?)\s+(\w+)([,)])', r'\1 \3', norm)
+        if "\n" in sig:
+            sig_line = [l for l in sig.split("\n") if l.strip() and not l.strip().startswith("//")][-1]
+        norm = re.sub(r'@Param\("[^"]*"\)\s*', "", sig_line)
+        norm = re.sub(r"\b([\w.]+(?:<[^>]+>)?)\s+(\w+)([,)])", r"\1 \3", norm)
         if norm in sig_map:
             deduped.append(f"    // [DUPLICATE] {sig_line.strip()}")
         else:
@@ -11884,12 +13286,12 @@ def _write_mapper_interface(base_path: Path, pkg: PackageInfo):
     if not methods:
         methods = [f"// No direct DML operations for {pkg.package_name}"]
 
-    for method_name, sql, return_type in getattr(pkg, '_extra_mapper_methods', []):
+    for method_name, sql, return_type in getattr(pkg, "_extra_mapper_methods", []):
         if return_type == "Long":
-            methods.append(f"{return_type} {method_name}(@Param(\"seqName\") String seqName);")
+            methods.append(f'{return_type} {method_name}(@Param("seqName") String seqName);')
             imports.add("import org.apache.ibatis.annotations.Param;")
         elif return_type == "Integer":
-            methods.append(f"{return_type} {method_name}(@Param(\"jsonb\") String jsonb);")
+            methods.append(f'{return_type} {method_name}(@Param("jsonb") String jsonb);')
             imports.add("import org.apache.ibatis.annotations.Param;")
 
     imports_str = "\n".join(sorted(imports)) + "\n" if imports else ""
@@ -11913,7 +13315,7 @@ def _write_mapper_interface(base_path: Path, pkg: PackageInfo):
 
 def _dml_used_local_vars(proc: ProcedureInfo, dml: DmlStatement) -> list:
     sql_raw = dml.sql_text or ""
-    mybatis_placeholders = set(re.findall(r'[#\$]\{(\w+)', sql_raw))
+    mybatis_placeholders = set(re.findall(r"[#\$]\{(\w+)", sql_raw))
     forall_elem_names = {name for name, _ in dml.extra_params} if dml.extra_params else set()
     used = []
     param_names_lower = {p.name.lower() for p in proc.parameters if not p.is_out}
@@ -11922,10 +13324,10 @@ def _dml_used_local_vars(proc: ProcedureInfo, dml: DmlStatement) -> list:
         java_name = snake_to_camel(var_name)
         if var_name.lower() in param_names_lower or java_name.lower() in param_java_lower:
             continue
-        if java_name in mybatis_placeholders or re.search(rf'\b{re.escape(var_name)}\b', sql_raw, re.IGNORECASE):
+        if java_name in mybatis_placeholders or re.search(rf"\b{re.escape(var_name)}\b", sql_raw, re.IGNORECASE):
             mapper_type = var_java_type
             if java_name in forall_elem_names:
-                m = re.match(r'java\.util\.List<(.+)>', mapper_type)
+                m = re.match(r"java\.util\.List<(.+)>", mapper_type)
                 if m:
                     mapper_type = m.group(1)
             used.append((java_name, mapper_type))
@@ -11942,13 +13344,13 @@ def _build_mapper_method(proc: ProcedureInfo, dml: DmlStatement, imports: set) -
         imports.add("import java.util.List;")
         imports.add("import java.util.Map;")
         imports.add("import org.apache.ibatis.annotations.Param;")
-        return f"    int {method_name}(@Param(\"list\") java.util.List<java.util.Map<String, Object>> list);"
+        return f'    int {method_name}(@Param("list") java.util.List<java.util.Map<String, Object>> list);'
 
     sql_raw = dml.sql_text or ""
-    _sql_refs = set(re.findall(r'[#\$]\{(\w+)', sql_raw))
+    _sql_refs = set(re.findall(r"[#\$]\{(\w+)", sql_raw))
     if dml.is_dynamic and dml.dynamic_conditions:
         for dc in dml.dynamic_conditions:
-            _sql_refs.update(re.findall(r'[#\$]\{(\w+)', dc.sql_fragment))
+            _sql_refs.update(re.findall(r"[#\$]\{(\w+)", dc.sql_fragment))
 
     params = []
     _extra_java_names = {jn for jn, _ in dml.extra_params}
@@ -11964,7 +13366,7 @@ def _build_mapper_method(proc: ProcedureInfo, dml: DmlStatement, imports: set) -
 
     for java_name, java_type in _dml_used_local_vars(proc, dml):
         # Unwrap AtomicReference<T> → T for mapper parameters
-        mapper_type = re.sub(r'^AtomicReference<(.+)>$', r'\1', java_type) if java_type else java_type
+        mapper_type = re.sub(r"^AtomicReference<(.+)>$", r"\1", java_type) if java_type else java_type
         params.append(f'@Param("{java_name}") {mapper_type} {java_name}')
         _imp = _resolve_import(mapper_type)
         if _imp:
@@ -12001,11 +13403,7 @@ def _build_mapper_method(proc: ProcedureInfo, dml: DmlStatement, imports: set) -
         else:
             ret = "Map<String, Object>"
             imports.add("import java.util.Map;")
-    elif dml.sql_type == "insert":
-        ret = "int"
-    elif dml.sql_type == "update":
-        ret = "int"
-    elif dml.sql_type == "delete":
+    elif dml.sql_type == "insert" or dml.sql_type == "update" or dml.sql_type == "delete":
         ret = "int"
     else:
         ret = "void"
@@ -12032,70 +13430,70 @@ def _write_mapper_xml(base_path: Path, pkg: PackageInfo):
         _proc_cte_defs = {}
         for dml in proc.dml_statements:
             sql_raw = dml.sql_text.strip()
-            _with_start = re.search(r'(?i)\bWITH\b', sql_raw)
+            _with_start = re.search(r"(?i)\bWITH\b", sql_raw)
             if _with_start:
                 _pos = _with_start.end()
                 _d = 0
                 _dml_pos = None
                 for _ci in range(_pos, len(sql_raw)):
-                    if sql_raw[_ci] == '(':
+                    if sql_raw[_ci] == "(":
                         _d += 1
-                    elif sql_raw[_ci] == ')':
+                    elif sql_raw[_ci] == ")":
                         _d -= 1
                     elif _d == 0:
-                        _dm = re.match(r'(?i)\s*\b(INSERT|UPDATE|DELETE|SELECT)\b', sql_raw[_ci:])
+                        _dm = re.match(r"(?i)\s*\b(INSERT|UPDATE|DELETE|SELECT)\b", sql_raw[_ci:])
                         if _dm:
                             _dml_pos = _ci
                             break
                 if _dml_pos:
-                    _cte_block = sql_raw[_with_start.end():_dml_pos]
+                    _cte_block = sql_raw[_with_start.end() : _dml_pos]
                     _depth = 0
                     _start = 0
                     _name = None
                     i = 0
                     while i < len(_cte_block):
                         c = _cte_block[i]
-                        if c == '(':
+                        if c == "(":
                             _depth += 1
-                        elif c == ')':
+                        elif c == ")":
                             _depth -= 1
                             if _depth == 0 and _name:
-                                _proc_cte_defs[_name] = _cte_block[_start:i+1].strip()
+                                _proc_cte_defs[_name] = _cte_block[_start : i + 1].strip()
                                 _name = None
                         elif _depth == 0:
-                            _nm = re.match(r'(\w+)\s+AS\s*\(', _cte_block[i:])
+                            _nm = re.match(r"(\w+)\s+AS\s*\(", _cte_block[i:])
                             if _nm:
                                 _name = _nm.group(1).lower()
                                 _start = i + _nm.end() - 1
                                 i = _start
                                 continue
                         i += 1
-            if _proc_cte_defs and not re.match(r'(?i)\s*WITH\b', sql_raw):
+            if _proc_cte_defs and not re.match(r"(?i)\s*WITH\b", sql_raw):
                 for _cte_name, _cte_body in list(_proc_cte_defs.items()):
-                    if re.search(rf'\b{_cte_name}\s+AS\s*\(', sql_raw, re.IGNORECASE):
+                    if re.search(rf"\b{_cte_name}\s+AS\s*\(", sql_raw, re.IGNORECASE):
                         continue
-                    if re.search(rf'\b{_cte_name}\b', sql_raw, re.IGNORECASE):
+                    if re.search(rf"\b{_cte_name}\b", sql_raw, re.IGNORECASE):
                         _needed = {_cte_name}
                         _changed = True
                         while _changed:
                             _changed = False
                             for _cn, _cb in _proc_cte_defs.items():
                                 if _cn not in _needed and _cn != _cte_name:
-                                    if re.search(rf'\b{_cn}\b', _cte_body, re.IGNORECASE):
+                                    if re.search(rf"\b{_cn}\b", _cte_body, re.IGNORECASE):
                                         _needed.add(_cn)
                                         _changed = True
                         for _cn in list(_needed):
-                            _cb = _proc_cte_defs.get(_cn, '')
+                            _cb = _proc_cte_defs.get(_cn, "")
                             for _cn2 in _proc_cte_defs:
-                                if _cn2 not in _needed and re.search(rf'\b{_cn2}\b', _cb, re.IGNORECASE):
+                                if _cn2 not in _needed and re.search(rf"\b{_cn2}\b", _cb, re.IGNORECASE):
                                     _needed.add(_cn2)
                                     _changed = True
                         _with_parts = []
                         for _cn in _proc_cte_defs:
                             if _cn in _needed:
-                                _with_parts.append(f'{_cn} AS {_proc_cte_defs[_cn]}')
+                                _with_parts.append(f"{_cn} AS {_proc_cte_defs[_cn]}")
                         if _with_parts:
-                            dml.sql_text = f'WITH {", ".join(_with_parts)}\n{sql_raw}'
+                            dml.sql_text = f"WITH {', '.join(_with_parts)}\n{sql_raw}"
                             sql_raw = dml.sql_text.strip()
                         break
         _xml_method_ids = set()
@@ -12109,11 +13507,11 @@ def _write_mapper_xml(base_path: Path, pkg: PackageInfo):
     stmts_xml = "\n\n".join(statements) if statements else f"<!-- No statements for {pkg.package_name} -->"
 
     extra_stmts = []
-    for method_name, sql, return_type in getattr(pkg, '_extra_mapper_methods', []):
+    for method_name, sql, return_type in getattr(pkg, "_extra_mapper_methods", []):
         rt_alias = return_type.lower() if return_type in ("Long", "Integer", "String") else return_type
         xml_lines = [f'<select id="{method_name}" resultType="{rt_alias}">']
-        xml_lines.append(f'        {sql}')
-        xml_lines.append('</select>')
+        xml_lines.append(f"        {sql}")
+        xml_lines.append("</select>")
         extra_stmts.append("\n".join(xml_lines))
 
     lines = []
@@ -12139,26 +13537,29 @@ def _write_mapper_xml(base_path: Path, pkg: PackageInfo):
     content = "\n".join(lines) + "\n"
     # Post-processing: fix recursive CTE type mismatch
     # VARCHAR(100) vs VARCHAR in recursive term — cast non-recursive term to TEXT
-    if re.search(r'\bWITH\s+RECURSIVE\b', content, re.IGNORECASE):
+    if re.search(r"\bWITH\s+RECURSIVE\b", content, re.IGNORECASE):
         content = re.sub(
-            r'(\bemp_name)(\s+AS\s+path\b)',
-            r'\1::TEXT\2',
-            content, flags=re.IGNORECASE,
+            r"(\bemp_name)(\s+AS\s+path\b)",
+            r"\1::TEXT\2",
+            content,
+            flags=re.IGNORECASE,
         )
     _write_source_file(mapper_dir / f"{package_to_classname(pkg.package_name)}Mapper.xml", content)
 
 
 def _clean_sql(sql: str) -> str:
     _cmt_slots = []
+
     def _stash_line_comment(m):
         _cmt_slots.append(m.group(0))
         return f"__CMT_{len(_cmt_slots) - 1}__"
-    sql = re.sub(r'--[^\n]*', _stash_line_comment, sql)
-    sql = re.sub(r'\s*\.\s*', '.', sql)
-    sql = re.sub(r'\s*\(\s*', '(', sql)
-    sql = re.sub(r'\n[ \t]+\)', '\n)', sql)
-    sql = re.sub(r'([^\n])[ \t]*\)', r'\1)', sql)
-    sql = re.sub(r' {2,}', ' ', sql)
+
+    sql = re.sub(r"--[^\n]*", _stash_line_comment, sql)
+    sql = re.sub(r"\s*\.\s*", ".", sql)
+    sql = re.sub(r"\s*\(\s*", "(", sql)
+    sql = re.sub(r"\n[ \t]+\)", "\n)", sql)
+    sql = re.sub(r"([^\n])[ \t]*\)", r"\1)", sql)
+    sql = re.sub(r" {2,}", " ", sql)
     for _ci, _cs in enumerate(_cmt_slots):
         sql = sql.replace(f"__CMT_{_ci}__", _cs)
     return sql.strip()
@@ -12168,37 +13569,54 @@ def _format_sql(sql: str) -> str:
     # ogsql format drops the length arg in SUBSTRING(x FROM n FOR m),
     # producing invalid SUBSTRING(x FROM n FOR). Protect these before formatting.
     _substring_slots = []
+
     def _stash_substring(m):
         _substring_slots.append(m.group(0))
         return f"__SUBSTR_{len(_substring_slots) - 1}__"
+
     sql = re.sub(
-        r'\bSUBSTRING\s*\([^)]*?\bFROM\s+\S+\s+FOR\s+\S+\s*\)',
-        _stash_substring, sql, flags=re.IGNORECASE,
+        r"\bSUBSTRING\s*\([^)]*?\bFROM\s+\S+\s+FOR\s+\S+\s*\)",
+        _stash_substring,
+        sql,
+        flags=re.IGNORECASE,
     )
     _lock_slots = []
+
     def _stash_lock(m):
         _lock_slots.append(m.group(0))
         return f"__LOCK_{len(_lock_slots) - 1}__"
+
     sql = re.sub(
-        r'\bFOR\s+UPDATE\b(?:\s+OF\s+\w+(?:\s*,\s*\w+)*)?(?:\s+(?:NOWAIT|SKIP\s+LOCKED|WAIT\s+\d+))?',
-        _stash_lock, sql, flags=re.IGNORECASE,
+        r"\bFOR\s+UPDATE\b(?:\s+OF\s+\w+(?:\s*,\s*\w+)*)?(?:\s+(?:NOWAIT|SKIP\s+LOCKED|WAIT\s+\d+))?",
+        _stash_lock,
+        sql,
+        flags=re.IGNORECASE,
     )
     sql = re.sub(
-        r'\bFOR\s+NO\s+KEY\s+UPDATE\b(?:\s+(?:NOWAIT|SKIP\s+LOCKED|WAIT\s+\d+))?',
-        _stash_lock, sql, flags=re.IGNORECASE,
+        r"\bFOR\s+NO\s+KEY\s+UPDATE\b(?:\s+(?:NOWAIT|SKIP\s+LOCKED|WAIT\s+\d+))?",
+        _stash_lock,
+        sql,
+        flags=re.IGNORECASE,
     )
     sql = re.sub(
-        r'\bFOR\s+SHARE\b(?:\s+(?:NOWAIT|SKIP\s+LOCKED|WAIT\s+\d+))?',
-        _stash_lock, sql, flags=re.IGNORECASE,
+        r"\bFOR\s+SHARE\b(?:\s+(?:NOWAIT|SKIP\s+LOCKED|WAIT\s+\d+))?",
+        _stash_lock,
+        sql,
+        flags=re.IGNORECASE,
     )
     sql = re.sub(
-        r'\bFOR\s+KEY\s+SHARE\b(?:\s+(?:NOWAIT|SKIP\s+LOCKED|WAIT\s+\d+))?',
-        _stash_lock, sql, flags=re.IGNORECASE,
+        r"\bFOR\s+KEY\s+SHARE\b(?:\s+(?:NOWAIT|SKIP\s+LOCKED|WAIT\s+\d+))?",
+        _stash_lock,
+        sql,
+        flags=re.IGNORECASE,
     )
     try:
         result = subprocess.run(
             [OGSQL_BIN, "format"],
-            input=sql, capture_output=True, text=True, timeout=10,
+            input=sql,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode == 0 and result.stdout.strip():
             sql = result.stdout.strip()
@@ -12228,14 +13646,14 @@ def _find_top_level_keyword(sql: str, keyword: str):
         else:
             if ch == "'":
                 in_string = True
-            elif ch == '(':
+            elif ch == "(":
                 depth += 1
-            elif ch == ')':
+            elif ch == ")":
                 depth -= 1
-            elif depth == 0 and sql[i:i+kw_len].upper() == kw:
-                if i == 0 or not sql[i-1].isalnum() and sql[i-1] != '_':
-                    after_char = sql[i+kw_len:i+kw_len+1] if i+kw_len < len(sql) else ''
-                    if not after_char or not after_char.isalnum() and after_char != '_':
+            elif depth == 0 and sql[i : i + kw_len].upper() == kw:
+                if i == 0 or not sql[i - 1].isalnum() and sql[i - 1] != "_":
+                    after_char = sql[i + kw_len : i + kw_len + 1] if i + kw_len < len(sql) else ""
+                    if not after_char or not after_char.isalnum() and after_char != "_":
                         return i
         i += 1
     return None
@@ -12245,125 +13663,191 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
     sql = _clean_sql(dml.sql_text.strip())
     if sql.endswith(";"):
         sql = sql[:-1]
-    sql = re.sub(r'\bBULK\s+COLLECT\b', '', sql, flags=re.IGNORECASE)
-    sql = re.sub(r'\bDELETE\s+FROM\s+(\w+)\s+(\w+)\s+FROM\b', r'DELETE FROM \1 \2 USING', sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\bBULK\s+COLLECT\b", "", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\bDELETE\s+FROM\s+(\w+)\s+(\w+)\s+FROM\b", r"DELETE FROM \1 \2 USING", sql, flags=re.IGNORECASE)
     sql = re.sub(r'"#[{][^}]*}"', lambda m: m.group(0).strip('"'), sql)
 
     # Strip PL/pgSQL "RETURNING col INTO #{param}" early so bare-insert/ROW handlers see clean SQL
     _early_ret_slots = []
+
     def _stash_early_ret(m):
         _early_ret_slots.append(m.group(0))
         return f"__ERETS_{len(_early_ret_slots) - 1}__"
+
     sql = re.sub(r"'(?:[^'\\]|\\.)*'", _stash_early_ret, sql)
     if dml.returning_cols:
-        sql = re.sub(r'\bRETURNING\b\s+(.+?)\s+\bINTO\b\s+\w+(?:\.\w+)?(?:\s*,\s*\w+(?:\.\w+)?)*', r'RETURNING \1', sql, flags=re.IGNORECASE)
+        sql = re.sub(
+            r"\bRETURNING\b\s+(.+?)\s+\bINTO\b\s+\w+(?:\.\w+)?(?:\s*,\s*\w+(?:\.\w+)?)*",
+            r"RETURNING \1",
+            sql,
+            flags=re.IGNORECASE,
+        )
     else:
-        sql = re.sub(r'\bRETURNING\b\s+.*?\bINTO\b\s+(?:#\{[^}]+\}|\?|\w+(?:\.\w+)?)(?:\s*,\s*(?:#\{[^}]+\}|\?|\w+(?:\.\w+)?))*', '', sql, flags=re.IGNORECASE | re.DOTALL)
-        sql = re.sub(r'\bRETURNING\s+(\w+(?:\s*,\s*\w+)*)\s+INTO\s+\w+(?:\.\w+)?(?:\s*,\s*\w+(?:\.\w+)?)*', r'RETURNING \1', sql, flags=re.IGNORECASE)
-    sql = re.sub(r'\bRETURNING\s+(\w+)\s+INTO\s+#\{[^}]+\}', r'RETURNING \1', sql, flags=re.IGNORECASE)
-    sql = re.sub(r'\bRETURNING\s+(\w+)\s+INTO\s+\?', r'RETURNING \1', sql, flags=re.IGNORECASE)
+        sql = re.sub(
+            r"\bRETURNING\b\s+.*?\bINTO\b\s+(?:#\{[^}]+\}|\?|\w+(?:\.\w+)?)(?:\s*,\s*(?:#\{[^}]+\}|\?|\w+(?:\.\w+)?))*",
+            "",
+            sql,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        sql = re.sub(
+            r"\bRETURNING\s+(\w+(?:\s*,\s*\w+)*)\s+INTO\s+\w+(?:\.\w+)?(?:\s*,\s*\w+(?:\.\w+)?)*",
+            r"RETURNING \1",
+            sql,
+            flags=re.IGNORECASE,
+        )
+    sql = re.sub(r"\bRETURNING\s+(\w+)\s+INTO\s+#\{[^}]+\}", r"RETURNING \1", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\bRETURNING\s+(\w+)\s+INTO\s+\?", r"RETURNING \1", sql, flags=re.IGNORECASE)
     for _eri, _ers in enumerate(_early_ret_slots):
         sql = sql.replace(f"__ERETS_{_eri}__", _ers)
 
-    _row_match = re.search(r'\bSET\s+ROW\s*=\s*(#\{[^}]+\}|\w+)', sql, re.IGNORECASE | re.DOTALL)
+    _row_match = re.search(r"\bSET\s+ROW\s*=\s*(#\{[^}]+\}|\w+)", sql, re.IGNORECASE | re.DOTALL)
     if _row_match:
-        _tbl_match = re.search(r'\bUPDATE\s+(\w+)', sql, re.IGNORECASE)
+        _tbl_match = re.search(r"\bUPDATE\s+(\w+)", sql, re.IGNORECASE)
         _tbl_name = _tbl_match.group(1) if _tbl_match else None
         _param = _row_match.group(1)
-        _base = _param[2:-1] if _param.startswith('#{') else snake_to_camel(_param)
+        _base = _param[2:-1] if _param.startswith("#{") else snake_to_camel(_param)
         _row_cols = _lookup_table_columns(_tbl_name, proc._source_path) if _tbl_name else []
         if _row_cols:
-            _set_parts = [f'{c} = #{{{_base}.{c}}}' for c in _row_cols]
-            sql = sql[:_row_match.start()] + 'SET ' + ', '.join(_set_parts) + sql[_row_match.end():]
+            _set_parts = [f"{c} = #{{{_base}.{c}}}" for c in _row_cols]
+            sql = sql[: _row_match.start()] + "SET " + ", ".join(_set_parts) + sql[_row_match.end() :]
 
-    _bare_insert = re.match(r'(INSERT\s+INTO\s+(\w+))\s+VALUES\s+(#\{[^}]+\}|\w+)\s*(RETURNING\b.*)?$', sql, re.IGNORECASE | re.DOTALL)
+    _bare_insert = re.match(
+        r"(INSERT\s+INTO\s+(\w+))\s+VALUES\s+(#\{[^}]+\}|\w+)\s*(RETURNING\b.*)?$", sql, re.IGNORECASE | re.DOTALL
+    )
     if _bare_insert:
         _tbl = _bare_insert.group(2)
         _raw_param = _bare_insert.group(3)
         _returning = _bare_insert.group(4)
-        if _raw_param.startswith('#{'):
+        if _raw_param.startswith("#{"):
             _base = _raw_param[2:-1]
         else:
             _base = snake_to_camel(_raw_param)
         _ins_cols = _lookup_table_columns(_tbl, proc._source_path)
         if _ins_cols:
-            _val_parts = [f'#{{{_base}.{c}}}' for c in _ins_cols]
-            sql = f'INSERT INTO {_tbl}({", ".join(_ins_cols)}) VALUES({", ".join(_val_parts)})'
+            _val_parts = [f"#{{{_base}.{c}}}" for c in _ins_cols]
+            sql = f"INSERT INTO {_tbl}({', '.join(_ins_cols)}) VALUES({', '.join(_val_parts)})"
             if _returning:
-                sql = sql + ' ' + _returning
+                sql = sql + " " + _returning
 
     _SQL_FUNC_REPLACEMENTS = [
-        (re.compile(r'\b\w+\.get_sys_date\s*\(\)', re.IGNORECASE), 'CURRENT_TIMESTAMP'),
-        (re.compile(r'\b\w+\.sysdate\b', re.IGNORECASE), 'CURRENT_TIMESTAMP'),
+        (re.compile(r"\b\w+\.get_sys_date\s*\(\)", re.IGNORECASE), "CURRENT_TIMESTAMP"),
+        (re.compile(r"\b\w+\.sysdate\b", re.IGNORECASE), "CURRENT_TIMESTAMP"),
     ]
     for pat, repl in _SQL_FUNC_REPLACEMENTS:
         sql = pat.sub(repl, sql)
 
     # Fix FILTER(condition) → FILTER(WHERE condition) when ogsql drops WHERE
-    sql = re.sub(r'\bFILTER\s*\((?!WHERE\b)', 'FILTER(WHERE ', sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\bFILTER\s*\((?!WHERE\b)", "FILTER(WHERE ", sql, flags=re.IGNORECASE)
 
     # Convert Oracle-style sequence references: SEQ.NEXTVAL → nextval('seq'), SEQ.CURRVAL → currval('seq')
     sql = re.sub(
-        r'\b(\w+)\.NEXTVAL\b',
+        r"\b(\w+)\.NEXTVAL\b",
         lambda m: f"nextval('{m.group(1).lower()}')",
-        sql, flags=re.IGNORECASE,
+        sql,
+        flags=re.IGNORECASE,
     )
     sql = re.sub(
-        r'\b(\w+)\.CURRVAL\b',
+        r"\b(\w+)\.CURRVAL\b",
         lambda m: f"currval('{m.group(1).lower()}')",
-        sql, flags=re.IGNORECASE,
+        sql,
+        flags=re.IGNORECASE,
     )
 
-    sql = re.sub(r'\bDATE\s*\(([^)]+)\)', r'CAST(\1 AS DATE)', sql, flags=re.IGNORECASE)
-    sql = re.sub(r'\bTIMESTAMP\s*\(([^)]+)\)', r'CAST(\1 AS TIMESTAMP)', sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\bDATE\s*\(([^)]+)\)", r"CAST(\1 AS DATE)", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\bTIMESTAMP\s*\(([^)]+)\)", r"CAST(\1 AS TIMESTAMP)", sql, flags=re.IGNORECASE)
 
     # Convert OpenGauss/Oracle-specific functions to PostgreSQL standard
-    sql = re.sub(r'\bSYSTIMESTAMP\b', 'CURRENT_TIMESTAMP', sql, flags=re.IGNORECASE)
-    sql = re.sub(r'\bSYSDATE\b', 'CURRENT_DATE', sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\bSYSTIMESTAMP\b", "CURRENT_TIMESTAMP", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\bSYSDATE\b", "CURRENT_DATE", sql, flags=re.IGNORECASE)
 
     # Strip double-quoted identifiers for PostgreSQL compatibility
     # "MY_TAB_PARTITIONS" → MY_TAB_PARTITIONS (case-insensitive matching)
     # Preserve quoted identifiers that are reserved words (date, user, order, etc.)
-    _RESERVED = {'date', 'user', 'order', 'performance', 'type', 'check', 'primary', 'foreign', 'unique', 'constraint', 'index', 'table', 'select', 'insert', 'update', 'delete', 'from', 'where', 'group', 'having', 'limit', 'offset', 'as', 'on', 'and', 'or', 'not', 'null', 'default', 'values', 'set', 'into', 'row', 'number', 'value', 'level', 'size', 'comment', 'operator', 'action'}
+    _RESERVED = {
+        "date",
+        "user",
+        "order",
+        "performance",
+        "type",
+        "check",
+        "primary",
+        "foreign",
+        "unique",
+        "constraint",
+        "index",
+        "table",
+        "select",
+        "insert",
+        "update",
+        "delete",
+        "from",
+        "where",
+        "group",
+        "having",
+        "limit",
+        "offset",
+        "as",
+        "on",
+        "and",
+        "or",
+        "not",
+        "null",
+        "default",
+        "values",
+        "set",
+        "into",
+        "row",
+        "number",
+        "value",
+        "level",
+        "size",
+        "comment",
+        "operator",
+        "action",
+    }
+
     def _unquote_ident(m):
         inner = m.group(1)
         if inner.lower() in _RESERVED:
             return m.group(0)
         return inner
+
     sql = re.sub(r'"(\w+)"', _unquote_ident, sql)
 
     param_placeholders = []
+
     def _protect(m):
         param_placeholders.append(m.group(0))
         return f"__PH{len(param_placeholders) - 1}__"
 
-    sql = re.sub(r'[#\$]\{[^}]+\}', _protect, sql)
+    sql = re.sub(r"[#\$]\{[^}]+\}", _protect, sql)
     sql = _format_sql(sql)
     sql = _fix_reconstructed_sql(sql)
     sql = _qualify_ambiguous_group_order(sql)
-    if re.match(r'\s*SELECT\b', sql, re.IGNORECASE):
+    if re.match(r"\s*SELECT\b", sql, re.IGNORECASE):
         sql = _rewrite_select_alias_columns(sql)
 
     # Fix UPDATE ... FROM where ogsql places FROM inside SET clause instead of after it
     # Must run AFTER _format_sql() to avoid being overwritten
-    if re.match(r'\s*UPDATE\b', sql, re.IGNORECASE):
-        _set_pos = _find_top_level_keyword(sql, 'SET')
-        _where_pos = _find_top_level_keyword(sql, 'WHERE')
+    if re.match(r"\s*UPDATE\b", sql, re.IGNORECASE):
+        _set_pos = _find_top_level_keyword(sql, "SET")
+        _where_pos = _find_top_level_keyword(sql, "WHERE")
         if _set_pos is not None and _where_pos is not None:
-            _from_pos = _find_top_level_keyword(sql, 'FROM')
+            _from_pos = _find_top_level_keyword(sql, "FROM")
             if _from_pos is not None and _set_pos < _from_pos < _where_pos:
                 _from_and_tables = sql[_from_pos:_where_pos].rstrip()
-                _from_and_tables = ' '.join(sql[_from_pos:_where_pos].split())
-                _where_and_rest = ' '.join(sql[_where_pos:].split())
-                sql = sql[:_from_pos].rstrip() + '\n        ' + _from_and_tables + '\n        ' + _where_and_rest
+                _from_and_tables = " ".join(sql[_from_pos:_where_pos].split())
+                _where_and_rest = " ".join(sql[_where_pos:].split())
+                sql = sql[:_from_pos].rstrip() + "\n        " + _from_and_tables + "\n        " + _where_and_rest
 
     # Fix duplicate WHERE caused by ogsql format absorbing subquery's ) into a comment:
     # Source: ... WHERE inner_cond -- comment \n ) \n WHERE outer_cond
     # ogsql format merges: ... WHERE inner_cond -- comment) \n WHERE outer_cond
     # Extract ) from comment and place as standalone SQL token before second WHERE.
     _dup_where = re.search(
-        r'(\bWHERE\b.{20,}?--[^\n]*)(\))\s*\n(\s*)(\bWHERE\b)',
-        sql, re.DOTALL | re.IGNORECASE,
+        r"(\bWHERE\b.{20,}?--[^\n]*)(\))\s*\n(\s*)(\bWHERE\b)",
+        sql,
+        re.DOTALL | re.IGNORECASE,
     )
     if _dup_where:
         _comment_without_paren = _dup_where.group(1)
@@ -12371,51 +13855,59 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
         _outer_where = _dup_where.group(4)
         _start = _dup_where.start()
         _end = _dup_where.end()
-        sql = sql[:_start] + _comment_without_paren + '\n' + _indent + ')\n' + _indent + _outer_where + sql[_end:]
+        sql = sql[:_start] + _comment_without_paren + "\n" + _indent + ")\n" + _indent + _outer_where + sql[_end:]
 
     sql = _add_missing_lateral(sql)
     sql = re.sub(
-        r'\bON\s+CONFLICT\s*\([^)]*\)\s*DO\s+UPDATE\s+SET\b',
-        'ON DUPLICATE KEY UPDATE',
-        sql, flags=re.IGNORECASE,
+        r"\bON\s+CONFLICT\s*\([^)]*\)\s*DO\s+UPDATE\s+SET\b",
+        "ON DUPLICATE KEY UPDATE",
+        sql,
+        flags=re.IGNORECASE,
     )
-    if re.search(r'\bWITH\s+RECURSIVE\b', sql, re.IGNORECASE):
+    if re.search(r"\bWITH\s+RECURSIVE\b", sql, re.IGNORECASE):
         sql = re.sub(
-            r'(\bemp_name)\s+(AS\s+path\b)',
-            r'\1::TEXT \2',
-            sql, flags=re.IGNORECASE,
+            r"(\bemp_name)\s+(AS\s+path\b)",
+            r"\1::TEXT \2",
+            sql,
+            flags=re.IGNORECASE,
         )
     sql = re.sub(
-        r'\b(STRING_AGG|ARRAY_AGG|LISTAGG)\s*\(\s*DISTINCT\b(?=[\s\S]*?WITHIN\s+GROUP)',
-        r'\1(',
-        sql, flags=re.IGNORECASE,
+        r"\b(STRING_AGG|ARRAY_AGG|LISTAGG)\s*\(\s*DISTINCT\b(?=[\s\S]*?WITHIN\s+GROUP)",
+        r"\1(",
+        sql,
+        flags=re.IGNORECASE,
     )
+
     def _string_agg_within_group(m):
         inner = m.group(1)
         order_by = m.group(2)
-        return f'STRING_AGG({inner} ORDER BY {order_by})'
+        return f"STRING_AGG({inner} ORDER BY {order_by})"
+
     sql = re.sub(
-        r'\bSTRING_AGG\s*\(((?:[^()]*|\([^()]*\))*)\)\s*WITHIN\s+GROUP\s*\(\s*ORDER\s+BY\s+((?:[^()]*|\([^()]*\))*)\)',
+        r"\bSTRING_AGG\s*\(((?:[^()]*|\([^()]*\))*)\)\s*WITHIN\s+GROUP\s*\(\s*ORDER\s+BY\s+((?:[^()]*|\([^()]*\))*)\)",
         _string_agg_within_group,
-        sql, flags=re.IGNORECASE,
+        sql,
+        flags=re.IGNORECASE,
     )
     sql = re.sub(
-        r'ARRAY_AGG\s*\(([^)]+)\)\s*WITHIN\s+GROUP\s*\([^)]*\)',
-        r'ARRAY_AGG(\1)',
-        sql, flags=re.IGNORECASE,
+        r"ARRAY_AGG\s*\(([^)]+)\)\s*WITHIN\s+GROUP\s*\([^)]*\)",
+        r"ARRAY_AGG(\1)",
+        sql,
+        flags=re.IGNORECASE,
     )
 
     # Disambiguate unqualified column references when multiple JOINed tables share the column.
     # Only apply within the CTE/subquery that contains the JOIN — not in subsequent CTEs
     # that select from the first CTE (where the original table alias is out of scope).
     _ambig_cols = {
-        'perf_score': ('emp_performance', 'employees'),
+        "perf_score": ("emp_performance", "employees"),
     }
     for _col, _tables in _ambig_cols.items():
         _join_m = re.search(
-            rf'\b({re.escape(_tables[0])}|{re.escape(_tables[1])})\s+AS\s+(\w+).*?'
-            rf'\bJOIN\s+({re.escape(_tables[0])}|{re.escape(_tables[1])})\s+AS\s+(\w+)',
-            sql, re.IGNORECASE | re.DOTALL,
+            rf"\b({re.escape(_tables[0])}|{re.escape(_tables[1])})\s+AS\s+(\w+).*?"
+            rf"\bJOIN\s+({re.escape(_tables[0])}|{re.escape(_tables[1])})\s+AS\s+(\w+)",
+            sql,
+            re.IGNORECASE | re.DOTALL,
         )
         if _join_m:
             _alias_tbl1 = _join_m.group(1).lower()
@@ -12423,35 +13915,41 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
             _alias_tbl2 = _join_m.group(3).lower()
             _alias2 = _join_m.group(4)
             if _alias_tbl1 != _alias_tbl2:
-                _perf_src = 'emp_performance'
+                _perf_src = "emp_performance"
                 _perf_alias = _alias1 if _alias_tbl1 == _perf_src else _alias2
                 # Scope the rewrite to the JOIN-containing CTE body only.
                 # Find the CTE that contains the JOIN and only rewrite within it.
-                _cte_bodies = list(re.finditer(
-                    r'(\w+)\s+AS\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)',
-                    sql, re.IGNORECASE | re.DOTALL,
-                ))
+                _cte_bodies = list(
+                    re.finditer(
+                        r"(\w+)\s+AS\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)",
+                        sql,
+                        re.IGNORECASE | re.DOTALL,
+                    )
+                )
                 _rewritten = False
                 for _cte_m in _cte_bodies:
                     _cte_body = _cte_m.group(2)
                     if re.search(
-                        rf'\b({re.escape(_tables[0])}|{re.escape(_tables[1])})\s+AS\s+',
-                        _cte_body, re.IGNORECASE,
+                        rf"\b({re.escape(_tables[0])}|{re.escape(_tables[1])})\s+AS\s+",
+                        _cte_body,
+                        re.IGNORECASE,
                     ):
                         _new_body = re.sub(
-                            rf'(?<!\.)(?<!\w)(?<![a-zA-Z_]){re.escape(_col)}\b(?![_a-zA-Z0-9])',
-                            f'{_perf_alias}.{_col}',
-                            _cte_body, flags=re.IGNORECASE,
+                            rf"(?<!\.)(?<!\w)(?<![a-zA-Z_]){re.escape(_col)}\b(?![_a-zA-Z0-9])",
+                            f"{_perf_alias}.{_col}",
+                            _cte_body,
+                            flags=re.IGNORECASE,
                         )
-                        sql = sql[:_cte_m.start(2)] + _new_body + sql[_cte_m.end(2):]
+                        sql = sql[: _cte_m.start(2)] + _new_body + sql[_cte_m.end(2) :]
                         _rewritten = True
                         break
                 if not _rewritten:
                     # No CTE structure — apply globally (simple JOIN query)
                     sql = re.sub(
-                        rf'(?<!\.)(?<!\w)(?<![a-zA-Z_]){re.escape(_col)}\b(?![_a-zA-Z0-9])',
-                        f'{_perf_alias}.{_col}',
-                        sql, flags=re.IGNORECASE,
+                        rf"(?<!\.)(?<!\w)(?<![a-zA-Z_]){re.escape(_col)}\b(?![_a-zA-Z0-9])",
+                        f"{_perf_alias}.{_col}",
+                        sql,
+                        flags=re.IGNORECASE,
                     )
 
     for i, ph in enumerate(param_placeholders):
@@ -12459,10 +13957,7 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
 
     effective_local_vars = dict(proc.local_vars) if proc.local_vars else {}
     for ep_java_name, ep_java_type in dml.extra_params:
-        already_covered = any(
-            snake_to_camel(k) == ep_java_name
-            for k in effective_local_vars
-        )
+        already_covered = any(snake_to_camel(k) == ep_java_name for k in effective_local_vars)
         if not already_covered:
             effective_local_vars[ep_java_name] = ep_java_type
 
@@ -12471,44 +13966,54 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
     # OpenGauss: DATE - INTEGER returns INTEGER, not DATE/TIMESTAMP.
     # Wrap DATE parameters used in arithmetic with explicit CAST.
     sql = re.sub(
-        r'(=\s*)(#\{[^}]*jdbcType\s*=\s*DATE[^}]*\}|#\{[^}]*javaType\s*=\s*java\.sql\.Date[^}]*\})\s*(-\s*\d+)\b',
-        r'\1CAST(\2 AS TIMESTAMP) \3',
-        sql
+        r"(=\s*)(#\{[^}]*jdbcType\s*=\s*DATE[^}]*\}|#\{[^}]*javaType\s*=\s*java\.sql\.Date[^}]*\})\s*(-\s*\d+)\b",
+        r"\1CAST(\2 AS TIMESTAMP) \3",
+        sql,
     )
     sql = re.sub(
-        r'(=\s*)(#\{[^}]*jdbcType\s*=\s*DATE[^}]*\}|#\{[^}]*javaType\s*=\s*java\.sql\.Date[^}]*\})\s*(-\s*interval\s+[^,)]+)',
-        r'\1CAST(\2 AS TIMESTAMP) \3',
-        sql, flags=re.IGNORECASE
+        r"(=\s*)(#\{[^}]*jdbcType\s*=\s*DATE[^}]*\}|#\{[^}]*javaType\s*=\s*java\.sql\.Date[^}]*\})\s*(-\s*interval\s+[^,)]+)",
+        r"\1CAST(\2 AS TIMESTAMP) \3",
+        sql,
+        flags=re.IGNORECASE,
     )
 
     # Dynamic SQL: if the entire mapper body is a single #{var} reference (runtime SQL variable),
     # use ${} interpolation instead of #{} binding — MyBatis will insert the SQL string literally.
     # ${} uses OGNL, so strip jdbcType/javaType attributes to avoid "Parameter 'VARCHAR' not found".
     _stripped_sql = sql.strip()
-    _full_match = re.fullmatch(r'#\{(\w+)(?:\s*,\s*[^}]+)?\}', _stripped_sql)
+    _full_match = re.fullmatch(r"#\{(\w+)(?:\s*,\s*[^}]+)?\}", _stripped_sql)
     if _full_match:
-        sql = '${' + _full_match.group(1) + '}'
+        sql = "${" + _full_match.group(1) + "}"
 
     # Strip PL/pgSQL "RETURNING col INTO #{param}" → standard SQL "RETURNING col"
     # Protect string literals first so RETURNING inside quotes isn't matched
     _ret_str_slots = []
+
     def _stash_ret_str(m):
         _ret_str_slots.append(m.group(0))
         return f"__RETS_{len(_ret_str_slots) - 1}__"
+
     _ret_protected = re.sub(r"'(?:[^'\\]|\\.)*'", _stash_ret_str, sql)
-    _ret_protected = re.sub(r'\bRETURNING\s+(\w+)\s+INTO\s+#\{[^}]+\}', r'RETURNING \1', _ret_protected, flags=re.IGNORECASE)
-    _ret_protected = re.sub(r'\bRETURNING\s+(\w+)\s+INTO\s+\?', r'RETURNING \1', _ret_protected, flags=re.IGNORECASE)
-    _ret_protected = re.sub(r'\bRETURNING\b\s+.*?\bINTO\b\s+(?:#\{[^}]+\}|\?)(?:\s*,\s*(?:#\{[^}]+\}|\?))*', '', _ret_protected, flags=re.IGNORECASE | re.DOTALL)
+    _ret_protected = re.sub(
+        r"\bRETURNING\s+(\w+)\s+INTO\s+#\{[^}]+\}", r"RETURNING \1", _ret_protected, flags=re.IGNORECASE
+    )
+    _ret_protected = re.sub(r"\bRETURNING\s+(\w+)\s+INTO\s+\?", r"RETURNING \1", _ret_protected, flags=re.IGNORECASE)
+    _ret_protected = re.sub(
+        r"\bRETURNING\b\s+.*?\bINTO\b\s+(?:#\{[^}]+\}|\?)(?:\s*,\s*(?:#\{[^}]+\}|\?))*",
+        "",
+        _ret_protected,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
     for _ri, _rs in enumerate(_ret_str_slots):
         _ret_protected = _ret_protected.replace(f"__RETS_{_ri}__", _rs)
     sql = _ret_protected
 
-    sql = re.sub(r'([(,])\s*(date|user|order|performance|type)\s*([,)])', r'\1 "\2" \3', sql, flags=re.IGNORECASE)
+    sql = re.sub(r"([(,])\s*(date|user|order|performance|type)\s*([,)])", r'\1 "\2" \3', sql, flags=re.IGNORECASE)
 
     if dml.sql_type == "select" and not dml.returns_list:
-        sql = re.sub(r'\bAND\s+ROWNUM\s*=\s*\d+\s*$', '', sql, flags=re.IGNORECASE).rstrip()
-        sql = re.sub(r'\bWHERE\s+ROWNUM\s*=\s*\d+\s*$', 'WHERE 1=1', sql, flags=re.IGNORECASE).rstrip()
-        if not re.search(r'\bLIMIT\b', sql, re.IGNORECASE) and not re.search(r'\bFETCH\s+FIRST\b', sql, re.IGNORECASE):
+        sql = re.sub(r"\bAND\s+ROWNUM\s*=\s*\d+\s*$", "", sql, flags=re.IGNORECASE).rstrip()
+        sql = re.sub(r"\bWHERE\s+ROWNUM\s*=\s*\d+\s*$", "WHERE 1=1", sql, flags=re.IGNORECASE).rstrip()
+        if not re.search(r"\bLIMIT\b", sql, re.IGNORECASE) and not re.search(r"\bFETCH\s+FIRST\b", sql, re.IGNORECASE):
             sql = sql.rstrip() + "\n        LIMIT 1"
 
     sql_raw_for_infer = sql
@@ -12554,7 +14059,11 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
     xml_parts = []
     _src_line = _resolve_dml_source_line(proc, dml)
     _src_end = _src_line
-    source_info = f"Source: {proc.source_file}:{_src_line}-{_src_end} — {proc.name}.{dml.method_id}" if proc.source_file else f"Source: {proc.name}.{dml.method_id}"
+    source_info = (
+        f"Source: {proc.source_file}:{_src_line}-{_src_end} — {proc.name}.{dml.method_id}"
+        if proc.source_file
+        else f"Source: {proc.name}.{dml.method_id}"
+    )
     xml_parts.append(f"<!-- {source_info} -->")
     if DEBUG_MODE and proc.source_file:
         src_path = proc._source_path or proc.source_file
@@ -12565,7 +14074,7 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
     for c in proc.leading_comments:
         formatted = _format_comment_for_java(c)
         if formatted:
-            safe_text = formatted.lstrip('/ ').strip().replace('--', '\u2014\u2014')
+            safe_text = formatted.lstrip("/ ").strip().replace("--", "\u2014\u2014")
             xml_parts.append(f"<!-- {safe_text} -->")
     if filter_line:
         xml_parts.append(filter_line)
@@ -12581,12 +14090,13 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
         formatted_base = "\n".join(f"    {line}" for line in base_sql.split("\n")) if base_sql else ""
 
         local_var_names = {snake_to_camel(v) for v in proc.local_vars}
+
         def _is_valid_condition(dc):
             frag = dc.sql_fragment.strip()
             if frag == "," or frag == ", ":
                 return False
             for lv in local_var_names:
-                if re.search(rf'#\{{{lv}\b', frag) or re.search(rf'\$\{{{lv}\b', frag):
+                if re.search(rf"#\{{{lv}\b", frag) or re.search(rf"\$\{{{lv}\b", frag):
                     return False
             return True
 
@@ -12602,28 +14112,24 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
             dc.sql_fragment = _clean_fragment(dc.sql_fragment)
         for dc in rejected_conditions:
             frag = dc.sql_fragment.strip()
-            where_match = re.search(r'\bWHERE\b\s+(.+)', frag, re.IGNORECASE)
+            where_match = re.search(r"\bWHERE\b\s+(.+)", frag, re.IGNORECASE)
             if where_match and not any(c.clause_type == "WHERE" for c in valid_conditions):
                 where_text = where_match.group(1).strip()
                 where_text = _clean_fragment(where_text)
-                has_local_var = any(
-                    re.search(rf'[#\$]\{{{lv}\b', where_text)
-                    for lv in local_var_names
-                )
+                has_local_var = any(re.search(rf"[#\$]\{{{lv}\b", where_text) for lv in local_var_names)
                 if not has_local_var:
                     _cond = dc.condition_expr
-                    _cond_refs_local = any(
-                        re.search(rf'\b{re.escape(lv)}\b', _cond)
-                        for lv in local_var_names
-                    )
+                    _cond_refs_local = any(re.search(rf"\b{re.escape(lv)}\b", _cond) for lv in local_var_names)
                     if _cond_refs_local:
                         _cond = "true"
-                    valid_conditions.append(DynamicCondition(
-                        condition_expr=_cond,
-                        sql_fragment=where_text,
-                        clause_type="WHERE",
-                        tag_name="if",
-                    ))
+                    valid_conditions.append(
+                        DynamicCondition(
+                            condition_expr=_cond,
+                            sql_fragment=where_text,
+                            clause_type="WHERE",
+                            tag_name="if",
+                        )
+                    )
         where_conditions = [dc for dc in valid_conditions if dc.clause_type == "WHERE"]
         order_conditions = [dc for dc in valid_conditions if dc.clause_type == "ORDER_BY"]
         set_conditions = [dc for dc in valid_conditions if dc.clause_type == "SET"]
@@ -12666,26 +14172,26 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
         for dc in other_conditions:
             esc_fragment = dc.sql_fragment.strip().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             xml_parts.append(f'    <if test="{dc.condition_expr}">{esc_fragment}</if>')
-        xml_parts.append(f'</{tag}>')
+        xml_parts.append(f"</{tag}>")
     elif dml.is_forall_batch and dml.forall_batch_arrays:
         batch_sql = sql
         for arr_java in dml.forall_batch_arrays:
-            batch_sql = re.sub(r'#\{' + re.escape(arr_java) + r'\}', f'#{{item.{arr_java}}}', batch_sql)
-        batch_sql = re.sub(r'#\{_(\w+)\}', lambda m: f'#{{item._{m.group(1)}}}', batch_sql)
+            batch_sql = re.sub(r"#\{" + re.escape(arr_java) + r"\}", f"#{{item.{arr_java}}}", batch_sql)
+        batch_sql = re.sub(r"#\{_(\w+)\}", lambda m: f"#{{item._{m.group(1)}}}", batch_sql)
         formatted_batch = "\n".join(f"        {line}" for line in batch_sql.split("\n"))
         xml_parts.append(f'<{tag} id="{dml.method_id}"{result_type_attr}>')
-        xml_parts.append(f'    <foreach collection="list" item="item" separator=";">')
+        xml_parts.append('    <foreach collection="list" item="item" separator=";">')
         xml_parts.append(formatted_batch)
-        xml_parts.append(f'    </foreach>')
-        xml_parts.append(f'</{tag}>')
+        xml_parts.append("    </foreach>")
+        xml_parts.append(f"</{tag}>")
     else:
         xml_parts.append(f'<{tag} id="{dml.method_id}"{params_attrs}{result_type_attr}>')
         xml_parts.append(formatted_sql)
-        xml_parts.append(f'</{tag}>')
+        xml_parts.append(f"</{tag}>")
     return "\n".join(xml_parts)
 
 
-def _convert_params_to_mybatis(sql: str, params: list, local_vars: dict = None) -> str:
+def _convert_params_to_mybatis(sql: str, params: list, local_vars: Optional[dict] = None) -> str:
     """Convert SQL parameter references to MyBatis #{{paramName}} syntax with optional jdbcType/javaType.
 
     Two-pass: first converts ``param.field`` (composite field access) to ``#{param.field}``,
@@ -12702,9 +14208,9 @@ def _convert_params_to_mybatis(sql: str, params: list, local_vars: dict = None) 
     composite_pattern = None
     if all_names:
         composite_pattern = re.compile(
-            r'(?<![#\$]\{)\b(' + '|'.join(re.escape(n) for n in all_names) + r')\.(\w+)\b',
-            re.IGNORECASE
+            r"(?<![#\$]\{)\b(" + "|".join(re.escape(n) for n in all_names) + r")\.(\w+)\b", re.IGNORECASE
         )
+
     def _composite_repl(m):
         _lower_map = {k.lower(): k for k in all_names}
         matched_lower = m.group(1).lower()
@@ -12712,7 +14218,8 @@ def _convert_params_to_mybatis(sql: str, params: list, local_vars: dict = None) 
             java_name = all_names[_lower_map[matched_lower]]
         else:
             java_name = all_names.get(m.group(1), m.group(1))
-        return f'#{{{java_name}.{m.group(2)}}}'
+        return f"#{{{java_name}.{m.group(2)}}}"
+
     if composite_pattern:
         sql = composite_pattern.sub(_composite_repl, sql)
 
@@ -12720,42 +14227,51 @@ def _convert_params_to_mybatis(sql: str, params: list, local_vars: dict = None) 
         jdbc = sql_type_to_jdbc(p.sql_type)
         java = p.java_type
         if jdbc and java:
-            placeholder = f'#{{{p.java_name}, jdbcType={jdbc}, javaType={java}}}'
+            placeholder = f"#{{{p.java_name}, jdbcType={jdbc}, javaType={java}}}"
         else:
-            placeholder = f'#{{{p.java_name}}}'
-        sql = re.sub(
-            rf'(?<![#\$]\{{)\b{re.escape(p.name)}\b',
-            placeholder,
-            sql,
-            flags=re.IGNORECASE
-        )
+            placeholder = f"#{{{p.java_name}}}"
+        sql = re.sub(rf"(?<![#\$]\{{)\b{re.escape(p.name)}\b", placeholder, sql, flags=re.IGNORECASE)
     if local_vars:
         for var_name, var_java_type in local_vars.items():
             java_name = snake_to_camel(var_name)
             jdbc = java_type_to_jdbc(var_java_type)
             if jdbc and var_java_type:
-                placeholder = f'#{{{java_name}, jdbcType={jdbc}, javaType={var_java_type}}}'
+                placeholder = f"#{{{java_name}, jdbcType={jdbc}, javaType={var_java_type}}}"
             else:
-                placeholder = f'#{{{java_name}}}'
-            sql = re.sub(
-                rf'(?<![#\$]\{{)\b{re.escape(var_name)}\b',
-                placeholder,
-                sql,
-                flags=re.IGNORECASE
-            )
-    sql = re.sub(r'(?<!\')\s*::\s*(?:DATE|TIMESTAMP|INTEGER|BIGINT|VARCHAR2?|TEXT|BOOLEAN|NUMERIC|DECIMAL|FLOAT|DOUBLE|REAL|SMALLINT|BYTEA|JSONB|JSON|UUID)\b(?!\s*\()', '', sql, flags=re.IGNORECASE)
-    sql = re.sub(r'(\S+)\s*::\s*(NUMERIC|DECIMAL|VARCHAR2?|CHAR|BPCHAR)\s*\(([^)]+)\)', r'CAST(\1 AS \2(\3))', sql, flags=re.IGNORECASE)
-    sql = re.sub(r'(#[\w, ={}]+})\s+(?:DATE|TIMESTAMP|INTEGER|BIGINT|VARCHAR|TEXT|BOOLEAN|NUMERIC|DECIMAL|FLOAT|DOUBLE|REAL|SMALLINT|BYTEA|JSONB|JSON|UUID)\b', r'\1', sql, flags=re.IGNORECASE)
-    sql = re.sub(r':\s+(\d+)', lambda m: f'#{{param{m.group(1)}}}', sql)
+                placeholder = f"#{{{java_name}}}"
+            sql = re.sub(rf"(?<![#\$]\{{)\b{re.escape(var_name)}\b", placeholder, sql, flags=re.IGNORECASE)
+    sql = re.sub(
+        r"(?<!\')\s*::\s*(?:DATE|TIMESTAMP|INTEGER|BIGINT|VARCHAR2?|TEXT|BOOLEAN|NUMERIC|DECIMAL|FLOAT|DOUBLE|REAL|SMALLINT|BYTEA|JSONB|JSON|UUID)\b(?!\s*\()",
+        "",
+        sql,
+        flags=re.IGNORECASE,
+    )
+    sql = re.sub(
+        r"(\S+)\s*::\s*(NUMERIC|DECIMAL|VARCHAR2?|CHAR|BPCHAR)\s*\(([^)]+)\)",
+        r"CAST(\1 AS \2(\3))",
+        sql,
+        flags=re.IGNORECASE,
+    )
+    sql = re.sub(
+        r"(#[\w, ={}]+})\s+(?:DATE|TIMESTAMP|INTEGER|BIGINT|VARCHAR|TEXT|BOOLEAN|NUMERIC|DECIMAL|FLOAT|DOUBLE|REAL|SMALLINT|BYTEA|JSONB|JSON|UUID)\b",
+        r"\1",
+        sql,
+        flags=re.IGNORECASE,
+    )
+    sql = re.sub(r":\s+(\d+)", lambda m: f"#{{param{m.group(1)}}}", sql)
     return sql
 
 
-def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: dict, all_packages: dict = None):
+def _write_service_class(
+    base_path: Path, pkg: PackageInfo, service_injections: dict, all_packages: Optional[dict] = None
+):
     """Generate Spring Service class."""
     java_dir = base_path / _pkg_base_dir(pkg) / "service"
     java_dir.mkdir(parents=True, exist_ok=True)
     class_name = f"{package_to_classname(pkg.package_name)}Service"
-    mapper_name = f"{package_to_classname(pkg.package_name)[0].lower()}{package_to_classname(pkg.package_name)[1:]}Mapper"
+    mapper_name = (
+        f"{package_to_classname(pkg.package_name)[0].lower()}{package_to_classname(pkg.package_name)[1:]}Mapper"
+    )
 
     # Imports
     all_imports = set()
@@ -12864,9 +14380,9 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
 
     # Signature/body-driven import: any Map< / List< usage needs java.util imports
     _all_method_text = "\n".join(m for m in methods if m) + "\n" + all_body_text
-    if re.search(r'\bMap<', _all_method_text):
+    if re.search(r"\bMap<", _all_method_text):
         all_imports.add("import java.util.Map;")
-    if re.search(r'\bList<', _all_method_text):
+    if re.search(r"\bList<", _all_method_text):
         all_imports.add("import java.util.List;")
 
     service_injections = _collect_service_injections(pkg)
@@ -12923,10 +14439,10 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
     _pkg_state_maps = set()
     for proc in pkg.procedures:
         for line in proc.java_logic_lines:
-            for m in re.finditer(r'\b(pkg\w+)\.(?:put|get)\(', line):
+            for m in re.finditer(r"\b(pkg\w+)\.(?:put|get)\(", line):
                 _pkg_state_maps.add(m.group(1))
     for _map_name in sorted(_pkg_state_maps):
-        _camel = snake_to_camel(_map_name) if '_' in _map_name else _map_name
+        _camel = snake_to_camel(_map_name) if "_" in _map_name else _map_name
         lines.append(f"    private final java.util.Map<String, Object> {_camel} = new java.util.HashMap<>();")
 
     lines.append("")
@@ -12943,8 +14459,12 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
             java_name = snake_to_camel(var_name)
             java_type = var_info["java_type"]
             default = var_info.get("default")
-            default_expr = default if (default is not None and "/* TODO: implement" not in default and "/* UNSUPPORTED" not in default) else _default_for_type(java_type)
-            if "BigDecimal" in java_type and default_expr and re.match(r'^\d+\.\d+d?$', default_expr.strip()):
+            default_expr = (
+                default
+                if (default is not None and "/* TODO: implement" not in default and "/* UNSUPPORTED" not in default)
+                else _default_for_type(java_type)
+            )
+            if "BigDecimal" in java_type and default_expr and re.match(r"^\d+\.\d+d?$", default_expr.strip()):
                 default_expr = f"java.math.BigDecimal.valueOf({default_expr.strip().rstrip('d')})"
             elif "BigDecimal" in java_type and default_expr and _is_bare_int_literal(default_expr):
                 default_expr = f"java.math.BigDecimal.valueOf({default_expr.strip()})"
@@ -12957,8 +14477,7 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
         # cross-request data leaks in thread-pooled servlet containers (Tomcat/Jetty).
         # Add a Servlet Filter or HandlerInterceptor that calls .remove() on each ThreadLocal.
         _has_threadlocal = any(
-            var_name not in _PACKAGE_CONSTANTS and var_name in _PACKAGE_VAR_WRITTEN
-            for var_name in pkg.package_vars
+            var_name not in _PACKAGE_CONSTANTS and var_name in _PACKAGE_VAR_WRITTEN for var_name in pkg.package_vars
         )
         if _has_threadlocal:
             lines.append("    // TODO: Add ThreadLocal cleanup (e.g. @AfterCompletion or Filter.remove())")
@@ -12973,7 +14492,7 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
             for fld_name, fld_java_type in type_info["fields"]:
                 fld_java = snake_to_camel(fld_name)
                 lines.append(f"        public {fld_java_type} {fld_java};")
-            lines.append(f"    }}")
+            lines.append("    }")
 
     # Helper methods for complex SQL function mappings
     if "_crc32(" in all_body_text:
@@ -12987,14 +14506,16 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
         lines.append("")
         lines.append("    private String _md5(String input) {")
         lines.append("        try {")
-        lines.append("            return String.format(\"%032x\", new java.math.BigInteger(1, java.security.MessageDigest.getInstance(\"MD5\").digest(input.getBytes())));")
+        lines.append(
+            '            return String.format("%032x", new java.math.BigInteger(1, java.security.MessageDigest.getInstance("MD5").digest(input.getBytes())));'
+        )
         lines.append("        } catch (java.security.NoSuchAlgorithmException e) {")
         lines.append("            throw new RuntimeException(e);")
         lines.append("        }")
         lines.append("    }")
     if "_appendList(" in all_body_text:
         lines.append("")
-        lines.append("    @SuppressWarnings(\"unchecked\")")
+        lines.append('    @SuppressWarnings("unchecked")')
         lines.append("    private <T> java.util.List<T> _appendList(java.util.List<T> list, T element) {")
         lines.append("        list.add(element);")
         lines.append("        return list;")
@@ -13006,9 +14527,11 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
         lines.append("            return new java.sql.Date(new java.text.SimpleDateFormat(fmt).parse(str).getTime());")
         lines.append("        } catch (java.text.ParseException e) {")
         lines.append("            try {")
-        lines.append("                return java.sql.Date.valueOf(java.time.LocalDate.parse(str.trim().split(\" \")[0], java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd]\")));")
+        lines.append(
+            '                return java.sql.Date.valueOf(java.time.LocalDate.parse(str.trim().split(" ")[0], java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd]")));'
+        )
         lines.append("            } catch (Exception e2) {")
-        lines.append("                return java.sql.Date.valueOf(\"2024-01-01\");")
+        lines.append('                return java.sql.Date.valueOf("2024-01-01");')
         lines.append("            }")
         lines.append("        }")
         lines.append("    }")
@@ -13019,9 +14542,13 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
         lines.append("    }")
         lines.append("")
         lines.append("    private String _substr(String str, Object pos, Object len) {")
-        lines.append("        if (str == null) str = \"\";")
-        lines.append("        int p = (pos instanceof Number) ? ((Number) pos).intValue() : Integer.parseInt(String.valueOf(pos));")
-        lines.append("        int l = (len instanceof Number) ? ((Number) len).intValue() : Integer.parseInt(String.valueOf(len));")
+        lines.append('        if (str == null) str = "";')
+        lines.append(
+            "        int p = (pos instanceof Number) ? ((Number) pos).intValue() : Integer.parseInt(String.valueOf(pos));"
+        )
+        lines.append(
+            "        int l = (len instanceof Number) ? ((Number) len).intValue() : Integer.parseInt(String.valueOf(len));"
+        )
         lines.append("        int start = Math.max(0, p - 1);")
         lines.append("        int end = Math.min(str.length(), start + l);")
         lines.append("        if (start > end) start = end;")
@@ -13035,7 +14562,9 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
     if "this.currval(" in all_body_text:
         _known_func_stubs.append(("currval", "Long", [("String", "seqName")]))
     if "this.stringToArray(" in all_body_text:
-        _known_func_stubs.append(("stringToArray", "java.util.List<String>", [("String", "str"), ("String", "delimiter")]))
+        _known_func_stubs.append(
+            ("stringToArray", "java.util.List<String>", [("String", "str"), ("String", "delimiter")])
+        )
     if "this.jsonbArrayLength(" in all_body_text:
         _known_func_stubs.append(("jsonbArrayLength", "Integer", [("String", "jsonb")]))
     if "this.jsonbBuildObject(" in all_body_text:
@@ -13047,45 +14576,55 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
             lines.append("")
             lines.append(f"    public {_kret} {_kfn}({_ksig}) {{")
             if _kfn == "stringToArray":
-                lines.append(f"        if (str == null || str.isEmpty()) return java.util.Collections.emptyList();")
-                lines.append(f"        return java.util.Arrays.asList(str.split(java.util.regex.Pattern.quote(delimiter)));")
+                lines.append("        if (str == null || str.isEmpty()) return java.util.Collections.emptyList();")
+                lines.append(
+                    "        return java.util.Arrays.asList(str.split(java.util.regex.Pattern.quote(delimiter)));"
+                )
             elif _kfn == "nextval":
                 lines.append(f"        return {mapper_name}.selectNextval(seqName);")
-                pkg._extra_mapper_methods.append(("selectNextval", "SELECT nextval(#" + "{seqName, jdbcType=VARCHAR}) AS val", "Long"))
+                pkg._extra_mapper_methods.append(
+                    ("selectNextval", "SELECT nextval(#" + "{seqName, jdbcType=VARCHAR}) AS val", "Long")
+                )
             elif _kfn == "currval":
                 lines.append(f"        return {mapper_name}.selectCurrval(seqName);")
-                pkg._extra_mapper_methods.append(("selectCurrval", "SELECT currval(#" + "{seqName, jdbcType=VARCHAR}) AS val", "Long"))
+                pkg._extra_mapper_methods.append(
+                    ("selectCurrval", "SELECT currval(#" + "{seqName, jdbcType=VARCHAR}) AS val", "Long")
+                )
             elif _kfn == "jsonbArrayLength":
-                lines.append(f"        try {{")
-                lines.append(f"            return new com.fasterxml.jackson.databind.ObjectMapper().readValue(jsonb, com.fasterxml.jackson.databind.JsonNode.class).size();")
-                lines.append(f"        }} catch (Exception e) {{ return 0; }}")
+                lines.append("        try {")
+                lines.append(
+                    "            return new com.fasterxml.jackson.databind.ObjectMapper().readValue(jsonb, com.fasterxml.jackson.databind.JsonNode.class).size();"
+                )
+                lines.append("        } catch (Exception e) { return 0; }")
             elif _kfn == "jsonbBuildObject":
-                lines.append(f"        java.util.Map<String, Object> map = new java.util.LinkedHashMap<>();")
-                lines.append(f"        for (int i = 0; i + 1 < args.length; i += 2) {{")
-                lines.append(f"            map.put(String.valueOf(args[i]), args[i + 1]);")
-                lines.append(f"        }}")
-                lines.append(f"        try {{ return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(map); }}")
-                lines.append(f"        catch (Exception e) {{ throw new RuntimeException(e); }}")
+                lines.append("        java.util.Map<String, Object> map = new java.util.LinkedHashMap<>();")
+                lines.append("        for (int i = 0; i + 1 < args.length; i += 2) {")
+                lines.append("            map.put(String.valueOf(args[i]), args[i + 1]);")
+                lines.append("        }")
+                lines.append(
+                    "        try { return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(map); }"
+                )
+                lines.append("        catch (Exception e) { throw new RuntimeException(e); }")
             else:
                 lines.append(f"        // TODO: implement {_kfn}")
                 if _kret == "Integer" or _kret == "int":
-                    lines.append(f"        return 0;")
+                    lines.append("        return 0;")
                 elif _kret == "Long" or _kret == "long":
-                    lines.append(f"        return 0L;")
+                    lines.append("        return 0L;")
                 elif _kret == "java.math.BigDecimal":
-                    lines.append(f"        return java.math.BigDecimal.ZERO;")
+                    lines.append("        return java.math.BigDecimal.ZERO;")
                 elif _kret.startswith("java.util.List") or _kret.startswith("List"):
-                    lines.append(f"        return java.util.Collections.emptyList();")
+                    lines.append("        return java.util.Collections.emptyList();")
                 else:
-                    lines.append(f"        return null;")
-            lines.append(f"    }}")
+                    lines.append("        return null;")
+            lines.append("    }")
 
     missing = _MISSING_OVERLOADS.get(pkg.package_name, [])
     for method_name, params in missing:
         existing_sigs = set()
-        for m in methods:
-            for mline in m.split("\n"):
-                if f"public" in mline and method_name in mline and "(" in mline:
+        for m in methods:  # type: ignore[assignment]  # mypy: loop variable reuses an earlier regex-match name
+            for mline in m.split("\n"):  # type: ignore[attr-defined]  # mypy: methods contains generated source strings
+                if "public" in mline and method_name in mline and "(" in mline:
                     existing_sigs.add(mline.strip())
         sig_str = ", ".join(f"{pt} {pn}" for pt, pn in params)
         already_exists = any(sig_str in s for s in existing_sigs)
@@ -13103,18 +14642,18 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
                 ret = "String"
                 # Coerce all params to String for jsonb_build_object stub
                 sig_str = ", ".join(f"String {pn}" for _, pn in params)
-            lines.append(f"    // TODO: Auto-generated stub — parser missed this overload")
+            lines.append("    // TODO: Auto-generated stub — parser missed this overload")
             lines.append(f"    public {ret} {method_name}({sig_str}) {{")
             lines.append(f"        // TODO: implement {method_name}({sig_str})")
             if ret == "Integer" or ret == "int":
-                lines.append(f"        return 0;")
+                lines.append("        return 0;")
             elif ret == "Long" or ret == "long":
-                lines.append(f"        return 0L;")
+                lines.append("        return 0L;")
             elif ret == "java.math.BigDecimal":
-                lines.append(f"        return java.math.BigDecimal.ZERO;")
+                lines.append("        return java.math.BigDecimal.ZERO;")
             else:
-                lines.append(f"        return null;")
-            lines.append(f"    }}")
+                lines.append("        return null;")
+            lines.append("    }")
 
     for i, method in enumerate(methods):
         if i > 0:
@@ -13156,13 +14695,13 @@ def _is_numeric_default(default_java: str, java_type: str) -> bool:
     t = java_type.lower()
     if "bigdecimal" in t or "big_decimal" in t:
         try:
-            float(default_java.rstrip('dDfFlL'))
+            float(default_java.rstrip("dDfFlL"))
             return True
         except ValueError:
             return False
     if "long" in t:
         try:
-            int(default_java.rstrip('lL'))
+            int(default_java.rstrip("lL"))
             return True
         except ValueError:
             return False
@@ -13174,13 +14713,13 @@ def _is_numeric_default(default_java: str, java_type: str) -> bool:
             return False
     if "double" in t:
         try:
-            float(default_java.rstrip('dD'))
+            float(default_java.rstrip("dD"))
             return True
         except ValueError:
             return False
     if "float" in t:
         try:
-            float(default_java.rstrip('fF'))
+            float(default_java.rstrip("fF"))
             return True
         except ValueError:
             return False
@@ -13195,13 +14734,13 @@ def _wrap_default_for_type(default_java: str, java_type: str) -> str:
         if default_java.startswith("java.math.BigDecimal.valueOf") or default_java.startswith("java.math.BigDecimal."):
             return default_java
         try:
-            float(default_java.rstrip('dDfFlL'))
+            float(default_java.rstrip("dDfFlL"))
             return f"java.math.BigDecimal.valueOf({default_java})"
         except ValueError:
             return default_java
     if "long" in t:
         try:
-            int(default_java.rstrip('lL'))
+            int(default_java.rstrip("lL"))
             return f"Long.valueOf({default_java})"
         except ValueError:
             return default_java
@@ -13213,13 +14752,13 @@ def _wrap_default_for_type(default_java: str, java_type: str) -> str:
             return default_java
     if "double" in t:
         try:
-            float(default_java.rstrip('dD'))
+            float(default_java.rstrip("dD"))
             return f"Double.valueOf({default_java})"
         except ValueError:
             return default_java
     if "float" in t:
         try:
-            float(default_java.rstrip('fF'))
+            float(default_java.rstrip("fF"))
             return f"Float.valueOf({default_java})"
         except ValueError:
             return default_java
@@ -13286,26 +14825,26 @@ def _if_else_all_branches_return(body_lines, closing_idx):
 
         prev_depth = depth
         for ch in s:
-            if ch == '}':
+            if ch == "}":
                 depth += 1
-            elif ch == '{':
+            elif ch == "{":
                 depth -= 1
 
         if depth == 0 and prev_depth == 0:
-            if re.match(r'^if\b', s):
+            if re.match(r"^if\b", s):
                 branches.append(current_returns)
                 return (all(branches) and has_else) if branches else False
             break
-        elif prev_depth >= 1 and depth == prev_depth and ('}' in s and '{' in s) and re.search(r'\belse\b', s):
+        elif prev_depth >= 1 and depth == prev_depth and ("}" in s and "{" in s) and re.search(r"\belse\b", s):
             branches.append(current_returns)
             current_returns = False
-            if not re.search(r'\belse\s+if\b', s):
+            if not re.search(r"\belse\s+if\b", s):
                 has_else = True
         elif depth == 1 and prev_depth == 1:
-            if re.match(r'^return\b', s) and s.endswith(";"):
+            if re.match(r"^return\b", s) and s.endswith(";"):
                 current_returns = True
         elif depth == 0 and prev_depth == 1:
-            if re.match(r'^if\b', s):
+            if re.match(r"^if\b", s):
                 branches.append(current_returns)
                 return (all(branches) and has_else) if branches else False
             break
@@ -13316,11 +14855,11 @@ def _if_else_all_branches_return(body_lines, closing_idx):
 def _format_comment_for_java(comment) -> str:
     """Format a SQL CommentInfo as a Java comment line."""
     text = comment.text
-    if text.startswith('--'):
+    if text.startswith("--"):
         text = text[2:].strip()
-    elif text.startswith('/*') and text.endswith('*/'):
+    elif text.startswith("/*") and text.endswith("*/"):
         text = text[2:-2].strip()
-        text = ' '.join(line.strip() for line in text.split('\n') if line.strip())
+        text = " ".join(line.strip() for line in text.split("\n") if line.strip())
     return f"// {text}" if text else ""
 
 
@@ -13332,8 +14871,18 @@ def _reconcile_function_return_type(proc: ProcedureInfo, declared_ret: str):
     """
     if not proc.is_function or not declared_ret:
         return None
-    _numeric = ("Long", "Integer", "int", "long", "Double", "double",
-                "Float", "float", "java.math.BigDecimal", "BigDecimal")
+    _numeric = (
+        "Long",
+        "Integer",
+        "int",
+        "long",
+        "Double",
+        "double",
+        "Float",
+        "float",
+        "java.math.BigDecimal",
+        "BigDecimal",
+    )
     if not any(n in declared_ret for n in _numeric):
         return None
 
@@ -13356,16 +14905,16 @@ def _drop_unreachable_fallback(lines):
     last = None
     for i in range(len(lines) - 1, -1, -1):
         s = lines[i].strip()
-        if not s or s.startswith('//'):
+        if not s or s.startswith("//"):
             continue
         last = (i, s)
         break
-    if not last or not re.match(r'^return\b.*;$', last[1]):
+    if not last or not re.match(r"^return\b.*;$", last[1]):
         return lines
     ret_i = last[0]
     catch_line = None
     for j in range(ret_i - 1, -1, -1):
-        if re.match(r'^\}\s*catch\b', lines[j].strip()):
+        if re.match(r"^\}\s*catch\b", lines[j].strip()):
             catch_line = j
             break
     if catch_line is None:
@@ -13374,7 +14923,7 @@ def _drop_unreachable_fallback(lines):
     def _last_stmt_before(before):
         for k in range(before, -1, -1):
             sk = lines[k].strip()
-            if sk and not sk.startswith('//'):
+            if sk and not sk.startswith("//"):
                 return sk
         return None
 
@@ -13382,15 +14931,15 @@ def _drop_unreachable_fallback(lines):
     lc = None
     for k in range(ret_i - 1, catch_line, -1):
         sk = lines[k].strip()
-        if sk and not sk.startswith('//') and sk != '}':
+        if sk and not sk.startswith("//") and sk != "}":
             lc = sk
             break
-    if lt and lt.split()[0] in ('return', 'throw') and lc and lc.split()[0] in ('return', 'throw'):
+    if lt and lt.split()[0] in ("return", "throw") and lc and lc.split()[0] in ("return", "throw"):
         return lines[:ret_i]
     return lines
 
 
-def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: dict = None) -> str:
+def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: Optional[dict] = None) -> str:
     params = []
     out_params = []
     _used_param_names = set()
@@ -13430,7 +14979,7 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
             ret_type = _reconciled
         if ret_type == "String":
             proc.java_logic_lines = [
-                re.sub(r'^(\s*return )((?:Long|Integer|Double)\.parse\w+\([^;]*\));$', r'\1String.valueOf(\2);', l)
+                re.sub(r"^(\s*return )((?:Long|Integer|Double)\.parse\w+\([^;]*\));$", r"\1String.valueOf(\2);", l)
                 for l in proc.java_logic_lines
             ]
         proc.java_logic_lines = _drop_unreachable_fallback(proc.java_logic_lines)
@@ -13455,7 +15004,9 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
     if is_stubbed:
         _stub_reasons = STUB_REASONS.get(_stub_key, [])
         if proc.source_file:
-            body_lines.append(f"// Source SQL: {proc.source_file} (lines {proc.source_start_line}-{proc.source_end_line})")
+            body_lines.append(
+                f"// Source SQL: {proc.source_file} (lines {proc.source_start_line}-{proc.source_end_line})"
+            )
         body_lines.append("// TODO: Auto-generated stub — complex PL/pgSQL pattern requires manual implementation")
         for _sr in _stub_reasons:
             body_lines.append(f"//   Reason: {_sr}")
@@ -13463,20 +15014,23 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
             body_lines.append(f"return {_type_default(ret_type)};")
         exception_block = None
     else:
-        if proc.is_function and getattr(proc, '_setof_accumulate', False) and "List" in ret_type:
+        if proc.is_function and getattr(proc, "_setof_accumulate", False) and "List" in ret_type:
             body_lines.append(f"{ret_type} _returnRows = new java.util.ArrayList<>();")
         out_java_names = {p.java_name for p in out_params}
         top_level_declares = set()
         top_level_insert_idx = 0
-        _loop_vars = getattr(proc, '_loop_vars', set())
-        _pkg_var_names = getattr(proc, '_pkg_var_names', set())
+        _loop_vars: set[str] = getattr(proc, "_loop_vars", set())
+        _pkg_var_names: set[str] = getattr(proc, "_pkg_var_names", set())
         _all_logic_text = "\n".join(proc.java_logic_lines)
-        _for_decl_names = set(re.findall(r'for \((?:int |long |Integer |Long |Map<String, Object> )(\w+)', _all_logic_text))
-        _bare_assign_names = set(re.findall(r'^\s*(\w+) = ', _all_logic_text, re.M))
+        _for_decl_names = set(
+            re.findall(r"for \((?:int |long |Integer |Long |Map<String, Object> )(\w+)", _all_logic_text)
+        )
+        _bare_assign_names = set(re.findall(r"^\s*(\w+) = ", _all_logic_text, re.M))
         for var_name, var_type in proc.local_vars.items():
             var_java = snake_to_camel(var_name)
-            _suppress_decl = (var_name in _loop_vars
-                              and (var_java in _for_decl_names or var_java not in _bare_assign_names))
+            _suppress_decl = var_name in _loop_vars and (
+                var_java in _for_decl_names or var_java not in _bare_assign_names
+            )
             if var_java not in out_java_names and not _suppress_decl and var_name not in _pkg_var_names:
                 default_val = proc.local_var_defaults.get(var_name, _default_for_type(var_type))
                 if var_type.startswith("AtomicReference<"):
@@ -13503,10 +15057,9 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                 top_level_declares.add(var_java)
                 top_level_insert_idx = len(body_lines)
 
-        if getattr(proc, '_needs_futures_list', False):
+        if getattr(proc, "_needs_futures_list", False):
             body_lines.append(
-                'java.util.List<java.util.concurrent.CompletableFuture<Void>> _futures = '
-                'new java.util.ArrayList<>();'
+                "java.util.List<java.util.concurrent.CompletableFuture<Void>> _futures = new java.util.ArrayList<>();"
             )
             top_level_insert_idx = len(body_lines)
 
@@ -13515,14 +15068,14 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
 
         logic_text = " ".join(proc.java_logic_lines)
 
-        needs_found = re.search(r'\bfound\b', logic_text) is not None
+        needs_found = re.search(r"\bfound\b", logic_text) is not None
         if needs_found:
             body_lines.append("boolean found = false;")
 
-        if getattr(proc, '_needs_row_var', False):
+        if getattr(proc, "_needs_row_var", False):
             body_lines.append("java.util.Map<String, Object> _row = null;")
 
-        if getattr(proc, '_needs_rowcount_var', False):
+        if getattr(proc, "_needs_rowcount_var", False):
             body_lines.append("int _sqlRowCount = 0;")
 
         cursor_vars_to_hoist = set()
@@ -13539,13 +15092,10 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
         # Defensive: catch any __MAP_PUT__ tokens that slipped through (e.g. from _wrap_try_catch)
         _cleaned_lines = []
         for line in proc.java_logic_lines:
-            _m = re.match(r'\s*__MAP_PUT__(\w+)__(\w+(?:_\w+)*)\s*=\s*(.+);', line)
+            _m = re.match(r"\s*__MAP_PUT__(\w+)__(\w+(?:_\w+)*)\s*=\s*(.+);", line)
             if _m:
                 _var, _key, _val = _m.group(1), _m.group(2), _m.group(3)
-                line = line.replace(
-                    f"__MAP_PUT__{_var}__{_key} = {_val};",
-                    f'{_var}.put("{_key}", {_val});'
-                )
+                line = line.replace(f"__MAP_PUT__{_var}__{_key} = {_val};", f'{_var}.put("{_key}", {_val});')
             _cleaned_lines.append(line)
         proc.java_logic_lines = _cleaned_lines
 
@@ -13572,15 +15122,15 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                 s = line.strip()
                 modified = False
                 for hv in all_vars_to_hoist:
-                    m = re.match(rf'^(List<Map<String, Object>>)\s+{re.escape(hv)}\s*=\s*(.*)', s)
+                    m = re.match(rf"^(List<Map<String, Object>>)\s+{re.escape(hv)}\s*=\s*(.*)", s)
                     if m:
-                        indent = line[:len(line) - len(line.lstrip())]
+                        indent = line[: len(line) - len(line.lstrip())]
                         cleaned.append(f"{indent}{hv} = {m.group(2)}")
                         modified = True
                         break
-                    m2 = re.match(rf'^(int)\s+{re.escape(hv)}\s*=\s*(.*)', s)
+                    m2 = re.match(rf"^(int)\s+{re.escape(hv)}\s*=\s*(.*)", s)
                     if m2:
-                        indent = line[:len(line) - len(line.lstrip())]
+                        indent = line[: len(line) - len(line.lstrip())]
                         cleaned.append(f"{indent}{hv} = {m2.group(2)}")
                         modified = True
                         break
@@ -13604,8 +15154,8 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
         tc_remaining = []
         for line in body_lines:
             s = line.strip()
-            if re.match(rf'^(List<Map<String, Object>>|int)\s+(\w+)\s*=\s*', s):
-                var_name = re.match(rf'^(List<Map<String, Object>>|int)\s+(\w+)\s*=\s*', s).group(2)
+            if re.match(r"^(List<Map<String, Object>>|int)\s+(\w+)\s*=\s*", s):
+                var_name = re.match(r"^(List<Map<String, Object>>|int)\s+(\w+)\s*=\s*", s).group(2)  # type: ignore[union-attr]  # mypy: guarded by identical successful match
                 if var_name in cursor_vars_to_hoist:
                     tc_hoisted.append(line)
                     continue
@@ -13630,12 +15180,15 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
     # Also hoist any debug comments that immediately precede a variable declaration.
     hoisted_decls = []
     remaining_lines = []
-    _pending_debug = []  # accumulate debug comments that precede a declaration
+    _pending_debug: list[str] = []  # accumulate debug comments that precede a declaration
     for line in body_lines:
         s = line.strip()
-        if re.match(r'^(String|Long|Integer|BigDecimal|java\.math\.BigDecimal|AtomicReference|List<Map<String, Object>>|boolean|int|long|double|float)\s+\w+\s*=', s):
+        if re.match(
+            r"^(String|Long|Integer|BigDecimal|java\.math\.BigDecimal|AtomicReference|List<Map<String, Object>>|boolean|int|long|double|float)\s+\w+\s*=",
+            s,
+        ):
             # Don't hoist mapper query result assignments — they must stay in place (e.g., inside loops)
-            if 'mapper.' not in s:
+            if "mapper." not in s:
                 # Flush any pending debug comments right before this declaration
                 hoisted_decls.extend(_pending_debug)
                 _pending_debug = []
@@ -13643,7 +15196,7 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
             else:
                 _pending_debug = []
                 remaining_lines.append(line)
-        elif s.startswith('// [DEBUG]'):
+        elif s.startswith("// [DEBUG]"):
             # This might be a debug comment preceding a declaration — stash it
             _pending_debug.append(line)
         else:
@@ -13663,7 +15216,7 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
     body_lines = hoisted_decls + body_lines
 
     for line in body_lines:
-        if 'List<Map<String, Object>>' in line:
+        if "List<Map<String, Object>>" in line:
             proc.imports.add("import java.util.List;")
             proc.imports.add("import java.util.Map;")
             break
@@ -13688,17 +15241,20 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
         cleaned_lines = []
         for line in body_lines:
             for rc_name in refcursor_out_java_names:
-                line = re.sub(rf',\s*{re.escape(rc_name)}\s*\)', ')', line)
-                line = re.sub(rf'{re.escape(rc_name)}\s*,\s*', '', line)
+                line = re.sub(rf",\s*{re.escape(rc_name)}\s*\)", ")", line)
+                line = re.sub(rf"{re.escape(rc_name)}\s*,\s*", "", line)
             cleaned_lines.append(line)
         body_lines = cleaned_lines
 
     if ret_type != "void":
         _ret_default = "0" if ret_type in ("Integer", "int", "Long", "long", "Short", "Byte") else "null"
-        body_lines = [line.replace("return;", f"return {_ret_default};") if line.strip() == "return;" else line for line in body_lines]
+        body_lines = [
+            line.replace("return;", f"return {_ret_default};") if line.strip() == "return;" else line
+            for line in body_lines
+        ]
 
     body_lines = [line.replace("String.valueOf(null)", '""') for line in body_lines]
-    body_lines = [line.replace("new java.math.BigDecimal(\"\")", "java.math.BigDecimal.ZERO") for line in body_lines]
+    body_lines = [line.replace('new java.math.BigDecimal("")', "java.math.BigDecimal.ZERO") for line in body_lines]
 
     # Pre-pass: strip trailing dead code before stub check
     _last_ret = -1
@@ -13708,10 +15264,10 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
         _bd += s.count("{") - s.count("}")
         if s.startswith("//") or not s:
             continue
-        if _bd == 0 and re.match(r'^return\b', s) and s.endswith(";"):
+        if _bd == 0 and re.match(r"^return\b", s) and s.endswith(";"):
             _last_ret = i
     if _last_ret >= 0:
-        _trailing = body_lines[_last_ret + 1:]
+        _trailing = body_lines[_last_ret + 1 :]
         _has_unreachable = any(
             l.strip() and not l.strip().startswith("//") and l.strip() != "}" and not l.strip().startswith("/*")
             for l in _trailing
@@ -13734,7 +15290,7 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                     continue
                 if s == "}" and _pending == 0:
                     continue
-            body_lines = body_lines[:_last_ret + 1] + _kept
+            body_lines = body_lines[: _last_ret + 1] + _kept
 
     has_complex_issues, _failed_checks = _has_compilation_issues(body_lines, out_params, proc)
 
@@ -13746,7 +15302,7 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
             _bd += s.count("{") - s.count("}")
             if s.startswith("//") or not s:
                 continue
-            if _bd == 0 and re.match(r'^return\b', s) and s.endswith(";"):
+            if _bd == 0 and re.match(r"^return\b", s) and s.endswith(";"):
                 _all_paths_return = True
                 break
         if not _all_paths_return and exception_block:
@@ -13757,7 +15313,7 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                 _bd += s.count("{") - s.count("}")
                 if s.startswith("//") or not s:
                     continue
-                if re.match(r'^\}\s*catch\b', s) and _try_end is None:
+                if re.match(r"^\}\s*catch\b", s) and _try_end is None:
                     _try_end = i
                 if s == "}" and _bd == 0 and _try_end is not None:
                     _catch_end = i
@@ -13774,8 +15330,14 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                     if sj and not sj.startswith("//"):
                         _last_in_catch = sj
                         break
-                if _last_in_try and re.match(r'^return\b', _last_in_try) and _last_in_try.endswith(";") and \
-                   _last_in_catch and re.match(r'^return\b', _last_in_catch) and _last_in_catch.endswith(";"):
+                if (
+                    _last_in_try
+                    and re.match(r"^return\b", _last_in_try)
+                    and _last_in_try.endswith(";")
+                    and _last_in_catch
+                    and re.match(r"^return\b", _last_in_catch)
+                    and _last_in_catch.endswith(";")
+                ):
                     _all_paths_return = True
         if not _all_paths_return:
             # Check if body ends with a } at depth 0 that closes an if-else chain
@@ -13788,10 +15350,8 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                 if s == "}" and _bd == 0:
                     _last_close_at_0 = i
             if _last_close_at_0 >= 0:
-                _trailing_after = body_lines[_last_close_at_0 + 1:]
-                _only_comments_after = all(
-                    l.strip() == "" or l.strip().startswith("//") for l in _trailing_after
-                )
+                _trailing_after = body_lines[_last_close_at_0 + 1 :]
+                _only_comments_after = all(l.strip() == "" or l.strip().startswith("//") for l in _trailing_after)
                 if _only_comments_after and _if_else_all_branches_return(body_lines, _last_close_at_0):
                     _all_paths_return = True
         if not _all_paths_return:
@@ -13811,21 +15371,18 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
             _bd += s.count("{") - s.count("}")
             if s.startswith("//") or not s:
                 continue
-            if _bd == 0 and re.match(r'^return\b', s) and s.endswith(";"):
+            if _bd == 0 and re.match(r"^return\b", s) and s.endswith(";"):
                 _last_ret = i
         if _last_ret >= 0:
-            _trailing = body_lines[_last_ret + 1:]
-            _has_unreachable = any(
-                l.strip() and not l.strip().startswith("//") and l.strip() != "}"
-                for l in _trailing
-            )
+            _trailing = body_lines[_last_ret + 1 :]
+            _has_unreachable = any(l.strip() and not l.strip().startswith("//") and l.strip() != "}" for l in _trailing)
             if _has_unreachable:
                 _kept = []
                 for l in _trailing:
                     s = l.strip()
                     if not s or s.startswith("//") or s == "}":
                         _kept.append(l)
-                body_lines = body_lines[:_last_ret + 1] + _kept
+                body_lines = body_lines[: _last_ret + 1] + _kept
         else:
             # Secondary: find try-catch blocks where all paths return/throw
             _bd2 = 0
@@ -13838,17 +15395,13 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                 if s.startswith("try") and _bd2 == 1:
                     _try_start = i
                 if _bd2 == 0 and _try_start >= 0 and s == "}":
-                    _block = body_lines[_try_start:i+1]
-                    _try_has_return = any(re.match(r'\s*return\b', l) and ';' in l for l in _block)
-                    _catch_has_terminate = any(
-                        re.match(r'\s*(throw\b|return\b)', l) and ';' in l
-                        for l in _block
-                    )
+                    _block = body_lines[_try_start : i + 1]
+                    _try_has_return = any(re.match(r"\s*return\b", l) and ";" in l for l in _block)
+                    _catch_has_terminate = any(re.match(r"\s*(throw\b|return\b)", l) and ";" in l for l in _block)
                     if _try_has_return and _catch_has_terminate:
-                        _trailing = body_lines[i + 1:]
+                        _trailing = body_lines[i + 1 :]
                         _has_unreachable = any(
-                            l.strip() and not l.strip().startswith("//") and l.strip() != "}"
-                            for l in _trailing
+                            l.strip() and not l.strip().startswith("//") and l.strip() != "}" for l in _trailing
                         )
                         if _has_unreachable:
                             _kept = []
@@ -13856,7 +15409,7 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                                 s2 = l.strip()
                                 if not s2 or s2.startswith("//") or s2 == "}":
                                     _kept.append(l)
-                            body_lines = body_lines[:i + 1] + _kept
+                            body_lines = body_lines[: i + 1] + _kept
                     _try_start = -1
                     break
 
@@ -13878,30 +15431,32 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
     for line in body_lines:
         stripped = line.strip()
         if not stripped:
-            indented.append('')
+            indented.append("")
             continue
 
-        closes = stripped.startswith('}')
-        last_open = stripped.rfind('{')
-        last_close = stripped.rfind('}')
+        closes = stripped.startswith("}")
+        last_open = stripped.rfind("{")
+        last_close = stripped.rfind("}")
         opens = last_open != -1 and last_open > last_close
         single_line = last_open != -1 and last_close != -1 and last_open < last_close
 
         if closes and not single_line:
             depth -= 1
 
-        indented.append('        ' + '    ' * depth + stripped)
+        indented.append("        " + "    " * depth + stripped)
 
         if opens and not single_line:
             depth += 1
 
-    body_str = '\n'.join(indented)
+    body_str = "\n".join(indented)
 
     has_dml = any(d.sql_type in ("insert", "update", "delete") for d in proc.dml_statements)
 
     method_lines = []
     source_info = f"{proc.source_file}:{proc.source_start_line}-{proc.source_end_line}" if proc.source_file else ""
-    method_lines.append(f"    // Source: {proc.name} ({'FUNCTION' if proc.is_function else 'PROCEDURE'}) — {source_info}")
+    method_lines.append(
+        f"    // Source: {proc.name} ({'FUNCTION' if proc.is_function else 'PROCEDURE'}) — {source_info}"
+    )
     for c in proc.leading_comments:
         formatted = _format_comment_for_java(c)
         if formatted:
@@ -13919,7 +15474,7 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
     return "\n".join(method_lines)
 
 
-def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureInfo = None) -> tuple:
+def _has_compilation_issues(body_lines: list, out_params: list, proc: Optional[ProcedureInfo] = None) -> tuple:
     """Return (has_issues: bool, failed_checks: list[str])."""
     all_text = " ".join(body_lines)
     failed = []
@@ -13928,8 +15483,8 @@ def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureI
     for _l in body_lines:
         _s = re.sub(r'"(?:[^"\\]|\\.)*"', '""', _l)
         _s = re.sub(r"'(?:[^'\\]|\\.)*'", "''", _s)
-        _s = re.sub(r'/\*.*?\*/', '', _s)
-        _s = re.sub(r'//.*$', '', _s)
+        _s = re.sub(r"/\*.*?\*/", "", _s)
+        _s = re.sub(r"//.*$", "", _s)
         _stripped.append(_s)
     _delta = sum(l.count("{") - l.count("}") for l in _stripped)
     if _delta != 0:
@@ -13940,11 +15495,15 @@ def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureI
     # with "cannot find symbol", which no other check here can see.
     if proc is not None and getattr(proc, "_had_statement_error", False):
         for _name in getattr(proc, "_dropped_decls", ()):
-            if re.search(r'\b' + re.escape(_name) + r'\b', " ".join(_stripped)):
+            if re.search(r"\b" + re.escape(_name) + r"\b", " ".join(_stripped)):
                 failed.append(f"reference to '{_name}' whose declaration was rolled back")
                 break
 
-    if re.search(r'\bv_cursorResult\b', all_text) and "vCursorResult" not in all_text and "v_cursorResult =" not in all_text:
+    if (
+        re.search(r"\bv_cursorResult\b", all_text)
+        and "vCursorResult" not in all_text
+        and "v_cursorResult =" not in all_text
+    ):
         failed.append("cursor 结果变量 'v_cursorResult' 未正确初始化")
     if any("AtomicReference" in line and "<=" in line for line in _stripped):
         failed.append("AtomicReference 使用了不支持的比较运算符 (<=)")
@@ -13952,19 +15511,19 @@ def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureI
     out_java_names = {p.java_name for p in out_params}
     for line in body_lines:
         for name in out_java_names:
-            if re.search(rf'\b{re.escape(name)}\s*(==|!=|<=|>=|<|>)', line):
+            if re.search(rf"\b{re.escape(name)}\s*(==|!=|<=|>=|<|>)", line):
                 failed.append(f"OUT 参数 '{name}' 直接用于比较，缺少 .get() 访问器")
-            if re.search(rf'\b{re.escape(name)}\b', line):
-                if not re.search(rf'\b{re.escape(name)}\s*\.\s*(get|set)\s*\(', line):
-                    if 'AtomicReference<' not in line:
-                        if not re.search(rf'[(,]\s*\b{re.escape(name)}\b', line):
+            if re.search(rf"\b{re.escape(name)}\b", line):
+                if not re.search(rf"\b{re.escape(name)}\s*\.\s*(get|set)\s*\(", line):
+                    if "AtomicReference<" not in line:
+                        if not re.search(rf"[(,]\s*\b{re.escape(name)}\b", line):
                             failed.append(f"OUT 参数 '{name}' 未通过 .get()/.set() 访问")
 
     for p in out_params:
         if p.java_type == "String":
-            if re.search(rf'\b{re.escape(p.java_name)}\.set\(\d+\)', all_text):
+            if re.search(rf"\b{re.escape(p.java_name)}\.set\(\d+\)", all_text):
                 failed.append(f"String OUT 参数 '{p.java_name}' 的 .set() 收到了整数字面量")
-            if re.search(rf'\b{re.escape(p.java_name)}\.set\(\s*\w+Mapper\.', all_text):
+            if re.search(rf"\b{re.escape(p.java_name)}\.set\(\s*\w+Mapper\.", all_text):
                 failed.append(f"String OUT 参数 '{p.java_name}' 的 .set() 收到了 Mapper 返回值 (类型不匹配)")
 
     if proc is not None:
@@ -13973,17 +15532,17 @@ def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureI
         param_java_names = {p.java_name for p in proc.parameters}
         known_names = declared_result_vars | local_var_java_names | param_java_names
         for line in body_lines:
-            matches = re.findall(r'\b(\w+Result)\b', line)
+            matches = re.findall(r"\b(\w+Result)\b", line)
             for m in matches:
                 if m not in declared_result_vars and m not in known_names:
                     _record_todo("unresolved-cursor-result", proc, f"cursor 结果变量 '{m}' 可能未正确声明")
 
-    if re.search(r'/\*\s*(UNSUPPORTED|TODO: implement|Subquery|RangeOp|BitString)\b', all_text):
+    if re.search(r"/\*\s*(UNSUPPORTED|TODO: implement|Subquery|RangeOp|BitString)\b", all_text):
         _record_todo("UNSUPPORTED_FUNC", proc, "contains UNSUPPORTED/placeholder function calls")
 
     _type_error_patterns = [
-        (r'\bString\b.*无法转换.*Map<String', 'String 赋值给 Map<String,Object> (jsonb_set 类型不匹配)'),
-        (r"vRec\.put\([^)]+,\s*String\.format\(", 'String.format() 结果赋值给 Map put (可能类型不匹配)'),
+        (r"\bString\b.*无法转换.*Map<String", "String 赋值给 Map<String,Object> (jsonb_set 类型不匹配)"),
+        (r"vRec\.put\([^)]+,\s*String\.format\(", "String.format() 结果赋值给 Map put (可能类型不匹配)"),
     ]
     for pat, desc in _type_error_patterns:
         pass
@@ -13993,50 +15552,70 @@ def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureI
     if subquery_count + rangeop_count >= 3:
         failed.append(f"含 {subquery_count} 个 Subquery + {rangeop_count} 个 RangeOp 占位符 (复杂 SQL 无法自动转换)")
 
-    if re.search(r'while\s*\(\s*true\s*\)', all_text) and 'continue;' in all_text and 'break;' not in all_text:
+    if re.search(r"while\s*\(\s*true\s*\)", all_text) and "continue;" in all_text and "break;" not in all_text:
         failed.append("GOTO 转换残留死循环 (while(true) + continue 无 break)")
 
-    _unresolved_calls = re.findall(r'/\*\s*TODO:\s*implement\s+\w+\([^)]*\)\s*\*/\s*\(\s*(\w+)\(\s*/\*', all_text)
+    _unresolved_calls = re.findall(r"/\*\s*TODO:\s*implement\s+\w+\([^)]*\)\s*\*/\s*\(\s*(\w+)\(\s*/\*", all_text)
     if _unresolved_calls:
         failed.append(f"未解析的函数调用: {', '.join(set(_unresolved_calls))} (无 Java 等价实现)")
 
-    if re.search(r'\btgOp\b|\btgWhen\b|\btgName\b|\btgTag\b', all_text):
+    if re.search(r"\btgOp\b|\btgWhen\b|\btgName\b|\btgTag\b", all_text):
         failed.append("包含 PL/pgSQL 触发器变量 (TG_OP/TG_WHEN 等)，Java 无等价物")
 
     if proc:
-        for m in re.finditer(r'\b(\w+)\.put\(', all_text):
+        for m in re.finditer(r"\b(\w+)\.put\(", all_text):
             var_name = m.group(1)
             local_java = {snake_to_camel(v) for v in proc.local_vars.keys()}
             param_java = {p.java_name for p in proc.parameters}
             # Allow cross-package state Map variables (pkgXxx camelCase pattern)
-            _is_pkg_state_map = bool(re.match(r'^pkg[A-Z]', var_name))
-            if var_name not in local_java and var_name not in param_java and not _is_pkg_state_map and var_name not in ('_row', 'result', '_brow'):
+            _is_pkg_state_map = bool(re.match(r"^pkg[A-Z]", var_name))
+            if (
+                var_name not in local_java
+                and var_name not in param_java
+                and not _is_pkg_state_map
+                and var_name not in ("_row", "result", "_brow")
+            ):
                 failed.append(f"未声明的包状态变量 '{var_name}' 调用了 .put()")
                 break
 
-    if re.search(r'\w+\s*=\s*\d+\.\d+d\b', all_text) and 'BigDecimal' in all_text and 'BigDecimal.valueOf' not in all_text:
+    if (
+        re.search(r"\w+\s*=\s*\d+\.\d+d\b", all_text)
+        and "BigDecimal" in all_text
+        and "BigDecimal.valueOf" not in all_text
+    ):
         failed.append("BigDecimal 变量被赋值了 double 字面量 (类型不匹配)")
 
     # Stub procedures with local AtomicReference passed to OUT param target
-    _atomic_local_vars = {snake_to_camel(v) for v, t in proc.local_vars.items() if 'AtomicReference' in t} if proc else set()
-    _atomic_out_params = {p.java_name for p in proc.parameters if p.is_out and 'AtomicReference' in p.java_type} if proc else set()
+    _atomic_local_vars = (
+        {snake_to_camel(v) for v, t in proc.local_vars.items() if "AtomicReference" in t} if proc else set()
+    )
+    _atomic_out_params = (
+        {p.java_name for p in proc.parameters if p.is_out and "AtomicReference" in p.java_type} if proc else set()
+    )
     for _alv in _atomic_local_vars - _atomic_out_params:
-        if f'{_alv}.get()' in all_text and any('AtomicReference' in p.java_type and p.is_out for p in (proc.parameters if proc else [])):
+        if f"{_alv}.get()" in all_text and any(
+            "AtomicReference" in p.java_type and p.is_out for p in (proc.parameters if proc else [])
+        ):
             failed.append(f"局部 AtomicReference 变量 {_alv} 的 .get() 传给了 OUT 参数目标 (类型不匹配)")
             break
 
-    _round_calls = re.findall(r'Math\.round\(([^)]+)\)', all_text)
+    _round_calls = re.findall(r"Math\.round\(([^)]+)\)", all_text)
     for _rc_arg in _round_calls:
-        if any(kw in _rc_arg for kw in ('BigDecimal', 'setScale', '.add(', '.subtract(', '.multiply(', '.divide(', '.remainder(')):
+        if any(
+            kw in _rc_arg
+            for kw in ("BigDecimal", "setScale", ".add(", ".subtract(", ".multiply(", ".divide(", ".remainder(")
+        ):
             failed.append(f"Math.round(BigDecimal) — 参数 '{_rc_arg.strip()}' 应使用 .setScale()")
 
-    if proc and re.search(rf'\b{re.escape(proc.package.lower() if proc.package else "")}Service\s+\w+Service\s*,', all_text):
+    if proc and re.search(
+        rf"\b{re.escape(proc.package.lower() if proc.package else '')}Service\s+\w+Service\s*,", all_text
+    ):
         failed.append("Service 自注入导致循环依赖")
 
     if proc:
         for p in proc.parameters:
             if p.java_type in ("int", "long", "double", "float", "boolean", "short", "byte", "char"):
-                if re.search(rf'\b{re.escape(p.java_name)}\.equals\(', all_text):
+                if re.search(rf"\b{re.escape(p.java_name)}\.equals\(", all_text):
                     failed.append(f"基本类型参数 '{p.java_name}' 使用了 .equals() 而非 ==")
 
     _bd = 0
@@ -14045,8 +15624,8 @@ def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureI
         _bd += s.count("{") - s.count("}")
         if s.startswith("//") or not s:
             continue
-        if _bd == 0 and re.match(r'^return\b', s) and s.endswith(";"):
-            for after in body_lines[_i + 1:]:
+        if _bd == 0 and re.match(r"^return\b", s) and s.endswith(";"):
+            for after in body_lines[_i + 1 :]:
                 a = after.strip()
                 if a and not a.startswith("//") and a != "}":
                     failed.append("return 后仍有可达代码 (死代码)")
@@ -14070,12 +15649,9 @@ def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureI
                 _try_end = i
                 break
         if _try_start >= 0 and _try_end >= 0:
-            _block = body_lines[_try_start:_try_end + 1]
-            _try_has_return = any(re.match(r'\s*return\b', l) and ';' in l for l in _block)
-            _catch_has_terminate = any(
-                re.match(r'\s*(throw\b|return\b)', l) and ';' in l
-                for l in _block
-            )
+            _block = body_lines[_try_start : _try_end + 1]
+            _try_has_return = any(re.match(r"\s*return\b", l) and ";" in l for l in _block)
+            _catch_has_terminate = any(re.match(r"\s*(throw\b|return\b)", l) and ";" in l for l in _block)
             if _try_has_return and _catch_has_terminate:
                 failed = [f for f in failed if "return 后仍有可达代码" not in f]
 
@@ -14087,14 +15663,22 @@ def _has_compilation_issues(body_lines: list, out_params: list, proc: ProcedureI
             _bd2 += s.count("{") - s.count("}")
             if s.startswith("//") or not s:
                 continue
-            if _bd2 == 0 and re.match(r'^return\b', s) and s.endswith(";"):
+            if _bd2 == 0 and re.match(r"^return\b", s) and s.endswith(";"):
                 _has_top_return = True
 
     return (len(failed) > 0, failed)
 
 
 def _type_default(java_type: str) -> str:
-    _primitives = {"int": "0", "long": "0L", "double": "0.0d", "float": "0.0f", "boolean": "false", "short": "0", "byte": "0"}
+    _primitives = {
+        "int": "0",
+        "long": "0L",
+        "double": "0.0d",
+        "float": "0.0f",
+        "boolean": "false",
+        "short": "0",
+        "byte": "0",
+    }
     if java_type in _primitives:
         return _primitives[java_type]
     if "List" in java_type:
@@ -14145,19 +15729,29 @@ def _indent(text: str, level: int) -> str:
 
 def _to_primitive_if_boxed(java_type: str) -> str:
     _BOXED_TO_PRIMITIVE = {
-        "Long": "long", "Integer": "int", "Boolean": "boolean",
-        "Double": "double", "Float": "float",
+        "Long": "long",
+        "Integer": "int",
+        "Boolean": "boolean",
+        "Double": "double",
+        "Float": "float",
     }
     return _BOXED_TO_PRIMITIVE.get(java_type, java_type)
 
 
-def _write_service_test(base_path: Path, pkg: PackageInfo, service_injections: dict,
-                         svc_method_param_counts: dict, all_packages: dict = None):
+def _write_service_test(
+    base_path: Path,
+    pkg: PackageInfo,
+    service_injections: dict,
+    svc_method_param_counts: dict,
+    all_packages: Optional[dict] = None,
+):
     jp = _pkg_java_package(pkg)
     test_dir = base_path / "src/test/java" / jp.replace(".", "/") / "service"
     test_dir.mkdir(parents=True, exist_ok=True)
     class_name = f"{package_to_classname(pkg.package_name)}Service"
-    mapper_name = f"{package_to_classname(pkg.package_name)[0].lower()}{package_to_classname(pkg.package_name)[1:]}Mapper"
+    mapper_name = (
+        f"{package_to_classname(pkg.package_name)[0].lower()}{package_to_classname(pkg.package_name)[1:]}Mapper"
+    )
     test_class_name = f"{class_name}Test"
 
     imports = set()
@@ -14213,12 +15807,7 @@ def _write_service_test(base_path: Path, pkg: PackageInfo, service_injections: d
             test_methods.append(test_code)
 
     if not test_methods:
-        test_methods.append(
-            "    @Test\n"
-            "    void testServiceExists() {\n"
-            f"        assertNotNull(service);\n"
-            "    }"
-        )
+        test_methods.append("    @Test\n    void testServiceExists() {\n        assertNotNull(service);\n    }")
 
     lines = []
     lines.append(f"package {jp}.service;")
@@ -14236,7 +15825,7 @@ def _write_service_test(base_path: Path, pkg: PackageInfo, service_injections: d
             lines.append(formatted)
     lines.append(f"class {test_class_name} {{")
     lines.append("")
-    lines.append(f"    @Mock")
+    lines.append("    @Mock")
     lines.append(f"    private {package_to_classname(pkg.package_name)}Mapper {mapper_name};")
 
     for svc_var, pkg_name in service_injections.items():
@@ -14246,11 +15835,11 @@ def _write_service_test(base_path: Path, pkg: PackageInfo, service_injections: d
             svc_class_part = svc_var.replace("Service", "")
             svc_class = f"{package_to_classname(svc_class_part)}Service"
         lines.append("")
-        lines.append(f"    @Mock")
+        lines.append("    @Mock")
         lines.append(f"    private {svc_class} {svc_var};")
 
     lines.append("")
-    lines.append(f"    @InjectMocks")
+    lines.append("    @InjectMocks")
     lines.append(f"    private {class_name} service;")
 
     for i, tm in enumerate(test_methods):
@@ -14276,12 +15865,19 @@ def _domain_test_value(proc: ProcedureInfo, param, pkg=None) -> str:
     """
     jn = param.java_name
     # 1. Validation literal sampling
+    _raise_literals = set()
+    for _idx, _line in enumerate(proc.java_logic_lines):
+        if "throw new BusinessException" in _line:
+            _raise_context = proc.java_logic_lines[max(0, _idx - 1) : _idx + 1]
+            for _raise_line in _raise_context:
+                _raise_literals.update(re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', _raise_line))
     for line in proc.java_logic_lines:
-        m = re.search(r'Arrays\.asList\(([^)]*)\)\s*\.contains\(\s*' + re.escape(jn) + r'\s*\)', line)
+        m = re.search(r"Arrays\.asList\(([^)]*)\)\s*\.contains\(\s*" + re.escape(jn) + r"\s*\)", line)
         if m:
             lits = re.findall(r'"([^"]*)"', m.group(1))
             if lits:
-                return f'"{lits[0]}"'
+                selected = next((lit for lit in lits if lit not in _raise_literals), lits[0])
+                return f'"{selected}"'
     # 2. Date-prefix usage: `to_date(x || '-01')` appears in declaration
     # defaults (local_var_defaults) or arithmetic lines. Scan the whole pkg:
     # a param may be validated inside a cross-called method (verifyFingerprint
@@ -14292,7 +15888,9 @@ def _domain_test_value(proc: ProcedureInfo, param, pkg=None) -> str:
             _date_ctx_lines.extend(_pp.java_logic_lines)
             _date_ctx_lines.extend(getattr(_pp, "local_var_defaults", {}).values())
     for line in _date_ctx_lines:
-        if re.search(re.escape(jn) + r'\s*\+\s*"-0[1-9]"', line) or re.search(re.escape(jn) + r"\s*\|\|\s*'-0[1-9]'", line):
+        if re.search(re.escape(jn) + r'\s*\+\s*"-0[1-9]"', line) or re.search(
+            re.escape(jn) + r"\s*\|\|\s*'-0[1-9]'", line
+        ):
             return '"2024-01"'
     # 3. DEFAULT value
     if param.default_value:
@@ -14309,10 +15907,10 @@ def _domain_test_value(proc: ProcedureInfo, param, pkg=None) -> str:
                 # string literal — that fails to compile. Fall back to the
                 # type-aware generator so the value matches the Java type.
                 return _default_test_value(param.java_type, jn, pkg=pkg)
-            if re.match(r'^-?\d+(\.\d+)?$', dv):
+            if re.match(r"^-?\d+(\.\d+)?$", dv):
                 lower_jt = param.java_type.lower()
                 if "bigdecimal" in lower_jt:
-                    return f"new java.math.BigDecimal(\"{dv}\")"
+                    return f'new java.math.BigDecimal("{dv}")'
                 if "string" in lower_jt:
                     return f'"{dv}"'
                 return dv
@@ -14320,8 +15918,9 @@ def _domain_test_value(proc: ProcedureInfo, param, pkg=None) -> str:
     return _default_test_value(param.java_type, jn, pkg=pkg)
 
 
-def _build_test_methods(proc: ProcedureInfo, mapper_name: str, service_injections: dict,
-                         svc_method_param_counts: dict, pkg: PackageInfo) -> list:
+def _build_test_methods(
+    proc: ProcedureInfo, mapper_name: str, service_injections: dict, svc_method_param_counts: dict, pkg: PackageInfo
+) -> list:
     method_name = java_method_name(proc.proc_name)
     results = []
 
@@ -14334,7 +15933,7 @@ def _build_test_methods(proc: ProcedureInfo, mapper_name: str, service_injection
     for p in in_params:
         val = _domain_test_value(proc, p, pkg=pkg)
         decl_type = p.java_type
-        if pkg and hasattr(pkg, 'custom_types'):
+        if pkg and hasattr(pkg, "custom_types"):
             for tn, ti in pkg.custom_types.items():
                 if ti.get("kind") == "record" and _custom_type_classname(tn) == decl_type:
                     decl_type = f"{svc_class}.{decl_type}"
@@ -14363,10 +15962,38 @@ def _build_test_methods(proc: ProcedureInfo, mapper_name: str, service_injection
     has_service_calls = len(proc.service_calls) > 0
 
     if has_raise:
-        results.append(_build_error_test(proc, mapper_name, param_values, out_decls, args_str, service_injections, svc_method_param_counts, pkg))
-        results.append(_build_success_test(proc, mapper_name, param_values, out_decls, args_str, service_injections, svc_method_param_counts, pkg, out_params))
+        results.append(
+            _build_error_test(
+                proc, mapper_name, param_values, out_decls, args_str, service_injections, svc_method_param_counts, pkg
+            )
+        )
+        results.append(
+            _build_success_test(
+                proc,
+                mapper_name,
+                param_values,
+                out_decls,
+                args_str,
+                service_injections,
+                svc_method_param_counts,
+                pkg,
+                out_params,
+            )
+        )
     else:
-        results.append(_build_success_test(proc, mapper_name, param_values, out_decls, args_str, service_injections, svc_method_param_counts, pkg, out_params))
+        results.append(
+            _build_success_test(
+                proc,
+                mapper_name,
+                param_values,
+                out_decls,
+                args_str,
+                service_injections,
+                svc_method_param_counts,
+                pkg,
+                out_params,
+            )
+        )
 
     return results
 
@@ -14387,14 +16014,14 @@ def _default_test_value(java_type: str, param_name: str, pkg=None) -> str:
             return "20"
         return "1"
     if "bigdecimal" in lower or java_type == "BigDecimal":
-        return "new java.math.BigDecimal(\"99.99\")"
+        return 'new java.math.BigDecimal("99.99")'
     if "big_decimal" in lower:
-        return "new java.math.BigDecimal(\"99.99\")"
+        return 'new java.math.BigDecimal("99.99")'
     if "list" in lower:
         return "new java.util.ArrayList<>()"
     if "map" in lower:
         if any(kw in name_lower for kw in ("rec", "order", "detail", "row")):
-            return "new java.util.HashMap<>() {{ put(\"id\", 1L); put(\"order_id\", 1L); put(\"emp_id\", 1L); put(\"status\", \"ACTIVE\"); put(\"total_amount\", java.math.BigDecimal.TEN); put(\"amount\", java.math.BigDecimal.TEN); put(\"qty\", 10); put(\"price\", java.math.BigDecimal.TEN); }}"
+            return 'new java.util.HashMap<>() {{ put("id", 1L); put("order_id", 1L); put("emp_id", 1L); put("status", "ACTIVE"); put("total_amount", java.math.BigDecimal.TEN); put("amount", java.math.BigDecimal.TEN); put("qty", 10); put("price", java.math.BigDecimal.TEN); }}'
         return "new java.util.HashMap<>()"
     if "double" in lower:
         return "1.0d"
@@ -14403,14 +16030,14 @@ def _default_test_value(java_type: str, param_name: str, pkg=None) -> str:
     if "boolean" in lower:
         return "true"
     if "timestamp" in lower:
-        return "java.sql.Timestamp.valueOf(\"2024-01-01 00:00:00\")"
+        return 'java.sql.Timestamp.valueOf("2024-01-01 00:00:00")'
     if "date" in lower:
-        return "java.sql.Date.valueOf(\"2024-01-01\")"
+        return 'java.sql.Date.valueOf("2024-01-01")'
     if "map" in lower:
         return "new java.util.HashMap<>()"
     if "list" in lower:
         return "new java.util.ArrayList<>()"
-    if pkg and hasattr(pkg, 'custom_types') and pkg.custom_types:
+    if pkg and hasattr(pkg, "custom_types") and pkg.custom_types:
         type_lower = java_type.lower()
         for tn, ti in pkg.custom_types.items():
             if ti.get("kind") == "record" and _custom_type_classname(tn).lower() == type_lower:
@@ -14426,12 +16053,27 @@ def _default_test_value(java_type: str, param_name: str, pkg=None) -> str:
                 return f"new {svc_class}Service.{java_type}()"
     if "string" in lower or lower == "object":
         if "date" in name_lower:
-            return "\"2024-01-01\""
+            return '"2024-01-01"'
         if any(kw in name_lower for kw in ("list", "ids", "task_list", "id_list", "values")):
-            return "\"1,2,3\""
-        if any(kw in name_lower for kw in ("flag", "amount", "seqno", "interfaceseq", "operflag", "stepno", "count", "quantity", "qty", "price", "total")):
-            return "\"1\""
-    return f"\"test_{param_name}\""
+            return '"1,2,3"'
+        if any(
+            kw in name_lower
+            for kw in (
+                "flag",
+                "amount",
+                "seqno",
+                "interfaceseq",
+                "operflag",
+                "stepno",
+                "count",
+                "quantity",
+                "qty",
+                "price",
+                "total",
+            )
+        ):
+            return '"1"'
+    return f'"test_{param_name}"'
 
 
 def _collect_dollar_interpolation_params(proc: ProcedureInfo) -> set:
@@ -14440,11 +16082,11 @@ def _collect_dollar_interpolation_params(proc: ProcedureInfo) -> set:
     params = set()
     for dml in proc.dml_statements:
         if dml.sql_text:
-            for m in re.finditer(r'\$\{(\w+)\}', dml.sql_text):
+            for m in re.finditer(r"\$\{(\w+)\}", dml.sql_text):
                 params.add(m.group(1).lower())
         for dc in dml.dynamic_conditions:
             if dc.sql_fragment:
-                for m in re.finditer(r'\$\{(\w+)\}', dc.sql_fragment):
+                for m in re.finditer(r"\$\{(\w+)\}", dc.sql_fragment):
                     params.add(m.group(1).lower())
     return params
 
@@ -14471,43 +16113,63 @@ def _itest_dollar_param_value(param_name: str) -> str:
 def _has_unchecked_null_size(proc: ProcedureInfo) -> bool:
     result_vars_in_size = set()
     for line in proc.java_logic_lines:
-        for m in re.finditer(r'(\w+Result)\.size\(\)', line):
+        for m in re.finditer(r"(\w+Result)\.size\(\)", line):
             result_vars_in_size.add(m.group(1))
     if not result_vars_in_size:
         return False
     all_text = "\n".join(proc.java_logic_lines)
     for rv in result_vars_in_size:
-        has_mapper_init = bool(re.search(rf'\b{re.escape(rv)}\s*=\s*\w+Mapper\.', all_text) or
-                              re.search(rf'\b{re.escape(rv)}\s*=\s*\w+mapper\.', all_text))
-        has_null_guard = bool(re.search(rf'\b{re.escape(rv)}\s*==\s*null\b.*{re.escape(rv)}\s*=\s*new\b', all_text) or
-                             re.search(rf'if\s*\(\s*{re.escape(rv)}\s*==\s*null\s*\)\s*{re.escape(rv)}\s*=\s*new', all_text))
+        has_mapper_init = bool(
+            re.search(rf"\b{re.escape(rv)}\s*=\s*\w+Mapper\.", all_text)
+            or re.search(rf"\b{re.escape(rv)}\s*=\s*\w+mapper\.", all_text)
+        )
+        has_null_guard = bool(
+            re.search(rf"\b{re.escape(rv)}\s*==\s*null\b.*{re.escape(rv)}\s*=\s*new\b", all_text)
+            or re.search(rf"if\s*\(\s*{re.escape(rv)}\s*==\s*null\s*\)\s*{re.escape(rv)}\s*=\s*new", all_text)
+        )
         if not has_mapper_init and not has_null_guard:
             return True
     return False
 
 
-def _build_success_test(proc: ProcedureInfo, mapper_name: str,
-                         param_values: list, out_decls: list,
-                         args_str: str, service_injections: dict,
-                         svc_method_param_counts: dict, pkg: PackageInfo,
-                         out_params: list = None) -> str:
+def _build_success_test(
+    proc: ProcedureInfo,
+    mapper_name: str,
+    param_values: list,
+    out_decls: list,
+    args_str: str,
+    service_injections: dict,
+    svc_method_param_counts: dict,
+    pkg: PackageInfo,
+    out_params: Optional[list] = None,
+) -> str:
     method_name = java_method_name(proc.proc_name)
     lines = []
     has_while = any("while (" in line or "while(" in line for line in proc.java_logic_lines)
     camel_name = java_method_name(proc.proc_name)
     is_recursive = any(f"this.{camel_name}(" in line for line in proc.java_logic_lines)
-    has_conditional_while = any(re.search(r'while\s*\(\s*\w+\s*[><=!]', line) for line in proc.java_logic_lines)
+    has_conditional_while = any(re.search(r"while\s*\(\s*\w+\s*[><=!]", line) for line in proc.java_logic_lines)
     has_sm_guard = any("_smGuard" in line for line in proc.java_logic_lines)
     has_do_while = "} while (" in " ".join(proc.java_logic_lines)
-    has_indexed_cursor = any("CursorIdx" in line or "CurIdx" in line or ".get(vCurIdx" in line or ".get(vCursorIdx" in line for line in proc.java_logic_lines)
+    has_indexed_cursor = any(
+        "CursorIdx" in line or "CurIdx" in line or ".get(vCurIdx" in line or ".get(vCursorIdx" in line
+        for line in proc.java_logic_lines
+    )
     has_unchecked_null_size = _has_unchecked_null_size(proc)
-    is_safe_while = (has_while and has_indexed_cursor and not has_conditional_while and not has_sm_guard and not has_do_while and not has_unchecked_null_size)
+    is_safe_while = (
+        has_while
+        and has_indexed_cursor
+        and not has_conditional_while
+        and not has_sm_guard
+        and not has_do_while
+        and not has_unchecked_null_size
+    )
     if has_while and not is_safe_while:
-        lines.append("    @org.junit.jupiter.api.Disabled(\"auto-generated mock cannot terminate while loop\")")
+        lines.append('    @org.junit.jupiter.api.Disabled("auto-generated mock cannot terminate while loop")')
     elif is_recursive:
-        lines.append("    @org.junit.jupiter.api.Disabled(\"auto-generated mock cannot terminate recursive call\")")
+        lines.append('    @org.junit.jupiter.api.Disabled("auto-generated mock cannot terminate recursive call")')
     lines.append("    @Test")
-    lines.append(f"    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)")
+    lines.append("    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)")
     lines.append(f"    void test_{method_name}_success() {{")
 
     for pv in param_values:
@@ -14527,9 +16189,9 @@ def _build_success_test(proc: ProcedureInfo, mapper_name: str,
     if is_function:
         lines.append(f"        var result = service.{method_name}({args_str});")
         if is_stubbed or has_empty_body or has_body_error or has_unhandled_stmt:
-            lines.append(f"        // Stub/empty/error/unhandled implementation — result may be null")
+            lines.append("        // Stub/empty/error/unhandled implementation — result may be null")
         else:
-            lines.append(f"        assertNotNull(result);")
+            lines.append("        assertNotNull(result);")
     else:
         lines.append(f"        service.{method_name}({args_str});")
 
@@ -14562,10 +16224,10 @@ def _build_success_test(proc: ProcedureInfo, mapper_name: str,
 def _get_dml_mapper_param_types(proc: ProcedureInfo, dml: DmlStatement) -> list:
     """Compute Java param types for a DML mapper method, matching _build_mapper_method order."""
     sql_raw = dml.sql_text or ""
-    _sql_refs = set(re.findall(r'[#\$]\{(\w+)', sql_raw))
+    _sql_refs = set(re.findall(r"[#\$]\{(\w+)", sql_raw))
     if dml.is_dynamic and dml.dynamic_conditions:
         for dc in dml.dynamic_conditions:
-            _sql_refs.update(re.findall(r'[#\$]\{(\w+)', dc.sql_fragment))
+            _sql_refs.update(re.findall(r"[#\$]\{(\w+)", dc.sql_fragment))
 
     types = []
     _extra_java_names = {jn for jn, _ in dml.extra_params}
@@ -14578,7 +16240,7 @@ def _get_dml_mapper_param_types(proc: ProcedureInfo, dml: DmlStatement) -> list:
         types.append(p.java_type)
 
     for java_name, java_type in _dml_used_local_vars(proc, dml):
-        mapper_type = re.sub(r'^AtomicReference<(.+)>$', r'\1', java_type) if java_type else java_type
+        mapper_type = re.sub(r"^AtomicReference<(.+)>$", r"\1", java_type) if java_type else java_type
         types.append(mapper_type)
 
     seen_java = {p.java_name for p in proc.parameters if not (p.mode and p.mode.upper() == "OUT")}
@@ -14591,7 +16253,16 @@ def _get_dml_mapper_param_types(proc: ProcedureInfo, dml: DmlStatement) -> list:
     return types
 
 
-_PRIMITIVE_BOXING = {"boolean": "Boolean", "int": "Integer", "long": "Long", "double": "Double", "float": "Float", "short": "Short", "byte": "Byte", "char": "Character"}
+_PRIMITIVE_BOXING = {
+    "boolean": "Boolean",
+    "int": "Integer",
+    "long": "Long",
+    "double": "Double",
+    "float": "Float",
+    "short": "Short",
+    "byte": "Byte",
+    "char": "Character",
+}
 
 _SIMPLE_TO_FQ = {
     "Map": "java.util.Map",
@@ -14601,7 +16272,7 @@ _SIMPLE_TO_FQ = {
 
 
 def _any_type_class(java_type: str) -> str:
-    base = re.sub(r'<.*>', '', java_type).strip()
+    base = re.sub(r"<.*>", "", java_type).strip()
     base = _PRIMITIVE_BOXING.get(base, base)
     if "." not in base:
         base = _SIMPLE_TO_FQ.get(base, base)
@@ -14621,94 +16292,109 @@ def _collect_all_dmls(pkg: PackageInfo) -> dict:
                 local_var_count = len(local_var_names)
                 if dml.is_dynamic:
                     sql_raw = dml.sql_text or ""
-                    sql_refs = set(re.findall(r'[#\$]\{(\w+)', sql_raw))
+                    sql_refs = set(re.findall(r"[#\$]\{(\w+)", sql_raw))
                     if dml.dynamic_conditions:
                         for dc in dml.dynamic_conditions:
-                            sql_refs.update(re.findall(r'[#\$]\{(\w+)', dc.sql_fragment))
-                    dyn_param_count = sum(1 for param in p.parameters if not (param.mode and param.mode.upper() == "OUT") and param.java_name in sql_refs)
+                            sql_refs.update(re.findall(r"[#\$]\{(\w+)", dc.sql_fragment))
+                    dyn_param_count = sum(
+                        1
+                        for param in p.parameters
+                        if not (param.mode and param.mode.upper() == "OUT") and param.java_name in sql_refs
+                    )
                     total = dyn_param_count + local_var_count + extra_param_count
                 else:
                     total = in_param_count + local_var_count + extra_param_count
-                all_dmls[key] = (dml.method_id, dml.sql_type, dml.result_type, dml.returns_list, total, dml.sql_text, dml.returning_cols, dml.returning_into_vars, dml.is_forall_batch, list(param_types))
+                all_dmls[key] = (
+                    dml.method_id,
+                    dml.sql_type,
+                    dml.result_type,
+                    dml.returns_list,
+                    total,
+                    dml.sql_text,
+                    dml.returning_cols,
+                    dml.returning_into_vars,
+                    dml.is_forall_batch,
+                    list(param_types),
+                )
     return all_dmls
 
 
 def _sanitize_column_name(name: str) -> str:
     s = name.lower().strip()
-    s = s.replace('\n', ' ').replace('\r', ' ')
-    s = re.sub(r'\s+', ' ', s)
+    s = s.replace("\n", " ").replace("\r", " ")
+    s = re.sub(r"\s+", " ", s)
     # Strip PL/SQL keywords that may appear as column suffixes (e.g. "base_salary BULK COLLECT")
-    s = re.sub(r'\bbulk\s+collect\b', '', s, flags=re.IGNORECASE)
-    s = re.sub(r'[^a-z0-9_]', '', s)
-    s = s.strip('_')
+    s = re.sub(r"\bbulk\s+collect\b", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"[^a-z0-9_]", "", s)
+    s = s.strip("_")
     return s if s else "col"
 
 
 def _escape_java_string(s: str) -> str:
-    return s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+    return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
 
 
 def _extract_mock_fields_from_sql(sql_text: str) -> dict:
     if not sql_text:
         return {}
-    stripped = re.sub(r'--.*$', '', sql_text, flags=re.MULTILINE)
-    stripped = re.sub(r'/\*.*?\*/', '', stripped, flags=re.DOTALL)
+    stripped = re.sub(r"--.*$", "", sql_text, flags=re.MULTILINE)
+    stripped = re.sub(r"/\*.*?\*/", "", stripped, flags=re.DOTALL)
     # Strip BULK COLLECT INTO clause before column extraction
-    stripped = re.sub(r'\bBULK\s+COLLECT\s+INTO\b\s+[\w\s,]+', '', stripped, flags=re.IGNORECASE)
+    stripped = re.sub(r"\bBULK\s+COLLECT\s+INTO\b\s+[\w\s,]+", "", stripped, flags=re.IGNORECASE)
     # Strip plain INTO clause (single-variable)
-    stripped = re.sub(r'\bINTO\s+\w+', '', stripped, flags=re.IGNORECASE)
+    stripped = re.sub(r"\bINTO\s+\w+", "", stripped, flags=re.IGNORECASE)
     # Remove parenthesized subqueries to avoid FROM matching inside them
     no_subq = stripped
     for _ in range(5):
         prev = no_subq
-        no_subq = re.sub(r'\([^()]*\)', '', no_subq)
+        no_subq = re.sub(r"\([^()]*\)", "", no_subq)
         if no_subq == prev:
             break
-    m = re.match(r'select\s+(.*?)\s+from\b', no_subq, re.IGNORECASE | re.DOTALL)
+    m = re.match(r"select\s+(.*?)\s+from\b", no_subq, re.IGNORECASE | re.DOTALL)
     if not m:
         return {}
     col_clause = m.group(1).strip()
-    if col_clause == '*':
+    if col_clause == "*":
         return {}
     # Split on commas, but respect parentheses (subqueries, function calls)
     columns = []
     depth = 0
-    current = []
+    current: list[str] = []
     for ch in col_clause:
-        if ch == '(':
+        if ch == "(":
             depth += 1
-        elif ch == ')':
+        elif ch == ")":
             depth = max(0, depth - 1)
-        elif ch == ',' and depth == 0:
-            columns.append(''.join(current).strip())
+        elif ch == "," and depth == 0:
+            columns.append("".join(current).strip())
             current = []
             continue
         current.append(ch)
     if current:
-        columns.append(''.join(current).strip())
+        columns.append("".join(current).strip())
     clean_columns = []
     for part in columns:
         part = part.strip()
         if not part:
             continue
         # Standard alias: "expr AS alias" (something before AS)
-        alias_match = re.match(r'.+\s+[Aa][Ss]\s+(\w+)\s*$', part)
+        alias_match = re.match(r".+\s+[Aa][Ss]\s+(\w+)\s*$", part)
         if alias_match:
             clean_columns.append(alias_match.group(1).lower())
             continue
         # Orphaned alias from subquery stripping: "AS alias" (nothing before AS)
-        orphan_alias = re.match(r'^[Aa][Ss]\s+(\w+)\s*$', part)
+        orphan_alias = re.match(r"^[Aa][Ss]\s+(\w+)\s*$", part)
         if orphan_alias:
             clean_columns.append(orphan_alias.group(1).lower())
             continue
-        if '.' in part:
-            col_name = part.rsplit('.', 1)[-1].strip()
+        if "." in part:
+            col_name = part.rsplit(".", 1)[-1].strip()
             if col_name.isidentifier():
                 clean_columns.append(col_name.lower())
             continue
-        if '(' in part:
+        if "(" in part:
             continue
-        if part.strip() == '*':
+        if part.strip() == "*":
             continue
         sanitized = _sanitize_column_name(part)
         if sanitized and sanitized != "col":
@@ -14726,7 +16412,7 @@ def _mock_value_for_column(col_name: str) -> str:
     if any(k in n for k in ("salary", "amount", "price", "total", "balance", "cost")):
         return "java.math.BigDecimal.TEN"
     if any(k in n for k in ("name", "dept", "title", "label", "status", "desc")):
-        return "\"test\""
+        return '"test"'
     if any(k in n for k in ("count", "qty", "quantity", "num", "head_count")):
         return "5"
     if any(k in n for k in ("_ts", "ts_value", "_at", "time", "timestamp")):
@@ -14740,23 +16426,23 @@ def _extract_select_columns(sql: str) -> list:
     """Extract column names from SELECT clause (before FROM). Returns list of column name strings."""
     if not sql:
         return []
-    stripped = re.sub(r'--.*$', '', sql, flags=re.MULTILINE)
-    stripped = re.sub(r'/\*.*?\*/', '', stripped, flags=re.DOTALL)
-    stripped = re.sub(r'\bBULK\s+COLLECT\b', '', stripped, flags=re.IGNORECASE)
-    stripped = re.sub(r'\s+into\s+.*?(?=\s+from\b)', ' ', stripped, flags=re.IGNORECASE | re.DOTALL)
-    m = re.match(r'select\s+(.*?)\s+from\b', stripped, re.IGNORECASE | re.DOTALL)
+    stripped = re.sub(r"--.*$", "", sql, flags=re.MULTILINE)
+    stripped = re.sub(r"/\*.*?\*/", "", stripped, flags=re.DOTALL)
+    stripped = re.sub(r"\bBULK\s+COLLECT\b", "", stripped, flags=re.IGNORECASE)
+    stripped = re.sub(r"\s+into\s+.*?(?=\s+from\b)", " ", stripped, flags=re.IGNORECASE | re.DOTALL)
+    m = re.match(r"select\s+(.*?)\s+from\b", stripped, re.IGNORECASE | re.DOTALL)
     if not m:
         return []
     col_clause = m.group(1).strip()
-    cols = [c.strip() for c in re.split(r',\s*', col_clause)]
+    cols = [c.strip() for c in re.split(r",\s*", col_clause)]
     result = []
     for col in cols:
-        col = ' '.join(col.split())  # collapse whitespace/newlines
-        alias_match = re.match(r'.+\s+[Aa][Ss]\s+(\w+)\s*$', col)
+        col = " ".join(col.split())  # collapse whitespace/newlines
+        alias_match = re.match(r".+\s+[Aa][Ss]\s+(\w+)\s*$", col)
         if alias_match:
             result.append(alias_match.group(1))
         else:
-            dot_match = re.match(r'(\w+)\.(\w+)$', col)
+            dot_match = re.match(r"(\w+)\.(\w+)$", col)
             if dot_match:
                 result.append(dot_match.group(2))
             else:
@@ -14767,23 +16453,35 @@ def _extract_select_columns(sql: str) -> list:
 def _extract_select_column(sql_text: str, index: int) -> str:
     if not sql_text:
         return "col"
-    stripped = re.sub(r'--.*$', '', sql_text, flags=re.MULTILINE)
-    stripped = re.sub(r'/\*.*?\*/', '', stripped, flags=re.DOTALL)
-    stripped = re.sub(r'\s+into\s+.*?(?=\s+from\b)', ' ', stripped, flags=re.IGNORECASE | re.DOTALL)
-    m = re.match(r'select\s+(.*?)\s+from\b', stripped, re.IGNORECASE | re.DOTALL)
+    stripped = re.sub(r"--.*$", "", sql_text, flags=re.MULTILINE)
+    stripped = re.sub(r"/\*.*?\*/", "", stripped, flags=re.DOTALL)
+    stripped = re.sub(r"\s+into\s+.*?(?=\s+from\b)", " ", stripped, flags=re.IGNORECASE | re.DOTALL)
+    m = re.match(r"select\s+(.*?)\s+from\b", stripped, re.IGNORECASE | re.DOTALL)
     if not m:
         return "col"
-    cols = [c.strip() for c in re.split(r',\s*', m.group(1))]
+    cols = [c.strip() for c in re.split(r",\s*", m.group(1))]
     if index >= len(cols):
         return "col"
     col = cols[index].strip()
-    alias_match = re.match(r'.+\s+[Aa][Ss]\s+(\w+)\s*$', col)
+    alias_match = re.match(r".+\s+[Aa][Ss]\s+(\w+)\s*$", col)
     if alias_match:
         return alias_match.group(1)
     return col
 
 
-def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bool, mapper_name: str, dml_method_id: str, method_any: str, dml_sql_text: str = "", returning_cols: list = None, returning_into_vars: list = None, extra_keys: list = None, count_usage: str = None) -> str:
+def _mock_select_return(
+    dml_sql_type: str,
+    dml_result_type,
+    dml_returns_list: bool,
+    mapper_name: str,
+    dml_method_id: str,
+    method_any: str,
+    dml_sql_text: str = "",
+    returning_cols: Optional[list] = None,
+    returning_into_vars: Optional[list] = None,
+    extra_keys: Optional[list] = None,
+    count_usage: Optional[str] = None,
+) -> str:
     def _with_extra_keys(mock_fields: dict) -> str:
         puts = " ".join(f'm.put("{_escape_java_string(k)}", {v});' for k, v in mock_fields.items())
         return puts + " m.putAll(_rowTmpl);"
@@ -14793,11 +16491,40 @@ def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bo
             puts_parts = []
             for _ci, c in enumerate(returning_cols):
                 _var_name = returning_into_vars[_ci] if returning_into_vars and _ci < len(returning_into_vars) else None
-                if 'time' in c.lower() or 'date' in c.lower() or (_var_name and ('time' in _var_name.lower() or 'date' in _var_name.lower())):
-                    puts_parts.append(f'm.put("{_escape_java_string(c)}", new java.sql.Timestamp(System.currentTimeMillis()));')
-                elif 'salary' in c.lower() or 'amount' in c.lower() or 'price' in c.lower() or 'pct' in c.lower() or 'bonus' in c.lower() or (_var_name and ('bonus' in _var_name.lower() or 'salary' in _var_name.lower() or 'amount' in _var_name.lower() or 'pct' in _var_name.lower())):
+                if (
+                    "time" in c.lower()
+                    or "date" in c.lower()
+                    or (_var_name and ("time" in _var_name.lower() or "date" in _var_name.lower()))
+                ):
+                    puts_parts.append(
+                        f'm.put("{_escape_java_string(c)}", new java.sql.Timestamp(System.currentTimeMillis()));'
+                    )
+                elif (
+                    "salary" in c.lower()
+                    or "amount" in c.lower()
+                    or "price" in c.lower()
+                    or "pct" in c.lower()
+                    or "bonus" in c.lower()
+                    or (
+                        _var_name
+                        and (
+                            "bonus" in _var_name.lower()
+                            or "salary" in _var_name.lower()
+                            or "amount" in _var_name.lower()
+                            or "pct" in _var_name.lower()
+                        )
+                    )
+                ):
                     puts_parts.append(f'm.put("{_escape_java_string(c)}", java.math.BigDecimal.TEN);')
-                elif 'name' in c.lower() or 'reason' in c.lower() or 'fmt' in c.lower() or (_var_name and ('name' in _var_name.lower() or 'fmt' in _var_name.lower() or 'reason' in _var_name.lower())):
+                elif (
+                    "name" in c.lower()
+                    or "reason" in c.lower()
+                    or "fmt" in c.lower()
+                    or (
+                        _var_name
+                        and ("name" in _var_name.lower() or "fmt" in _var_name.lower() or "reason" in _var_name.lower())
+                    )
+                ):
                     puts_parts.append(f'm.put("{_escape_java_string(c)}", "test");')
                 else:
                     puts_parts.append(f'm.put("{_escape_java_string(c)}", 1);')
@@ -14809,7 +16536,7 @@ def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bo
         if mock_fields:
             puts = _with_extra_keys(mock_fields)
             return f"        {{ var m = new java.util.HashMap<String,Object>(); {puts} when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }}"
-        return f"        {{ var m = new java.util.HashMap<String,Object>(); m.putAll(_rowTmpl); m.put(\"id\", 1); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }}"
+        return f'        {{ var m = new java.util.HashMap<String,Object>(); m.putAll(_rowTmpl); m.put("id", 1); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }}'
     # M1 (#114 review): "count" must be a camelCase word (countOrders / ordersCount),
     # not a substring (discount / account / encounter would force the mock to 0).
     # method_id is `{dml_type}{snake_to_pascal(semantic_key)}` (e.g. selectOrderCount):
@@ -14818,8 +16545,8 @@ def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bo
     # keeps its lowercase c and does not match. The SQL text check still catches
     # `count(` in the raw query.
     _method_id_is_count = bool(
-        re.search(r'(^|[a-z0-9_])Count([A-Z_0-9]|$)', dml_method_id) or dml_method_id.startswith("Count")
-    ) or bool(re.search(r'\bcount\s*\(', (dml_sql_text or "").lower()))
+        re.search(r"(^|[a-z0-9_])Count([A-Z_0-9]|$)", dml_method_id) or dml_method_id.startswith("Count")
+    ) or bool(re.search(r"\bcount\s*\(", (dml_sql_text or "").lower()))
     _is_count_query = _method_id_is_count
     if dml_result_type == "Integer":
         _v = ("1" if count_usage == "exists" else "0") if _is_count_query else "999"
@@ -14828,26 +16555,26 @@ def _mock_select_return(dml_sql_type: str, dml_result_type, dml_returns_list: bo
         _v = ("1L" if count_usage == "exists" else "0L") if _is_count_query else "999L"
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn({_v});"
     if dml_result_type == "String":
-        return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(\"1\");"
+        return f'        when({mapper_name}.{dml_method_id}({method_any})).thenReturn("1");'
     if dml_result_type == "Boolean":
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(true);"
     if dml_result_type == "java.math.BigDecimal":
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.math.BigDecimal.TEN);"
     if "Timestamp" in (dml_result_type or ""):
-        return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.sql.Timestamp.valueOf(\"2024-01-01 00:00:00\"));"
+        return f'        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.sql.Timestamp.valueOf("2024-01-01 00:00:00"));'
     if "Date" in (dml_result_type or ""):
-        return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.sql.Date.valueOf(\"2024-01-01\"));"
+        return f'        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.sql.Date.valueOf("2024-01-01"));'
     if dml_result_type and dml_result_type not in ("Map<String, Object>", "java.util.Map"):
         return f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(null);"
     mock_fields = _extract_mock_fields_from_sql(dml_sql_text)
     if mock_fields:
         puts = _with_extra_keys(mock_fields)
         return f"        {{ var m = new java.util.HashMap<String,Object>(); {puts} when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m).thenReturn(null); }}"
-    return f"        {{ var m = new java.util.HashMap<String,Object>(); m.putAll(_rowTmpl); m.put(\"id\", 1L); m.put(\"emp_id\", 1L); m.put(\"product_id\", 1L); m.put(\"v_product_id\", 1L); m.put(\"v_qty\", 10); m.put(\"total\", 100); m.put(\"v_total\", 100); m.put(\"stock_qty\", 999); m.put(\"name\", \"test\"); m.put(\"emp_name\", \"test\"); m.put(\"status\", \"ACTIVE\"); m.put(\"v_status\", \"PENDING\"); m.put(\"v_amount\", java.math.BigDecimal.TEN); m.put(\"base_salary\", java.math.BigDecimal.TEN); m.put(\"bonus_pct\", 0.10d); m.put(\"allowance\", 1000); m.put(\"count\", 1); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m).thenReturn(null); }}"
+    return f'        {{ var m = new java.util.HashMap<String,Object>(); m.putAll(_rowTmpl); m.put("id", 1L); m.put("emp_id", 1L); m.put("product_id", 1L); m.put("v_product_id", 1L); m.put("v_qty", 10); m.put("total", 100); m.put("v_total", 100); m.put("stock_qty", 999); m.put("name", "test"); m.put("emp_name", "test"); m.put("status", "ACTIVE"); m.put("v_status", "PENDING"); m.put("v_amount", java.math.BigDecimal.TEN); m.put("base_salary", java.math.BigDecimal.TEN); m.put("bonus_pct", 0.10d); m.put("allowance", 1000); m.put("count", 1); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m).thenReturn(null); }}'
 
 
 def _detect_overloaded_ids(all_dmls: dict) -> set:
-    method_id_entries = {}
+    method_id_entries: dict[Any, list[Any]] = {}
     for key in all_dmls:
         mid = key[0]
         pts = key[1]
@@ -14871,20 +16598,27 @@ def _collect_count_usage(pkg: PackageInfo) -> dict:
     (needs mock 1); `if (v > 0)` / `if (v != 0)` is a guard (needs mock 0).
     """
     usage: dict = {}
+    priority = {"exists": 0, "guard": 1}
     for _p in pkg.procedures:
         lines = _p.java_logic_lines
         for i, line in enumerate(lines):
-            m = re.search(r'(\w+)\s*=\s*(?:this\.)?[\w]*[Mm]apper\.(\w+)\s*\(', line)
+            m = re.search(r"(\w+)\s*=\s*(?:this\.)?[\w]*[Mm]apper\.(\w+)\s*\(", line)
             if not m:
                 continue
             var, method_id = m.group(1), m.group(2)
-            for j in range(i, min(i + 3, len(lines))):
+            for j in range(i, min(i + 5, len(lines))):
                 l2 = lines[j]
-                if re.search(r'if\s*\(\s*' + re.escape(var) + r'\s*==\s*0\s*\)', l2):
-                    usage[method_id] = 'exists'
-                    break
-                if re.search(r'if\s*\(\s*' + re.escape(var) + r'\s*(?:>\s*0|!=\s*0)\s*\)', l2):
-                    usage[method_id] = 'guard'
+                var_re = re.escape(var)
+                detected = None
+                if re.search(r"\b" + var_re + r"\s*==\s*0\b|\b0\s*==\s*" + var_re + r"\b", l2):
+                    detected = "exists"
+                elif re.search(r"\b" + var_re + r"\s*<\s*1\b", l2):
+                    detected = "exists"
+                elif re.search(r"\b" + var_re + r"\s*(?:>\s*0|!=\s*0|>=\s*1)\b", l2):
+                    detected = "guard"
+                if detected is not None:
+                    if method_id not in usage or priority[detected] > priority[usage[method_id]]:
+                        usage[method_id] = detected
                     break
     return usage
 
@@ -14893,7 +16627,9 @@ def _mock_all_mapper_methods(mapper_name: str, pkg: PackageInfo, lines: list, er
     _extra_keys = []
     _key_cast = {}
     _seen_keys = set()
-    _cast_re = re.compile(r'\((Map<String, ?Object>|String|java\.sql\.Timestamp|java\.sql\.Date|Number)\)\s*\(?\s*[\w.]+\.get(?:OrDefault)?\("(\w+)"')
+    _cast_re = re.compile(
+        r'\((Map<String, ?Object>|String|java\.sql\.Timestamp|java\.sql\.Date|Number)\)\s*\(?\s*[\w.]+\.get(?:OrDefault)?\("(\w+)"'
+    )
     for _p in pkg.procedures:
         for _l in _p.java_logic_lines:
             for _m in _cast_re.finditer(_l):
@@ -14911,11 +16647,11 @@ def _mock_all_mapper_methods(mapper_name: str, pkg: PackageInfo, lines: list, er
         if c and "Map" in c:
             return "new java.util.HashMap<String,Object>()"
         if c == "String":
-            return "\"1\""
+            return '"1"'
         if c and "Timestamp" in c:
-            return "java.sql.Timestamp.valueOf(\"2024-01-01 00:00:00\")"
+            return 'java.sql.Timestamp.valueOf("2024-01-01 00:00:00")'
         if c and "Date" in c:
-            return "java.sql.Date.valueOf(\"2024-01-01\")"
+            return 'java.sql.Date.valueOf("2024-01-01")'
         return _mock_value_for_column(k)
 
     _tmpl_puts = " ".join(f'_rowTmpl.put("{_escape_java_string(k)}", {_tmpl_value(k)});' for k in _extra_keys)
@@ -14924,7 +16660,17 @@ def _mock_all_mapper_methods(mapper_name: str, pkg: PackageInfo, lines: list, er
     all_dmls = _collect_all_dmls(pkg)
     overloaded = _detect_overloaded_ids(all_dmls)
     for dml_key, dml_info in all_dmls.items():
-        dml_method_id, dml_sql_type, dml_result_type, dml_returns_list, dml_param_count, dml_sql_text, dml_returning_cols, dml_returning_into_vars, dml_is_forall_batch = dml_info[:9]
+        (
+            dml_method_id,
+            dml_sql_type,
+            dml_result_type,
+            dml_returns_list,
+            dml_param_count,
+            dml_sql_text,
+            dml_returning_cols,
+            dml_returning_into_vars,
+            dml_is_forall_batch,
+        ) = dml_info[:9]
         param_types = dml_info[9] if len(dml_info) > 9 else []
         if dml_is_forall_batch:
             if error_mode:
@@ -14941,21 +16687,41 @@ def _mock_all_mapper_methods(mapper_name: str, pkg: PackageInfo, lines: list, er
             method_any = ""
         if error_mode and dml_sql_type == "select":
             if dml_returns_list:
-                lines.append(f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of());")
+                lines.append(
+                    f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.util.List.of());"
+                )
             elif dml_result_type == "Integer":
                 lines.append(f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(0);")
             elif dml_result_type == "Long":
                 lines.append(f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(0L);")
             elif dml_result_type == "String":
-                lines.append(f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(\"\");")
+                lines.append(f'        when({mapper_name}.{dml_method_id}({method_any})).thenReturn("");')
             elif dml_result_type == "java.math.BigDecimal":
-                lines.append(f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.math.BigDecimal.ZERO);")
+                lines.append(
+                    f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(java.math.BigDecimal.ZERO);"
+                )
             elif dml_returning_cols or dml_result_type in ("Map<String, Object>", "java.util.Map", None, ""):
-                lines.append(f"        {{ var m = new java.util.HashMap<String,Object>(); m.put(\"id\", 1L); m.put(\"emp_id\", 1L); m.put(\"product_id\", 1L); m.put(\"v_product_id\", 1L); m.put(\"v_qty\", 10); m.put(\"total\", 0); m.put(\"v_total\", 0); m.put(\"stock_qty\", 0); m.put(\"name\", \"\"); m.put(\"emp_name\", \"\"); m.put(\"status\", \"REJECTED\"); m.put(\"v_status\", \"REJECTED\"); m.put(\"v_amount\", java.math.BigDecimal.ZERO); m.put(\"base_salary\", java.math.BigDecimal.ZERO); m.put(\"bonus_pct\", 0.0d); m.put(\"allowance\", 0); m.put(\"count\", 0); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m); }}")
+                lines.append(
+                    f'        {{ var m = new java.util.HashMap<String,Object>(); m.put("id", 1L); m.put("emp_id", 1L); m.put("product_id", 1L); m.put("v_product_id", 1L); m.put("v_qty", 10); m.put("total", 0); m.put("v_total", 0); m.put("stock_qty", 0); m.put("name", ""); m.put("emp_name", ""); m.put("status", "REJECTED"); m.put("v_status", "REJECTED"); m.put("v_amount", java.math.BigDecimal.ZERO); m.put("base_salary", java.math.BigDecimal.ZERO); m.put("bonus_pct", 0.0d); m.put("allowance", 0); m.put("count", 0); when({mapper_name}.{dml_method_id}({method_any})).thenReturn(m); }}'
+                )
             else:
                 lines.append(f"        when({mapper_name}.{dml_method_id}({method_any})).thenReturn(null);")
         else:
-            lines.append(_mock_select_return(dml_sql_type, dml_result_type, dml_returns_list, mapper_name, dml_method_id, method_any, dml_sql_text, dml_returning_cols, dml_returning_into_vars, extra_keys=_extra_keys, count_usage=_count_usage.get(dml_method_id)))
+            lines.append(
+                _mock_select_return(
+                    dml_sql_type,
+                    dml_result_type,
+                    dml_returns_list,
+                    mapper_name,
+                    dml_method_id,
+                    method_any,
+                    dml_sql_text,
+                    dml_returning_cols,
+                    dml_returning_into_vars,
+                    extra_keys=_extra_keys,
+                    count_usage=_count_usage.get(dml_method_id),
+                )
+            )
 
 
 def _build_any_matchers(proc: ProcedureInfo) -> str:
@@ -14965,25 +16731,43 @@ def _build_any_matchers(proc: ProcedureInfo) -> str:
     return ", ".join(["any()"] * count)
 
 
-def _build_error_test(proc: ProcedureInfo, mapper_name: str,
-                       param_values: list, out_decls: list,
-                       args_str: str, service_injections: dict,
-                       svc_method_param_counts: dict, pkg: PackageInfo) -> str:
+def _build_error_test(
+    proc: ProcedureInfo,
+    mapper_name: str,
+    param_values: list,
+    out_decls: list,
+    args_str: str,
+    service_injections: dict,
+    svc_method_param_counts: dict,
+    pkg: PackageInfo,
+) -> str:
     method_name = java_method_name(proc.proc_name)
     has_while = any("while (" in line or "while(" in line for line in proc.java_logic_lines)
-    has_conditional_while = any(re.search(r'while\s*\(\s*\w+\s*[><=!]', line) for line in proc.java_logic_lines)
+    has_conditional_while = any(re.search(r"while\s*\(\s*\w+\s*[><=!]", line) for line in proc.java_logic_lines)
     has_sm_guard = any("_smGuard" in line for line in proc.java_logic_lines)
     has_do_while = "} while (" in " ".join(proc.java_logic_lines)
-    has_indexed_cursor = any("CursorIdx" in line or "CurIdx" in line or ".get(vCurIdx" in line or ".get(vCursorIdx" in line for line in proc.java_logic_lines)
+    has_indexed_cursor = any(
+        "CursorIdx" in line or "CurIdx" in line or ".get(vCurIdx" in line or ".get(vCursorIdx" in line
+        for line in proc.java_logic_lines
+    )
     has_unchecked_null_size = _has_unchecked_null_size(proc)
-    is_safe_while = (has_while and has_indexed_cursor and not has_conditional_while and not has_sm_guard and not has_do_while and not has_unchecked_null_size)
+    is_safe_while = (
+        has_while
+        and has_indexed_cursor
+        and not has_conditional_while
+        and not has_sm_guard
+        and not has_do_while
+        and not has_unchecked_null_size
+    )
     lines = []
     if has_while and not is_safe_while:
-        lines.append("    @org.junit.jupiter.api.Disabled(\"auto-generated mock cannot terminate while loop\")")
+        lines.append('    @org.junit.jupiter.api.Disabled("auto-generated mock cannot terminate while loop")')
     lines.append("    @Test")
-    lines.append(f"    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)")
+    lines.append("    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)")
     lines.append(f"    void test_{method_name}_throwsBusinessException() {{")
-    lines.append("        org.junit.jupiter.api.Assumptions.assumeTrue(false, \"auto-generated error test requires domain-specific test data\");")
+    lines.append(
+        '        org.junit.jupiter.api.Assumptions.assumeTrue(false, "auto-generated error test requires domain-specific test data");'
+    )
 
     for pv in param_values:
         lines.append(f"        {pv}")
@@ -14992,9 +16776,9 @@ def _build_error_test(proc: ProcedureInfo, mapper_name: str,
 
     _mock_all_mapper_methods(mapper_name, pkg, lines, error_mode=True)
 
-    lines.append(f"        assertThrows(BusinessException.class, () -> {{")
+    lines.append("        assertThrows(BusinessException.class, () -> {")
     lines.append(f"            service.{method_name}({args_str});")
-    lines.append(f"        }});")
+    lines.append("        });")
     lines.append("    }")
     return "\n".join(lines)
 
@@ -15015,8 +16799,8 @@ CACHE_DIR_NAME = ".fluxgauss"
 
 def _compute_file_hash(filepath: str) -> str:
     h = hashlib.sha256()
-    with open(filepath, 'rb') as f:
-        for chunk in iter(lambda: f.read(8192), b''):
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
             h.update(chunk)
     return h.hexdigest()
 
@@ -15024,19 +16808,19 @@ def _compute_file_hash(filepath: str) -> str:
 def _parse_config(config_path: str) -> dict:
     """Parse YAML config file. Falls back to simple line parser if pyyaml unavailable."""
     if yaml:
-        with open(config_path, 'r') as f:
+        with open(config_path) as f:
             return yaml.safe_load(f) or {}
 
     def _yaml_bool(v):
-        if v.lower() in ('true', 'yes', 'on'):
+        if v.lower() in ("true", "yes", "on"):
             return True
-        if v.lower() in ('false', 'no', 'off'):
+        if v.lower() in ("false", "no", "off"):
             return False
         return v.strip('"').strip("'")
 
     def _yaml_value(v):
         v = v.strip()
-        if not v or v == '~' or v == 'null':
+        if not v or v == "~" or v == "null":
             return None
         b = _yaml_bool(v)
         if isinstance(b, bool):
@@ -15051,17 +16835,17 @@ def _parse_config(config_path: str) -> dict:
             pass
         return v.strip('"').strip("'")
 
-    config = {}
+    config: dict[str, Any] = {}
     stack = [(config, 0)]  # (dict_or_list, indent_level)
     lines = []
-    with open(config_path, 'r') as f:
+    with open(config_path) as f:
         for line in f:
             stripped = line.strip()
-            if stripped and not stripped.startswith('#'):
+            if stripped and not stripped.startswith("#"):
                 indent = len(line) - len(line.lstrip())
                 lines.append((indent, stripped))
     for li, (indent, stripped) in enumerate(lines):
-        list_match = re.match(r'^-\s+(.+)$', stripped)
+        list_match = re.match(r"^-\s+(.+)$", stripped)
         if list_match:
             val = list_match.group(1).strip().strip('"').strip("'")
             parent, _ = stack[-1]
@@ -15076,7 +16860,7 @@ def _parse_config(config_path: str) -> dict:
                     elif isinstance(entry, dict) and not entry:
                         parent[last_key] = [val]
             continue
-        kv_match = re.match(r'^(\w[\w_]*)\s*:\s*(.*)$', stripped)
+        kv_match = re.match(r"^(\w[\w_]*)\s*:\s*(.*)$", stripped)
         if kv_match:
             key, value = kv_match.group(1), kv_match.group(2).strip()
             while len(stack) > 1 and stack[-1][1] >= indent:
@@ -15086,8 +16870,7 @@ def _parse_config(config_path: str) -> dict:
                 if value:
                     parent[key] = _yaml_value(value)
                 else:
-                    next_is_list = (li + 1 < len(lines)
-                                    and lines[li + 1][1].startswith('- '))
+                    next_is_list = li + 1 < len(lines) and lines[li + 1][1].startswith("- ")
                     if next_is_list:
                         parent[key] = []
                     else:
@@ -15103,27 +16886,27 @@ def _cache_base(output_dir: str) -> Path:
 def _load_manifest(output_dir: str) -> dict:
     path = _cache_base(output_dir) / "manifest.json"
     if path.exists():
-        with open(path, 'r') as f:
-            return json.load(f)
+        with open(path) as f:
+            return cast(dict, json.load(f))
     return {"files": {}}
 
 
 def _save_manifest(output_dir: str, manifest: dict):
     base = _cache_base(output_dir)
     base.mkdir(parents=True, exist_ok=True)
-    with open(base / "manifest.json", 'w') as f:
+    with open(base / "manifest.json", "w") as f:
         json.dump(manifest, f, indent=2)
 
 
 def _cached_ast_path(output_dir: str, sql_file: str) -> Path:
-    safe = re.sub(r'[^\w]', '_', sql_file)
+    safe = re.sub(r"[^\w]", "_", sql_file)
     return _cache_base(output_dir) / "ast" / f"{safe}.json"
 
 
 def _load_cached_ast(output_dir: str, sql_file: str):
     path = _cached_ast_path(output_dir, sql_file)
     if path.exists():
-        with open(path, 'r') as f:
+        with open(path) as f:
             return json.load(f)
     return None
 
@@ -15131,7 +16914,7 @@ def _load_cached_ast(output_dir: str, sql_file: str):
 def _save_cached_ast(output_dir: str, sql_file: str, ast: dict):
     ast_dir = _cache_base(output_dir) / "ast"
     ast_dir.mkdir(parents=True, exist_ok=True)
-    with open(_cached_ast_path(output_dir, sql_file), 'w') as f:
+    with open(_cached_ast_path(output_dir, sql_file), "w") as f:
         json.dump(ast, f)
 
 
@@ -15142,7 +16925,7 @@ def _load_gen_checkpoint(output_dir: str) -> set:
     path = _cache_base(output_dir) / _GEN_CHECKPOINT_FILE
     if path.exists():
         try:
-            with open(path, 'r') as f:
+            with open(path) as f:
                 data = json.load(f)
             return set(data.get("completed", []))
         except Exception:
@@ -15153,7 +16936,7 @@ def _load_gen_checkpoint(output_dir: str) -> set:
 def _save_gen_checkpoint(output_dir: str, completed: set):
     base = _cache_base(output_dir)
     base.mkdir(parents=True, exist_ok=True)
-    with open(base / _GEN_CHECKPOINT_FILE, 'w') as f:
+    with open(base / _GEN_CHECKPOINT_FILE, "w") as f:
         json.dump({"completed": sorted(completed), "updated_at": datetime.now().isoformat()}, f, indent=2)
 
 
@@ -15215,10 +16998,8 @@ def _clean_stale_packages(output_dir: str, old_manifest: dict, current_packages:
                 _log(f"    Removed: {f.relative_to(base_path)}")
 
 
-
-
 def _itest_collect_schemas() -> dict:
-    schema_map = {}
+    schema_map: dict[str, dict[str, str]] = {}
     for (table, col), sql_type in TYPE_OVERRIDES.items():
         if table not in schema_map:
             schema_map[table] = {}
@@ -15311,19 +17092,19 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
     for pkg in packages:
         for proc in pkg.procedures:
             for dml in proc.dml_statements:
-                raw = getattr(dml, 'raw_sql_for_params', '') or getattr(dml, 'sql_text', '')
+                raw = getattr(dml, "raw_sql_for_params", "") or getattr(dml, "sql_text", "")
                 if not raw:
                     continue
                 raw_lower = raw.lower().strip()
                 if not raw_lower.startswith("insert"):
                     continue
-                m = re.match(r'insert\s+into\s+(\w+)\s*\(([^)]+)\)', raw_lower)
+                m = re.match(r"insert\s+into\s+(\w+)\s*\(([^)]+)\)", raw_lower)
                 if not m:
                     continue
                 tbl = m.group(1)
                 cols_str = m.group(2)
-                insert_cols = [c.strip().strip('"') for c in cols_str.split(',')]
-                if 'id' in insert_cols:
+                insert_cols = [c.strip().strip('"') for c in cols_str.split(",")]
+                if "id" in insert_cols:
                     tables_with_explicit_id_insert.add(tbl)
                 else:
                     tables_with_implicit_id_insert.add(tbl)
@@ -15334,37 +17115,50 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
     for pkg in packages:
         for proc in pkg.procedures:
             for dml in proc.dml_statements:
-                raw = getattr(dml, 'raw_sql_for_params', '') or getattr(dml, 'sql_text', '')
-                for m in re.finditer(r'\b(\w+)\.NEXTVAL\b', raw, re.IGNORECASE):
+                raw = getattr(dml, "raw_sql_for_params", "") or getattr(dml, "sql_text", "")
+                for m in re.finditer(r"\b(\w+)\.NEXTVAL\b", raw, re.IGNORECASE):
                     sequences_needed.add(m.group(1).lower())
                 for m in re.finditer(r"nextval\s*\(\s*'(\w+)'\s*\)", raw, re.IGNORECASE):
                     sequences_needed.add(m.group(1).lower())
 
     lines = []
-    _schema_m = re.search(r'currentSchema=(\w+)', itest_cfg.get("url", ""))
+    _schema_m = re.search(r"currentSchema=(\w+)", itest_cfg.get("url", ""))
     if _schema_m:
         lines.append(f"CREATE SCHEMA IF NOT EXISTS {_schema_m.group(1)};")
     for seq in sorted(sequences_needed):
-        lines.append(f'DROP SEQUENCE IF EXISTS {seq} CASCADE;')
+        lines.append(f"DROP SEQUENCE IF EXISTS {seq} CASCADE;")
     for seq in sorted(sequences_needed):
-        lines.append(f'CREATE SEQUENCE IF NOT EXISTS {seq} START WITH 1 INCREMENT BY 1;')
+        lines.append(f"CREATE SEQUENCE IF NOT EXISTS {seq} START WITH 1 INCREMENT BY 1;")
     if sequences_needed:
         lines.append("")
 
+    emitted_enum_types = set()
+    for table, metadata in sorted(_TABLE_CONSTRAINTS.items()):
+        columns = schema_map.get(table, {})
+        for col, members in metadata.get("enums", {}).items():
+            enum_type = _sql_ident(re.split(r"\s|\(", columns.get(col, ""), maxsplit=1)[0])
+            if not enum_type or enum_type in emitted_enum_types or not members:
+                continue
+            quoted_members = ", ".join("'" + str(member).replace("'", "''") + "'" for member in members)
+            lines.append(f"CREATE TYPE {enum_type} AS ENUM ({quoted_members});")
+            emitted_enum_types.add(enum_type)
+    if emitted_enum_types:
+        lines.append("")
+
     # Extract tables referenced by DML but missing from TYPE_OVERRIDES (no CREATE TABLE DDL)
-    dml_tables = {}
+    dml_tables: dict[str, dict[str, str]] = {}
     for pkg in packages:
         for proc in pkg.procedures:
             for dml in proc.dml_statements:
-                raw = getattr(dml, 'raw_sql_for_params', '') or getattr(dml, 'sql_text', '')
+                raw = getattr(dml, "raw_sql_for_params", "") or getattr(dml, "sql_text", "")
                 if not raw:
                     continue
                 raw_lower = raw.lower().strip()
                 # INSERT INTO table(col1, col2, ...) VALUES(#{param, jdbcType=X, ...}, ...)
-                m_ins = re.match(r'insert\s+into\s+(\w+)\s*\(([^)]+)\)\s*values\s*\(([^)]+)\)', raw_lower, re.DOTALL)
+                m_ins = re.match(r"insert\s+into\s+(\w+)\s*\(([^)]+)\)\s*values\s*\(([^)]+)\)", raw_lower, re.DOTALL)
                 if m_ins:
                     tbl = m_ins.group(1)
-                    cols = [c.strip().strip('"') for c in m_ins.group(2).split(',')]
+                    cols = [c.strip().strip('"') for c in m_ins.group(2).split(",")]
                     vals = m_ins.group(3)
                     if tbl not in dml_tables:
                         dml_tables[tbl] = {}
@@ -15375,76 +17169,122 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
                             dml_tables[tbl][col] = jdbc_type
                     continue
                 # SELECT col1, col2 FROM table WHERE ...
-                m_sel = re.match(r'select\s+(.*?)\s+from\s+(\w+)', raw_lower, re.DOTALL)
+                m_sel = re.match(r"select\s+(.*?)\s+from\s+(\w+)", raw_lower, re.DOTALL)
                 if m_sel:
                     tbl = m_sel.group(2)
-                    if not re.match(r'^[a-zA-Z_]', tbl):
+                    if not re.match(r"^[a-zA-Z_]", tbl):
                         continue
                     sel_str = m_sel.group(1)
                     if tbl not in dml_tables:
                         dml_tables[tbl] = {}
-                    for part in sel_str.split(','):
+                    for part in sel_str.split(","):
                         part = part.strip()
                         if not part:
                             continue
                         # Extract column names from function calls like SUM(amount), COUNT(x)
-                        for fm in re.finditer(r'\b(\w+)\s*\(\s*(\w+)\s*\)', part):
+                        for fm in re.finditer(r"\b(\w+)\s*\(\s*(\w+)\s*\)", part):
                             func_name = fm.group(1).lower()
                             inner_col = fm.group(2)
-                            if func_name not in ('substring', 'trim', 'coalesce', 'nvl', 'nvl2', 'nullif', 'cast', 'extract', 'overlay', 'replace', 'position') and inner_col.lower() not in ('*', 'distinct', 'all'):
+                            if func_name not in (
+                                "substring",
+                                "trim",
+                                "coalesce",
+                                "nvl",
+                                "nvl2",
+                                "nullif",
+                                "cast",
+                                "extract",
+                                "overlay",
+                                "replace",
+                                "position",
+                            ) and inner_col.lower() not in ("*", "distinct", "all"):
                                 if inner_col not in dml_tables[tbl]:
-                                    dml_tables[tbl][inner_col] = 'TEXT'
-                        if '(' in part:
+                                    dml_tables[tbl][inner_col] = "TEXT"
+                        if "(" in part:
                             continue
-                        m_col = re.match(r'(\w+)(?:\s+as\s+(\w+))?', part, re.IGNORECASE)
+                        m_col = re.match(r"(\w+)(?:\s+as\s+(\w+))?", part, re.IGNORECASE)
                         if m_col:
                             col_name = (m_col.group(2) or m_col.group(1)).strip()
-                            if col_name and col_name not in dml_tables[tbl] and col_name not in ('*', 'count', 'sum', 'avg', 'min', 'max'):
-                                dml_tables[tbl][col_name] = 'TEXT'
+                            if (
+                                col_name
+                                and col_name not in dml_tables[tbl]
+                                and col_name not in ("*", "count", "sum", "avg", "min", "max")
+                            ):
+                                dml_tables[tbl][col_name] = "TEXT"
                     # Also extract columns from WHERE clause
-                    where_m = re.search(r'\bwhere\s+(.+)', raw_lower, re.DOTALL)
+                    where_m = re.search(r"\bwhere\s+(.+)", raw_lower, re.DOTALL)
                     if where_m:
-                        for wm in re.finditer(r'(\w+)\s*(?:=|!=|<|>|<=|>=|like)\s*', where_m.group(1)):
+                        for wm in re.finditer(r"(\w+)\s*(?:=|!=|<|>|<=|>=|like)\s*", where_m.group(1)):
                             wcol = wm.group(1).lower()
-                            if wcol not in dml_tables[tbl] and wcol not in ('and', 'or', 'not', 'is', 'in', 'between', 'null', 'true', 'false', 'javatype', 'jdbctype', 'mode', 'resulttype', 'parametertype'):
-                                dml_tables[tbl][wcol] = 'TEXT'
+                            if wcol not in dml_tables[tbl] and wcol not in (
+                                "and",
+                                "or",
+                                "not",
+                                "is",
+                                "in",
+                                "between",
+                                "null",
+                                "true",
+                                "false",
+                                "javatype",
+                                "jdbctype",
+                                "mode",
+                                "resulttype",
+                                "parametertype",
+                            ):
+                                dml_tables[tbl][wcol] = "TEXT"
                     continue
                 # UPDATE table SET col1 = ..., col2 = ... WHERE ...
-                m_upd = re.match(r'update\s+(\w+)\s+set\s+(.*?)(?:\s+where\s+(.*))?$', raw_lower, re.DOTALL)
+                m_upd = re.match(r"update\s+(\w+)\s+set\s+(.*?)(?:\s+where\s+(.*))?$", raw_lower, re.DOTALL)
                 if m_upd:
                     tbl = m_upd.group(1)
-                    if not re.match(r'^[a-zA-Z_]', tbl):
+                    if not re.match(r"^[a-zA-Z_]", tbl):
                         continue
                     set_str = m_upd.group(2)
                     if tbl not in dml_tables:
                         dml_tables[tbl] = {}
-                    for assign in set_str.split(','):
+                    for assign in set_str.split(","):
                         assign = assign.strip()
-                        m_asgn = re.match(r'(\w+)\s*=', assign)
+                        m_asgn = re.match(r"(\w+)\s*=", assign)
                         if m_asgn:
                             col = m_asgn.group(1)
                             if col and col not in dml_tables[tbl]:
-                                val_part = assign[len(col):].lstrip('= ')
+                                val_part = assign[len(col) :].lstrip("= ")
                                 if "'" in val_part:
-                                    dml_tables[tbl][col] = 'VARCHAR(255)'
+                                    dml_tables[tbl][col] = "VARCHAR(255)"
                                 else:
-                                    dml_tables[tbl][col] = 'TEXT'
+                                    dml_tables[tbl][col] = "TEXT"
                     where_clause = m_upd.group(3)
                     if where_clause:
-                        for wm in re.finditer(r'(\w+)\s*(?:=|!=|<|>|<=|>=)\s*', where_clause):
+                        for wm in re.finditer(r"(\w+)\s*(?:=|!=|<|>|<=|>=)\s*", where_clause):
                             wcol = wm.group(1).lower()
-                            if wcol not in dml_tables[tbl] and wcol not in ('and', 'or', 'not', 'is', 'in', 'between', 'null', 'true', 'false', 'javatype', 'jdbctype', 'mode', 'resulttype', 'parametertype'):
-                                dml_tables[tbl][wcol] = 'TEXT'
+                            if wcol not in dml_tables[tbl] and wcol not in (
+                                "and",
+                                "or",
+                                "not",
+                                "is",
+                                "in",
+                                "between",
+                                "null",
+                                "true",
+                                "false",
+                                "javatype",
+                                "jdbctype",
+                                "mode",
+                                "resulttype",
+                                "parametertype",
+                            ):
+                                dml_tables[tbl][wcol] = "TEXT"
                     continue
 
     for pkg in packages:
         for proc in pkg.procedures:
             for dml in proc.dml_statements:
-                raw = getattr(dml, 'raw_sql_for_params', '') or getattr(dml, 'sql_text', '')
+                raw = getattr(dml, "raw_sql_for_params", "") or getattr(dml, "sql_text", "")
                 if not raw:
                     continue
                 for jt in _itest_extract_join_tables(raw.lower()):
-                    if jt not in dml_tables and re.match(r'^[a-zA-Z_]', jt):
+                    if jt not in dml_tables and re.match(r"^[a-zA-Z_]", jt):
                         dml_tables[jt] = {}
 
     # Merge DML-inferred tables into schema_map (only tables not already there)
@@ -15452,24 +17292,24 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
         if tbl in schema_map:
             continue
         if not dml_tables[tbl]:
-            dml_tables[tbl]['id'] = 'BIGSERIAL'
+            dml_tables[tbl]["id"] = "BIGSERIAL"
         schema_map[tbl] = dml_tables[tbl]
 
     # For tables with only a default 'id' column (from SELECT * FROM tmp_table),
     # try to copy columns from the most-columned table in the same procedure
     _star_ref_tables = set()
-    _proc_peer_tables = {}
+    _proc_peer_tables: dict[str, set[str]] = {}
     for pkg in packages:
         for proc in pkg.procedures:
             for dml in proc.dml_statements:
-                raw = getattr(dml, 'raw_sql_for_params', '') or getattr(dml, 'sql_text', '')
+                raw = getattr(dml, "raw_sql_for_params", "") or getattr(dml, "sql_text", "")
                 if not raw:
                     continue
                 raw_lower = raw.lower().strip()
-                m_sel = re.match(r'select\s+(?:\*|.*?)\s+from\s+(\w+)', raw_lower, re.DOTALL)
+                m_sel = re.match(r"select\s+(?:\*|.*?)\s+from\s+(\w+)", raw_lower, re.DOTALL)
                 if m_sel:
                     tbl = m_sel.group(1)
-                    is_star = bool(re.match(r'select\s+\*\s+from\s+', raw_lower, re.DOTALL))
+                    is_star = bool(re.match(r"select\s+\*\s+from\s+", raw_lower, re.DOTALL))
                     if is_star:
                         _star_ref_tables.add(tbl)
                         if tbl not in _proc_peer_tables:
@@ -15493,37 +17333,81 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
                     if c not in schema_map[tbl]:
                         schema_map[tbl][c] = t
 
-    _SYSTEM_OBJECTS = {'sys_dummy', 'dual', 'pg_class', 'pg_namespace', 'pg_attribute', 'pg_type',
-                        'pg_proc', 'pg_views', 'pg_tables', 'pg_sequences', 'pg_database',
-                        'information_schema', 'pg_catalog',
-                        'table', 'select', 'insert', 'update', 'delete', 'from', 'where', 'set',
-                        'create', 'drop', 'alter', 'index', 'view', 'join', 'into', 'values'}
-    _fk_deps = {}
+    _SYSTEM_OBJECTS = {
+        "sys_dummy",
+        "dual",
+        "pg_class",
+        "pg_namespace",
+        "pg_attribute",
+        "pg_type",
+        "pg_proc",
+        "pg_views",
+        "pg_tables",
+        "pg_sequences",
+        "pg_database",
+        "information_schema",
+        "pg_catalog",
+        "table",
+        "select",
+        "insert",
+        "update",
+        "delete",
+        "from",
+        "where",
+        "set",
+        "create",
+        "drop",
+        "alter",
+        "index",
+        "view",
+        "join",
+        "into",
+        "values",
+    }
+    _fk_deps: dict[str, set[str]] = {}
     for _tbl, _cols in schema_map.items():
         for _col, _typ in _cols.items():
-            m = re.search(r'REFERENCES\s+(\w+)', _typ, re.IGNORECASE)
+            m = re.search(r"REFERENCES\s+(\w+)", _typ, re.IGNORECASE)
             if m:
                 _parent = m.group(1).lower()
                 _fk_deps.setdefault(_tbl.lower(), set()).add(_parent)
     _child_tables = {
-        'emp_contacts', 'emp_archive', 'emp_log', 'emp_performance', 'emp_projects',
-        'emp_salary', 'salary_history', 'salary_update_log', 'operation_log', 'delete_audit',
-        'emp_temp_staging', 'order_items', 'inventory', 'payments',
-        'audit_log', 'result_log', 'sales_data', 'tmp_stats', 'dept_raise_standard',
-        'dept_summary', 'emp_bonus', 'batch_log', 'audit_trail',
+        "emp_contacts",
+        "emp_archive",
+        "emp_log",
+        "emp_performance",
+        "emp_projects",
+        "emp_salary",
+        "salary_history",
+        "salary_update_log",
+        "operation_log",
+        "delete_audit",
+        "emp_temp_staging",
+        "order_items",
+        "inventory",
+        "payments",
+        "audit_log",
+        "result_log",
+        "sales_data",
+        "tmp_stats",
+        "dept_raise_standard",
+        "dept_summary",
+        "emp_bonus",
+        "batch_log",
+        "audit_trail",
     }
     for _ct in _child_tables:
         if _ct not in _fk_deps:
-            _fk_deps[_ct] = {'employees', 'departments', 'products', 'orders', 'customers'}
+            _fk_deps[_ct] = {"employees", "departments", "products", "orders", "customers"}
     _sorted_tables = list(schema_map.keys())
     _sorted_tables.sort(key=lambda t: len(_fk_deps.get(t.lower(), set())), reverse=True)
 
     is_remote = itest_cfg.get("mode") == "remote"
     if not is_remote:
-         for table in _sorted_tables:
-             if table.lower() in _SYSTEM_OBJECTS:
-                 continue
-             lines.append(f'DROP TABLE IF EXISTS {table} CASCADE;')
+        for table in _sorted_tables:
+            if table.lower() in _SYSTEM_OBJECTS:
+                continue
+            lines.append(f"DROP TABLE IF EXISTS {table} CASCADE;")
     lines.append("")
     for table, columns in sorted(schema_map.items()):
         if table.lower() in _SYSTEM_OBJECTS:
@@ -15532,18 +17416,26 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
         for col, sql_type in sorted(columns.items()):
             sql_stripped = sql_type.strip()
             col_lower = col.lower()
-            if col_lower.startswith("constraint") or col_lower.startswith("check") or col_lower.startswith("primary") or col_lower.startswith("foreign") or col_lower.startswith("unique") or col_lower.startswith("index") or col_lower == "like":
+            if (
+                col_lower.startswith("constraint")
+                or col_lower.startswith("check")
+                or col_lower.startswith("primary")
+                or col_lower.startswith("foreign")
+                or col_lower.startswith("unique")
+                or col_lower.startswith("index")
+                or col_lower == "like"
+            ):
                 continue
             if "GENERATED ALWAYS" in sql_stripped.upper():
                 continue
-            if not re.match(r'^[a-zA-Z_]\w*$', col):
+            if not re.match(r"^[a-zA-Z_]\w*$", col):
                 continue
             effective_type = sql_stripped
             if col_lower == "id" and sql_stripped.upper().strip() == "BIGINT" and table in auto_id_tables:
                 effective_type = "BIGSERIAL"
-            effective_type = re.sub(r'\bvarchar2\b', 'varchar', effective_type, flags=re.IGNORECASE)
-            effective_type = re.sub(r'\bNUMBER\b', 'NUMERIC', effective_type, flags=re.IGNORECASE)
-            m_width = re.match(r'varchar\((\d+)\)', effective_type, re.IGNORECASE)
+            effective_type = re.sub(r"\bvarchar2\b", "varchar", effective_type, flags=re.IGNORECASE)
+            effective_type = re.sub(r"\bNUMBER\b", "NUMERIC", effective_type, flags=re.IGNORECASE)
+            m_width = re.match(r"varchar\((\d+)\)", effective_type, re.IGNORECASE)
             if m_width and int(m_width.group(1)) > 8000:
                 effective_type = "TEXT"
             col_defs.append(f'    "{col}" {effective_type}')
@@ -15557,11 +17449,11 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
 
     _fixture_tables = set(schema_map.keys())
     _source_files_seen = set()
-    _insert_by_table = {}
+    _insert_by_table: dict[str, list[str]] = {}
     for pkg in packages:
         _pkg_source = None
         for proc in pkg.procedures:
-            _pkg_source = getattr(proc, '_source_path', None)
+            _pkg_source = getattr(proc, "_source_path", None)
             if _pkg_source:
                 break
         if not _pkg_source or _pkg_source in _source_files_seen:
@@ -15569,25 +17461,27 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
         _source_files_seen.add(_pkg_source)
         if not os.path.isfile(_pkg_source):
             continue
-        with open(_pkg_source, 'r', encoding='utf-8', errors='replace') as f:
+        with open(_pkg_source, encoding="utf-8", errors="replace") as f:
             src_text = f.read()
         for m in re.finditer(
-            r'INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*(.*?);',
-            src_text, re.IGNORECASE | re.DOTALL
+            r"INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*(.*?);", src_text, re.IGNORECASE | re.DOTALL
         ):
             tbl = m.group(1).lower()
             if tbl not in _fixture_tables:
                 continue
             vals = m.group(3)
-            if not re.match(r'\s*\(', vals.strip()):
+            if not re.match(r"\s*\(", vals.strip()):
                 continue
-            if any(kw in vals.upper() for kw in ('NEXTVAL', 'RETURNING', 'CURRENT_DATE', 'SYSDATE', 'SQLERRM', 'CURRENT_TIMESTAMP')):
+            if any(
+                kw in vals.upper()
+                for kw in ("NEXTVAL", "RETURNING", "CURRENT_DATE", "SYSDATE", "SQLERRM", "CURRENT_TIMESTAMP")
+            ):
                 continue
-            if '||' in vals:
+            if "||" in vals:
                 continue
-            if re.search(r'\b(fn_\w+|p_\w+)\s*\(', vals, re.IGNORECASE):
+            if re.search(r"\b(fn_\w+|p_\w+)\s*\(", vals, re.IGNORECASE):
                 continue
-            if re.search(r'\b(v_\w+|p_\w+)\b', vals):
+            if re.search(r"\b(v_\w+|p_\w+)\b", vals):
                 continue
             if tbl not in _insert_by_table:
                 _insert_by_table[tbl] = []
@@ -15597,28 +17491,37 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
         init_sql = [init_sql]
     for script in init_sql:
         if os.path.isfile(script):
-            with open(script, 'r', encoding='utf-8', errors='replace') as f:
+            with open(script, encoding="utf-8", errors="replace") as f:
                 _init_content = f.read()
             _protected = []
+
             def _protect_do_blocks(m):
                 _protected.append(m.group(0))
                 return f"__IPROT_{len(_protected) - 1}__"
+
             def _convert_do_to_direct(m):
                 inner = m.group(0)
-                alters = re.findall(r'ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)\s+(.+?);', inner, re.IGNORECASE | re.DOTALL)
+                alters = re.findall(
+                    r"ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)\s+(.+?);", inner, re.IGNORECASE | re.DOTALL
+                )
                 if alters:
                     return " ".join(f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {c} {ty};" for t, c, ty in alters)
                 return ""
-            _init_content = re.sub(r'DO\s*\$\$.*?\$\$;', _convert_do_to_direct, _init_content, flags=re.DOTALL | re.IGNORECASE)
+
             _init_content = re.sub(
-                r'^(\s*ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+)(?!IF\s+NOT\s+EXISTS)(.+;)\s*$',
-                lambda m: m.group(1).strip() + " IF NOT EXISTS " + m.group(2).strip(),
-                _init_content, flags=re.MULTILINE | re.IGNORECASE
+                r"DO\s*\$\$.*?\$\$;", _convert_do_to_direct, _init_content, flags=re.DOTALL | re.IGNORECASE
             )
             _init_content = re.sub(
-                r'^(\s*(?:INSERT|UPDATE|DELETE)\s+.+;)\s*$',
+                r"^(\s*ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+)(?!IF\s+NOT\s+EXISTS)(.+;)\s*$",
+                lambda m: m.group(1).strip() + " IF NOT EXISTS " + m.group(2).strip(),
+                _init_content,
+                flags=re.MULTILINE | re.IGNORECASE,
+            )
+            _init_content = re.sub(
+                r"^(\s*(?:INSERT|UPDATE|DELETE)\s+.+;)\s*$",
                 lambda m: m.group(1).strip(),
-                _init_content, flags=re.MULTILINE | re.IGNORECASE
+                _init_content,
+                flags=re.MULTILINE | re.IGNORECASE,
             )
             for _pi, _ps in enumerate(_protected):
                 _init_content = _init_content.replace(f"__IPROT_{_pi}__", _ps)
@@ -15644,6 +17547,7 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
                 _other_lines.append(line)
         lines = list(_other_lines)
         for ins in _seed_inserts:
+
             def _offset_tuple_ids(m):
                 paren = m.group(1)
                 first_num = m.group(2)
@@ -15652,7 +17556,8 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
                     return paren + str(int(first_num) + _SEED_ID_OFFSET) + rest
                 except ValueError:
                     return m.group(0)
-            adjusted = re.sub(r'(\()\s*(\d+)([^)]*\))', _offset_tuple_ids, ins)
+
+            adjusted = re.sub(r"(\()\s*(\d+)([^)]*\))", _offset_tuple_ids, ins)
             lines.append("")
             lines.append(f"{adjusted};")
         _ALIAS_BACKFILL = [
@@ -15688,121 +17593,123 @@ def _convert_oracle_func_to_pg(func_sql: str) -> str:
     if not sql:
         return ""
 
-    sql = re.sub(r'\s*/\s*$', '', sql)
+    sql = re.sub(r"\s*/\s*$", "", sql)
 
     # Extract function name and params — handle multi-line params
     header_match = re.match(
-        r'CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+'
-        r'([^\s(]+)'
-        r'(\s*\()?',
-        sql, re.IGNORECASE | re.DOTALL
+        r"CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+"
+        r"([^\s(]+)"
+        r"(\s*\()?",
+        sql,
+        re.IGNORECASE | re.DOTALL,
     )
     if not header_match:
         return f"-- Could not parse function header:\n-- {sql[:500]}"
 
     func_name_raw = header_match.group(1)
     has_paren = header_match.group(2) is not None
-    rest = sql[header_match.end():]
+    rest = sql[header_match.end() :]
 
     # Parse params if present (find matching close paren)
-    params_str = ''
+    params_str = ""
     if has_paren:
         depth = 1
         idx = 0
         while idx < len(rest) and depth > 0:
-            if rest[idx] == '(':
+            if rest[idx] == "(":
                 depth += 1
-            elif rest[idx] == ')':
+            elif rest[idx] == ")":
                 depth -= 1
             idx += 1
-        params_str = rest[:idx].rstrip(')')
+        params_str = rest[:idx].rstrip(")")
         rest = rest[idx:]
 
     rest = rest.strip()
 
     # Now parse: RETURN type [DETERMINISTIC] IS/AS body
     # Handle RETURN TABLE(...) with nested parens
-    ret_match = re.match(
-        r'RETURN\s+',
-        rest, re.IGNORECASE | re.DOTALL
-    )
+    ret_match = re.match(r"RETURN\s+", rest, re.IGNORECASE | re.DOTALL)
     if not ret_match:
         return f"-- Could not parse function return/body:\n-- {sql[:500]}"
 
-    type_rest = rest[ret_match.end():]
+    type_rest = rest[ret_match.end() :]
 
-    if type_rest.upper().startswith('TABLE(') or type_rest.upper().startswith('TABLE ('):
+    if type_rest.upper().startswith("TABLE(") or type_rest.upper().startswith("TABLE ("):
         # Find matching close paren for TABLE(...)
-        table_start = type_rest.index('(')
+        table_start = type_rest.index("(")
         depth = 1
         idx = table_start + 1
         while idx < len(type_rest) and depth > 0:
-            if type_rest[idx] == '(':
+            if type_rest[idx] == "(":
                 depth += 1
-            elif type_rest[idx] == ')':
+            elif type_rest[idx] == ")":
                 depth -= 1
             idx += 1
         ret_type = type_rest[:idx]
         after_type = type_rest[idx:].strip()
     else:
-        simple_match = re.match(r'(\S+)', type_rest)
+        simple_match = re.match(r"(\S+)", type_rest)
         if not simple_match:
             return f"-- Could not parse function return type:\n-- {sql[:500]}"
         ret_type = simple_match.group(1)
-        after_type = type_rest[simple_match.end():].strip()
+        after_type = type_rest[simple_match.end() :].strip()
 
-    det_match = re.match(r'DETERMINISTIC\s+', after_type, re.IGNORECASE)
+    det_match = re.match(r"DETERMINISTIC\s+", after_type, re.IGNORECASE)
     if det_match:
-        after_type = after_type[det_match.end():]
+        after_type = after_type[det_match.end() :]
 
-    is_as_match = re.match(r'(?:IS|AS)\s+(.*)', after_type, re.IGNORECASE | re.DOTALL)
+    is_as_match = re.match(r"(?:IS|AS)\s+(.*)", after_type, re.IGNORECASE | re.DOTALL)
     if not is_as_match:
         return f"-- Could not parse function body:\n-- {sql[:500]}"
     body = is_as_match.group(1)
 
     _ORA_TO_PG_TYPE = {
-        'VARCHAR2': 'VARCHAR', 'VARCHAR2(': 'VARCHAR(',
-        'NUMBER': 'NUMERIC', 'NUMBER(': 'NUMERIC(',
-        'INTEGER': 'INTEGER', 'NUMERIC': 'NUMERIC',
-        'DATE': 'DATE', 'TIMESTAMP': 'TIMESTAMP',
-        'TABLE': 'TABLE',
+        "VARCHAR2": "VARCHAR",
+        "VARCHAR2(": "VARCHAR(",
+        "NUMBER": "NUMERIC",
+        "NUMBER(": "NUMERIC(",
+        "INTEGER": "INTEGER",
+        "NUMERIC": "NUMERIC",
+        "DATE": "DATE",
+        "TIMESTAMP": "TIMESTAMP",
+        "TABLE": "TABLE",
     }
     ret_type_pg = ret_type
     for ora, pg in sorted(_ORA_TO_PG_TYPE.items(), key=lambda x: -len(x[0])):
         if ret_type.upper().startswith(ora):
-            ret_type_pg = pg + ret_type[len(ora):]
+            ret_type_pg = pg + ret_type[len(ora) :]
             break
-    ret_type_pg = re.sub(r'\bVARCHAR2\b', 'VARCHAR', ret_type_pg, flags=re.IGNORECASE)
+    ret_type_pg = re.sub(r"\bVARCHAR2\b", "VARCHAR", ret_type_pg, flags=re.IGNORECASE)
 
     # Convert params: VARCHAR2 → VARCHAR, strip IN/OUT/IN OUT modes for PG
-    pg_params = re.sub(r'\bVARCHAR2\b', 'VARCHAR', params_str, flags=re.IGNORECASE)
-    pg_params = re.sub(r'\bIN\s+OUT\b', 'INOUT', pg_params, flags=re.IGNORECASE)
+    pg_params = re.sub(r"\bVARCHAR2\b", "VARCHAR", params_str, flags=re.IGNORECASE)
+    pg_params = re.sub(r"\bIN\s+OUT\b", "INOUT", pg_params, flags=re.IGNORECASE)
 
     # Body conversions
-    body = re.sub(r'\bPRAGMA\s+AUTONOMOUS_TRANSACTION\s*;?', '', body, flags=re.IGNORECASE)
-    body = re.sub(r'\bVARCHAR2\b', 'VARCHAR', body, flags=re.IGNORECASE)
-    body = re.sub(r'\bFROM\s+sys_dummy\b', 'FROM (SELECT 1 AS dummy) AS sys_dummy', body, flags=re.IGNORECASE)
-    body = re.sub(r'\bFROM\s+dual\b', 'FROM (SELECT 1 AS dummy) AS dual', body, flags=re.IGNORECASE)
-    body = re.sub(r'\bNO_DATA_FOUND\b', 'NO_DATA_FOUND', body, flags=re.IGNORECASE)
+    body = re.sub(r"\bPRAGMA\s+AUTONOMOUS_TRANSACTION\s*;?", "", body, flags=re.IGNORECASE)
+    body = re.sub(r"\bVARCHAR2\b", "VARCHAR", body, flags=re.IGNORECASE)
+    body = re.sub(r"\bFROM\s+sys_dummy\b", "FROM (SELECT 1 AS dummy) AS sys_dummy", body, flags=re.IGNORECASE)
+    body = re.sub(r"\bFROM\s+dual\b", "FROM (SELECT 1 AS dummy) AS dual", body, flags=re.IGNORECASE)
+    body = re.sub(r"\bNO_DATA_FOUND\b", "NO_DATA_FOUND", body, flags=re.IGNORECASE)
 
     # seq.NEXTVAL → nextval('seq'), seq.CURRVAL → currval('seq')
-    body = re.sub(r'\b(\w+)\.NEXTVAL\b', r"nextval('\1')", body, flags=re.IGNORECASE)
-    body = re.sub(r'\b(\w+)\.CURRVAL\b', r"currval('\1')", body, flags=re.IGNORECASE)
+    body = re.sub(r"\b(\w+)\.NEXTVAL\b", r"nextval('\1')", body, flags=re.IGNORECASE)
+    body = re.sub(r"\b(\w+)\.CURRVAL\b", r"currval('\1')", body, flags=re.IGNORECASE)
 
-    create_name = func_name_raw.split('.')[-1] if '.' in func_name_raw else func_name_raw
+    create_name = func_name_raw.split(".")[-1] if "." in func_name_raw else func_name_raw
 
     if has_paren:
-        final_params = '(' + pg_params.strip() + ')'
+        final_params = "(" + pg_params.strip() + ")"
     else:
-        final_params = '()'
+        final_params = "()"
 
     # Insert DECLARE before variable declarations if body starts with them
     body_stripped = body.strip()
-    begin_match = re.search(r'\bBEGIN\b', body_stripped, re.IGNORECASE)
+    begin_match = re.search(r"\bBEGIN\b", body_stripped, re.IGNORECASE)
     if begin_match and begin_match.start() > 0:
-        pre_begin = body_stripped[:begin_match.start()].strip()
-        if pre_begin and not pre_begin.upper().startswith('DECLARE'):
-            body_stripped = 'DECLARE\n' + body_stripped
+        pre_begin = body_stripped[: begin_match.start()].strip()
+        if pre_begin and not pre_begin.upper().startswith("DECLARE"):
+            body_stripped = "DECLARE\n" + body_stripped
 
     inner = (
         f"CREATE OR REPLACE FUNCTION {create_name}{final_params}\n"
@@ -15819,9 +17726,9 @@ def _extract_standalone_functions_sql(packages: list) -> list:
     func_blocks = []
 
     for pkg in packages:
-        full_path = ''
+        full_path = ""
         if pkg.procedures:
-            full_path = getattr(pkg.procedures[0], '_source_path', '')
+            full_path = getattr(pkg.procedures[0], "_source_path", "")
         if not full_path:
             continue
         if full_path in source_files_seen:
@@ -15831,23 +17738,22 @@ def _extract_standalone_functions_sql(packages: list) -> list:
         if not os.path.isfile(full_path):
             continue
 
-        with open(full_path, 'r', encoding='utf-8', errors='replace') as f:
+        with open(full_path, encoding="utf-8", errors="replace") as f:
             content = f.read()
 
         for m in re.finditer(
-            r'(CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+.*?END\s*;\s*/)',
-            content, re.IGNORECASE | re.DOTALL
+            r"(CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+.*?END\s*;\s*/)", content, re.IGNORECASE | re.DOTALL
         ):
             raw = m.group(1)
             upper = raw.upper()
-            if any(t in upper for t in ['VARCHAR2_ARRAY', 'VARCHAR_ARRAY', 'VARRAY', 'TABLE OF']):
+            if any(t in upper for t in ["VARCHAR2_ARRAY", "VARCHAR_ARRAY", "VARRAY", "TABLE OF"]):
                 continue
-            if re.search(r'\bCOMMIT\s*;', upper):
+            if re.search(r"\bCOMMIT\s*;", upper):
                 continue
             pg_func = _convert_oracle_func_to_pg(raw)
-            if pg_func and not pg_func.startswith('--'):
+            if pg_func and not pg_func.startswith("--"):
                 pg_upper = pg_func.upper()
-                if 'TYPE ' in pg_upper and 'IS RECORD' in pg_upper:
+                if "TYPE " in pg_upper and "IS RECORD" in pg_upper:
                     continue
                 func_blocks.append(pg_func)
 
@@ -15857,64 +17763,64 @@ def _extract_standalone_functions_sql(packages: list) -> list:
 def _infer_jdbc_type_from_values(col_name, cols, vals_str):
     idx = cols.index(col_name) if col_name in cols else -1
     if idx < 0:
-        return 'TEXT'
+        return "TEXT"
     # Extract the Nth parameter from the VALUES clause
     parts = []
     depth = 0
     current = []
     for ch in vals_str:
-        if ch in ('(', '{'):
+        if ch in ("(", "{"):
             depth += 1
             current.append(ch)
-        elif ch in (')', '}'):
+        elif ch in (")", "}"):
             depth -= 1
             current.append(ch)
-        elif ch == ',' and depth == 0:
-            parts.append(''.join(current).strip())
+        elif ch == "," and depth == 0:
+            parts.append("".join(current).strip())
             current = []
         else:
             current.append(ch)
     if current:
-        parts.append(''.join(current).strip())
+        parts.append("".join(current).strip())
     if idx >= len(parts):
-        return 'TEXT'
+        return "TEXT"
     val = parts[idx].lower()
-    jdbc_m = re.search(r'jdbctype\s*=\s*(\w+)', val)
+    jdbc_m = re.search(r"jdbctype\s*=\s*(\w+)", val)
     if jdbc_m:
         jt = jdbc_m.group(1).upper()
-        if 'INT' in jt or 'BIGINT' in jt:
-            return 'BIGINT'
-        if 'DECIMAL' in jt or 'NUMERIC' in jt:
-            return 'NUMERIC'
-        if 'DATE' in jt:
-            return 'DATE'
-        if 'TIMESTAMP' in jt:
-            return 'TIMESTAMP'
-        if 'BOOL' in jt:
-            return 'BOOLEAN'
+        if "INT" in jt or "BIGINT" in jt:
+            return "BIGINT"
+        if "DECIMAL" in jt or "NUMERIC" in jt:
+            return "NUMERIC"
+        if "DATE" in jt:
+            return "DATE"
+        if "TIMESTAMP" in jt:
+            return "TIMESTAMP"
+        if "BOOL" in jt:
+            return "BOOLEAN"
     if "'" in val:
-        return 'VARCHAR(255)'
-    return 'TEXT'
+        return "VARCHAR(255)"
+    return "TEXT"
 
 
 def _itest_extract_table_from_select(sql: str) -> str:
-    m = re.search(r'\bfrom\s+(?:\w+\.)?(\w+)', sql, re.IGNORECASE)
+    m = re.search(r"\bfrom\s+(?:\w+\.)?(\w+)", sql, re.IGNORECASE)
     return m.group(1).lower() if m else ""
 
 
 def _itest_extract_table_from_insert(sql: str) -> str:
-    m = re.search(r'\binto\s+(?:\w+\.)?(\w+)', sql, re.IGNORECASE)
+    m = re.search(r"\binto\s+(?:\w+\.)?(\w+)", sql, re.IGNORECASE)
     return m.group(1).lower() if m else ""
 
 
 def _itest_extract_table_from_update_delete(sql: str) -> str:
-    m = re.search(r'\b(?:update|delete\s+from?)\s+(?:\w+\.)?(\w+)', sql, re.IGNORECASE)
+    m = re.search(r"\b(?:update|delete\s+from?)\s+(?:\w+\.)?(\w+)", sql, re.IGNORECASE)
     return m.group(1).lower() if m else ""
 
 
 def _itest_extract_join_tables(sql: str) -> list:
     tables = []
-    for m in re.finditer(r'\bJOIN\s+(?:\w+\.)?(\w+)', sql, re.IGNORECASE):
+    for m in re.finditer(r"\bJOIN\s+(?:\w+\.)?(\w+)", sql, re.IGNORECASE):
         tables.append(m.group(1).lower())
     return tables
 
@@ -15924,7 +17830,7 @@ def _param_java_type(proc, param_name: str) -> str:
     pl = param_name.lower()
     for p in proc.parameters:
         if p.name.lower() == pl or p.java_name.lower() == pl:
-            return p.java_type
+            return cast(str, p.java_type)
     return "String"
 
 
@@ -15946,9 +17852,47 @@ def _itest_sql_value(java_value: str, sql_type: str) -> str:
     return v
 
 
-def _itest_generate_test_value(col_name: str, sql_type: str) -> str:
+def _itest_numeric_check_value(col_name: str, expressions: list[str]) -> Optional[str]:
+    for expr in expressions:
+        match = re.fullmatch(
+            rf"\s*\(*\s*\"?{re.escape(col_name)}\"?\s*(>=|<=|>|<|=)\s*(-?\d+(?:\.\d+)?)\s*\)*\s*",
+            expr,
+            re.IGNORECASE,
+        )
+        if not match:
+            continue
+        operator, raw_value = match.groups()
+        value = float(raw_value) if "." in raw_value else int(raw_value)
+        if operator == ">":
+            value = value + (100 if value >= 100 else 1)
+        elif operator == "<":
+            value -= 1
+        return str(value)
+    return None
+
+
+def _itest_generate_test_value(col_name: str, sql_type: str, constraints: Optional[dict] = None) -> str:
     lower_type = (sql_type or "").lower()
     lower_col = col_name.lower()
+    constraints = constraints or {}
+    enum_members = constraints.get("enums", {}).get(lower_col, [])
+    if enum_members:
+        return "'" + str(enum_members[0]).replace("'", "''") + "'"
+    check_value = _itest_numeric_check_value(lower_col, constraints.get("checks", {}).get(lower_col, []))
+    if check_value is not None:
+        return check_value
+    if lower_col == constraints.get("partition_key") and ("date" in lower_type or "timestamp" in lower_type):
+        bounds = constraints.get("partition_bounds", [])
+        if bounds:
+            lower, upper = cast(tuple[str, str], bounds[0])
+            if lower:
+                return str(lower)
+            upper_date = re.fullmatch(r"'(\d{4}-\d{2}-\d{2})'", upper)
+            if upper_date:
+                inside = datetime.strptime(upper_date.group(1), "%Y-%m-%d") - timedelta(days=1)
+                return f"'{inside:%Y-%m-%d}'"
+        _log(f"  Warning: partition bounds not parsed for column {lower_col}; using fixed date literal")
+        return "'2024-01-01'"
     if any(t in lower_type for t in ("int", "serial", "bigserial")):
         if lower_col.startswith("parent_"):
             return "NULL"
@@ -15959,7 +17903,7 @@ def _itest_generate_test_value(col_name: str, sql_type: str) -> str:
         return "10"
     if any(t in lower_type for t in ("numeric", "decimal", "real", "float", "double")):
         # Parse precision/scale to avoid overflow: numeric(5,4) max is 9.9999
-        _m = re.match(r'(?:numeric|decimal)\s*\(\s*(\d+)\s*(?:,\s*(\d+))?\s*\)', lower_type)
+        _m = re.match(r"(?:numeric|decimal)\s*\(\s*(\d+)\s*(?:,\s*(\d+))?\s*\)", lower_type)
         if _m:
             _precision = int(_m.group(1))
             _scale = int(_m.group(2) or "0")
@@ -15978,7 +17922,7 @@ def _itest_generate_test_value(col_name: str, sql_type: str) -> str:
         return "'\\x00'"
     if any(t in lower_type for t in ("varchar", "char", "text", "json", "jsonb", "uuid")):
         # Parse length from varchar(N) / char(N) to respect column constraints
-        _len_m = re.match(r'(?:varchar2?|character\s+varying|char|character)\s*\(\s*(\d+)\s*\)', lower_type)
+        _len_m = re.match(r"(?:varchar2?|character\s+varying|char|character)\s*\(\s*(\d+)\s*\)", lower_type)
         _max_len = int(_len_m.group(1)) if _len_m else 0
         if _max_len == 1:
             # Single-char flag columns: use 'Y' instead of long string
@@ -15994,15 +17938,17 @@ def _itest_generate_test_value(col_name: str, sql_type: str) -> str:
     return "'test'"
 
 
-def _itest_infer_test_data(proc: ProcedureInfo, pkg: PackageInfo, schema_map: dict, all_packages: dict = None) -> dict:
+def _itest_infer_test_data(
+    proc: ProcedureInfo, pkg: PackageInfo, schema_map: dict, all_packages: Optional[dict] = None
+) -> tuple[dict, dict, dict]:
     handled = set()
     needed = {}
     bindings = {}
-    literals = {}
+    literals: dict[str, Any] = {}
     for dml in proc.dml_statements:
         sql = dml.sql_text or ""
         sql_lower = sql.lower().strip()
-        for _bm in re.finditer(r'(\w+)\s*=\s*(p_[a-z0-9_]+)', sql, re.IGNORECASE):
+        for _bm in re.finditer(r"(\w+)\s*=\s*(p_[a-z0-9_]+)", sql, re.IGNORECASE):
             bindings[_bm.group(1).lower()] = snake_to_camel(_bm.group(2))
         if dml.sql_type == "insert":
             tbl = _itest_extract_table_from_insert(sql)
@@ -16014,17 +17960,29 @@ def _itest_infer_test_data(proc: ProcedureInfo, pkg: PackageInfo, schema_map: di
                 cols = _itest_extract_columns_from_select(sql_lower, tbl, schema_map)
                 needed[tbl] = cols
             if tbl:
-                _wm = re.search(r'\bwhere\s+(.+)', sql_lower, re.DOTALL)
+                _wm = re.search(r"\bwhere\s+(.+)", sql_lower, re.DOTALL)
                 if _wm:
-                    _wtxt = re.sub(r'[#\$]\{[^}]*\}', '', _wm.group(1))
+                    _wtxt = re.sub(r"[#\$]\{[^}]*\}", "", _wm.group(1))
                     for _lm in re.finditer(r"(\w+)\s*=\s*('([^']*)'|[\w.]+)(?![\w.])", _wtxt):
                         _lc, _lv = _lm.group(1).lower(), _lm.group(2)
-                        if _lc in ("and", "or", "not", "is", "null", "select", "from", "where", "to_date", "like", "in"):
+                        if _lc in (
+                            "and",
+                            "or",
+                            "not",
+                            "is",
+                            "null",
+                            "select",
+                            "from",
+                            "where",
+                            "to_date",
+                            "like",
+                            "in",
+                        ):
                             continue
                         if not _lv.startswith("'"):
-                            if not re.match(r'^-?\d+(\.\d+)?$', _lv):
+                            if not re.match(r"^-?\d+(\.\d+)?$", _lv):
                                 continue
-                            if _lv.count('.') > 1:
+                            if _lv.count(".") > 1:
                                 continue
                         literals.setdefault(tbl, {})[_lc] = _lv
                     for _bm in re.finditer(r"between\s+(\w+)\s+and\s+(\w+)", _wtxt):
@@ -16057,47 +18015,47 @@ def _itest_infer_test_data(proc: ProcedureInfo, pkg: PackageInfo, schema_map: di
 
 def _itest_extract_columns_from_select(sql_lower: str, tbl: str, schema_map: dict) -> dict:
     full_schema = schema_map.get(tbl, {})
-    m = re.match(r'select\s+(.*?)\s+from\b', sql_lower, re.DOTALL)
+    m = re.match(r"select\s+(.*?)\s+from\b", sql_lower, re.DOTALL)
     if not m:
-        return full_schema
+        return cast(dict, full_schema)
     col_clause = m.group(1).strip()
-    if col_clause == '*':
-        return full_schema
+    if col_clause == "*":
+        return cast(dict, full_schema)
     cols = {}
-    for part in col_clause.split(','):
+    for part in col_clause.split(","):
         part = part.strip()
-        if not part or '(' in part:
+        if not part or "(" in part:
             continue
-        alias_m = re.match(r'.+\s+as\s+(\w+)\s*$', part, re.IGNORECASE)
-        col_name = alias_m.group(1).lower() if alias_m else part.split('.')[-1].strip().lower()
-        col_name = re.sub(r'[^a-z0-9_]', '', col_name)
+        alias_m = re.match(r".+\s+as\s+(\w+)\s*$", part, re.IGNORECASE)
+        col_name = alias_m.group(1).lower() if alias_m else part.split(".")[-1].strip().lower()
+        col_name = re.sub(r"[^a-z0-9_]", "", col_name)
         if col_name and col_name in full_schema:
             cols[col_name] = full_schema[col_name]
-    where_m = re.search(r'\bwhere\s+(.+)', sql_lower, re.DOTALL)
+    where_m = re.search(r"\bwhere\s+(.+)", sql_lower, re.DOTALL)
     if where_m:
-        for wm in re.finditer(r'(\w+)\s*(?:=|!=|<|>|<=|>=|like)\s*', where_m.group(1)):
+        for wm in re.finditer(r"(\w+)\s*(?:=|!=|<|>|<=|>=|like)\s*", where_m.group(1)):
             wcol = wm.group(1).lower()
             if wcol in full_schema and wcol not in cols:
                 cols[wcol] = full_schema[wcol]
-    return cols if cols else full_schema
+    return cast(dict, cols if cols else full_schema)
 
 
 def _itest_extract_columns_from_update(sql_lower: str, tbl: str, schema_map: dict) -> dict:
     full_schema = schema_map.get(tbl, {})
-    m = re.match(r'update\s+\w+\s+set\s+(.*?)(?:\s+where\b|$)', sql_lower, re.DOTALL)
+    m = re.match(r"update\s+\w+\s+set\s+(.*?)(?:\s+where\b|$)", sql_lower, re.DOTALL)
     if not m:
-        return full_schema
+        return cast(dict, full_schema)
     cols = {}
-    for assign in m.group(1).split(','):
+    for assign in m.group(1).split(","):
         assign = assign.strip()
-        col_m = re.match(r'(\w+)\s*=', assign)
+        col_m = re.match(r"(\w+)\s*=", assign)
         if col_m:
             col = col_m.group(1).lower()
             if col in full_schema:
                 cols[col] = full_schema[col]
-    where_m = re.search(r'\bwhere\s+(.+)', sql_lower, re.DOTALL)
+    where_m = re.search(r"\bwhere\s+(.+)", sql_lower, re.DOTALL)
     if where_m:
-        for wm in re.finditer(r'(\w+)\s*(?:=|!=|<|>|<=|>=|like)\s*', where_m.group(1)):
+        for wm in re.finditer(r"(\w+)\s*(?:=|!=|<|>|<=|>=|like)\s*", where_m.group(1)):
             wcol = wm.group(1).lower()
             if wcol in full_schema and wcol not in cols:
                 cols[wcol] = full_schema[wcol]
@@ -16107,10 +18065,10 @@ def _itest_extract_columns_from_update(sql_lower: str, tbl: str, schema_map: dic
 def _itest_add_transitive_tables(proc, pkg, schema_map, handled, needed, all_packages, depth=0):
     if depth > 2:
         return
-    _camel_re = re.compile(r'([a-z0-9])([A-Z])')
+    _camel_re = re.compile(r"([a-z0-9])([A-Z])")
 
     def _camel_to_snake(name):
-        return _camel_re.sub(r'\1_\2', name).lower()
+        return _camel_re.sub(r"\1_\2", name).lower()
 
     # Build service-var → package lookup
     _svc_to_pkg = {}
@@ -16148,7 +18106,7 @@ def _itest_add_transitive_tables(proc, pkg, schema_map, handled, needed, all_pac
 
     for line in proc.java_logic_lines:
         # Same-package: this.methodName(
-        for m in re.finditer(r'\bthis\.(\w+)\s*\(', line):
+        for m in re.finditer(r"\bthis\.(\w+)\s*\(", line):
             method_java = m.group(1)
             proc_name = _camel_to_snake(method_java)
             for tp in pkg.procedures:
@@ -16158,7 +18116,7 @@ def _itest_add_transitive_tables(proc, pkg, schema_map, handled, needed, all_pac
                     break
 
         # Cross-package: xxxService.methodName(
-        for m in re.finditer(r'\b(\w+Service)\.(\w+)\s*\(', line):
+        for m in re.finditer(r"\b(\w+Service)\.(\w+)\s*\(", line):
             svc_var = m.group(1)
             method_java = m.group(2)
             target_pkg = _svc_to_pkg.get(svc_var)
@@ -16167,7 +18125,9 @@ def _itest_add_transitive_tables(proc, pkg, schema_map, handled, needed, all_pac
                 for tp in target_pkg.procedures:
                     if tp.proc_name == proc_name:
                         _add_proc_tables(tp)
-                        _itest_add_transitive_tables(tp, target_pkg, schema_map, handled, needed, all_packages, depth + 1)
+                        _itest_add_transitive_tables(
+                            tp, target_pkg, schema_map, handled, needed, all_packages, depth + 1
+                        )
                         break
 
 
@@ -16184,15 +18144,15 @@ def _collect_fk_parents() -> dict:
             continue
         seen_files.add(src_file)
         try:
-            with open(src_file, "r", encoding="utf-8", errors="replace") as f:
+            with open(src_file, encoding="utf-8", errors="replace") as f:
                 content = f.read()
         except OSError:
             continue
         # (#114 review minor 10): also strip `--` line comments (a `-- references
         # ...` comment must not create a phantom FK edge) and quoted identifiers
         # so `"Parent"` resolves to its unquoted name.
-        content_clean = re.sub(r'/\*.*?\*/', "", content, flags=re.DOTALL)
-        content_clean = re.sub(r'--.*$', "", content_clean, flags=re.MULTILINE)
+        content_clean = re.sub(r"/\*.*?\*/", "", content, flags=re.DOTALL)
+        content_clean = re.sub(r"--.*$", "", content_clean, flags=re.MULTILINE)
         for m in re.finditer(
             r"create\s+table\s+(?:if\s+not\s+exists\s+)?(?:\w+\.)?(?:\"(\w+)\"|(\w+))\s*\(",
             content_clean,
@@ -16231,7 +18191,14 @@ def _topo_order_tables(tables: list, fk_parents: dict) -> list:
     return ordered
 
 
-def _itest_write_fixtures(base_path: Path, proc: ProcedureInfo, pkg: PackageInfo, test_data: dict, bindings: dict = None, literals: dict = None) -> str:
+def _itest_write_fixtures(
+    base_path: Path,
+    proc: ProcedureInfo,
+    pkg: PackageInfo,
+    test_data: dict,
+    bindings: Optional[dict] = None,
+    literals: Optional[dict] = None,
+) -> str:
     if not test_data:
         return ""
     lines = []
@@ -16252,7 +18219,7 @@ def _itest_write_fixtures(base_path: Path, proc: ProcedureInfo, pkg: PackageInfo
             col_lower = col.lower()
             if any(col_lower.startswith(p) or col_lower == p for p in _skip_prefixes):
                 continue
-            if not re.match(r'^[a-zA-Z_]\w*$', col):
+            if not re.match(r"^[a-zA-Z_]\w*$", col):
                 continue
             col_names.append(col)
             bound_param = bindings.get(col_lower)
@@ -16268,7 +18235,7 @@ def _itest_write_fixtures(base_path: Path, proc: ProcedureInfo, pkg: PackageInfo
             elif _lit is not None:
                 values.append(_lit)
             else:
-                values.append(_itest_generate_test_value(col, sql_type))
+                values.append(_itest_generate_test_value(col, sql_type, _TABLE_CONSTRAINTS.get(table.lower())))
         cols_str = ", ".join(col_names)
         vals_str = ", ".join(values)
         lines.append(f"INSERT INTO {table} ({cols_str}) VALUES ({vals_str});")
@@ -16335,15 +18302,26 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
             has_recursive = True
             break
     has_dynamic_sql = any(
-        any(dml.sql_text and (re.fullmatch(r'#\{[^}]+\}', dml.sql_text.strip()) or re.search(r'\$\{[^}]+\}', dml.sql_text)) for dml in proc.dml_statements)
+        any(
+            dml.sql_text
+            and (re.fullmatch(r"#\{[^}]+\}", dml.sql_text.strip()) or re.search(r"\$\{[^}]+\}", dml.sql_text))
+            for dml in proc.dml_statements
+        )
         for proc in pkg.procedures
     )
     has_itest_while = any(
-        any("while (" in line or "while(" in line for line in proc.java_logic_lines)
-        for proc in pkg.procedures
+        any("while (" in line or "while(" in line for line in proc.java_logic_lines) for proc in pkg.procedures
     )
     has_gaussdb_only_sql = any(
-        any(dml.sql_text and re.search(r'\b(dblink|pg_sleep|clock_timestamp|dblink_connect|dblink_get_connections)\b', dml.sql_text, re.IGNORECASE) for dml in proc.dml_statements)
+        any(
+            dml.sql_text
+            and re.search(
+                r"\b(dblink|pg_sleep|clock_timestamp|dblink_connect|dblink_get_connections)\b",
+                dml.sql_text,
+                re.IGNORECASE,
+            )
+            for dml in proc.dml_statements
+        )
         for proc in pkg.procedures
     )
     if has_stubs or has_recursive or has_dynamic_sql or has_itest_while or has_gaussdb_only_sql:
@@ -16370,7 +18348,7 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
 
         _numeric_string_params = set()
         for dml in proc.dml_statements:
-            for m in re.finditer(r'to_number\s*\(\s*#?\{?(\w+)', dml.sql_text or "", re.IGNORECASE):
+            for m in re.finditer(r"to_number\s*\(\s*#?\{?(\w+)", dml.sql_text or "", re.IGNORECASE):
                 ref = m.group(1)
                 _numeric_string_params.add(ref.lower())
 
@@ -16380,12 +18358,14 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
         param_args = []
         for p in in_params:
             val = _default_test_value(p.java_type, p.java_name, pkg=pkg)
-            if p.java_type == "String" and (p.name.lower() in _numeric_string_params or p.java_name.lower() in _numeric_string_params):
+            if p.java_type == "String" and (
+                p.name.lower() in _numeric_string_params or p.java_name.lower() in _numeric_string_params
+            ):
                 val = '"1"'
             if p.java_type == "String" and (p.java_name.lower() in _dollar_params or p.name.lower() in _dollar_params):
                 val = _itest_dollar_param_value(p.java_name)
             decl_type = p.java_type
-            if pkg and hasattr(pkg, 'custom_types'):
+            if pkg and hasattr(pkg, "custom_types"):
                 for tn, ti in pkg.custom_types.items():
                     if ti.get("kind") == "record" and _custom_type_classname(tn) == decl_type:
                         decl_type = f"{svc_class}.{decl_type}"
@@ -16426,20 +18406,36 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
 
         is_itest_stubbed = (proc.name, len(proc.parameters)) in STUB_PROCEDURES
         has_while = any("while (" in line or "while(" in line for line in proc.java_logic_lines)
-        has_conditional_while = any(re.search(r'while\s*\(\s*\w+\s*[><=!]', line) for line in proc.java_logic_lines)
+        has_conditional_while = any(re.search(r"while\s*\(\s*\w+\s*[><=!]", line) for line in proc.java_logic_lines)
         has_sm_guard = any("_smGuard" in line for line in proc.java_logic_lines)
         has_do_while = "} while (" in " ".join(proc.java_logic_lines)
-        has_indexed_cursor = any("CursorIdx" in line or "CurIdx" in line or ".get(vCurIdx" in line or ".get(vCursorIdx" in line for line in proc.java_logic_lines)
+        has_indexed_cursor = any(
+            "CursorIdx" in line or "CurIdx" in line or ".get(vCurIdx" in line or ".get(vCursorIdx" in line
+            for line in proc.java_logic_lines
+        )
         has_unchecked_null_size = _has_unchecked_null_size(proc)
-        is_safe_while = (has_while and has_indexed_cursor and not has_conditional_while and not has_sm_guard and not has_do_while and not has_unchecked_null_size)
+        is_safe_while = (
+            has_while
+            and has_indexed_cursor
+            and not has_conditional_while
+            and not has_sm_guard
+            and not has_do_while
+            and not has_unchecked_null_size
+        )
         itest_camel_name = java_method_name(proc.proc_name)
         is_recursive = any(f"this.{itest_camel_name}(" in line for line in proc.java_logic_lines)
         has_dynamic_sql = any(
-            dml.sql_text and (re.fullmatch(r'#\{[^}]+\}', dml.sql_text.strip()) or re.search(r'\$\{[^}]+\}', dml.sql_text))
+            dml.sql_text
+            and (re.fullmatch(r"#\{[^}]+\}", dml.sql_text.strip()) or re.search(r"\$\{[^}]+\}", dml.sql_text))
             for dml in proc.dml_statements
         )
         has_gaussdb_only_sql = any(
-            dml.sql_text and re.search(r'\b(dblink|pg_sleep|clock_timestamp|dblink_connect|dblink_get_connections)\b', dml.sql_text, re.IGNORECASE)
+            dml.sql_text
+            and re.search(
+                r"\b(dblink|pg_sleep|clock_timestamp|dblink_connect|dblink_get_connections)\b",
+                dml.sql_text,
+                re.IGNORECASE,
+            )
             for dml in proc.dml_statements
         )
         complexity_score = len(proc.dml_statements) + len(proc.service_calls) + len(proc.java_logic_lines) // 10
@@ -16452,22 +18448,26 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
         lines = []
         _itest_disabled = False
         if is_itest_stubbed:
-            lines.append("    @Disabled(\"Converter stub — complex PL/pgSQL pattern requires manual implementation\")")
+            lines.append('    @Disabled("Converter stub — complex PL/pgSQL pattern requires manual implementation")')
             _itest_disabled = True
         elif has_while and not is_safe_while:
-            lines.append("    @Disabled(\"auto-generated itest cannot terminate while loop\")")
+            lines.append('    @Disabled("auto-generated itest cannot terminate while loop")')
             _itest_disabled = True
         elif is_recursive:
-            lines.append("    @Disabled(\"auto-generated itest cannot terminate recursive call\")")
+            lines.append('    @Disabled("auto-generated itest cannot terminate recursive call")')
             _itest_disabled = True
         elif has_gaussdb_only_sql:
-            lines.append("    @Disabled(\"auto-generated itest skipped — SQL uses GaussDB-only extensions (dblink, pg_sleep, etc.)\")")
+            lines.append(
+                '    @Disabled("auto-generated itest skipped — SQL uses GaussDB-only extensions (dblink, pg_sleep, etc.)")'
+            )
             _itest_disabled = True
         if has_dynamic_sql and not _itest_disabled:
-            lines.append("    @Disabled(\"auto-generated itest cannot exercise runtime-constructed dynamic SQL\")")
+            lines.append('    @Disabled("auto-generated itest cannot exercise runtime-constructed dynamic SQL")')
         if sql_script:
             if itest_cfg.get("mode") == "remote":
-                lines.append(f'    @org.springframework.test.context.jdbc.Sql(scripts = "{sql_script}", config = @org.springframework.test.context.jdbc.SqlConfig(errorMode = org.springframework.test.context.jdbc.SqlConfig.ErrorMode.CONTINUE_ON_ERROR))')
+                lines.append(
+                    f'    @org.springframework.test.context.jdbc.Sql(scripts = "{sql_script}", config = @org.springframework.test.context.jdbc.SqlConfig(errorMode = org.springframework.test.context.jdbc.SqlConfig.ErrorMode.CONTINUE_ON_ERROR))'
+                )
             else:
                 lines.append(f'    @org.springframework.test.context.jdbc.Sql(scripts = "{sql_script}")')
         lines.append("    @Test")
@@ -16516,10 +18516,10 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
         lines.append(f"// Source: {pkg.source_file}")
     lines.append(f"class {class_name} extends AbstractIntegrationTest {{")
     lines.append("")
-    lines.append(f"    @Autowired")
+    lines.append("    @Autowired")
     lines.append(f"    private {mapper_class} {mapper_var};")
     lines.append("")
-    lines.append(f"    @Autowired")
+    lines.append("    @Autowired")
     lines.append(f"    private {svc_class} {svc_var};")
 
     for svc_var_inj, pkg_name in service_injections.items():
@@ -16529,7 +18529,7 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
             svc_class_part = svc_var_inj.replace("Service", "")
             svc_class_inj = f"{package_to_classname(svc_class_part)}Service"
         lines.append("")
-        lines.append(f"    @Autowired")
+        lines.append("    @Autowired")
         lines.append(f"    private {svc_class_inj} {svc_var_inj};")
 
     for tm in test_methods:
@@ -16542,11 +18542,13 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
     _write_source_file(itest_dir / f"{class_name}.java", content)
 
 
-
-
 def build_conversion_report(
-    output_dir: str, packages: list, all_skipped: list, parse_errors_map: dict,
-    config_path: str = "", parse_warnings_map: dict = None
+    output_dir: str,
+    packages: list,
+    all_skipped: list,
+    parse_errors_map: dict,
+    config_path: str = "",
+    parse_warnings_map: Optional[dict] = None,
 ) -> ConversionReport:
     if parse_warnings_map is None:
         parse_warnings_map = {}
@@ -16569,7 +18571,7 @@ def build_conversion_report(
     base_path = Path(output_dir)
     for pkg in packages:
         class_name = package_to_classname(pkg.package_name)
-        jp_path = _pkg_java_package(pkg).replace('.', '/')
+        jp_path = _pkg_java_package(pkg).replace(".", "/")
         generated = [
             f"src/main/java/{jp_path}/service/{class_name}Service.java",
             f"src/main/java/{jp_path}/mapper/{class_name}Mapper.java",
@@ -16601,20 +18603,22 @@ def build_conversion_report(
                 else:
                     notes = f"含 {todo_count} 个 TODO 待处理"
 
-            report.procedure_mappings.append(ProcedureMapping(
-                sql_file=pkg.source_file,
-                procedure_name=proc.name,
-                procedure_type="FUNCTION" if proc.is_function else "PROCEDURE",
-                java_service=f"{class_name}Service",
-                java_method=java_method_name(proc.proc_name),
-                mapper_methods=mapper_methods,
-                generated_files=generated,
-                is_stub=is_stub,
-                has_parse_error=has_error,
-                notes=notes,
-                stub_reasons=list(_proc_reasons),
-                table_refs=proc.table_refs,
-            ))
+            report.procedure_mappings.append(
+                ProcedureMapping(
+                    sql_file=pkg.source_file,
+                    procedure_name=proc.name,
+                    procedure_type="FUNCTION" if proc.is_function else "PROCEDURE",
+                    java_service=f"{class_name}Service",
+                    java_method=java_method_name(proc.proc_name),
+                    mapper_methods=mapper_methods,
+                    generated_files=generated,
+                    is_stub=is_stub,
+                    has_parse_error=has_error,
+                    notes=notes,
+                    stub_reasons=list(_proc_reasons),
+                    table_refs=proc.table_refs,
+                )
+            )
 
     for sql_file, errors in parse_errors_map.items():
         if isinstance(errors, list):
@@ -16624,7 +18628,7 @@ def build_conversion_report(
             report.parse_errors.append((sql_file, errors))
 
     for sql_file, warnings in parse_warnings_map.items():
-        for warn in (warnings if isinstance(warnings, list) else [warnings]):
+        for warn in warnings if isinstance(warnings, list) else [warnings]:
             report.parse_warnings.append((sql_file, warn))
 
     return report
@@ -16644,9 +18648,11 @@ def _render_report_markdown(report: ConversionReport) -> str:
     lines.append("")
     lines.append("## 概览")
     lines.append("")
-    lines.append(f"| 指标 | 数量 |")
-    lines.append(f"|------|------|")
-    lines.append(f"| 输入 SQL 文件 | {len(set(m.sql_file for m in report.procedure_mappings)) + len(set(s.sql_file for s in report.skipped_items))} |")
+    lines.append("| 指标 | 数量 |")
+    lines.append("|------|------|")
+    lines.append(
+        f"| 输入 SQL 文件 | {len(set(m.sql_file for m in report.procedure_mappings)) + len(set(s.sql_file for s in report.skipped_items))} |"
+    )
     lines.append(f"| 转换的包 | {report.total_packages} |")
     lines.append(f"| 存储过程/函数 | {report.total_procedures} |")
     lines.append(f"| 提取的 DML (MyBatis mapper) | {report.total_dml} |")
@@ -16798,7 +18804,7 @@ def _render_report_markdown(report: ConversionReport) -> str:
             lines.append("以下存储过程调用了未包含在输入中的包，请在配置中添加对应的 SQL 文件。")
             lines.append("")
             for uc in report.unresolved_calls:
-                if hasattr(uc, 'caller') and hasattr(uc, 'callee'):
+                if hasattr(uc, "caller") and hasattr(uc, "callee"):
                     lines.append(f"- **调用者**: `{uc.caller}`")
                     lines.append(f"  **被调用**: `{uc.callee}`")
                     if uc.caller_file:
@@ -16822,7 +18828,7 @@ def _render_report_markdown(report: ConversionReport) -> str:
                 lines.append(f"- `{m.procedure_name}` → `{m.java_service}.{m.java_method}()`")
             lines.append("")
 
-    all_table_refs = {}
+    all_table_refs: dict[str, Any] = {}
     for m in report.procedure_mappings:
         if m.table_refs:
             all_table_refs.setdefault(m.sql_file, {}).setdefault(m.procedure_name, m.table_refs)
@@ -16852,7 +18858,9 @@ def _render_report_markdown(report: ConversionReport) -> str:
         lines.append("")
         lines.append("## ⚠️ 未映射的函数调用")
         lines.append("")
-        lines.append("以下函数在转换过程中未找到对应的 Java 映射，生成的代码中包含 `/* UNSUPPORTED */` 注释，需要手动实现：")
+        lines.append(
+            "以下函数在转换过程中未找到对应的 Java 映射，生成的代码中包含 `/* UNSUPPORTED */` 注释，需要手动实现："
+        )
         lines.append("")
         lines.append("| 存储过程 | 节点类型 | 函数名 | 源文件 |")
         lines.append("|----------|----------|--------|--------|")
@@ -16880,6 +18888,7 @@ def _render_report_markdown(report: ConversionReport) -> str:
         lines.append("")
 
         from collections import Counter as _StubCounter
+
         all_reasons = []
         for m in stub_mappings:
             all_reasons.extend(m.stub_reasons)
@@ -16899,6 +18908,7 @@ def _render_report_markdown(report: ConversionReport) -> str:
         lines.append("")
 
         from collections import Counter as _Counter
+
         cat_counts = _Counter(cat for cat, _, _, _ in TODO_SUMMARY)
         cat_detail_counts = _Counter((cat, detail) for cat, _, _, detail in TODO_SUMMARY)
 
@@ -16907,7 +18917,10 @@ def _render_report_markdown(report: ConversionReport) -> str:
             "FOR_UNSUPPORTED_KIND": ("FOR 循环未知类型", "FOR 循环的 kind 不在 Range/Query 之中"),
             "FOR_QUERY_FAILED": ("FOR 查询重建失败", "FOR IN SELECT 的 SQL 无法从 AST 还原"),
             "EXECUTE_UNRESOLVED": ("EXECUTE 动态 SQL 未解析", "动态 SQL 变量无法追踪到完整 SQL 字符串"),
-            "SAVEPOINT": ("SAVEPOINT 事务控制", "SAVEPOINT / ROLLBACK TO SAVEPOINT 需通过 JDBC 或 Spring @Transactional 处理"),
+            "SAVEPOINT": (
+                "SAVEPOINT 事务控制",
+                "SAVEPOINT / ROLLBACK TO SAVEPOINT 需通过 JDBC 或 Spring @Transactional 处理",
+            ),
             "AUTO_STUB": ("自动 Stub", "生成代码未通过编译检查，方法体被替换为 Stub"),
             "COMPLEX_REVIEW": ("复杂模式需审查", "同 AUTO_STUB，为方法级注释标记"),
         }
@@ -16931,7 +18944,9 @@ def _render_report_markdown(report: ConversionReport) -> str:
                 lines.append(f"| `{detail}` | {count} |")
             lines.append("")
 
-        for_kind_details = {d: c for (cat, d), c in cat_detail_counts.items() if cat in ("FOR_UNSUPPORTED_KIND", "FOR_QUERY_FAILED")}
+        for_kind_details = {
+            d: c for (cat, d), c in cat_detail_counts.items() if cat in ("FOR_UNSUPPORTED_KIND", "FOR_QUERY_FAILED")
+        }
         if for_kind_details:
             lines.append("### FOR 循环问题详细分布")
             lines.append("")
@@ -16973,8 +18988,7 @@ def _render_report_markdown(report: ConversionReport) -> str:
     return "\n".join(lines)
 
 
-def write_conversion_report(report: ConversionReport, output_dir: str,
-                            report_file: str = None) -> list:
+def write_conversion_report(report: ConversionReport, output_dir: str, report_file: Optional[str] = None) -> list:
     content = _render_report_markdown(report)
 
     written = []
@@ -17083,7 +19097,9 @@ def _build_arg_parser():
     parser.add_argument("--skip-validate", action="store_true", default=False, help="跳过 SQL 语法校验")
     parser.add_argument("--encoding", metavar="ENC", default=None, help="生成源码的编码格式（默认 UTF-8）")
     parser.add_argument("--report", metavar="FILE", help="指定转换报告输出路径")
-    parser.add_argument("--debug", action="store_true", default=False, help="调试模式：在生成的Java/XML中注入SQL源码行号注释")
+    parser.add_argument(
+        "--debug", action="store_true", default=False, help="调试模式：在生成的Java/XML中注入SQL源码行号注释"
+    )
     parser.add_argument("-v", "--version", action="store_true", default=False, help="显示版本信息")
     parser.add_argument("--mcp", action="store_true", default=False, help="以 MCP 服务器模式启动（stdio 协议）")
     return parser
@@ -17098,20 +19114,22 @@ def _read_version_from_cargo_toml(base_dir: str | None = None) -> str | None:
     found (e.g. PyInstaller bundle without source).
     """
     script_dir = base_dir or os.path.dirname(os.path.abspath(__file__))
-    for rel in [os.path.join('..', 'crates', 'fluxgauss', 'Cargo.toml'),
-                os.path.join('..', 'Cargo.toml'),
-                'Cargo.toml']:
+    for rel in [
+        os.path.join("..", "crates", "fluxgauss", "Cargo.toml"),
+        os.path.join("..", "Cargo.toml"),
+        "Cargo.toml",
+    ]:
         cargo_toml = os.path.normpath(os.path.join(script_dir, rel))
         if not os.path.isfile(cargo_toml):
             continue
         uses_workspace_version = False
         try:
-            with open(cargo_toml, 'r', encoding='utf-8') as f:
+            with open(cargo_toml, encoding="utf-8") as f:
                 for line in f:
                     s = line.strip()
-                    if s.startswith('version = '):
+                    if s.startswith("version = "):
                         return s.split('"')[1]
-                    if s.startswith('version.workspace'):
+                    if s.startswith("version.workspace"):
                         uses_workspace_version = True
         except Exception:
             pass
@@ -17134,8 +19152,7 @@ def _run_mcp_server():
         from mcp.server.fastmcp import FastMCP
     except ImportError:
         print(
-            "Error: MCP mode requires the 'mcp' package. Install it with:\n"
-            "  pip install mcp",
+            "Error: MCP mode requires the 'mcp' package. Install it with:\n  pip install mcp",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -17183,15 +19200,17 @@ def _run_mcp_server():
             raw_errors = fresult.get("errors", [])
             raw_warnings = fresult.get("warnings", [])
             errors_out = []
-            for e in raw_errors:
+            for e in raw_errors:  # type: ignore[misc]  # mypy: exception target cleanup conflicts with loop name
                 if isinstance(e, dict):
                     ve = e.get("ValidationError", {})
                     if isinstance(ve, dict) and ve:
-                        errors_out.append({
-                            "line": ve.get("line", 0),
-                            "column": ve.get("column", 0),
-                            "message": ve.get("message", str(ve)),
-                        })
+                        errors_out.append(
+                            {
+                                "line": ve.get("line", 0),
+                                "column": ve.get("column", 0),
+                                "message": ve.get("message", str(ve)),
+                            }
+                        )
                     else:
                         errors_out.append({"line": 0, "column": 0, "message": str(e)})
                 else:
@@ -17201,11 +19220,13 @@ def _run_mcp_server():
                 if isinstance(w, dict):
                     vw = w.get("ValidationWarning", w)
                     if isinstance(vw, dict):
-                        warnings_out.append({
-                            "line": vw.get("line", 0),
-                            "column": vw.get("column", 0),
-                            "message": vw.get("message", str(vw)),
-                        })
+                        warnings_out.append(
+                            {
+                                "line": vw.get("line", 0),
+                                "column": vw.get("column", 0),
+                                "message": vw.get("message", str(vw)),
+                            }
+                        )
                     else:
                         warnings_out.append({"line": 0, "column": 0, "message": str(w)})
                 else:
@@ -17215,11 +19236,13 @@ def _run_mcp_server():
                 total_error_files += 1
             if warnings_out:
                 total_warning_files += 1
-            file_results.append({
-                "file": f,
-                "errors": errors_out,
-                "warnings": warnings_out,
-            })
+            file_results.append(
+                {
+                    "file": f,
+                    "errors": errors_out,
+                    "warnings": warnings_out,
+                }
+            )
 
         return {
             "valid": total_error_files == 0,
@@ -17233,10 +19256,10 @@ def _run_mcp_server():
     # ──────────────────────────────────────────────
     @mcp.tool()
     def convert_sql(
-        config: dict = None,
-        files: list[str] = None,
-        output_dir: str = None,
-        base_package: str = None,
+        config: Optional[dict] = None,
+        files: Optional[list[str]] = None,
+        output_dir: Optional[str] = None,
+        base_package: Optional[str] = None,
         full: bool = False,
         debug: bool = False,
         skip_validation: bool = False,
@@ -17279,11 +19302,21 @@ def _run_mcp_server():
         global STUB_PROCEDURES, STUB_REASONS, UNRESOLVED_CALLS, UNSUPPORTED_FUNCTIONS, TODO_SUMMARY
 
         saved_state = (
-            BASE_PACKAGE, BASE_DIR, _SOURCE_ENCODING, DEBUG_MODE, _LOGGER_CONFIG,
-            TYPE_OVERRIDES.copy(), _TABLE_DDL_SOURCE.copy(),
-            _PACKAGE_CONSTANTS.copy(), _PACKAGE_VARIABLES.copy(), _PACKAGE_VAR_WRITTEN.copy(),
-            STUB_PROCEDURES.copy(), STUB_REASONS.copy(),
-            UNRESOLVED_CALLS.copy(), UNSUPPORTED_FUNCTIONS.copy(), TODO_SUMMARY.copy(),
+            BASE_PACKAGE,
+            BASE_DIR,
+            _SOURCE_ENCODING,
+            DEBUG_MODE,
+            _LOGGER_CONFIG,
+            TYPE_OVERRIDES.copy(),
+            _TABLE_DDL_SOURCE.copy(),
+            _PACKAGE_CONSTANTS.copy(),
+            _PACKAGE_VARIABLES.copy(),
+            _PACKAGE_VAR_WRITTEN.copy(),
+            STUB_PROCEDURES.copy(),
+            STUB_REASONS.copy(),
+            UNRESOLVED_CALLS.copy(),
+            UNSUPPORTED_FUNCTIONS.copy(),
+            TODO_SUMMARY.copy(),
         )
 
         # Apply new state
@@ -17320,7 +19353,7 @@ def _run_mcp_server():
             # ── Phase 0: Table DDL pre-scan ──
             for sql_file in resolved_sql_files:
                 try:
-                    with open(sql_file, "r", encoding=_SOURCE_ENCODING, errors="replace") as _f:
+                    with open(sql_file, encoding=_SOURCE_ENCODING, errors="replace") as _f:
                         _content = _f.read()
                 except Exception:
                     continue
@@ -17340,17 +19373,10 @@ def _run_mcp_server():
                     vresults = validate_sql_files(resolved_sql_files)
                     for sf in resolved_sql_files:
                         vr = vresults.get(sf, {})
-                        real_errors = [
-                            e for e in vr.get("errors", [])
-                            if not _is_parse_warning(e)
-                        ]
+                        real_errors = [e for e in vr.get("errors", []) if not _is_parse_warning(e)]
                         if real_errors:
-                            err_msgs = "; ".join(
-                                _format_validate_error(e) for e in real_errors[:5]
-                            )
-                            raise _McpToolError(
-                                f"Validation failed for {sf}: {err_msgs}"
-                            )
+                            err_msgs = "; ".join(_format_validate_error(e) for e in real_errors[:5])
+                            raise _McpToolError(f"Validation failed for {sf}: {err_msgs}")
                 except _McpToolError:
                     raise
                 except Exception as e:
@@ -17360,7 +19386,7 @@ def _run_mcp_server():
             parsed_asts = {}
             try:
                 parsed_asts = parse_sql_files(resolved_sql_files)
-            except Exception as e:
+            except Exception:
                 # Fallback to per-file parsing
                 for sf in resolved_sql_files:
                     try:
@@ -17370,8 +19396,8 @@ def _run_mcp_server():
 
             # ── Phase 3: Extract procedures ──
             packages = []
-            all_package_names = {}
-            _merge_keys = {}
+            all_package_names: dict[str, PackageInfo] = {}
+            _merge_keys: dict[str, str] = {}
             all_skipped = []
 
             for sql_file in resolved_sql_files:
@@ -17399,9 +19425,7 @@ def _run_mcp_server():
                     for p in procedures:
                         p._source_path = sql_file
                     comments = extract_comments(ast)
-                    pkg_level_comments = _map_comments_to_procedures(
-                        comments, procedures, source_file=basename
-                    )
+                    pkg_level_comments = _map_comments_to_procedures(comments, procedures, source_file=basename)
 
                     if not procedures:
                         continue
@@ -17465,12 +19489,12 @@ def _run_mcp_server():
                 for proc in pkg.procedures:
                     try:
                         if pkg.package_vars:
-                            _pkg_var_names = getattr(proc, "_pkg_var_names", set())
+                            _pkg_var_names: set[str] = getattr(proc, "_pkg_var_names", set())
                             for vn, vi in pkg.package_vars.items():
                                 if vn not in proc.local_vars:
                                     proc.local_vars[vn] = vi.get("java_type", "Object")
                                     _pkg_var_names.add(vn)
-                            setattr(proc, "_pkg_var_names", _pkg_var_names)
+                            proc._pkg_var_names = _pkg_var_names
                         analyze_procedure(proc, all_package_names)
                     except Exception as e:
                         proc.java_logic_lines.append(f"// ERROR: 转换失败 - {e}")
@@ -17490,7 +19514,8 @@ def _run_mcp_server():
             try:
                 os.makedirs(output_dir_abs, exist_ok=True)
                 generate_project(
-                    output_dir_abs, packages,
+                    output_dir_abs,
+                    packages,
                     changed_packages=None,
                     config=resolved_config,
                     progress_cb=None,
@@ -17501,7 +19526,10 @@ def _run_mcp_server():
 
             # ── Phase 6: Build report ──
             report = build_conversion_report(
-                output_dir_abs, packages, all_skipped, parse_errors_map,
+                output_dir_abs,
+                packages,
+                all_skipped,
+                parse_errors_map,
                 config_path=str(resolved_config) if resolved_config else "MCP mode",
                 parse_warnings_map=parse_warnings_map,
             )
@@ -17525,16 +19553,8 @@ def _run_mcp_server():
 
             # ── Summary ──
             total_procs = sum(len(pkg.procedures) for pkg in packages)
-            total_dml = sum(
-                len(proc.dml_statements)
-                for pkg in packages
-                for proc in pkg.procedures
-            )
-            total_calls = sum(
-                len(proc.service_calls)
-                for pkg in packages
-                for proc in pkg.procedures
-            )
+            total_dml = sum(len(proc.dml_statements) for pkg in packages for proc in pkg.procedures)
+            total_calls = sum(len(proc.service_calls) for pkg in packages for proc in pkg.procedures)
 
             result = {
                 "success": True,
@@ -17542,9 +19562,7 @@ def _run_mcp_server():
                 "generated_files": sorted(set(generated_files)),
                 "report": {
                     "generated_at": report.generated_at,
-                    "sql_files": list(
-                        set(m.sql_file for m in report.procedure_mappings)
-                    ),
+                    "sql_files": list(set(m.sql_file for m in report.procedure_mappings)),
                     "procedure_mappings": [
                         {
                             "sql_file": m.sql_file,
@@ -17556,15 +19574,10 @@ def _run_mcp_server():
                         }
                         for m in report.procedure_mappings
                     ],
-                    "parse_errors": [
-                        {"file": f, "error": str(e)}
-                        for f, e in report.parse_errors
-                    ],
+                    "parse_errors": [{"file": f, "error": str(e)} for f, e in report.parse_errors],
                 },
                 "report_paths": report_paths,
-                "log_path": str(
-                    _cache_base(output_dir_abs) / "logs" / "conversion-latest.log"
-                ),
+                "log_path": str(_cache_base(output_dir_abs) / "logs" / "conversion-latest.log"),
                 "summary": {
                     "packages": len(packages),
                     "procedures": total_procs,
@@ -17585,16 +19598,24 @@ def _run_mcp_server():
         finally:
             # Restore global state
             (
-                BASE_PACKAGE, BASE_DIR, _SOURCE_ENCODING, DEBUG_MODE, _LOGGER_CONFIG,
-                TYPE_OVERRIDES, _TABLE_DDL_SOURCE,
-                _PACKAGE_CONSTANTS, _PACKAGE_VARIABLES, _PACKAGE_VAR_WRITTEN,
-                STUB_PROCEDURES, STUB_REASONS,
-                UNRESOLVED_CALLS, UNSUPPORTED_FUNCTIONS, TODO_SUMMARY,
+                BASE_PACKAGE,
+                BASE_DIR,
+                _SOURCE_ENCODING,
+                DEBUG_MODE,
+                _LOGGER_CONFIG,
+                TYPE_OVERRIDES,
+                _TABLE_DDL_SOURCE,
+                _PACKAGE_CONSTANTS,
+                _PACKAGE_VARIABLES,
+                _PACKAGE_VAR_WRITTEN,
+                STUB_PROCEDURES,
+                STUB_REASONS,
+                UNRESOLVED_CALLS,
+                UNSUPPORTED_FUNCTIONS,
+                TODO_SUMMARY,
             ) = saved_state
             _CUSTOM_TYPE_PRESETS.clear()
-            _CUSTOM_TYPE_PRESETS.update(
-                {k.lower(): v for k, v in _CUSTOM_TYPE_PRESETS.items()}
-            )
+            _CUSTOM_TYPE_PRESETS.update({k.lower(): v for k, v in _CUSTOM_TYPE_PRESETS.items()})
 
     # ── Run server ──
     mcp.run(transport="stdio")
@@ -17634,57 +19655,57 @@ def main():
             print(f"Error: config file not found: {config_path}")
             sys.exit(1)
         config = _parse_config(config_path)
-        output_dir = config.get('output_dir', './dest')
-        sql_files = config.get('sources', [])
-        if config.get('base_package'):
+        output_dir = config.get("output_dir", "./dest")
+        sql_files = config.get("sources", [])
+        if config.get("base_package"):
             global BASE_PACKAGE, BASE_DIR, _LOGGER_CONFIG
-            BASE_PACKAGE = config['base_package']
+            BASE_PACKAGE = config["base_package"]
             BASE_DIR = "src/main/java/" + BASE_PACKAGE.replace(".", "/")
-        if 'logger' in config:
+        if "logger" in config:
             _LOGGER_CONFIG = _resolve_logger_config(config)
-        if 'type_aliases' in config:
-            _user_aliases = config['type_aliases']
+        if "type_aliases" in config:
+            _user_aliases = config["type_aliases"]
             if isinstance(_user_aliases, dict):
                 _CUSTOM_TYPE_PRESETS.update({k.lower(): v for k, v in _user_aliases.items()})
 
         # ── Resolve source encoding (from config only) ──
-        if config.get('encoding'):
-            _SOURCE_ENCODING = config['encoding']
+        if config.get("encoding"):
+            _SOURCE_ENCODING = config["encoding"]
 
     elif args.output and args.sources:
         output_dir = args.output
         sql_files = args.sources
     else:
-        print(f"Error: 请指定配置文件 (-c) 或输出目录 + 源文件 (-o + -s)")
-        print(f"  用法: fluxgauss -c fluxgauss.yaml")
-        print(f"  用法: fluxgauss -o ./dest -s pkg_order.sql pkg_product.sql")
-        print(f" 帮助: fluxgauss -h")
+        print("Error: 请指定配置文件 (-c) 或输出目录 + 源文件 (-o + -s)")
+        print("  用法: fluxgauss -c fluxgauss.yaml")
+        print("  用法: fluxgauss -o ./dest -s pkg_order.sql pkg_product.sql")
+        print(" 帮助: fluxgauss -h")
         sys.exit(1)
 
     # ── Resolve source encoding (CLI overrides config) ──
     if args.encoding:
         _SOURCE_ENCODING = args.encoding
     try:
-        ''.encode(_SOURCE_ENCODING)
+        "".encode(_SOURCE_ENCODING)
     except LookupError:
         print(f"Error: unsupported encoding: {_SOURCE_ENCODING}")
         sys.exit(1)
 
     sql_file_to_java_package = {}
-    if args.config and ('java_packages' in config or 'java_package' in config):
+    if args.config and ("java_packages" in config or "java_package" in config):
         if not yaml:
             print("  ⚠ java_package 配置需要 pyyaml 支持，请安装: pip install pyyaml", file=sys.stderr)
             print("  ⚠ java_package 配置已忽略，将使用默认 base_package", file=sys.stderr)
         else:
-            _jp_entries = config.get('java_packages', [])
-            if not _jp_entries and 'java_package' in config:
-                jp_single = config['java_package']
+            _jp_entries = config.get("java_packages", [])
+            if not _jp_entries and "java_package" in config:
+                jp_single = config["java_package"]
                 _jp_entries = [jp_single] if isinstance(jp_single, dict) else jp_single
             for jp_entry in _jp_entries:
                 if not isinstance(jp_entry, dict):
                     continue
-                jp_name = jp_entry.get('package', '')
-                for src in jp_entry.get('sources', []):
+                jp_name = jp_entry.get("package", "")
+                for src in jp_entry.get("sources", []):
                     sql_file_to_java_package[src] = jp_name
                     if src not in sql_files:
                         sql_files.append(src)
@@ -17698,7 +19719,7 @@ def main():
             parse_errors_map[f] = [{"parse_error": f"file not found: {f}"}]
         sql_files = [f for f in sql_files if os.path.exists(f)]
         if not sql_files:
-            _log(f"  ❌ No valid source files. Exiting.", to_stdout=False)
+            _log("  ❌ No valid source files. Exiting.", to_stdout=False)
             sys.exit(1)
 
     # ── Incremental: hash comparison ──
@@ -17738,7 +19759,15 @@ def main():
                 _batch_results = validate_sql_files(_files_to_validate)
                 for sql_file in _files_to_validate:
                     basename = os.path.basename(sql_file)
-                    vresult = _batch_results.get(sql_file, {"error_count": 1, "warning_count": 0, "errors": [{"ValidationError": {"message": "Missing batch result"}}], "warnings": []})
+                    vresult = _batch_results.get(
+                        sql_file,
+                        {
+                            "error_count": 1,
+                            "warning_count": 0,
+                            "errors": [{"ValidationError": {"message": "Missing batch result"}}],
+                            "warnings": [],
+                        },
+                    )
                     raw_errors = vresult.get("errors", [])
                     real_errors = [e for e in raw_errors if not _is_parse_warning(e)]
                     warnings_in_errors = [e for e in raw_errors if _is_parse_warning(e)]
@@ -17746,7 +19775,10 @@ def main():
                     all_warnings = raw_warnings + warnings_in_errors
 
                     if real_errors:
-                        _log(f"    ❌ {basename}: {len(real_errors)} error(s), {len(all_warnings)} warning(s)", to_stdout=False)
+                        _log(
+                            f"    ❌ {basename}: {len(real_errors)} error(s), {len(all_warnings)} warning(s)",
+                            to_stdout=False,
+                        )
                         _validate_errors[basename] = real_errors
                         if all_warnings:
                             _validate_warnings[basename] = all_warnings
@@ -17774,21 +19806,21 @@ def main():
                 if sys.stdin.isatty():
                     try:
                         _ans = input("  是否继续转换？语法错误可能导致转换结果不准确。[y/N] ").strip().lower()
-                        if _ans not in ('y', 'yes'):
-                            _log(f"  用户取消转换。请修复语法错误后重试。", to_stdout=True)
+                        if _ans not in ("y", "yes"):
+                            _log("  用户取消转换。请修复语法错误后重试。", to_stdout=True)
                             _close_log(output_dir)
                             sys.exit(1)
-                        _log(f"  用户选择继续转换（忽略语法错误）", to_stdout=False)
+                        _log("  用户选择继续转换（忽略语法错误）", to_stdout=False)
                     except (EOFError, KeyboardInterrupt):
-                        _log(f"  用户取消转换。", to_stdout=True)
+                        _log("  用户取消转换。", to_stdout=True)
                         _close_log(output_dir)
                         sys.exit(1)
                 else:
-                    _log(f"  ❌ 非交互模式检测到语法错误，自动中止。使用 --skip-validate 跳过校验。", to_stdout=True)
+                    _log("  ❌ 非交互模式检测到语法错误，自动中止。使用 --skip-validate 跳过校验。", to_stdout=True)
                     _close_log(output_dir)
                     sys.exit(1)
         else:
-            _log(f"  Validation: all files cached, skipping.", to_stdout=False)
+            _log("  Validation: all files cached, skipping.", to_stdout=False)
 
     # ── Phase 0: Pre-scan for table DDL ──
     _ddl_files = list(sql_files)
@@ -17801,14 +19833,15 @@ def main():
     for sql_file in _ddl_files:
         if sql_file not in changed_files and not full_regen:
             continue
-        with open(sql_file, 'r', encoding=_SOURCE_ENCODING, errors='replace') as _f:
+        with open(sql_file, encoding=_SOURCE_ENCODING, errors="replace") as _f:
             _content = _f.read()
-        if re.search(r'create\s+table', _content, re.IGNORECASE):
+        if re.search(r"create\s+table", _content, re.IGNORECASE):
             schema = parse_table_ddl(sql_file)
             for tbl, cols in schema.items():
                 for col, col_type in cols.items():
                     TYPE_OVERRIDES[(tbl, col)] = col_type
                     _TABLE_DDL_SOURCE[(tbl, col)] = sql_file
+            _collect_table_constraints(sql_file, schema)
 
     # ── Phase 1: Parse SQL files (use cache for unchanged) ──
     packages = []
@@ -17887,14 +19920,23 @@ def main():
             comments = extract_comments(ast)
             pkg_level_comments = _map_comments_to_procedures(comments, procedures, source_file=basename)
             if not procedures:
-                _log(f"    (no procedures found)", to_stdout=False)
+                _log("    (no procedures found)", to_stdout=False)
                 continue
 
             pkg_name = procedures[0].package if procedures[0].package else Path(sql_file).stem
             for vname, vdata in pkg_vars.items():
                 if vname not in _PACKAGE_CONSTANTS:
                     _PACKAGE_VARIABLES[vname] = {**vdata, "package": pkg_name}
-            pkg = PackageInfo(package_name=pkg_name, procedures=procedures, package_vars=pkg_vars, source_file=basename, source_files=[basename], java_package=sql_file_to_java_package.get(sql_file, ""), comments=pkg_level_comments, custom_types=custom_types)
+            pkg = PackageInfo(
+                package_name=pkg_name,
+                procedures=procedures,
+                package_vars=pkg_vars,
+                source_file=basename,
+                source_files=[basename],
+                java_package=sql_file_to_java_package.get(sql_file, ""),
+                comments=pkg_level_comments,
+                custom_types=custom_types,
+            )
             _merge_key = package_to_classname(pkg_name)
             _existing_name = _merge_keys.get(_merge_key)
             if _existing_name is not None:
@@ -17911,7 +19953,10 @@ def main():
                     _UDF_RETURN_TYPES[(_p.proc_name.lower(), len(_p.parameters))] = _rt
 
             for proc in procedures:
-                _log(f"    ✅ {'FUNCTION' if proc.is_function else 'PROCEDURE'}: {proc.name} ({len(proc.parameters)} params)", to_stdout=False)
+                _log(
+                    f"    ✅ {'FUNCTION' if proc.is_function else 'PROCEDURE'}: {proc.name} ({len(proc.parameters)} params)",
+                    to_stdout=False,
+                )
             if pkg.java_package:
                 _log(f"    📦 Java package: {pkg.java_package}", to_stdout=False)
         except Exception as e:
@@ -17927,17 +19972,17 @@ def main():
     # ── Phase 2: Analyze all procedures ──
     all_procs = [(pkg, proc) for pkg in packages for proc in pkg.procedures]
     n_analyze = len(all_procs)
-    _log(f"\n  Analyzing cross-package dependencies...", to_stdout=False)
+    _log("\n  Analyzing cross-package dependencies...", to_stdout=False)
     for idx, (pkg, proc) in enumerate(all_procs, 1):
         _progress_bar("Analyze", idx, n_analyze, proc.name)
         try:
             if pkg.package_vars:
-                _pkg_var_names = getattr(proc, '_pkg_var_names', set())
+                _pkg_var_names = getattr(proc, "_pkg_var_names", set())
                 for vn, vi in pkg.package_vars.items():
                     if vn not in proc.local_vars:
                         proc.local_vars[vn] = vi.get("java_type", "Object")
                         _pkg_var_names.add(vn)
-                setattr(proc, '_pkg_var_names', _pkg_var_names)
+                proc._pkg_var_names = _pkg_var_names
             analyze_procedure(proc, all_package_names)
         except Exception as e:
             _log(f"    ❌ Error analyzing {proc.name}: {e}", to_stdout=False)
@@ -17960,33 +20005,33 @@ def main():
     if full_regen or not is_incremental:
         changed_pkg_names = None
     else:
-        directly_changed = {
-            pkg_name
-            for f in changed_files if f in sql_file_to_pkg
-            for pkg_name in sql_file_to_pkg[f]
-        }
+        directly_changed = {pkg_name for f in changed_files if f in sql_file_to_pkg for pkg_name in sql_file_to_pkg[f]}
         changed_pkg_names = _find_dependent_packages(packages, directly_changed)
         _log(f"\n  Incremental: regenerating {len(changed_pkg_names)}/{len(packages)} packages")
 
     # ── Phase 3: Generate ──
-    _log(f"\n  Generating Spring Boot project...", to_stdout=False)
+    _log("\n  Generating Spring Boot project...", to_stdout=False)
     _resume_skip = _load_gen_checkpoint(output_dir) if args.resume else set()
     if _resume_skip:
         _log(f"  ⏩ Resume: skipping {len(_resume_skip)} already-generated packages", to_stdout=True)
     _gen_ok = False
     try:
-        generate_project(output_dir, packages, changed_packages=changed_pkg_names, config=config,
-                         resume_skip=_resume_skip,
-                         progress_cb=lambda phase, i, n, s: (
-                             _progress_bar("Generate", i, n, s) if phase == "pkg" else None
-                         ))
-        _progress_done("Generate", len([p for p in packages
-                                        if changed_pkg_names is None or p.package_name in changed_pkg_names]))
+        generate_project(
+            output_dir,
+            packages,
+            changed_packages=changed_pkg_names,
+            config=config,
+            resume_skip=_resume_skip,
+            progress_cb=lambda phase, i, n, s: (_progress_bar("Generate", i, n, s) if phase == "pkg" else None),
+        )
+        _progress_done(
+            "Generate", len([p for p in packages if changed_pkg_names is None or p.package_name in changed_pkg_names])
+        )
         _gen_ok = True
     except Exception as e:
         _log(f"  ❌ Error generating project: {e}", to_stdout=False)
         _log(traceback.format_exc(), to_stdout=False)
-        _log(f"  💡 Use --resume to continue from checkpoint", to_stdout=True)
+        _log("  💡 Use --resume to continue from checkpoint", to_stdout=True)
 
     if _gen_ok:
         _clear_gen_checkpoint(output_dir)
@@ -18005,11 +20050,14 @@ def main():
     _save_manifest(output_dir, new_manifest)
 
     report = build_conversion_report(
-        output_dir, packages, all_skipped, parse_errors_map,
-        config_path=config_path or "", parse_warnings_map=parse_warnings_map
+        output_dir,
+        packages,
+        all_skipped,
+        parse_errors_map,
+        config_path=config_path or "",
+        parse_warnings_map=parse_warnings_map,
     )
-    report_paths = write_conversion_report(report, output_dir,
-                                            report_file=args.report)
+    report_paths = write_conversion_report(report, output_dir, report_file=args.report)
     stub_count = len(STUB_PROCEDURES)
     STUB_PROCEDURES.clear()
     STUB_REASONS.clear()
@@ -18029,7 +20077,7 @@ def main():
         itest_cfg = {}
     itest_enabled = itest_cfg.get("enabled", False)
 
-    _log(f"\n  Done!")
+    _log("\n  Done!")
     _log(f"    Packages:    {len(packages)}")
     _log(f"    Procedures:  {total_procs}")
     _log(f"    DML stmts:   {total_dml} (extracted as iBatis mapper methods)")
@@ -18047,11 +20095,11 @@ def main():
         _log(f"    Stubs:       {stub_count} (需人工审查, 详见转换报告)")
     if TODO_SUMMARY:
         _log(f"    TODOs:       {len(TODO_SUMMARY)} (详见转换报告)")
-    _log(f"")
+    _log("")
     _log(f"    详细处理日志: {_cache_base(output_dir) / 'logs' / 'conversion-latest.log'}")
 
     if report_paths:
-        _log(f"\n  📄 转换报告:")
+        _log("\n  📄 转换报告:")
         for p in report_paths:
             _log(f"    - {p}")
         _log(f"    - {_cache_base(output_dir) / 'logs' / 'conversion-latest.log'}")

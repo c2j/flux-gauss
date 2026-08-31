@@ -1,0 +1,21 @@
+// ===== FILE: Issue118CalleeMapper.java =====
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue118CalleeMapper {
+
+    // No direct DML operations for pkg_issue118_callee
+}
+
+// ===== FILE: Issue118CallerMapper.java =====
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue118CallerMapper {
+
+    // No direct DML operations for pkg_issue118_caller
+}

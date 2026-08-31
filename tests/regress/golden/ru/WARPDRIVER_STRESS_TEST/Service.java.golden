@@ -135,7 +135,7 @@ public class WarpdriverStressTestService {
                             // SQL: . unit_price := 100
                             // CALL itemTab(vIdx) — procedure not found in current package
                             // SQL: . metadata := jsonb_build_object ( 'order_id' , v_rec . order_id , 'mode' , p_mode , 'seq' , g_session_counter )
-                            vSum = vSum.add(java.math.BigDecimal.valueOf(((Number) vRec.getOrDefault("totalAmount", vRec.get("total_amount"))).doubleValue()));
+                            vSum = vSum.add(java.math.BigDecimal.valueOf(((Number) java.util.Objects.requireNonNullElse(vRec.getOrDefault("totalAmount", vRec.get("total_amount")), 0L)).doubleValue()));
                             if (java.util.Optional.ofNullable((Number) vRec.getOrDefault("totalAmount", vRec.get("total_amount"))).map(Number::longValue).orElse(0L) > 1000000) {
                                 this.spDynamicSchedulerDispatch(String.valueOf(vRec.getOrDefault("orderId", vRec.get("order_id"))), "JOB_BIG_ORDER_");
                             } else if (java.util.Optional.ofNullable((Number) vRec.getOrDefault("totalAmount", vRec.get("total_amount"))).map(Number::longValue).orElse(0L) < 0) {

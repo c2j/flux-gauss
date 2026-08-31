@@ -282,9 +282,8 @@ ogsql validate → 转换 → mvn compile → mvn test → DB_PASSWORD=... mvn v
 
 ```bash
 # ---------- Python 侧 ----------
-# 开发依赖（注意：ruff / mypy 不在 extras 里，必须单独装）
-pip install -e ".[dev,mcp]"
-pip install ruff mypy
+# 开发依赖（ruff / mypy 已包含在 dev extras）
+.venv/bin/pip install -e ".[dev,mcp]"
 
 # 单测（按文件 / 按名字过滤）
 python3 -m pytest tests/test_type_conversion.py -v
@@ -302,10 +301,10 @@ python3 -m pytest tests/regress/test_demo_migration.py -v --tb=short -m demo_mig
 # 双引擎 parity（需 ogsql + target/release/fluxgauss）
 python3 -m pytest tests/regress/test_parity.py -m parity -v
 
-# Python lint / 类型（CI 不跑，本地必跑）
-ruff format --check converter tests
-ruff check converter tests
-mypy converter
+# Python lint / 类型（0-error gate）
+.venv/bin/ruff check converter tests
+.venv/bin/ruff format --check converter tests
+.venv/bin/mypy converter
 
 # ---------- Rust 侧 ----------
 # 单测
@@ -326,9 +325,8 @@ cargo clippy --all --all-targets
 > **没有 fmt / clippy / ruff / mypy 任何一项。** §0 门禁表里的 ruff 与 clippy 完全依赖本地自觉——
 > CI 绿不代表门禁过。
 >
-> ⚠️ `ruff` 与 `mypy` **没有**写进 `pyproject.toml` 的 `[project.optional-dependencies]`
-> （`dev` 只有 `pytest>=7.0`），也不在 `requirements.txt` 里；但 `ruff.toml` / `mypy.ini` 存在，
-> §0 又拿 ruff 当门禁。必须 `pip install ruff mypy` 单独安装，否则门禁根本跑不起来。
+> `ruff` 与 `mypy` 已由 `pyproject.toml` 的 `dev` extras 提供；`mypy converter` 以 0 error 为门禁，
+> 新增类型错误不得进入主分支。
 >
 > ⚠️ 跑 Python 转换前先离开仓库根目录（见 §4 的 ogsql 二进制解析顺序陷阱），
 > 否则会静默命中根目录的旧 `./ogsql`。

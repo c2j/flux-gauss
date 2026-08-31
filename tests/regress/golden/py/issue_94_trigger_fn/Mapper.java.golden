@@ -1,0 +1,9 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue94TriggerFnMapper {
+
+    // No direct DML operations for issue_94_trigger_fn
+}

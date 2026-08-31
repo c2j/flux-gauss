@@ -4,7 +4,7 @@ Tests for naming/identifier functions in converter/flux_gauss.py.
 These pure functions are critical for correct Java code generation —
 every class name, method name, and variable name passes through them.
 """
-import pytest
+
 import converter.flux_gauss as fg
 
 

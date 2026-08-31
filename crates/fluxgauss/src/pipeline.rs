@@ -610,7 +610,7 @@ fn phase2_analyze(
             idx += 1;
             crate::progress::progress_bar("Analyze", idx, total, &proc.name);
 
-            if let Err(e) = crate::analyze::analyze_procedure(proc, &proc_summaries, ctx, &ddl_schema, debug) {
+            if let Err(e) = crate::analyze::analyze_procedure(proc, &proc_summaries, ctx, &ddl_schema.columns, debug) {
                 errors.push(e);
             }
         }

@@ -6,6 +6,7 @@
   语料缺失时显式 pytest.skip（AGENTS.md §8 口径：skipped 单列、不计入失败）；
   有语料的机器（本机）则全量校验。
 """
+
 from pathlib import Path
 
 import pytest
