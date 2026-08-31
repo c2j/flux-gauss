@@ -22,7 +22,7 @@ import textwrap
 import traceback
 from collections import defaultdict, namedtuple
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional, cast
 
@@ -213,9 +213,11 @@ def parse_table_ddl(sql_file: str) -> dict:
 
     # Find CREATE TABLE statements by tracking parenthesis depth
     for m in re.finditer(
-        r"create\s+table\s+(?:if\s+not\s+exists\s+)?(?:\w+\.)?(\w+)\s*\(", content_clean, re.IGNORECASE
+        r"create\s+table\s+(?:if\s+not\s+exists\s+)?(?:\w+\.)?(?:\"([^\"]+)\"|(\w+))\s*\(",
+        content_clean,
+        re.IGNORECASE,
     ):
-        table_name = m.group(1).lower()
+        table_name = (m.group(1) or m.group(2)).lower()
         start = m.end()
 
         depth = 1
@@ -268,7 +270,7 @@ def parse_table_ddl(sql_file: str) -> dict:
                 )
                 tokens = part.split(None, 1)
             if len(tokens) >= 2:
-                col_name = tokens[0].strip().lower()
+                col_name = tokens[0].strip().strip('"').lower()
                 col_type = tokens[1].strip()
                 col_type = re.split(
                     r"\s+(NOT\s+NULL|NULL|DEFAULT|PRIMARY|UNIQUE|CHECK|REFERENCES|CONSTRAINT|USING|PCTFREE|INITRANS|MAXTRANS|STORAGE|TABLESPACE|ENABLE|DISABLE|NOCOMPRESS|COMPRESS)",
@@ -486,6 +488,148 @@ TYPE_OVERRIDES: dict[tuple[str, str], str] = {
 }
 
 _TABLE_DDL_SOURCE: dict = {}
+_TABLE_CONSTRAINTS: dict[str, dict[str, Any]] = {}
+_ENUM_TYPES: dict[str, list[str]] = {}
+
+
+def _sql_ident(raw: str) -> str:
+    return raw.strip().strip('"').split(".")[-1].strip('"').lower()
+
+
+def _split_ddl_parts(text: str) -> list[str]:
+    parts = []
+    current = []
+    depth = 0
+    in_string = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == "'":
+            current.append(char)
+            if in_string and index + 1 < len(text) and text[index + 1] == "'":
+                current.append("'")
+                index += 2
+                continue
+            in_string = not in_string
+        elif not in_string and char == "(":
+            depth += 1
+            current.append(char)
+        elif not in_string and char == ")":
+            depth -= 1
+            current.append(char)
+        elif not in_string and char == "," and depth == 0:
+            parts.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+        index += 1
+    if current:
+        parts.append("".join(current).strip())
+    return parts
+
+
+def _parenthesized_text(text: str, open_pos: int) -> tuple[str, int]:
+    depth = 1
+    in_string = False
+    pos = open_pos + 1
+    while pos < len(text) and depth:
+        char = text[pos]
+        if char == "'":
+            if in_string and pos + 1 < len(text) and text[pos + 1] == "'":
+                pos += 2
+                continue
+            in_string = not in_string
+        elif not in_string and char == "(":
+            depth += 1
+        elif not in_string and char == ")":
+            depth -= 1
+        pos += 1
+    return text[open_pos + 1 : pos - 1], pos
+
+
+def _check_expressions(part: str) -> list[str]:
+    expressions = []
+    for match in re.finditer(r"\bCHECK\s*\(", part, re.IGNORECASE):
+        expr, _ = _parenthesized_text(part, match.end() - 1)
+        expressions.append(expr.strip())
+    return expressions
+
+
+def _collect_table_constraints(sql_file: str, schema: Optional[dict] = None) -> None:
+    """Collect enum, CHECK and RANGE partition metadata from a DDL source."""
+    with open(sql_file, encoding="utf-8", errors="replace") as ddl_file:
+        content = ddl_file.read()
+    content = re.sub(r"/\*.*?\*/", "", content, flags=re.DOTALL)
+    content = re.sub(r"--.*$", "", content, flags=re.MULTILINE)
+
+    for match in re.finditer(
+        r"\bCREATE\s+TYPE\s+((?:\"[^\"]+\"|\w+)(?:\s*\.\s*(?:\"[^\"]+\"|\w+))?)\s+AS\s+ENUM\s*\(",
+        content,
+        re.IGNORECASE,
+    ):
+        members_text, _ = _parenthesized_text(content, match.end() - 1)
+        members = [m.group(1).replace("''", "'") for m in re.finditer(r"'((?:''|[^'])*)'", members_text)]
+        _ENUM_TYPES[_sql_ident(match.group(1))] = members
+
+    table_pattern = re.compile(
+        r"\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+        r"((?:\"[^\"]+\"|\w+)(?:\s*\.\s*(?:\"[^\"]+\"|\w+))?)\s*\(",
+        re.IGNORECASE,
+    )
+    parsed_schema = schema if schema is not None else parse_table_ddl(sql_file)
+    for match in table_pattern.finditer(content):
+        table = _sql_ident(match.group(1))
+        columns_text, table_end = _parenthesized_text(content, match.end() - 1)
+        enum_columns: dict[str, list[str]] = {}
+        checks: dict[str, list[str]] = {}
+        partition_key: Optional[str] = None
+        partition_bounds: list[tuple[str, str]] = []
+        metadata: dict[str, Any] = {
+            "enums": enum_columns,
+            "checks": checks,
+            "partition_key": None,
+            "partition_bounds": partition_bounds,
+        }
+        table_columns = parsed_schema.get(table, {})
+        for col, sql_type in table_columns.items():
+            type_name = _sql_ident(re.split(r"\s|\(", sql_type.strip(), maxsplit=1)[0])
+            if type_name in _ENUM_TYPES:
+                enum_columns[col] = list(_ENUM_TYPES[type_name])
+
+        parts = _split_ddl_parts(columns_text)
+        for part in parts:
+            first = re.match(r'\s*(?:"([^\"]+)"|(\w+))', part)
+            first_name = _sql_ident(first.group(1) or first.group(2)) if first else ""
+            is_table_constraint = first_name in {"constraint", "check", "primary", "foreign", "unique"}
+            for expr in _check_expressions(part):
+                if is_table_constraint:
+                    referenced = [
+                        col
+                        for col in table_columns
+                        if re.search(rf'(?<![\w"])"?{re.escape(col)}"?(?![\w"])', expr, re.IGNORECASE)
+                    ]
+                else:
+                    referenced = [first_name] if first_name in table_columns else []
+                for col in referenced:
+                    checks.setdefault(col, []).append(expr)
+
+        statement_tail = content[
+            table_end : content.find(";", table_end) if ";" in content[table_end:] else len(content)
+        ]
+        partition = re.search(
+            r"\bPARTITION\s+BY\s+RANGE\s*\(\s*(?:\"([^\"]+)\"|(\w+))\s*\)",
+            statement_tail,
+            re.IGNORECASE,
+        )
+        if partition:
+            partition_key = _sql_ident(partition.group(1) or partition.group(2))
+            specs = statement_tail[partition.end() :]
+            for bound in re.finditer(r"\bVALUES\s+LESS\s+THAN\s*\(([^)]*)\)", specs, re.IGNORECASE):
+                partition_bounds.append(("", bound.group(1).strip()))
+            for bound in re.finditer(r"\bVALUES\s+FROM\s*\(([^)]*)\)\s+TO\s*\(([^)]*)\)", specs, re.IGNORECASE):
+                partition_bounds.append((bound.group(1).strip(), bound.group(2).strip()))
+        metadata["partition_key"] = partition_key
+        _TABLE_CONSTRAINTS[table] = metadata
 
 
 def _lookup_table_columns(table_name: str, source_file: str = "") -> list:
@@ -16985,6 +17129,19 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
     if sequences_needed:
         lines.append("")
 
+    emitted_enum_types = set()
+    for table, metadata in sorted(_TABLE_CONSTRAINTS.items()):
+        columns = schema_map.get(table, {})
+        for col, members in metadata.get("enums", {}).items():
+            enum_type = _sql_ident(re.split(r"\s|\(", columns.get(col, ""), maxsplit=1)[0])
+            if not enum_type or enum_type in emitted_enum_types or not members:
+                continue
+            quoted_members = ", ".join("'" + str(member).replace("'", "''") + "'" for member in members)
+            lines.append(f"CREATE TYPE {enum_type} AS ENUM ({quoted_members});")
+            emitted_enum_types.add(enum_type)
+    if emitted_enum_types:
+        lines.append("")
+
     # Extract tables referenced by DML but missing from TYPE_OVERRIDES (no CREATE TABLE DDL)
     dml_tables: dict[str, dict[str, str]] = {}
     for pkg in packages:
@@ -17692,9 +17849,47 @@ def _itest_sql_value(java_value: str, sql_type: str) -> str:
     return v
 
 
-def _itest_generate_test_value(col_name: str, sql_type: str) -> str:
+def _itest_numeric_check_value(col_name: str, expressions: list[str]) -> Optional[str]:
+    for expr in expressions:
+        match = re.fullmatch(
+            rf"\s*\(*\s*\"?{re.escape(col_name)}\"?\s*(>=|<=|>|<|=)\s*(-?\d+(?:\.\d+)?)\s*\)*\s*",
+            expr,
+            re.IGNORECASE,
+        )
+        if not match:
+            continue
+        operator, raw_value = match.groups()
+        value = float(raw_value) if "." in raw_value else int(raw_value)
+        if operator == ">":
+            value = value + (100 if value >= 100 else 1)
+        elif operator == "<":
+            value -= 1
+        return str(value)
+    return None
+
+
+def _itest_generate_test_value(col_name: str, sql_type: str, constraints: Optional[dict] = None) -> str:
     lower_type = (sql_type or "").lower()
     lower_col = col_name.lower()
+    constraints = constraints or {}
+    enum_members = constraints.get("enums", {}).get(lower_col, [])
+    if enum_members:
+        return "'" + str(enum_members[0]).replace("'", "''") + "'"
+    check_value = _itest_numeric_check_value(lower_col, constraints.get("checks", {}).get(lower_col, []))
+    if check_value is not None:
+        return check_value
+    if lower_col == constraints.get("partition_key") and ("date" in lower_type or "timestamp" in lower_type):
+        bounds = constraints.get("partition_bounds", [])
+        if bounds:
+            lower, upper = cast(tuple[str, str], bounds[0])
+            if lower:
+                return str(lower)
+            upper_date = re.fullmatch(r"'(\d{4}-\d{2}-\d{2})'", upper)
+            if upper_date:
+                inside = datetime.strptime(upper_date.group(1), "%Y-%m-%d") - timedelta(days=1)
+                return f"'{inside:%Y-%m-%d}'"
+        _log(f"  Warning: partition bounds not parsed for column {lower_col}; using fixed date literal")
+        return "'2024-01-01'"
     if any(t in lower_type for t in ("int", "serial", "bigserial")):
         if lower_col.startswith("parent_"):
             return "NULL"
@@ -18037,7 +18232,7 @@ def _itest_write_fixtures(
             elif _lit is not None:
                 values.append(_lit)
             else:
-                values.append(_itest_generate_test_value(col, sql_type))
+                values.append(_itest_generate_test_value(col, sql_type, _TABLE_CONSTRAINTS.get(table.lower())))
         cols_str = ", ".join(col_names)
         vals_str = ", ".join(values)
         lines.append(f"INSERT INTO {table} ({cols_str}) VALUES ({vals_str});")
@@ -19643,6 +19838,7 @@ def main():
                 for col, col_type in cols.items():
                     TYPE_OVERRIDES[(tbl, col)] = col_type
                     _TABLE_DDL_SOURCE[(tbl, col)] = sql_file
+            _collect_table_constraints(sql_file, schema)
 
     # ── Phase 1: Parse SQL files (use cache for unchanged) ──
     packages = []

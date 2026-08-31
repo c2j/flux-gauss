@@ -43,6 +43,8 @@ def _reset_global_state():
     fg._DML_CTR_TRACKER = None
     fg._UDF_RETURN_TYPES.clear()
     fg._TABLE_DDL_SOURCE.clear()
+    fg._TABLE_CONSTRAINTS.clear()
+    fg._ENUM_TYPES.clear()
 
     # TYPE_OVERRIDES is a config dict — save/restore to avoid test cross-contamination
     original_overrides = dict(fg.TYPE_OVERRIDES)
