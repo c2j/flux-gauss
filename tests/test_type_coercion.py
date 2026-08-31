@@ -1,4 +1,5 @@
 """Tests for _coerce_type() — unified type coercion engine."""
+
 import converter.flux_gauss as fg
 
 
@@ -126,7 +127,9 @@ class TestCoerceTypeNumeric:
         assert fg._coerce_type("rateVar", "Double", "Long") == "rateVar.longValue()"
 
     def test_integer_to_bigdecimal(self):
-        assert fg._coerce_type("countVar", "Integer", "java.math.BigDecimal") == "java.math.BigDecimal.valueOf(countVar)"
+        assert (
+            fg._coerce_type("countVar", "Integer", "java.math.BigDecimal") == "java.math.BigDecimal.valueOf(countVar)"
+        )
 
     def test_long_to_bigdecimal(self):
         assert fg._coerce_type("idVar", "Long", "java.math.BigDecimal") == "java.math.BigDecimal.valueOf(idVar)"
@@ -240,8 +243,9 @@ class TestAssignmentTypeCoercion:
             "expression": {"PlVariable": ["v_integer"]},
         }
         fg._process_assignment(assign_data, proc, {})
-        assert any(".longValue()" in line and "vLong" in line for line in proc.java_logic_lines), \
+        assert any(".longValue()" in line and "vLong" in line for line in proc.java_logic_lines), (
             f"Expected .longValue() coercion, got: {proc.java_logic_lines}"
+        )
 
     def test_assign_integer_to_string_var(self):
         """v_str := v_integer -> v_str = String.valueOf(vInteger)"""
@@ -251,8 +255,9 @@ class TestAssignmentTypeCoercion:
             "expression": {"PlVariable": ["v_integer"]},
         }
         fg._process_assignment(assign_data, proc, {})
-        assert any("String.valueOf(" in line and "vInteger" in line for line in proc.java_logic_lines), \
+        assert any("String.valueOf(" in line and "vInteger" in line for line in proc.java_logic_lines), (
             f"Expected String.valueOf() coercion, got: {proc.java_logic_lines}"
+        )
 
     def test_assign_string_to_integer_var(self):
         """v_int := v_str -> v_int = Integer.parseInt(vStr)"""
@@ -262,8 +267,9 @@ class TestAssignmentTypeCoercion:
             "expression": {"PlVariable": ["v_str"]},
         }
         fg._process_assignment(assign_data, proc, {})
-        assert any("Integer.parseInt(" in line for line in proc.java_logic_lines), \
+        assert any("Integer.parseInt(" in line for line in proc.java_logic_lines), (
             f"Expected Integer.parseInt() coercion, got: {proc.java_logic_lines}"
+        )
 
     def test_assign_long_to_integer_var(self):
         """v_int := v_long -> v_int = vLong.intValue()"""
@@ -273,8 +279,9 @@ class TestAssignmentTypeCoercion:
             "expression": {"PlVariable": ["v_long"]},
         }
         fg._process_assignment(assign_data, proc, {})
-        assert any(".intValue()" in line and "vLong" in line for line in proc.java_logic_lines), \
+        assert any(".intValue()" in line and "vLong" in line for line in proc.java_logic_lines), (
             f"Expected .intValue() coercion, got: {proc.java_logic_lines}"
+        )
 
     def test_assign_same_type_no_coercion(self):
         """v_a := v_b (both Integer) -> no coercion"""
@@ -284,8 +291,9 @@ class TestAssignmentTypeCoercion:
             "expression": {"PlVariable": ["v_b"]},
         }
         fg._process_assignment(assign_data, proc, {})
-        assert any("vA = vB;" in line for line in proc.java_logic_lines), \
+        assert any("vA = vB;" in line for line in proc.java_logic_lines), (
             f"Expected no coercion for same type, got: {proc.java_logic_lines}"
+        )
 
 
 class TestComparisonTypeCoercion:
@@ -311,8 +319,7 @@ class TestComparisonTypeCoercion:
         proc = self._make_proc(local_vars={"v_int": "Integer", "v_long": "Long"})
         expr = {"BinaryOp": {"left": {"PlVariable": ["v_int"]}, "op": "=", "right": {"PlVariable": ["v_long"]}}}
         result = fg._expr_to_java(expr, proc)
-        assert "longValue()" in result or "compareTo" in result, \
-            f"Expected type coercion in comparison, got: {result}"
+        assert "longValue()" in result or "compareTo" in result, f"Expected type coercion in comparison, got: {result}"
 
     def test_compare_long_vs_bigdecimal(self):
         """v_long = v_bd -> coerce to BigDecimal compareTo"""
@@ -333,8 +340,9 @@ class TestComparisonTypeCoercion:
         proc = self._make_proc(local_vars={"v_int": "Integer", "v_dbl": "Double"})
         expr = {"BinaryOp": {"left": {"PlVariable": ["v_int"]}, "op": ">", "right": {"PlVariable": ["v_dbl"]}}}
         result = fg._expr_to_java(expr, proc)
-        assert "doubleValue()" in result or "Double.compare" in result, \
+        assert "doubleValue()" in result or "Double.compare" in result, (
             f"Expected type coercion for Integer vs Double, got: {result}"
+        )
 
 
 class TestVarDeclDefaultCoercion:
@@ -348,8 +356,7 @@ class TestVarDeclDefaultCoercion:
         default_inferred = fg._infer_expr_type(default_expr, None)
         if fg._needs_coercion(default_inferred, var_type):
             default_java = fg._coerce_type(default_java, default_inferred, var_type)
-        assert "Long.valueOf(42)" == default_java, \
-            f"Expected Long.valueOf(42), got: {default_java}"
+        assert default_java == "Long.valueOf(42)", f"Expected Long.valueOf(42), got: {default_java}"
 
     def test_default_string_to_integer_var(self):
         """v_int INTEGER := '100' -> default coerced to Integer.parseInt("100")"""
@@ -359,8 +366,7 @@ class TestVarDeclDefaultCoercion:
         default_inferred = fg._infer_expr_type(default_expr, None)
         if fg._needs_coercion(default_inferred, var_type):
             default_java = fg._coerce_type(default_java, default_inferred, var_type)
-        assert 'Integer.parseInt("100")' == default_java, \
-            f"Expected Integer.parseInt coercion, got: {default_java}"
+        assert default_java == 'Integer.parseInt("100")', f"Expected Integer.parseInt coercion, got: {default_java}"
 
     def test_default_same_type_no_coercion(self):
         """v_str VARCHAR := 'hello' -> no coercion needed"""
@@ -370,8 +376,7 @@ class TestVarDeclDefaultCoercion:
         default_inferred = fg._infer_expr_type(default_expr, None)
         if fg._needs_coercion(default_inferred, var_type):
             default_java = fg._coerce_type(default_java, default_inferred, var_type)
-        assert '"hello"' == default_java, \
-            f"Expected no coercion for same type, got: {default_java}"
+        assert default_java == '"hello"', f"Expected no coercion for same type, got: {default_java}"
 
     def test_default_integer_to_bigdecimal_var(self):
         """v_amount NUMERIC := 100 -> default coerced to BigDecimal.valueOf(100)"""
@@ -381,5 +386,4 @@ class TestVarDeclDefaultCoercion:
         default_inferred = fg._infer_expr_type(default_expr, None)
         if fg._needs_coercion(default_inferred, var_type):
             default_java = fg._coerce_type(default_java, default_inferred, var_type)
-        assert "BigDecimal.valueOf(100)" in default_java, \
-            f"Expected BigDecimal.valueOf coercion, got: {default_java}"
+        assert "BigDecimal.valueOf(100)" in default_java, f"Expected BigDecimal.valueOf coercion, got: {default_java}"

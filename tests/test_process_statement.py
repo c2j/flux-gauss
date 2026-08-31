@@ -4,16 +4,23 @@ Tests for _process_statement and control flow handlers.
 Covers: IF/FOR range/WHILE/LOOP, Assignment, RAISE, RETURN.
 These functions modify proc.java_logic_lines as a side effect.
 """
+
 import pytest
+
 import converter.flux_gauss as fg
 
 
 @pytest.fixture
 def proc():
     return fg.ProcedureInfo(
-        name="pkg_test.proc_a", package="pkg_test", proc_name="proc_a",
-        is_function=False, return_type=None, parameters=[],
-        body={"Block": {"body": {"statements": []}}}, sql_text="BEGIN NULL; END;",
+        name="pkg_test.proc_a",
+        package="pkg_test",
+        proc_name="proc_a",
+        is_function=False,
+        return_type=None,
+        parameters=[],
+        body={"Block": {"body": {"statements": []}}},
+        sql_text="BEGIN NULL; END;",
         local_vars={"v_count": "Integer", "v_name": "String", "v_flag": "Boolean"},
     )
 
@@ -76,8 +83,12 @@ class TestProcessIf:
     def test_simple_if(self, proc, all_packages, dml_counter):
         if_stmt = {
             "If": {
-                "condition": {"BinaryOp": {"op": ">", "left": {"ColumnRef": ["v_count"]}, "right": {"Literal": {"Integer": 0}}}},
-                "then_stmts": [{"Assignment": {"target": {"ColumnRef": ["v_flag"]}, "expr": {"Literal": {"Boolean": True}}}}],
+                "condition": {
+                    "BinaryOp": {"op": ">", "left": {"ColumnRef": ["v_count"]}, "right": {"Literal": {"Integer": 0}}}
+                },
+                "then_stmts": [
+                    {"Assignment": {"target": {"ColumnRef": ["v_flag"]}, "expr": {"Literal": {"Boolean": True}}}}
+                ],
                 "elsifs": [],
                 "else_stmts": [],
             }
@@ -91,9 +102,13 @@ class TestProcessIf:
         if_stmt = {
             "If": {
                 "condition": {"ColumnRef": ["v_flag"]},
-                "then_stmts": [{"Assignment": {"target": {"ColumnRef": ["v_count"]}, "expr": {"Literal": {"Integer": 1}}}}],
+                "then_stmts": [
+                    {"Assignment": {"target": {"ColumnRef": ["v_count"]}, "expr": {"Literal": {"Integer": 1}}}}
+                ],
                 "elsifs": [],
-                "else_stmts": [{"Assignment": {"target": {"ColumnRef": ["v_count"]}, "expr": {"Literal": {"Integer": 0}}}}],
+                "else_stmts": [
+                    {"Assignment": {"target": {"ColumnRef": ["v_count"]}, "expr": {"Literal": {"Integer": 0}}}}
+                ],
             }
         }
         fg._process_if(if_stmt["If"], proc, all_packages, dml_counter)
@@ -107,7 +122,13 @@ class TestProcessFor:
         for_stmt = {
             "For": {
                 "variable": "i",
-                "kind": {"Range": {"low": {"Literal": {"Integer": 1}}, "high": {"Literal": {"Integer": 10}}, "reverse": False}},
+                "kind": {
+                    "Range": {
+                        "low": {"Literal": {"Integer": 1}},
+                        "high": {"Literal": {"Integer": 10}},
+                        "reverse": False,
+                    }
+                },
                 "body": [{"Assignment": {"target": {"ColumnRef": ["v_count"]}, "expr": {"ColumnRef": ["i"]}}}],
             }
         }
@@ -119,7 +140,9 @@ class TestProcessFor:
         for_stmt = {
             "For": {
                 "variable": "i",
-                "kind": {"Range": {"low": {"Literal": {"Integer": 1}}, "high": {"Literal": {"Integer": 5}}, "reverse": True}},
+                "kind": {
+                    "Range": {"low": {"Literal": {"Integer": 1}}, "high": {"Literal": {"Integer": 5}}, "reverse": True}
+                },
                 "body": [],
             }
         }
@@ -132,8 +155,23 @@ class TestProcessWhile:
     def test_simple_while(self, proc, all_packages, dml_counter):
         while_stmt = {
             "While": {
-                "condition": {"BinaryOp": {"op": "<", "left": {"ColumnRef": ["v_count"]}, "right": {"Literal": {"Integer": 100}}}},
-                "body": [{"Assignment": {"target": {"ColumnRef": ["v_count"]}, "expr": {"BinaryOp": {"op": "+", "left": {"ColumnRef": ["v_count"]}, "right": {"Literal": {"Integer": 1}}}}}}],
+                "condition": {
+                    "BinaryOp": {"op": "<", "left": {"ColumnRef": ["v_count"]}, "right": {"Literal": {"Integer": 100}}}
+                },
+                "body": [
+                    {
+                        "Assignment": {
+                            "target": {"ColumnRef": ["v_count"]},
+                            "expr": {
+                                "BinaryOp": {
+                                    "op": "+",
+                                    "left": {"ColumnRef": ["v_count"]},
+                                    "right": {"Literal": {"Integer": 1}},
+                                }
+                            },
+                        }
+                    }
+                ],
             }
         }
         fg._process_while(while_stmt["While"], proc, all_packages, dml_counter)
@@ -146,8 +184,32 @@ class TestProcessLoop:
         loop_stmt = {
             "Loop": {
                 "body": [
-                    {"Assignment": {"target": {"ColumnRef": ["v_count"]}, "expr": {"BinaryOp": {"op": "+", "left": {"ColumnRef": ["v_count"]}, "right": {"Literal": {"Integer": 1}}}}}},
-                    {"If": {"condition": {"BinaryOp": {"op": ">=", "left": {"ColumnRef": ["v_count"]}, "right": {"Literal": {"Integer": 10}}}}, "then_stmts": [{"Exit": {"condition": None}}], "elsifs": [], "else_stmts": []}},
+                    {
+                        "Assignment": {
+                            "target": {"ColumnRef": ["v_count"]},
+                            "expr": {
+                                "BinaryOp": {
+                                    "op": "+",
+                                    "left": {"ColumnRef": ["v_count"]},
+                                    "right": {"Literal": {"Integer": 1}},
+                                }
+                            },
+                        }
+                    },
+                    {
+                        "If": {
+                            "condition": {
+                                "BinaryOp": {
+                                    "op": ">=",
+                                    "left": {"ColumnRef": ["v_count"]},
+                                    "right": {"Literal": {"Integer": 10}},
+                                }
+                            },
+                            "then_stmts": [{"Exit": {"condition": None}}],
+                            "elsifs": [],
+                            "else_stmts": [],
+                        }
+                    },
                 ],
             }
         }

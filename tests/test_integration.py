@@ -4,12 +4,14 @@ Integration regression tests for the full conversion pipeline.
 Tests the complete SQL → AST → ProcedureInfo → Java code path using
 cached AST files from dest/.fluxgauss/ast/ and mocked parse_sql_file.
 """
+
 import json
 import os
-import pytest
-from unittest.mock import patch, MagicMock
-import converter.flux_gauss as fg
+from unittest.mock import MagicMock, patch
 
+import pytest
+
+import converter.flux_gauss as fg
 
 AST_DIR = os.path.join(os.path.dirname(__file__), "..", "dest", ".fluxgauss", "ast")
 
@@ -115,7 +117,9 @@ class TestAnalyzeProcedureFromCachedAst:
         procs, _, _ = fg.extract_procedures(ast, "PKG_WARPDRIVER_STRESS_TEST.sql")
         assert len(procs) > 0
 
-        all_pkgs = {"PKG_WARPDRIVER_STRESS_TEST": fg.PackageInfo(package_name="PKG_WARPDRIVER_STRESS_TEST", procedures=procs)}
+        all_pkgs = {
+            "PKG_WARPDRIVER_STRESS_TEST": fg.PackageInfo(package_name="PKG_WARPDRIVER_STRESS_TEST", procedures=procs)
+        }
         fg.analyze_procedure(procs[0], all_pkgs)
         assert len(procs[0].java_logic_lines) > 0
 
@@ -124,7 +128,9 @@ class TestAnalyzeProcedureFromCachedAst:
         ast = _load_cached_ast("demo_project_sql_PKG_WARPDRIVER_STRESS_TEST_sql.json")
         procs, _, _ = fg.extract_procedures(ast, "PKG_WARPDRIVER_STRESS_TEST.sql")
 
-        all_pkgs = {"PKG_WARPDRIVER_STRESS_TEST": fg.PackageInfo(package_name="PKG_WARPDRIVER_STRESS_TEST", procedures=procs)}
+        all_pkgs = {
+            "PKG_WARPDRIVER_STRESS_TEST": fg.PackageInfo(package_name="PKG_WARPDRIVER_STRESS_TEST", procedures=procs)
+        }
         for proc in procs:
             fg.analyze_procedure(proc, all_pkgs)
 
@@ -136,7 +142,9 @@ class TestAnalyzeProcedureFromCachedAst:
         ast = _load_cached_ast("demo_project_sql_PKG_WARPDRIVER_STRESS_TEST_sql.json")
         procs, _, _ = fg.extract_procedures(ast, "PKG_WARPDRIVER_STRESS_TEST.sql")
 
-        all_pkgs = {"PKG_WARPDRIVER_STRESS_TEST": fg.PackageInfo(package_name="PKG_WARPDRIVER_STRESS_TEST", procedures=procs)}
+        all_pkgs = {
+            "PKG_WARPDRIVER_STRESS_TEST": fg.PackageInfo(package_name="PKG_WARPDRIVER_STRESS_TEST", procedures=procs)
+        }
         for proc in procs:
             fg.analyze_procedure(proc, all_pkgs)
             for line in proc.java_logic_lines:
@@ -147,9 +155,14 @@ class TestBuildConversionReport:
     def test_creates_report(self):
         pkg = fg.PackageInfo(package_name="pkg_test")
         proc = fg.ProcedureInfo(
-            name="pkg_test.p1", package="pkg_test", proc_name="p1",
-            is_function=False, return_type=None, parameters=[],
-            body={}, sql_text="",
+            name="pkg_test.p1",
+            package="pkg_test",
+            proc_name="p1",
+            is_function=False,
+            return_type=None,
+            parameters=[],
+            body={},
+            sql_text="",
             source_file="test.sql",
         )
         pkg.procedures = [proc]

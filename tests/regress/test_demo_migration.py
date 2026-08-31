@@ -9,6 +9,7 @@ compilable, testable Java project with no silent failures."
 Slow (~4 min both engines). Select with: pytest -m demo_migration
 Deselect with: pytest -m "not demo_migration"
 """
+
 import os
 import re
 import shutil
@@ -32,7 +33,7 @@ REQUIRES_OGSQL = {"py"}
 # These must never appear in generated output. Contrast with legitimate stubs
 # ("complex PL/pgSQL pattern requires manual implementation") which are by-design.
 EXCEPTION_STUB_PATTERNS = [
-    "转换分析阶段异常",   # analysis-phase exception
+    "转换分析阶段异常",  # analysis-phase exception
     "AttributeError",
     "TypeError",
     "KeyError",
@@ -43,10 +44,10 @@ EXCEPTION_STUB_PATTERNS = [
 ]
 
 # Thresholds
-STUB_RATIO_HARD_FAIL = 0.25   # >25% of Services with any stub → fail
-STUB_RATIO_WARN = 0.10        # >10% → warn (printed, not failed)
+STUB_RATIO_HARD_FAIL = 0.25  # >25% of Services with any stub → fail
+STUB_RATIO_WARN = 0.10  # >10% → warn (printed, not failed)
 DML_FLOOR = {
-    "py": 50,   # Python after _tracker fix produces ~630; floor catches catastrophic regression
+    "py": 50,  # Python after _tracker fix produces ~630; floor catches catastrophic regression
     "ru": 100,  # Rust produces ~617
 }
 
@@ -56,6 +57,7 @@ MVN_TIMEOUT = 600
 
 
 # ── Binary detection ─────────────────────────────────────────────
+
 
 def _find_ogsql() -> str | None:
     """Resolve ogsql binary path, or None if unavailable."""
@@ -77,6 +79,7 @@ def _find_rust_binary() -> str | None:
 
 # ── Pipeline runner ──────────────────────────────────────────────
 
+
 def _run_cmd(cmd: list[str], cwd: str, timeout: int, env: dict | None = None) -> tuple[int, str, str]:
     """Run a command, return (exit_code, stdout, stderr)."""
     full_env = os.environ.copy()
@@ -84,8 +87,12 @@ def _run_cmd(cmd: list[str], cwd: str, timeout: int, env: dict | None = None) ->
         full_env.update(env)
     try:
         result = subprocess.run(
-            cmd, cwd=cwd, capture_output=True, text=True,
-            timeout=timeout, env=full_env,
+            cmd,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=full_env,
         )
         return result.returncode, result.stdout, result.stderr
     except subprocess.TimeoutExpired:
@@ -129,8 +136,7 @@ def _count_service_files(dest_dir: Path) -> int:
     """Count *Service.java files under src/main/java."""
     pattern = str(dest_dir / "src" / "main" / "java" / "**" / "*Service.java")
     # Use pathlib glob recursively
-    return sum(1 for _ in dest_dir.rglob("*Service.java")
-               if "src/main/java" in str(_))
+    return sum(1 for _ in dest_dir.rglob("*Service.java") if "src/main/java" in str(_))
 
 
 def _count_exception_stubs(dest_dir: Path) -> tuple[int, int]:
@@ -210,7 +216,8 @@ def _run_engine_pipeline(engine: str, yaml_path: str, dest_dir: str) -> dict:
     # --- L0.2: mvn compile ---
     compile_exit, compile_out, _ = _run_cmd(
         ["mvn", "compile", "-batch-mode", "-q"],
-        str(dest), MVN_TIMEOUT,
+        str(dest),
+        MVN_TIMEOUT,
     )
     result["compile_exit"] = compile_exit
     result["compile_errors"] = _parse_compile_errors(compile_out + (result.get("convert_stderr", "")))
@@ -218,7 +225,8 @@ def _run_engine_pipeline(engine: str, yaml_path: str, dest_dir: str) -> dict:
     # --- L0.3: mvn test ---
     test_exit, test_out, _ = _run_cmd(
         ["mvn", "test", "-batch-mode"],
-        str(dest), MVN_TIMEOUT,
+        str(dest),
+        MVN_TIMEOUT,
     )
     result["test_exit"] = test_exit
     result["test_summary"] = _parse_test_summary(test_out)
@@ -238,6 +246,7 @@ def _run_engine_pipeline(engine: str, yaml_path: str, dest_dir: str) -> dict:
 
 # ── Session fixture ──────────────────────────────────────────────
 
+
 @pytest.fixture(scope="module")
 def demo_results():
     """Run full demo migration for all configs once. Returns {engine: ResultBundle}."""
@@ -249,6 +258,7 @@ def demo_results():
 
 # ── L0.0: Config integrity ──────────────────────────────────────
 
+
 @pytest.mark.demo_migration
 class TestL00ConfigIntegrity:
     """Every yaml source entry must exist on disk."""
@@ -256,6 +266,7 @@ class TestL00ConfigIntegrity:
     @pytest.mark.parametrize("engine,yaml_path", [(e, y) for e, y, _ in DEMO_CONFIGS])
     def test_sources_exist(self, engine, yaml_path):
         import yaml  # pyyaml
+
         yaml_full = REPO_ROOT / yaml_path
         with open(yaml_full, encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
@@ -270,6 +281,7 @@ class TestL00ConfigIntegrity:
 
 # ── L0.1: Conversion runs, no silent skip ───────────────────────
 
+
 @pytest.mark.demo_migration
 class TestL01Conversion:
     """Converter must exit 0 and produce expected package count with no silent skips."""
@@ -280,8 +292,7 @@ class TestL01Conversion:
         if "skipped" in r:
             pytest.skip(r["skipped"])
         assert r["convert_exit"] == 0, (
-            f"{engine}: converter exited {r['convert_exit']}\n"
-            f"stderr: {r.get('convert_stderr', '')[:500]}"
+            f"{engine}: converter exited {r['convert_exit']}\nstderr: {r.get('convert_stderr', '')[:500]}"
         )
 
     @pytest.mark.parametrize("engine", ["py", "ru"])
@@ -297,12 +308,13 @@ class TestL01Conversion:
         # massive silent skips while tolerating DDL-only packages.
         assert actual >= claimed * 0.6, (
             f"{engine}: converter claims {claimed} packages but only {actual} Service.java files exist "
-            f"({actual/claimed:.0%}). Large discrepancy suggests silent failures."
+            f"({actual / claimed:.0%}). Large discrepancy suggests silent failures."
         )
         assert actual > 0, f"{engine}: no Service.java files generated at all"
 
 
 # ── L0.2: Compile ───────────────────────────────────────────────
+
 
 @pytest.mark.demo_migration
 class TestL02Compile:
@@ -322,6 +334,7 @@ class TestL02Compile:
 
 # ── L0.3: Unit tests ────────────────────────────────────────────
 
+
 @pytest.mark.demo_migration
 class TestL03UnitTest:
     """mvn test must pass with zero failures and zero errors."""
@@ -340,6 +353,7 @@ class TestL03UnitTest:
 
 
 # ── L0.4: Semantic health — stub scanning ───────────────────────
+
 
 @pytest.mark.demo_migration
 class TestL04SemanticHealth:
@@ -365,8 +379,10 @@ class TestL04SemanticHealth:
             pytest.skip(r["skipped"])
         ratio = r.get("stub_ratio", 1.0)
         if ratio > STUB_RATIO_WARN:
-            print(f"  WARN: {engine} stub ratio is {ratio:.1%} "
-                  f"({r['total_stub_count']}/{r['service_count']} Services have stubs)")
+            print(
+                f"  WARN: {engine} stub ratio is {ratio:.1%} "
+                f"({r['total_stub_count']}/{r['service_count']} Services have stubs)"
+            )
         assert ratio <= STUB_RATIO_HARD_FAIL, (
             f"{engine}: stub ratio {ratio:.1%} exceeds {STUB_RATIO_HARD_FAIL:.0%} threshold "
             f"({r['total_stub_count']}/{r['service_count']} Services). "
@@ -375,6 +391,7 @@ class TestL04SemanticHealth:
 
 
 # ── L0.5: DML extraction sanity ─────────────────────────────────
+
 
 @pytest.mark.demo_migration
 class TestL05DmlExtraction:
@@ -389,6 +406,5 @@ class TestL05DmlExtraction:
         count = r.get("mapper_method_count", 0)
         floor = DML_FLOOR[engine]
         assert count >= floor, (
-            f"{engine}: only {count} mapper methods generated (floor: {floor}). "
-            f"DML extraction may be silently broken."
+            f"{engine}: only {count} mapper methods generated (floor: {floor}). DML extraction may be silently broken."
         )

@@ -50,46 +50,56 @@ class TestDomainTestValueQuotedDefault:
 
     def _proc(self):
         return fg.ProcedureInfo(
-            name="pkg_test.proc_a", package="pkg_test", proc_name="proc_a",
-            is_function=False, return_type=None, parameters=[],
-            body={"Block": {"body": {"statements": []}}}, sql_text="BEGIN NULL; END;",
+            name="pkg_test.proc_a",
+            package="pkg_test",
+            proc_name="proc_a",
+            is_function=False,
+            return_type=None,
+            parameters=[],
+            body={"Block": {"body": {"statements": []}}},
+            sql_text="BEGIN NULL; END;",
             local_vars={},
         )
 
     def test_quoted_date_default_uses_date_literal(self):
         proc = self._proc()
-        param = fg.Parameter(name="p_start", java_type="java.sql.Date", sql_type="date",
-                             default_value="'2024-01-01'")
+        param = fg.Parameter(name="p_start", java_type="java.sql.Date", sql_type="date", default_value="'2024-01-01'")
         out = fg._domain_test_value(proc, param, pkg=None)
         assert "java.sql.Date.valueOf" in out, f"Date default must be type-aware, got: {out}"
 
     def test_quoted_timestamp_default_uses_timestamp_literal(self):
         proc = self._proc()
-        param = fg.Parameter(name="p_ts", java_type="java.sql.Timestamp", sql_type="timestamp",
-                             default_value="'2024-01-01 10:00:00'")
+        param = fg.Parameter(
+            name="p_ts", java_type="java.sql.Timestamp", sql_type="timestamp", default_value="'2024-01-01 10:00:00'"
+        )
         out = fg._domain_test_value(proc, param, pkg=None)
         assert "java.sql.Timestamp.valueOf" in out, f"Timestamp default must be type-aware, got: {out}"
 
     def test_quoted_string_default_stays_string(self):
         proc = self._proc()
-        param = fg.Parameter(name="p_mode", java_type="String", sql_type="varchar",
-                             default_value="'REPLACE'")
+        param = fg.Parameter(name="p_mode", java_type="String", sql_type="varchar", default_value="'REPLACE'")
         out = fg._domain_test_value(proc, param, pkg=None)
         assert out == '"REPLACE"', f"String default keeps its literal, got: {out}"
 
     def test_quoted_bigdecimal_default_uses_bigdecimal(self):
         proc = self._proc()
-        param = fg.Parameter(name="p_amount", java_type="java.math.BigDecimal", sql_type="numeric",
-                             default_value="'99.99'")
+        param = fg.Parameter(
+            name="p_amount", java_type="java.math.BigDecimal", sql_type="numeric", default_value="'99.99'"
+        )
         out = fg._domain_test_value(proc, param, pkg=None)
         assert "BigDecimal" in out, f"BigDecimal default must be type-aware, got: {out}"
 
 
 def _make_callee(name, params):
     return fg.ProcedureInfo(
-        name=f"pkg_cal.{name}", package="pkg_cal", proc_name=name,
-        is_function=False, return_type=None, parameters=params,
-        body={"Block": {"body": {"statements": []}}}, sql_text="BEGIN NULL; END;",
+        name=f"pkg_cal.{name}",
+        package="pkg_cal",
+        proc_name=name,
+        is_function=False,
+        return_type=None,
+        parameters=params,
+        body={"Block": {"body": {"statements": []}}},
+        sql_text="BEGIN NULL; END;",
         local_vars={},
     )
 
@@ -100,74 +110,129 @@ class TestStripGetForCrossPkgOutArgs:
 
     def _proc_with_call(self):
         proc = fg.ProcedureInfo(
-            name="pkg_ord.proc_a", package="pkg_ord", proc_name="proc_a",
-            is_function=False, return_type=None, parameters=[],
-            body={"Block": {"body": {"statements": []}}}, sql_text="BEGIN NULL; END;",
+            name="pkg_ord.proc_a",
+            package="pkg_ord",
+            proc_name="proc_a",
+            is_function=False,
+            return_type=None,
+            parameters=[],
+            body={"Block": {"body": {"statements": []}}},
+            sql_text="BEGIN NULL; END;",
             local_vars={"v_id": "Long"},
         )
         proc.service_calls = [
-            fg.ServiceCall(service_name="AcctService", method_name="transfer",
-                           args=[], package_name="pkg_cal")
+            fg.ServiceCall(service_name="AcctService", method_name="transfer", args=[], package_name="pkg_cal")
         ]
         return proc
 
     def test_only_out_position_stripped(self):
         proc = self._proc_with_call()
-        callee = _make_callee("transfer", [
-            fg.Parameter(name="p_in", java_type="Long", sql_type="bigint", mode="IN"),
-            fg.Parameter(name="p_out", java_type="Long", sql_type="bigint", mode="OUT"),
-        ])
-        all_packages = {"pkg_cal": fg.PackageInfo(
-            package_name="pkg_cal", procedures=[callee], table_refs={},
-            package_vars={}, source_file="", source_files=[], comments=[],
-            java_package="", custom_types={}, _extra_mapper_methods=[],
-        )}
+        callee = _make_callee(
+            "transfer",
+            [
+                fg.Parameter(name="p_in", java_type="Long", sql_type="bigint", mode="IN"),
+                fg.Parameter(name="p_out", java_type="Long", sql_type="bigint", mode="OUT"),
+            ],
+        )
+        all_packages = {
+            "pkg_cal": fg.PackageInfo(
+                package_name="pkg_cal",
+                procedures=[callee],
+                table_refs={},
+                package_vars={},
+                source_file="",
+                source_files=[],
+                comments=[],
+                java_package="",
+                custom_types={},
+                _extra_mapper_methods=[],
+            )
+        }
         line = "AcctService.transfer(vId.get(), vId.get());"
         out = fg._strip_get_for_cross_pkg_out_args(line, "vId", proc, all_packages)
         assert out == "AcctService.transfer(vId.get(), vId);", f"IN keeps .get(), OUT stripped: {out}"
 
     def test_nested_expression_out_position_rewritten(self):
         proc = self._proc_with_call()
-        callee = _make_callee("transfer", [
-            fg.Parameter(name="p_out", java_type="Long", sql_type="bigint", mode="OUT"),
-        ])
-        all_packages = {"pkg_cal": fg.PackageInfo(
-            package_name="pkg_cal", procedures=[callee], table_refs={},
-            package_vars={}, source_file="", source_files=[], comments=[],
-            java_package="", custom_types={}, _extra_mapper_methods=[],
-        )}
+        callee = _make_callee(
+            "transfer",
+            [
+                fg.Parameter(name="p_out", java_type="Long", sql_type="bigint", mode="OUT"),
+            ],
+        )
+        all_packages = {
+            "pkg_cal": fg.PackageInfo(
+                package_name="pkg_cal",
+                procedures=[callee],
+                table_refs={},
+                package_vars={},
+                source_file="",
+                source_files=[],
+                comments=[],
+                java_package="",
+                custom_types={},
+                _extra_mapper_methods=[],
+            )
+        }
         line = "AcctService.transfer(String.valueOf(vId.get()));"
         out = fg._strip_get_for_cross_pkg_out_args(line, "vId", proc, all_packages)
         assert out == "AcctService.transfer(String.valueOf(vId));", f"OUT arg rewritten in place: {out}"
 
     def test_ambiguous_overload_fails_safe(self):
         proc = self._proc_with_call()
-        callee_1 = _make_callee("transfer", [
-            fg.Parameter(name="p_a", java_type="Long", sql_type="bigint", mode="IN"),
-        ])
-        callee_2 = _make_callee("transfer", [
-            fg.Parameter(name="p_a", java_type="Long", sql_type="bigint", mode="IN"),
-            fg.Parameter(name="p_b", java_type="Long", sql_type="bigint", mode="IN"),
-        ])
-        all_packages = {"pkg_cal": fg.PackageInfo(
-            package_name="pkg_cal", procedures=[callee_1, callee_2], table_refs={},
-            package_vars={}, source_file="", source_files=[], comments=[],
-            java_package="", custom_types={}, _extra_mapper_methods=[],
-        )}
+        callee_1 = _make_callee(
+            "transfer",
+            [
+                fg.Parameter(name="p_a", java_type="Long", sql_type="bigint", mode="IN"),
+            ],
+        )
+        callee_2 = _make_callee(
+            "transfer",
+            [
+                fg.Parameter(name="p_a", java_type="Long", sql_type="bigint", mode="IN"),
+                fg.Parameter(name="p_b", java_type="Long", sql_type="bigint", mode="IN"),
+            ],
+        )
+        all_packages = {
+            "pkg_cal": fg.PackageInfo(
+                package_name="pkg_cal",
+                procedures=[callee_1, callee_2],
+                table_refs={},
+                package_vars={},
+                source_file="",
+                source_files=[],
+                comments=[],
+                java_package="",
+                custom_types={},
+                _extra_mapper_methods=[],
+            )
+        }
         line = "AcctService.transfer(vId.get());"
         out = fg._strip_get_for_cross_pkg_out_args(line, "vId", proc, all_packages)
         assert out == line, f"ambiguous overload must leave line unchanged: {out}"
 
     def test_indentation_and_prefix_preserved(self):
         proc = self._proc_with_call()
-        callee = _make_callee("transfer", [
-            fg.Parameter(name="p_out", java_type="Long", sql_type="bigint", mode="OUT"),
-        ])
-        all_packages = {"pkg_cal": fg.PackageInfo(
-            package_name="pkg_cal", procedures=[callee], table_refs={},
-            package_vars={}, source_file="", source_files=[], comments=[],
-            java_package="", custom_types={}, _extra_mapper_methods=[],
-        )}
+        callee = _make_callee(
+            "transfer",
+            [
+                fg.Parameter(name="p_out", java_type="Long", sql_type="bigint", mode="OUT"),
+            ],
+        )
+        all_packages = {
+            "pkg_cal": fg.PackageInfo(
+                package_name="pkg_cal",
+                procedures=[callee],
+                table_refs={},
+                package_vars={},
+                source_file="",
+                source_files=[],
+                comments=[],
+                java_package="",
+                custom_types={},
+                _extra_mapper_methods=[],
+            )
+        }
         indented = "    AcctService.transfer(vId.get());"
         out = fg._strip_get_for_cross_pkg_out_args(indented, "vId", proc, all_packages)
         assert out == "    AcctService.transfer(vId);", f"indentation must be preserved: {out!r}"
@@ -182,29 +247,38 @@ class TestNumberMinusTimestamp:
 
     def _proc(self):
         return fg.ProcedureInfo(
-            name="pkg_test.proc_a", package="pkg_test", proc_name="proc_a",
-            is_function=False, return_type=None, parameters=[],
-            body={"Block": {"body": {"statements": []}}}, sql_text="BEGIN NULL; END;",
+            name="pkg_test.proc_a",
+            package="pkg_test",
+            proc_name="proc_a",
+            is_function=False,
+            return_type=None,
+            parameters=[],
+            body={"Block": {"body": {"statements": []}}},
+            sql_text="BEGIN NULL; END;",
             local_vars={"v_ts": "java.sql.Timestamp", "v_days": "Long"},
         )
 
     def test_number_minus_timestamp_subtracts(self):
         proc = self._proc()
-        ast = {"BinaryOp": {
-            "op": "-",
-            "left": {"ColumnRef": ["v_days"]},
-            "right": {"ColumnRef": ["v_ts"]},
-        }}
+        ast = {
+            "BinaryOp": {
+                "op": "-",
+                "left": {"ColumnRef": ["v_days"]},
+                "right": {"ColumnRef": ["v_ts"]},
+            }
+        }
         out = fg._expr_to_java(ast, proc)
         assert ".getTime() - " in out, f"number - timestamp must subtract, got: {out}"
 
     def test_timestamp_minus_number_subtracts(self):
         proc = self._proc()
-        ast = {"BinaryOp": {
-            "op": "-",
-            "left": {"ColumnRef": ["v_ts"]},
-            "right": {"ColumnRef": ["v_days"]},
-        }}
+        ast = {
+            "BinaryOp": {
+                "op": "-",
+                "left": {"ColumnRef": ["v_ts"]},
+                "right": {"ColumnRef": ["v_days"]},
+            }
+        }
         out = fg._expr_to_java(ast, proc)
         assert ".getTime() - " in out, f"timestamp - number must subtract, got: {out}"
 
@@ -214,18 +288,15 @@ class TestParamDefaultJavaEscaping:
     escaped (SQL `''` → raw quote, backslash/quote escaping for the literal)."""
 
     def test_sql_doubled_quote_becomes_raw_quote(self):
-        param = fg.Parameter(name="p_msg", java_type="String", sql_type="varchar",
-                             mode="IN", default_value="'it''s'")
+        param = fg.Parameter(name="p_msg", java_type="String", sql_type="varchar", mode="IN", default_value="'it''s'")
         assert fg._param_default_java(param) == '"it\'s"'
 
     def test_embedded_double_quote_escaped(self):
-        param = fg.Parameter(name="p_msg", java_type="String", sql_type="varchar",
-                             mode="IN", default_value="'a\"b'")
+        param = fg.Parameter(name="p_msg", java_type="String", sql_type="varchar", mode="IN", default_value="'a\"b'")
         assert fg._param_default_java(param) == '"a\\"b"'
 
     def test_digit_string_stays_numeric(self):
-        param = fg.Parameter(name="p_n", java_type="Integer", sql_type="int",
-                             mode="IN", default_value="'5'")
+        param = fg.Parameter(name="p_n", java_type="Integer", sql_type="int", mode="IN", default_value="'5'")
         assert fg._param_default_java(param) == "5"
 
 
@@ -254,10 +325,7 @@ class TestCollectFkParents:
     def test_quoted_identifier_resolves_unquoted(self, tmp_path):
         ddl = tmp_path / "ddl2.sql"
         ddl.write_text(
-            'create table "OrderLine" (\n'
-            '  id bigint primary key,\n'
-            '  "OrderId" bigint references "Order"(id)\n'
-            ");\n",
+            'create table "OrderLine" (\n  id bigint primary key,\n  "OrderId" bigint references "Order"(id)\n);\n',
             encoding="utf-8",
         )
         fg._TABLE_DDL_SOURCE[("orderline", "orderid")] = str(ddl)
@@ -266,8 +334,3 @@ class TestCollectFkParents:
         finally:
             fg._TABLE_DDL_SOURCE.clear()
         assert "order" in fk.get("orderline", []), f"quoted FK must resolve unquoted: {fk}"
-
-
-
-
-

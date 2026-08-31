@@ -4,7 +4,7 @@ Tests for dataclass models in converter/flux_gauss.py.
 These tests verify correct initialization, property computation,
 and default values for the core data structures.
 """
-import pytest
+
 import converter.flux_gauss as fg
 
 
@@ -144,14 +144,24 @@ class TestProcedureInfo:
     def test_default_collections_are_independent(self):
         """Each instance should have its own collection objects."""
         proc1 = fg.ProcedureInfo(
-            name="p1", package="pkg", proc_name="p1",
-            is_function=False, return_type=None, parameters=[],
-            body={}, sql_text="",
+            name="p1",
+            package="pkg",
+            proc_name="p1",
+            is_function=False,
+            return_type=None,
+            parameters=[],
+            body={},
+            sql_text="",
         )
         proc2 = fg.ProcedureInfo(
-            name="p2", package="pkg", proc_name="p2",
-            is_function=False, return_type=None, parameters=[],
-            body={}, sql_text="",
+            name="p2",
+            package="pkg",
+            proc_name="p2",
+            is_function=False,
+            return_type=None,
+            parameters=[],
+            body={},
+            sql_text="",
         )
         proc1.local_vars["x"] = "String"
         assert "x" not in proc2.local_vars
@@ -168,9 +178,14 @@ class TestPackageInfo:
 
     def test_with_procedures(self):
         proc = fg.ProcedureInfo(
-            name="pkg_test.p1", package="pkg_test", proc_name="p1",
-            is_function=False, return_type=None, parameters=[],
-            body={}, sql_text="",
+            name="pkg_test.p1",
+            package="pkg_test",
+            proc_name="p1",
+            is_function=False,
+            return_type=None,
+            parameters=[],
+            body={},
+            sql_text="",
         )
         pkg = fg.PackageInfo(package_name="pkg_test", procedures=[proc])
         assert len(pkg.procedures) == 1

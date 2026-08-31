@@ -1,7 +1,7 @@
 """
 Tests for SQL processing functions in converter/flux_gauss.py.
 """
-import pytest
+
 import converter.flux_gauss as fg
 
 
@@ -44,11 +44,7 @@ class TestSplitSqlStatements:
         assert len(stmts) == 1
 
     def test_nested_dollar_quotes(self):
-        sql = (
-            "CREATE FUNCTION outer() RETURNS void $$ BEGIN\n"
-            "  NULL;\n"
-            "END; $$ LANGUAGE PLPGSQL;"
-        )
+        sql = "CREATE FUNCTION outer() RETURNS void $$ BEGIN\n  NULL;\nEND; $$ LANGUAGE PLPGSQL;"
         stmts = fg._split_sql_statements(sql)
         assert len(stmts) == 1
 
