@@ -1,0 +1,26 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper._PublicMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_94_trigger_fn.sql
+public class _PublicService {
+    private static final Logger log = LoggerFactory.getLogger(_PublicService.class);
+
+    private final _PublicMapper _PublicMapper;
+
+    public _PublicService(_PublicMapper _PublicMapper) {
+        this._PublicMapper = _PublicMapper;
+    }
+
+    // Source: public.last_updated (FUNCTION) — {FIXTURES_ROOT}/issue_94_trigger_fn.sql:3-8
+    public Object lastUpdated() {
+        // TODO: Auto-generated stub — complex PL/pgSQL pattern requires manual implementation
+        return null;
+    }
+}

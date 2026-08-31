@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_94_trigger_fn.sql",
+  "package_name": "issue_94_trigger_fn",
+  "files": {
+    "Service.java": "ae824b5107a60491",
+    "Mapper.java": "0de8932d679f4505",
+    "Mapper.xml": "603cd6b827b4cb69",
+    "ServiceTest.java": "c95be011612ca33b"
+  }
+}

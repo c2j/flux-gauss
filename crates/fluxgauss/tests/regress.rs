@@ -628,6 +628,22 @@ fn issue_72b_math_string_arguments_are_parsed() {
 }
 
 #[test]
+fn issue_94_trigger_function_is_stubbed_without_bare_new() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let sql_file = manifest_dir.join(FIXTURES_REL).join("issue_94_trigger_fn.sql");
+    let tmp = tempfile::tempdir().expect("Failed to create temp dir");
+    let generated = run_conversion(&sql_file, &tmp.path().join("dest"));
+    let service = generated.files.get("Service.java").expect("Service.java not generated");
+
+    assert!(!service.contains("return new;"), "trigger function must not emit bare Java keyword `new`:\n{}", service);
+    assert!(
+        service.contains("// TODO: Auto-generated stub") && service.contains("return null;"),
+        "trigger function must be stubbed for manual review:\n{}",
+        service
+    );
+}
+
+#[test]
 fn issue_71_schema_qualified_cross_package_call_resolves() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let sql_file = manifest_dir.join(FIXTURES_REL).join("issue_71_cross_pkg_schema.sql");
