@@ -1210,6 +1210,12 @@ class TestIssue63_Varchar2Return:
         assert not re.search(r"public\s+String\s+fncGetPriceNum\s*\(", svc), (
             "Issue #63: numeric COALESCE return must NOT be flipped to String"
         )
+        assert "Objects.requireNonNullElse(vTotal, 0L)" in svc, (
+            "Issue #63: COALESCE(Long, int) must emit 0L so requireNonNullElse infers Long (e2e compile)"
+        )
+        assert not re.search(r"requireNonNullElse\(vTotal,\s*0\)", svc), (
+            "Issue #63: bare int literal next to Long var breaks javac type inference"
+        )
 
     def test_reconcile_overrides_wrong_numeric_declaration(self, cached_ast, tmp_path):
         """When AST return_type is wrongly numeric but body returns String var."""

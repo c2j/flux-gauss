@@ -249,6 +249,26 @@ class TestExprToJavaFunctionCall:
         )
         assert "requireNonNullElse" in result or "Objects" in result
 
+    def test_coalesce_long_var_with_int_literal_gets_long_literal(self):
+        proc_long = fg.ProcedureInfo(
+            name="pkg_test.proc_b",
+            package="pkg_test",
+            proc_name="proc_b",
+            is_function=False,
+            return_type=None,
+            parameters=[],
+            body={},
+            sql_text="",
+            local_vars={"v_total": "Long"},
+        )
+        result = fg._expr_to_java(
+            {"FunctionCall": {"name": ["coalesce"], "args": [{"ColumnRef": ["v_total"]}, {"Literal": {"Integer": 0}}]}},
+            proc_long,
+        )
+        assert "Objects.requireNonNullElse(vTotal, 0L)" in result, (
+            "Issue #63: Long 变量 + int 字面量必须产出 0L，否则 requireNonNullElse 推断为 Number"
+        )
+
     def test_mod(self, proc):
         result = fg._expr_to_java(
             {"FunctionCall": {"name": ["mod"], "args": [{"ColumnRef": ["x"]}, {"Literal": {"Integer": 2}}]}},

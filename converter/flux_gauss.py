@@ -11742,6 +11742,12 @@ def _expr_to_java(expr, proc: Any = None, as_read: bool = True, all_packages: An
                     if "BigDecimal" in first_type:
                         args_java = [(a if a != "0" else "java.math.BigDecimal.ZERO") for a in args_java]
                         args_str = ", ".join(args_java)
+                    elif first_type in ("Long", "long"):
+                        # Issue #63: requireNonNullElse(T,T) 与异型参数（Long vs Integer）
+                        # 会把 T 推断为 Number&Comparable，后续算术/返回全部编译失败。
+                        # bare int 字面量补 L 后装箱为 Long，T 统一为 Long。
+                        args_java = [(a + "L" if _is_bare_int_literal(a.strip()) else a) for a in args_java]
+                        args_str = ", ".join(args_java)
                 if func_name_lower in ("nvl", "nvl2", "coalesce") and args_java:
                     _a0 = args_java[0].strip()
                     if (

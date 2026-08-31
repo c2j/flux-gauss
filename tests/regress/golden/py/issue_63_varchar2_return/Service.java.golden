@@ -51,7 +51,7 @@ public class Issue63Varchar2ReturnService {
     // Source: pkg_issue63_ret.fnc_get_price_num (FUNCTION) — issue_63_varchar2_return.sql:65-72
     public Long fncGetPriceNum(String pIId) {
         Long vTotal = Long.valueOf(0);
-        vTotal = Objects.requireNonNullElse(vTotal, 0) + 1;
-        return Objects.requireNonNullElse(vTotal, 0);
+        vTotal = Objects.requireNonNullElse(vTotal, 0L) + 1;
+        return Objects.requireNonNullElse(vTotal, 0L);
     }
 }
