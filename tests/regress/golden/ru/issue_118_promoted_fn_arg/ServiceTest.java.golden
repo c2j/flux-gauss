@@ -1,0 +1,76 @@
+// ===== FILE: Issue118CalleeServiceTest.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue118CalleeMapper;
+import com.example.demo.service.Issue118CalleeService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_118_promoted_fn_arg.sql
+class Issue118CalleeServiceTest {
+
+    @Mock
+    private Issue118CalleeMapper issue118CalleeMapper;
+
+    @InjectMocks
+    private Issue118CalleeService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_fillName_success() {
+        Long pId = 1L;
+        AtomicReference<String> pNameRef = new AtomicReference<>(null);
+        var result = service.fillName(pId, pNameRef);
+    }
+}
+
+// ===== FILE: Issue118CallerServiceTest.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue118CallerMapper;
+import com.example.demo.service.Issue118CalleeService;
+import com.example.demo.service.Issue118CallerService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_118_promoted_fn_arg.sql
+class Issue118CallerServiceTest {
+
+    @Mock
+    private Issue118CallerMapper issue118CallerMapper;
+
+    @Mock
+    private Issue118CalleeService issue118CalleeService;
+
+    @InjectMocks
+    private Issue118CallerService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_consumeName_success() {
+        when(issue118CalleeService.fillName(anyLong(), (java.util.concurrent.atomic.AtomicReference) any())).thenReturn(999L);
+        service.consumeName();
+    }
+}

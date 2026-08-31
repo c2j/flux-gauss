@@ -2167,7 +2167,8 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         }
     }
     let upper = name.to_uppercase();
-    let jargs: Vec<String> = args.iter().map(|a| expr_to_java(a, proc)).collect();
+    let raw_jargs: Vec<String> = args.iter().map(|a| expr_to_java(a, proc)).collect();
+    let jargs: Vec<String> = raw_jargs.iter().map(|arg| maybe_deref_promoted(arg, proc)).collect();
     match upper.as_str() {
         "NVL" | "COALESCE" if jargs.len() >= 2 => {
             let else_val = if is_bigdecimal_var(&jargs[0], proc) && jargs[1].trim().chars().all(|c| c.is_ascii_digit()) {
@@ -2559,6 +2560,10 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             }
         }
         _ => {
+            // Routine calls need the original argument expressions: sibling and
+            // cross-package OUT positions pass AtomicReference holders, while
+            // their IN positions perform their own value dereference/coercion.
+            let jargs = raw_jargs;
             let name_parts: Vec<&str> = name.split('.').collect();
             let mut ambig_candidates: Vec<String> = Vec::new();
             let (method, is_self_call, cross_pkg_svc, target_params): (
@@ -3356,6 +3361,46 @@ mod tests {
         let expr = ogsql_parser::ast::Expr::ColumnRef(vec!["v_flag".into()]);
         let out = bool_expr_to_java(&expr, &proc);
         assert!(out == "vFlag.get()", "boolean condition must deref promoted var, got: {}", out);
+    }
+
+    fn function_call(name: &str, args: Vec<ogsql_parser::ast::Expr>) -> ogsql_parser::ast::Expr {
+        ogsql_parser::ast::Expr::FunctionCall {
+            name: name.split('.').map(Into::into).collect(),
+            args,
+            distinct: false,
+            over: None,
+            filter: None,
+            within_group: Vec::new(),
+            separator: None,
+            default: None,
+            conversion_format: None,
+            agg_from: None,
+            builtin: None,
+        }
+    }
+
+    #[test]
+    fn test_function_call_value_arg_derefs_promoted_var_but_sibling_out_arg_stays_bare() {
+        let mut proc = empty_proc();
+        proc.out_local_vars.insert("v_name".into(), "AtomicReference<String>".into());
+        proc.local_vars.insert("v_name".into(), "String".into());
+        let arg = ogsql_parser::ast::Expr::ColumnRef(vec!["v_name".into()]);
+
+        let upper = expr_to_java(&function_call("upper", vec![arg.clone()]), &proc);
+        assert!(upper.contains("vName.get()"), "normal function value arg must deref promoted var, got: {}", upper);
+
+        proc.package_proc_params.insert(
+            "consumeOut".into(),
+            vec![vec![crate::types::Parameter {
+                name: "p_name".into(),
+                java_type: "String".into(),
+                sql_type: "varchar2".into(),
+                mode: Some(crate::types::ParamMode::Out),
+                default_value: None,
+            }]],
+        );
+        let sibling = expr_to_java(&function_call("consume_out", vec![arg]), &proc);
+        assert_eq!(sibling, "this.consumeOut(vName)", "sibling OUT arg must remain the bare AtomicReference");
     }
 
     #[test]

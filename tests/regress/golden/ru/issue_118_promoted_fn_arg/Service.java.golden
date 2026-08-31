@@ -1,0 +1,65 @@
+// ===== FILE: Issue118CalleeService.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue118CalleeMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_118_promoted_fn_arg.sql
+public class Issue118CalleeService {
+    private static final Logger log = LoggerFactory.getLogger(Issue118CalleeService.class);
+
+    private final Issue118CalleeMapper issue118CalleeMapper;
+
+    public Issue118CalleeService(Issue118CalleeMapper issue118CalleeMapper) {
+        this.issue118CalleeMapper = issue118CalleeMapper;
+    }
+
+    // Source: pkg_issue118_callee.fill_name (FUNCTION) — {FIXTURES_ROOT}/issue_118_promoted_fn_arg.sql:7-11
+    public Long fillName(long pId, AtomicReference<String> pName) {
+        pName.set("alice");
+        return ((Number)(pId)).longValue();
+    }
+}
+
+// ===== FILE: Issue118CallerService.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue118CallerMapper;
+import com.example.demo.service.Issue118CalleeService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_118_promoted_fn_arg.sql
+public class Issue118CallerService {
+    private static final Logger log = LoggerFactory.getLogger(Issue118CallerService.class);
+
+    private final Issue118CallerMapper issue118CallerMapper;
+    private final Issue118CalleeService issue118CalleeService;
+
+    public Issue118CallerService(Issue118CallerMapper issue118CallerMapper, Issue118CalleeService issue118CalleeService) {
+        this.issue118CallerMapper = issue118CallerMapper;
+        this.issue118CalleeService = issue118CalleeService;
+    }
+
+    // Source: pkg_issue118_caller.consume_name (PROCEDURE) — {FIXTURES_ROOT}/issue_118_promoted_fn_arg.sql:21-30
+    public void consumeName() {
+        Long vLength = 0L;
+        AtomicReference<String> vName = new AtomicReference<>(null);
+        Long vResult = 0L;
+        String vUpper = null;
+        vResult = ((Number)(issue118CalleeService.fillName(1, vName))).longValue();
+        vUpper = String.valueOf(vName.get()).toUpperCase();
+        vLength = ((Number) vName.get().length()).longValue();
+    }
+}
