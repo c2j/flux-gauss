@@ -1526,7 +1526,7 @@ pub(crate) fn typed_rowtype_field(raw_get: String, base_var: &str, field: &str, 
     } else if field_type == "Long" || field_type == "long" {
         format!("({} == null ? 0L : ((Number) {}).longValue())", raw_get, raw_get)
     } else if field_type == "Integer" || field_type == "int" {
-        format!("({} == null ? null : ((Number) {}).intValue())", raw_get, raw_get)
+        format!("({} == null ? 0 : ((Number) {}).intValue())", raw_get, raw_get)
     } else if field_type.contains("BigDecimal") {
         format!("({} == null ? null : new java.math.BigDecimal(String.valueOf({})))", raw_get, raw_get)
     } else {

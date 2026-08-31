@@ -794,13 +794,14 @@ fn build_schema_map(
 
 pub fn parse_table_ddl(sql_files: &[std::path::PathBuf]) -> SchemaMetadata {
     let mut metadata = SchemaMetadata::default();
-    let create_re = regex::Regex::new(r"(?i)create\s+table\s+(?:if\s+not\s+exists\s+)?(?:\w+\.)?(\w+)\s*\(").unwrap();
+    let create_re =
+        regex::Regex::new(r#"(?i)create\s+table\s+(?:if\s+not\s+exists\s+)?(?:\w+\.|"[^"]+"\.)?(\w+)\s*\("#).unwrap();
     let enum_re = regex::Regex::new(r"(?is)create\s+type\s+(?:\w+\.)?(\w+)\s+as\s+enum\s*\(([^)]*)\)").unwrap();
     let check_re = regex::Regex::new(r"(?is)check\s*\(([^()]*)\)").unwrap();
     let check_col_re = regex::Regex::new(r#"(?i)^\s*"?([a-z_][a-z0-9_]*)"?\s*(?:>=|<=|=|>|<)"#).unwrap();
     let partition_re = regex::Regex::new(r#"(?is)partition\s+by\s+range\s*\(\s*"?(\w+)"?\s*\)"#).unwrap();
-    let bound_re = regex::Regex::new(r"(?is)values\s+less\s+than\s*\(\s*'?([^')\s,]+)'?\s*\)").unwrap();
-    let reference_re = regex::Regex::new(r#"(?i)references\s+(?:\w+\.)?(?:"(\w+)"|(\w+))"#).unwrap();
+    let bound_re = regex::Regex::new(r#"(?is)values\s+less\s+than\s*\(\s*(?:'([^']*)'|([^)\s,]+))\s*\)"#).unwrap();
+    let reference_re = regex::Regex::new(r#"(?i)references\s+(?:(?:"[^"]+"|\w+)\.)?(?:"([^"]+)"|(\w+))"#).unwrap();
 
     for sql_file in sql_files {
         let content = match std::fs::read(sql_file) {
@@ -922,7 +923,11 @@ pub fn parse_table_ddl(sql_files: &[std::path::PathBuf]) -> SchemaMetadata {
                 constraints.partition_key = Some(caps[1].to_lowercase());
                 let mut lower = String::new();
                 for bound_caps in bound_re.captures_iter(statement_tail) {
-                    let upper = bound_caps[1].to_string();
+                    let raw_upper = bound_caps.get(1).or_else(|| bound_caps.get(2));
+                    let upper = match raw_upper {
+                        Some(m) => m.as_str().to_string(),
+                        None => continue,
+                    };
                     if upper.eq_ignore_ascii_case("maxvalue") {
                         break;
                     }
@@ -2385,6 +2390,67 @@ CREATE TABLE films (
         assert_eq!(constraints.checks.get("id").unwrap(), &vec!["id >= 1"]);
         assert_eq!(constraints.partition_key.as_deref(), Some("created_at"));
         assert_eq!(constraints.partition_bounds, vec![(String::new(), "2025-01-01".to_string())]);
+    }
+
+    #[test]
+    fn issue_101_review_partition_bound_with_time_component() {
+        let dir = tempfile::tempdir().unwrap();
+        let sql_file = dir.path().join("partition_ts.sql");
+        std::fs::write(
+            &sql_file,
+            r#"
+CREATE TABLE payment (
+    payment_id BIGINT,
+    payment_date TIMESTAMP
+) PARTITION BY RANGE (payment_date) (
+    PARTITION p2022_01 VALUES LESS THAN ('2022-02-01 00:00:00'),
+    PARTITION pmax VALUES LESS THAN (MAXVALUE)
+);
+"#,
+        )
+        .unwrap();
+
+        let parsed = parse_table_ddl(&[sql_file]);
+        let constraints = parsed.constraints.get("payment").unwrap();
+        assert_eq!(
+            constraints.partition_bounds,
+            vec![(String::new(), "2022-02-01 00:00:00".to_string())],
+            "带时间成分的分区上界必须被捕获，否则采样静默退化为固定日期"
+        );
+    }
+
+    #[test]
+    fn issue_101_review_fk_double_quoted_schema_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let sql_file = dir.path().join("fk_quoted.sql");
+        std::fs::write(
+            &sql_file,
+            r#"
+CREATE TABLE "public".rental (
+    rental_id BIGINT,
+    inventory_id BIGINT REFERENCES "public".inventory (inventory_id)
+);
+CREATE TABLE "public".payment (
+    payment_id BIGINT,
+    rental_id BIGINT REFERENCES "public"."rental" (rental_id)
+);
+"#,
+        )
+        .unwrap();
+
+        let parsed = parse_table_ddl(&[sql_file]);
+        let rental_parents = parsed.fk_parents.get("rental").unwrap();
+        assert!(
+            rental_parents.iter().all(|p| p == "inventory"),
+            "双引号 schema 前缀不得被误认为父表，got: {:?}",
+            rental_parents
+        );
+        let payment_parents = parsed.fk_parents.get("payment").unwrap();
+        assert!(
+            payment_parents.iter().all(|p| p == "rental"),
+            "全引号 \"schema\".\"table\" 引用必须解析出正确父表，got: {:?}",
+            payment_parents
+        );
     }
 
     #[test]

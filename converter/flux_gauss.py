@@ -11069,8 +11069,10 @@ def _parse_interval_value_unit(tc_expr, proc, all_packages):
                 if unit in ("day", "month", "year", "hour", "minute", "second"):
                     value_java = _expr_to_java(bop.get("left", {}), proc, all_packages=all_packages)
                     if not re.fullmatch(r"\d+", value_java.strip()):
-                        parsed = "0L" if value_java == "null" else f"Long.parseLong(String.valueOf({value_java}))"
-                        value_java = f"({value_java} != null ? {parsed} : 0L)"
+                        if value_java == "null":
+                            value_java = "0L"
+                        else:
+                            value_java = f"({value_java} != null ? Long.parseLong(String.valueOf({value_java})) : 0L)"
                     return (unit, value_java)
     return None
 
@@ -12379,7 +12381,8 @@ def _expr_to_java(expr, proc: Any = None, as_read: bool = True, all_packages: An
                     if re.fullmatch(r"\d{1,4}-\d{1,2}-\d{1,2}|\d{8}", _literal):
                         return f'java.sql.Timestamp.valueOf(java.time.LocalDate.parse("{_literal}", java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd][yyyy-M-d]")).atStartOfDay())'
                     if len(_literal) <= 10 and ":" not in _literal:
-                        return f'/* TODO: invalid timestamp literal */ "{_escape_java_string(_literal)}"'
+                        # 对齐 Rust 侧：降级为 null（String 字面量喂给 Timestamp 变量是编译错误）
+                        return "/* TODO: invalid timestamp literal */ null"
                 _it = _infer_expr_type(_tc_expr, proc) if proc else ""
                 if "Date" in _it and "Timestamp" not in _it:
                     # Date-typed source: String.valueOf(date) lacks the time part
