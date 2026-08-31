@@ -544,7 +544,10 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
             if has_arithmetic {
                 format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed))
             } else {
-                format!("java.math.BigDecimal.valueOf(((Number) {}).longValue())", trimmed)
+                format!(
+                    "java.math.BigDecimal.valueOf(((Number) java.util.Objects.requireNonNullElse({}, 0L)).longValue())",
+                    trimmed
+                )
             }
         }
         Some(t) if t.contains("BigDecimal") && trimmed.contains("this.") && !trimmed.starts_with('(') => {
@@ -694,7 +697,10 @@ fn coerce_arg_to_type(arg: &str, target_type: &str, proc: &ProcedureInfo) -> Str
             return format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed));
         }
         if trimmed.contains(".get(") {
-            return format!("java.math.BigDecimal.valueOf(((Number) {}).longValue())", trimmed);
+            return format!(
+                "java.math.BigDecimal.valueOf(((Number) java.util.Objects.requireNonNullElse({}, 0L)).longValue())",
+                trimmed
+            );
         }
     }
 
@@ -1311,7 +1317,10 @@ fn wrap_bigdecimal(expr: &str, already_bd: bool, proc: &ProcedureInfo) -> String
                 trimmed, trimmed
             );
         }
-        return format!("java.math.BigDecimal.valueOf({}.get().longValue())", trimmed);
+        return format!(
+            "java.math.BigDecimal.valueOf(((Number) java.util.Objects.requireNonNullElse({}.get(), 0L)).longValue())",
+            trimmed
+        );
     }
     if trimmed.starts_with("Math.") {
         return format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed));
@@ -1339,7 +1348,10 @@ fn wrap_bigdecimal(expr: &str, already_bd: bool, proc: &ProcedureInfo) -> String
                     base, base
                 );
             }
-            format!("java.math.BigDecimal.valueOf(((Number) {}).doubleValue())", trimmed)
+            format!(
+                "java.math.BigDecimal.valueOf(((Number) java.util.Objects.requireNonNullElse({}, 0L)).doubleValue())",
+                trimmed
+            )
         }
     } else if trimmed.chars().all(|c| c.is_ascii_digit() || c == '.') && !trimmed.is_empty() {
         format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed))
@@ -1512,7 +1524,7 @@ pub(crate) fn typed_rowtype_field(raw_get: String, base_var: &str, field: &str, 
         // recognizes the ((java.sql.Timestamp) ...) prefix.
         format!("((java.sql.Timestamp) {})", raw_get)
     } else if field_type == "Long" || field_type == "long" {
-        format!("({} == null ? null : ((Number) {}).longValue())", raw_get, raw_get)
+        format!("({} == null ? 0L : ((Number) {}).longValue())", raw_get, raw_get)
     } else if field_type == "Integer" || field_type == "int" {
         format!("({} == null ? null : ((Number) {}).intValue())", raw_get, raw_get)
     } else if field_type.contains("BigDecimal") {
@@ -1596,6 +1608,28 @@ fn interval_count_unit(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> 
     interval_count_unit_inner(inner, proc)
 }
 
+fn decimal_safe_interval_count(value: String, proc: &ProcedureInfo) -> String {
+    let trimmed = value.trim();
+    // D1 (#117 minor 3): retain this converter's established arithmetic
+    // convention that a nullish operand contributes zero. Full SQL NULL
+    // propagation would require a nullable Timestamp pipeline.
+    if is_nullish_java_expr(trimmed) {
+        return "0".into();
+    }
+    if !trimmed.is_empty() && trimmed.chars().all(|c| c.is_ascii_digit()) {
+        let normalized = trimmed.trim_start_matches('0');
+        return if normalized.is_empty() { "0".into() } else { normalized.into() };
+    }
+    if is_integer_type(trimmed, proc)
+        || trimmed.starts_with("Long.parseLong(")
+        || trimmed.ends_with(".longValue()")
+        || trimmed.parse::<i64>().is_ok()
+    {
+        return trimmed.to_string();
+    }
+    format!("Long.parseLong(String.valueOf({}))", trimmed)
+}
+
 /// Like `interval_count_unit` but takes the already-unwrapped interval body.
 fn interval_count_unit_inner(inner: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> Option<(String, String)> {
     use ogsql_parser::ast::{Expr, Literal};
@@ -1628,7 +1662,7 @@ fn interval_count_unit_inner(inner: &ogsql_parser::ast::Expr, proc: &ProcedureIn
     } else {
         return None;
     };
-    Some((value, unit.to_string()))
+    Some((decimal_safe_interval_count(value, proc), unit.to_string()))
 }
 
 /// Deref a rendered value expression if it is a bare promoted local var
@@ -1741,7 +1775,10 @@ fn binary_op_to_java(
                     let stripped =
                         r.replace(".concat(String.valueOf(\" days\"))", "").replace(".concat(\" days\")", "");
                     format!("Long.parseLong(String.valueOf({}))", stripped.trim())
-                } else if r == "null" || r.contains("String.valueOf(") || is_string_var(&r, proc) {
+                } else if is_nullish_java_expr(&r) {
+                    // D1: interval arithmetic follows the existing nullish-to-zero convention.
+                    "0".into()
+                } else if r.contains("String.valueOf(") || is_string_var(&r, proc) {
                     format!("Long.parseLong(String.valueOf({}))", r)
                 } else if is_bigdecimal_var(&r, proc) || r.contains("BigDecimal") {
                     format!("({}).longValue()", r)
@@ -1806,7 +1843,10 @@ fn binary_op_to_java(
                     let stripped =
                         r.replace(".concat(String.valueOf(\" days\"))", "").replace(".concat(\" days\")", "");
                     format!("Long.parseLong(String.valueOf({}))", stripped.trim())
-                } else if r == "null" || r.contains("String.valueOf(") || is_string_var(&r, proc) {
+                } else if is_nullish_java_expr(&r) {
+                    // D1: interval arithmetic follows the existing nullish-to-zero convention.
+                    "0".into()
+                } else if r.contains("String.valueOf(") || is_string_var(&r, proc) {
                     format!("Long.parseLong(String.valueOf({}))", r)
                 } else if is_bigdecimal_var(&r, proc) || r.contains("BigDecimal") {
                     format!("({}).longValue()", r)
@@ -1823,7 +1863,10 @@ fn binary_op_to_java(
                     let stripped =
                         l.replace(".concat(String.valueOf(\" days\"))", "").replace(".concat(\" days\")", "");
                     format!("Long.parseLong(String.valueOf({}))", stripped.trim())
-                } else if l == "null" || l.contains("String.valueOf(") || is_string_var(&l, proc) {
+                } else if is_nullish_java_expr(&l) {
+                    // D1: interval arithmetic follows the existing nullish-to-zero convention.
+                    "0".into()
+                } else if l.contains("String.valueOf(") || is_string_var(&l, proc) {
                     format!("Long.parseLong(String.valueOf({}))", l)
                 } else {
                     l.clone()
@@ -2952,6 +2995,18 @@ fn is_boxed_integer(expr_str: &str, proc: &ProcedureInfo) -> bool {
     false
 }
 
+fn is_date_shaped_literal(lit: &str) -> bool {
+    if lit.len() == 8 && lit.chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    let parts: Vec<_> = lit.split('-').collect();
+    parts.len() == 3
+        && (1..=4).contains(&parts[0].len())
+        && (1..=2).contains(&parts[1].len())
+        && (1..=2).contains(&parts[2].len())
+        && parts.iter().all(|part| part.chars().all(|c| c.is_ascii_digit()))
+}
+
 fn type_cast_to_java(expr: &ogsql_parser::ast::Expr, type_name: &str, proc: &ProcedureInfo) -> String {
     let inner = expr_to_java(expr, proc);
     let lower = type_name.to_lowercase();
@@ -2987,12 +3042,17 @@ fn type_cast_to_java(expr: &ogsql_parser::ast::Expr, type_name: &str, proc: &Pro
         s if s.contains("bool") => format!("((Boolean) {})", inner),
         s if s.contains("timestamp") => {
             if inner.starts_with('"') {
-                // timestamptz '1970-01-01' — string literal must parse, not cast;
-                // Timestamp.valueOf requires the time part, pad date-only literals.
                 let lit = &inner[1..inner.len() - 1];
-                let padded =
-                    if lit.len() <= 10 && !lit.contains(':') { format!("{} 00:00:00", lit) } else { lit.to_string() };
-                format!("java.sql.Timestamp.valueOf(\"{}\")", padded)
+                if is_date_shaped_literal(lit) {
+                    format!(
+                        "java.sql.Timestamp.valueOf(java.time.LocalDate.parse({}, java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd][yyyy-M-d]\")).atStartOfDay())",
+                        inner
+                    )
+                } else if lit.contains(':') {
+                    format!("java.sql.Timestamp.valueOf({})", inner)
+                } else {
+                    format!("/* TODO: non-date timestamp literal {} */ null", inner)
+                }
             } else {
                 format!("((java.sql.Timestamp) {})", inner)
             }
@@ -3216,6 +3276,35 @@ mod tests {
     }
 
     #[test]
+    fn test_timestamp_cast_only_parses_date_shaped_literals() {
+        let proc = empty_proc();
+        for literal in ["abc", "123"] {
+            let cast = ogsql_parser::ast::Expr::TypeCast {
+                expr: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String(literal.into()))),
+                type_name: ogsql_parser::ast::DataType::Timestamp(None, None),
+                default: None,
+                format: None,
+            };
+            let out = expr_to_java(&cast, &proc);
+            assert!(
+                !out.contains("Timestamp.valueOf"),
+                "non-date literal must not enter a doomed timestamp parse: {}",
+                out
+            );
+        }
+
+        let cast = ogsql_parser::ast::Expr::TypeCast {
+            expr: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String("2026-5-01".into()))),
+            type_name: ogsql_parser::ast::DataType::Timestamp(None, None),
+            default: None,
+            format: None,
+        };
+        let out = expr_to_java(&cast, &proc);
+        assert!(out.contains("DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd][yyyy-M-d]\")"), "got: {}", out);
+        assert!(out.contains("atStartOfDay()"), "date-only timestamp must start at midnight: {}", out);
+    }
+
+    #[test]
     fn test_assignment_out_integer_param_long_expr_uses_int_value() {
         // #103 DwdService:102/139 — `o_months := o_months + 1` produces a long
         // expression (safe_long_value), but oMonths is AtomicReference<Integer>;
@@ -3421,7 +3510,7 @@ mod tests {
 
         let id = resolve_column_ref("v_wm.wm_id_value", &proc);
         assert!(
-            id.contains("vWm.getOrDefault(\"wmIdValue\", vWm.get(\"wm_id_value\")) == null ? null : ((Number) vWm.getOrDefault(\"wmIdValue\", vWm.get(\"wm_id_value\"))).longValue()"),
+            id.contains("vWm.getOrDefault(\"wmIdValue\", vWm.get(\"wm_id_value\")) == null ? 0L : ((Number) vWm.getOrDefault(\"wmIdValue\", vWm.get(\"wm_id_value\"))).longValue()"),
             "got: {}",
             id
         );
@@ -3432,6 +3521,41 @@ mod tests {
             "String field stays raw for null checks: {}",
             st
         );
+    }
+
+    #[test]
+    fn test_bigdecimal_number_extraction_is_null_safe() {
+        let mut proc = empty_proc();
+        proc.out_local_vars.insert("v_amount".into(), "AtomicReference<Long>".into());
+
+        let coerced = coerce_for_type("row.get(\"amount\")", Some("BigDecimal"), &proc);
+        assert!(coerced.contains("requireNonNullElse(row.get(\"amount\"), 0L)"), "got: {}", coerced);
+
+        let arg = coerce_arg_to_type("row.get(\"amount\")", "BigDecimal", &proc);
+        assert!(arg.contains("requireNonNullElse(row.get(\"amount\"), 0L)"), "got: {}", arg);
+
+        let promoted = wrap_bigdecimal("vAmount", false, &proc);
+        assert!(promoted.contains("requireNonNullElse(vAmount.get(), 0L)"), "got: {}", promoted);
+
+        let map_value = wrap_bigdecimal("row.get(\"amount\")", false, &proc);
+        assert!(map_value.contains("requireNonNullElse(row.get(\"amount\"), 0L)"), "got: {}", map_value);
+    }
+
+    #[test]
+    fn test_dynamic_sql_rowtype_field_arg_uses_sorted_first_match() {
+        let expected = "vAn.getOrDefault(\"sharedField\", vAn.get(\"shared_field\"))";
+        for _ in 0..10 {
+            let mut proc = empty_proc();
+            for (var, ty) in [("v_wm", "Long"), ("v_an", "String")] {
+                proc.local_vars.insert(var.into(), "Map<String, Object>".into());
+                proc.rowtype_field_types.entry(var.into()).or_default().insert("shared_field".into(), ty.into());
+            }
+            assert_eq!(
+                crate::generate::service::dynamic_sql_rowtype_field_arg("", "sharedField", &proc).as_deref(),
+                Some(expected),
+                "ambiguous %ROWTYPE field lookup must choose the lexically first variable"
+            );
+        }
     }
 
     #[test]
@@ -3456,11 +3580,12 @@ mod tests {
 
     #[test]
     fn test_interval_cast_numeric() {
-        let proc = empty_proc();
-        // (v_wm.lookback_days || ' day')::interval must not parseLong the string
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_str".into(), "String".into());
+        // String-backed interval counts must be parsed before entering a long context.
         let cast = ogsql_parser::ast::Expr::TypeCast {
             expr: Box::new(ogsql_parser::ast::Expr::BinaryOp {
-                left: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["v_wm".into(), "lookback_days".into()])),
+                left: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["v_str".into()])),
                 op: "||".into(),
                 right: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String(" day".into()))),
             }),
@@ -3469,7 +3594,51 @@ mod tests {
             format: None,
         };
         let out = expr_to_java(&cast, &proc);
-        assert!(!out.contains("parseLong"), "no parseLong on interval, got: {}", out);
+        assert_eq!(out, "(long)(Long.parseLong(String.valueOf(vStr)))");
+    }
+
+    #[test]
+    fn test_interval_cast_normalizes_leading_zero_literals() {
+        let proc = empty_proc();
+        for (literal, expected) in [("08 day", "(long)(8)"), ("010 day", "(long)(10)")] {
+            let cast = ogsql_parser::ast::Expr::TypeCast {
+                expr: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String(literal.into()))),
+                type_name: ogsql_parser::ast::DataType::Interval(None),
+                default: None,
+                format: None,
+            };
+            assert_eq!(expr_to_java(&cast, &proc), expected, "literal: {}", literal);
+        }
+    }
+
+    #[test]
+    fn test_timestamp_interval_arithmetic_coalesces_null_count_to_zero() {
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_ts".into(), "java.sql.Timestamp".into());
+        let ts = ogsql_parser::ast::Expr::ColumnRef(vec!["v_ts".into()]);
+        let null = ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Null);
+
+        for expr in [
+            ogsql_parser::ast::Expr::BinaryOp {
+                left: Box::new(ts.clone()),
+                op: "-".into(),
+                right: Box::new(null.clone()),
+            },
+            ogsql_parser::ast::Expr::BinaryOp {
+                left: Box::new(ts.clone()),
+                op: "+".into(),
+                right: Box::new(null.clone()),
+            },
+            ogsql_parser::ast::Expr::BinaryOp { left: Box::new(null), op: "+".into(), right: Box::new(ts) },
+        ] {
+            let out = expr_to_java(&expr, &proc);
+            assert!(!out.contains("String.valueOf(null)"), "null interval count must not be parsed: {}", out);
+            assert!(
+                out.contains("(long)(0)"),
+                "null interval count must follow the established nullish-to-zero convention: {}",
+                out
+            );
+        }
     }
 
     #[test]

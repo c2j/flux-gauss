@@ -157,7 +157,7 @@ public class ComplexClearingPkgService {
         }
         if ((java.util.Objects.equals(pOp, "UPDATE") && pNewRec.getOrDefault("accountId", pNewRec.get("account_id")) != null)) {
             { Object _val = complexClearingPkgMapper.selectTradeRecord_2(pOp, pOldRec, pNewRec, pCascade); if (_val != null) vDelta = (java.math.BigDecimal) _val; }
-            if (vDelta.subtract(java.math.BigDecimal.valueOf(((Number) pNewRec.get("balance")).doubleValue())).abs().compareTo(java.math.BigDecimal.valueOf(1.0)) > 0) {
+            if (vDelta.subtract(java.math.BigDecimal.valueOf(((Number) java.util.Objects.requireNonNullElse(pNewRec.get("balance"), 0L)).doubleValue())).abs().compareTo(java.math.BigDecimal.valueOf(1.0)) > 0) {
                 complexClearingPkgMapper.updateAccount(pOp, pOldRec, pNewRec, pCascade);
                 { Object _val = complexClearingPkgMapper.selectTradeRecord_3(pOp, pOldRec, pNewRec, pCascade); if (_val != null) vRelatedCount = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }
                 if (vRelatedCount > 0) {

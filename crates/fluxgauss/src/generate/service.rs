@@ -318,14 +318,18 @@ pub fn write_service_class(
 /// Mapper call passes the value instead of an undeclared bare name.
 /// The dml.sql_text is already parameter-substituted (${srcIdCol}), so match
 /// by reverse lookup: extra-param camel name → rowtype var field.
-fn dynamic_sql_rowtype_field_arg(
+pub(crate) fn dynamic_sql_rowtype_field_arg(
     _sql_text: &str,
     java_name: &str,
     proc: &crate::types::ProcedureInfo,
 ) -> Option<String> {
     let name_lower = java_name.to_lowercase();
-    for (var_lower, fields) in &proc.rowtype_field_types {
-        for field in fields.keys() {
+    let mut rowtype_vars: Vec<_> = proc.rowtype_field_types.iter().collect();
+    rowtype_vars.sort_by_key(|(var, _)| var.as_str());
+    for (var_lower, fields) in rowtype_vars {
+        let mut field_names: Vec<_> = fields.keys().collect();
+        field_names.sort();
+        for field in field_names {
             if crate::naming::snake_to_camel(field).to_lowercase() == name_lower {
                 let var_camel = crate::naming::snake_to_camel(var_lower);
                 let raw = format!(
