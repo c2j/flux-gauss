@@ -262,6 +262,9 @@ pub struct ProcedureInfo {
     /// Package variable names (snake_case) that are written (assigned to) in this procedure body.
     /// Used to detect de-facto constants: package vars never written here are treated as read-only.
     pub written_package_vars: HashSet<String>,
+
+    /// procedure_filter selection: "target" | "closure" | "excluded" | "" (#120)
+    pub selection: String,
 }
 
 impl ProcedureInfo {
@@ -313,6 +316,7 @@ impl ProcedureInfo {
             inline_comments: Vec::new(),
             local_var_source_lines: HashMap::new(),
             written_package_vars: HashSet::new(),
+            selection: String::new(),
         }
     }
 
@@ -335,6 +339,8 @@ pub struct PackageInfo {
     pub java_package: String,
     pub custom_types: HashMap<String, CustomTypeInfo>,
     pub extra_mapper_methods: Vec<(String, String, String)>,
+    /// Routines filtered out by `procedure_filter` — no Java artifacts (#120)
+    pub excluded_procedures: Vec<ProcedureInfo>,
 }
 
 // ── Lightweight Summaries (Phase 2 cross-package analysis) ──
@@ -450,6 +456,8 @@ pub struct ProcedureMapping {
     pub java_method: String,
     pub is_stub: bool,
     pub notes: Vec<String>,
+    /// procedure_filter selection: "target" | "closure" | "" (#120)
+    pub selection: String,
 }
 
 // ── Pipeline Phase Outputs (type-state pattern) ──
@@ -460,6 +468,8 @@ pub struct ParsedPackages {
     pub warnings: Vec<String>,
     pub skipped: Vec<SkippedItem>,
     pub errors: Vec<ConversionError>,
+    /// Packages dropped entirely by procedure_filter (all routines excluded) (#120)
+    pub filter_dropped: Vec<PackageInfo>,
 }
 
 pub struct AnalyzedPackages {
@@ -468,6 +478,8 @@ pub struct AnalyzedPackages {
     pub warnings: Vec<String>,
     pub skipped: Vec<SkippedItem>,
     pub errors: Vec<ConversionError>,
+    /// Packages dropped entirely by procedure_filter (all routines excluded) (#120)
+    pub filter_dropped: Vec<PackageInfo>,
 }
 
 #[cfg(test)]
@@ -604,6 +616,7 @@ mod tests {
             java_package: "com.example".into(),
             custom_types: HashMap::new(),
             extra_mapper_methods: Vec::new(),
+            excluded_procedures: Vec::new(),
         };
 
         let summary = PackageSummary::from_package(&pkg);

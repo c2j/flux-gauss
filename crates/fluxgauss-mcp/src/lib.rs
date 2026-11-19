@@ -222,7 +222,7 @@ impl FluxGaussMcpServer {
         let total_packages = result.packages.len();
         let total_procedures: usize = result.packages.iter().map(|p| p.procedures.len()).sum();
 
-        let report = fluxgauss::report::build_report(
+        let mut report = fluxgauss::report::build_report(
             &result.packages,
             result.skipped,
             result.warnings,
@@ -231,7 +231,10 @@ impl FluxGaussMcpServer {
             "MCP",
             &output_dir,
             sql_files.len(),
+            &result.filter_dropped_packages,
         );
+        report.procedure_filter = config.procedure_filter.clone().unwrap_or_default();
+        report.unmatched_filter = result.filter_unmatched.clone();
         let report_paths = report.save_auto(std::path::Path::new(&output_dir));
 
         let log_dir = std::path::Path::new(&output_dir).join(".fluxgauss").join("logs");
@@ -348,14 +351,14 @@ fn resolve_convert_inputs(
         let config: fluxgauss::config::AppConfig =
             serde_json::from_value(config_value.clone()).map_err(|e| format!("Failed to parse config JSON: {}", e))?;
         let output_dir = config.output_dir_or_default();
-        let sql_files: Vec<PathBuf> =
-            config.sources.as_ref().map(|s| s.iter().map(PathBuf::from).collect()).unwrap_or_default();
+        // Same expansion as the CLI: sources + source_dirs, dirs and globs (#121)
+        let sql_files: Vec<PathBuf> = config.resolve_source_files();
         return Ok((config, sql_files, output_dir));
     }
 
     let output_dir = req.output_dir.clone().unwrap_or_else(|| "./dest".to_string());
     let sql_files: Vec<PathBuf> = match &req.files {
-        Some(files) => files.iter().map(PathBuf::from).collect(),
+        Some(files) => fluxgauss::config::expand_source_patterns(files),
         None => {
             return Err("Either 'config' or 'files' must be provided for convert_sql".to_string());
         }
@@ -368,4 +371,41 @@ fn resolve_convert_inputs(
     };
 
     Ok((config, sql_files, output_dir))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_convert_inputs_expands_source_dirs_and_globs() {
+        // #121: MCP config `sources`/`source_dirs` entries that are directories
+        // or glob patterns must expand exactly like the CLI does.
+        let dir = tempfile::tempdir().unwrap();
+        let sql_dir = dir.path().join("sql");
+        std::fs::create_dir_all(&sql_dir).unwrap();
+        std::fs::write(sql_dir.join("a.sql"), "SELECT 1;").unwrap();
+        std::fs::write(sql_dir.join("b.sql"), "SELECT 2;").unwrap();
+        std::fs::write(sql_dir.join("c.txt"), "not sql").unwrap();
+
+        let config_json = serde_json::json!({
+            "output_dir": dir.path().join("dest").to_string_lossy(),
+            "base_package": "com.example.demo",
+            "sources": [sql_dir.join("*.sql").to_string_lossy().to_string()],
+            "source_dirs": [sql_dir.to_string_lossy().to_string()],
+        });
+        let req = ConvertSqlRequest {
+            config: Some(config_json),
+            files: None,
+            output_dir: None,
+            base_package: None,
+            full: false,
+            debug: false,
+            skip_validation: false,
+        };
+        let (_config, sql_files, _out) = resolve_convert_inputs(&req).unwrap();
+        let names: Vec<String> =
+            sql_files.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, vec!["a.sql".to_string(), "b.sql".to_string()], "{:?}", sql_files);
+    }
 }

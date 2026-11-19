@@ -738,6 +738,7 @@ fn build_package_info(
         java_package,
         custom_types,
         extra_mapper_methods: Vec::new(),
+        excluded_procedures: Vec::new(),
     }
 }
 

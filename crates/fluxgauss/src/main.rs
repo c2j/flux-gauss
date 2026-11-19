@@ -239,7 +239,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let report = fluxgauss::report::build_report(
+    let mut report = fluxgauss::report::build_report(
         &result.packages,
         result.skipped,
         result.warnings,
@@ -248,7 +248,10 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         &config_path_str,
         &output_dir,
         sql_files.len(),
+        &result.filter_dropped_packages,
     );
+    report.procedure_filter = config.procedure_filter.clone().unwrap_or_default();
+    report.unmatched_filter = result.filter_unmatched.clone();
     let report_paths = report.save_auto(std::path::Path::new(&output_dir));
 
     if let Some(report_path) = &cli.report {
@@ -314,12 +317,13 @@ fn resolve_inputs(cli: &Cli) -> Result<(config::AppConfig, Vec<PathBuf>, String)
         }
         let config = config::load_config(config_path)?;
         let output_dir = config.output_dir_or_default();
-        let sql_files: Vec<PathBuf> =
-            config.sources.as_ref().map(|s| s.iter().map(PathBuf::from).collect()).unwrap_or_default();
+        let sql_files = config.resolve_source_files();
         Ok((config, sql_files, output_dir))
     } else if cli.output.is_some() || !cli.sources.is_empty() {
         let output = cli.output.clone().ok_or("Missing --output directory. Use -o <dir> with -s <sql_files>")?;
-        let sql_files = cli.sources.clone();
+        let sql_files = fluxgauss::config::expand_source_patterns(
+            &cli.sources.iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>(),
+        );
         let config = config::AppConfig { output_dir: Some(output.to_string_lossy().to_string()), ..Default::default() };
         Ok((config, sql_files, output.to_string_lossy().to_string()))
     } else {

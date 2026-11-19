@@ -322,6 +322,35 @@ pub fn promote_out_local_vars(proc: &mut ProcedureInfo) {
             proc.imports.insert("import java.util.concurrent.atomic.AtomicReference;".into());
         }
     }
+    // Local vars promoted to AtomicReference<T> for OUT-arg usage may have been
+    // assigned earlier in the body (before the promoting cross-package call was
+    // seen), emitting `var = expr;` against what is now an AtomicReference —
+    // uncompilable. Rewrite those assignments to `var.set(expr);`.
+    if proc.out_local_vars.is_empty() {
+        return;
+    }
+    let promoted: std::collections::HashSet<String> =
+        proc.out_local_vars.keys().map(|k| crate::naming::snake_to_camel(k)).collect();
+    if promoted.is_empty() {
+        return;
+    }
+    static ASSIGN_RE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"^(\s*)([A-Za-z_]\w*)\s*=\s*([^=].*);").unwrap());
+    for line in proc.java_logic_lines.iter_mut() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*') {
+            continue;
+        }
+        if let Some(cap) = ASSIGN_RE.captures(line) {
+            let var_ref: &str = &cap[2];
+            if promoted.contains(var_ref) {
+                let indent = cap[1].to_string();
+                let var = cap[2].to_string();
+                let expr = cap[3].to_string();
+                *line = format!("{}{}.set({});", indent, var, expr);
+            }
+        }
+    }
 }
 
 pub fn discover_cross_service_refs(pkg: &mut crate::types::PackageInfo, known_packages: &[String]) {

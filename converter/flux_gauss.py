@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 import traceback
 import textwrap
+import glob
 import hashlib
 import shutil
 from dataclasses import dataclass, field
@@ -1054,6 +1055,7 @@ class PackageInfo:
     java_package: str = ""  # Custom Java package override (empty = use BASE_PACKAGE)
     custom_types: dict = field(default_factory=dict)  # name -> {"kind": "record"/"varray", "fields"/...}
     _extra_mapper_methods: list = field(default_factory=list)  # [(method_name, sql, return_type)]
+    excluded_procedures: list = field(default_factory=list)  # procs filtered out by procedure_filter (#120)
 
 
 # ── Conversion Report ──────────────────────────────────────────
@@ -1145,6 +1147,7 @@ class ProcedureMapping:
     notes: str = ""
     stub_reasons: list = field(default_factory=list)
     table_refs: set = field(default_factory=set)
+    selection: str = ""  # "target" | "closure" | "" (no filter) — issue #120
 
 
 @dataclass
@@ -1162,6 +1165,9 @@ class ConversionReport:
     total_procedures: int = 0
     total_dml: int = 0
     total_cross_calls: int = 0
+    procedure_filter: list = field(default_factory=list)   # raw filter entries, keeps :N (#120)
+    unmatched_filter: list = field(default_factory=list)   # filter entries matching nothing (#121)
+    excluded_procedures: list = field(default_factory=list)  # [(pkg, proc.name, source_file)]
 
 
 UnresolvedCall = namedtuple('UnresolvedCall', [
@@ -15186,6 +15192,268 @@ def _find_dependent_packages(packages: list, changed_pkg_names: set) -> set:
     return affected
 
 
+# ── Procedure-level filter & dependency closure (issue #120) ──────────────
+#
+# `procedure_filter` selects a whitelist of `pkg.proc` (optional `:N` arg-count
+# suffix) routines.  A fixpoint over a lightweight AST call-edge scan then pulls
+# every directly/indirectly called routine into the conversion set.  Routines
+# outside the closure get NO Java artifacts; package-level vars/types/cursors
+# are unaffected because they live on PackageInfo, not ProcedureInfo.
+
+_PROC_FILTER_ARG_RE = re.compile(r"^(?P<name>.+?)(?::(?P<argc>\d+))?$")
+
+
+def _expand_source_patterns(entries) -> list:
+    """Expand `sources`-style entries: plain files pass through, directories
+    contribute their *.sql files recursively, glob patterns are expanded.
+    Order-preserving dedupe; nonexistent paths are kept (caller validates)."""
+    if isinstance(entries, str):
+        entries = [entries]
+    files = []
+    for entry in entries or []:
+        if not isinstance(entry, str):
+            continue
+        e = entry.strip()
+        if not e:
+            continue
+        if any(ch in e for ch in "*?["):
+            files.extend(sorted(glob.glob(e, recursive=True)))
+        elif os.path.isdir(e):
+            files.extend(sorted(
+                str(p) for p in Path(e).rglob("*.sql") if p.is_file()))
+        else:
+            files.append(e)
+    seen = set()
+    out = []
+    for f in files:
+        if f not in seen:
+            seen.add(f)
+            out.append(f)
+    return out
+
+
+def _resolve_config_file_sets(config: dict) -> tuple:
+    """Return (routine_files, ddl_files) for a config dict.
+
+    `sources` / `source_dirs` accept files, directories and glob patterns and
+    feed the full parse+generate pipeline.  `ddl_sources` / `ddl_source_dirs`
+    accept the same forms but are only scanned for CREATE TABLE DDL (type
+    inference) — they are never parsed or converted.
+    """
+    routine = _expand_source_patterns(config.get("sources"))
+    routine += _expand_source_patterns(config.get("source_dirs"))
+    ddl = _expand_source_patterns(config.get("ddl_sources"))
+    ddl += _expand_source_patterns(config.get("ddl_source_dirs"))
+    return routine, ddl
+
+
+def _parse_procedure_filter_entries(entries) -> list:
+    """Normalize `procedure_filter` config → [(match_name, argc|None)].
+
+    Entry forms: `pkg.proc`, `schema.pkg.proc`, bare `proc`, each optionally
+    suffixed with `:N` to disambiguate overloads by parameter count.
+    """
+    if isinstance(entries, str):
+        entries = [entries]
+    result = []
+    for entry in entries or []:
+        if not isinstance(entry, str):
+            continue
+        e = entry.strip()
+        if not e:
+            continue
+        m = _PROC_FILTER_ARG_RE.match(e)
+        if not m:
+            continue
+        name = m.group("name").strip()
+        argc = m.group("argc")
+        result.append((name, int(argc) if argc else None))
+    return result
+
+
+def _proc_selection_key(pkg, proc):
+    return (pkg.package_name, proc.proc_name.lower(), len(proc.parameters))
+
+
+def _filter_name_candidates(name: str) -> set:
+    """Spellings equivalent to a filter entry.  `schema.pkg.proc` entries must
+    also match `pkg.proc` because the parser strips the schema from package
+    names (#121)."""
+    cands = {name}
+    parts = name.split(".")
+    if len(parts) >= 3:
+        cands.add(".".join(parts[-2:]))
+    return cands
+
+
+def _proc_filter_names(pkg, proc) -> set:
+    """All spellings a filter entry may use to reference this routine."""
+    names = {proc.name.lower()}
+    if proc.package:
+        names.add(f"{proc.package}.{proc.proc_name}".lower())
+    names.add(f"{pkg.package_name}.{proc.proc_name}".lower())
+    names.add(proc.proc_name.lower())
+    # schema-qualified proc.name (e.g. bigfund.pkg_a.proc_x) also offers its
+    # pkg.proc tail so both spellings select the same routine (#121)
+    tails = set()
+    for n in names:
+        parts = n.split(".")
+        if len(parts) >= 3:
+            tails.add(".".join(parts[-2:]))
+    return names | tails
+
+
+def _iter_routine_call_nodes(node):
+    """Yield (name_parts, arg_count) for every ProcedureCall/FunctionCall
+    node in a procedure body AST.  Nested calls inside arguments are covered
+    by the recursion into each node's payload."""
+    if isinstance(node, dict):
+        for key, val in node.items():
+            if key == "ProcedureCall" and isinstance(val, dict):
+                args = val.get("arguments", val.get("args", []))
+                yield (val.get("name", []) or [],
+                       len(args) if isinstance(args, list) else 0)
+            elif key == "FunctionCall" and isinstance(val, dict):
+                args = val.get("args", [])
+                yield (val.get("name", []) or [],
+                       len(args) if isinstance(args, list) else 0)
+            yield from _iter_routine_call_nodes(val)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _iter_routine_call_nodes(item)
+
+
+def _apply_procedure_filter(packages: list, all_packages: dict, entries: list):
+    """Select procedures per `procedure_filter` + transitive call closure.
+
+    Mutates each PackageInfo: `procedures` keeps only selected routines
+    (tagged proc._selection = "target"|"closure"); excluded routines move to
+    `excluded_procedures` and produce no Java artifacts.  Packages left with
+    zero procedures are removed from `packages` (they stay in all_packages so
+    name resolution is unaffected).
+
+    Returns (stats_dict, unmatched_entries).
+    """
+    # ── Indexes ──
+    proc_index = {}                       # key -> (pkg, proc)
+    pkg_proc_index = defaultdict(list)    # (pkg_name_lower, func_lower) -> [(pkg, proc)]
+    file_index = defaultdict(list)        # source_file -> [(pkg, proc)]
+    name_index = defaultdict(list)        # func_lower -> [(pkg, proc)]
+    for pkg in packages:
+        for proc in pkg.procedures:
+            key = _proc_selection_key(pkg, proc)
+            proc_index[key] = (pkg, proc)
+            pkg_proc_index[(pkg.package_name.lower(), proc.proc_name.lower())].append((pkg, proc))
+            if proc.source_file:
+                file_index[proc.source_file].append((pkg, proc))
+            name_index[proc.proc_name.lower()].append((pkg, proc))
+
+    def _arity_pick(cands, argc):
+        """Within one resolution layer keep only overloads whose parameter
+        count matches the call site; when none match, keep the whole layer
+        (over-approximate).  Never unions across layers (#121)."""
+        exact = [pp for pp in cands if len(pp[1].parameters) == argc]
+        return exact if exact else list(cands)
+
+    # ── Call-edge resolution: first non-empty layer wins ──
+    def resolve_edges(caller_pkg_name, caller_proc):
+        out = set()
+        for name_parts, argc in _iter_routine_call_nodes(caller_proc.body):
+            parts = [str(x) for x in name_parts if x]
+            if not parts:
+                continue
+            func = parts[-1].lower()
+            if len(parts) >= 2:
+                matched = _find_registered_pkg(parts[-2], all_packages)
+                if not matched:
+                    continue  # codegen emits an unresolved call; nothing to include
+                layer = pkg_proc_index.get((matched.lower(), func), [])
+                for tpkg, tproc in _arity_pick(layer, argc):
+                    out.add(_proc_selection_key(tpkg, tproc))
+                continue
+            # Unqualified: same package → same source file → global name index.
+            # The first layer with any candidate wins; no cross-layer union.
+            layer = pkg_proc_index.get((caller_pkg_name.lower(), func), [])
+            if not layer:
+                layer = [pp for pp in file_index.get(caller_proc.source_file, [])
+                         if pp[1].proc_name.lower() == func]
+            if not layer:
+                layer = name_index.get(func, [])
+            for tpkg, tproc in _arity_pick(layer, argc):
+                out.add(_proc_selection_key(tpkg, tproc))
+        return out
+
+    # ── Seeds ──
+    selected = {}   # key -> "target" | "closure"
+    unmatched = []
+    for name, argc in entries:
+        name_l = name.lower()
+        hits = []
+        entry_cands = _filter_name_candidates(name_l)
+        for pkg in packages:
+            for proc in pkg.procedures:
+                if argc is not None and len(proc.parameters) != argc:
+                    continue
+                if entry_cands & _proc_filter_names(pkg, proc):
+                    hits.append(_proc_selection_key(pkg, proc))
+        if not hits:
+            unmatched.append(name + (f":{argc}" if argc is not None else ""))
+            continue
+        for k in hits:
+            if k not in selected:
+                selected[k] = "target"
+
+    # ── Fixpoint closure over call edges ──
+    edges_cache = {}
+    queue = [k for k, v in selected.items() if v == "target"]
+    while queue:
+        key = queue.pop()
+        pkg, proc = proc_index[key]
+        if key not in edges_cache:
+            edges_cache[key] = resolve_edges(pkg.package_name, proc)
+        for ekey in edges_cache[key]:
+            if ekey in proc_index and ekey not in selected:
+                selected[ekey] = "closure"
+                queue.append(ekey)
+
+    # ── Apply selection ──
+    n_target = n_closure = n_excluded = 0
+    empty_pkgs = []
+    dropped_packages = []
+    for pkg in packages:
+        keep, excluded = [], []
+        for proc in pkg.procedures:
+            key = _proc_selection_key(pkg, proc)
+            sel = selected.get(key)
+            if sel:
+                proc._selection = sel
+                keep.append(proc)
+                if sel == "target":
+                    n_target += 1
+                else:
+                    n_closure += 1
+            else:
+                proc._selection = "excluded"
+                excluded.append(proc)
+                n_excluded += 1
+        pkg.procedures = keep
+        pkg.excluded_procedures = excluded
+        if not keep:
+            empty_pkgs.append(pkg.package_name)
+            dropped_packages.append(pkg)
+    packages[:] = [pkg for pkg in packages if pkg.package_name not in empty_pkgs]
+
+    stats = {
+        "targets": n_target,
+        "closure": n_closure,
+        "excluded": n_excluded,
+        "packages_dropped": len(empty_pkgs),
+        "unmatched": unmatched,
+        "dropped_packages": dropped_packages,
+    }
+    return stats
+
+
 def _clean_stale_packages(output_dir: str, old_manifest: dict, current_packages: list):
     """Delete generated files for packages no longer in config."""
     current_pkg_names = {p.package_name for p in current_packages}
@@ -16546,7 +16814,9 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
 
 def build_conversion_report(
     output_dir: str, packages: list, all_skipped: list, parse_errors_map: dict,
-    config_path: str = "", parse_warnings_map: dict = None
+    config_path: str = "", parse_warnings_map: dict = None,
+    procedure_filter: list = None, dropped_packages: list = None,
+    unmatched_filter: list = None
 ) -> ConversionReport:
     if parse_warnings_map is None:
         parse_warnings_map = {}
@@ -16560,6 +16830,8 @@ def build_conversion_report(
         parse_errors=[],
         parse_warnings=[],
         unresolved_calls=list(UNRESOLVED_CALLS),
+        procedure_filter=list(procedure_filter or []),
+        unmatched_filter=list(unmatched_filter or []),
         total_packages=len(packages),
         total_procedures=sum(len(pkg.procedures) for pkg in packages),
         total_dml=sum(len(proc.dml_statements) for pkg in packages for proc in pkg.procedures),
@@ -16567,6 +16839,11 @@ def build_conversion_report(
     )
 
     base_path = Path(output_dir)
+    for pkg in list(packages) + list(dropped_packages or []):
+        for ep in getattr(pkg, 'excluded_procedures', []):
+            report.excluded_procedures.append(
+                (pkg.package_name, ep.name, ep.source_file))
+
     for pkg in packages:
         class_name = package_to_classname(pkg.package_name)
         jp_path = _pkg_java_package(pkg).replace('.', '/')
@@ -16614,6 +16891,7 @@ def build_conversion_report(
                 notes=notes,
                 stub_reasons=list(_proc_reasons),
                 table_refs=proc.table_refs,
+                selection=getattr(proc, '_selection', ''),
             ))
 
     for sql_file, errors in parse_errors_map.items():
@@ -16660,11 +16938,38 @@ def _render_report_markdown(report: ConversionReport) -> str:
     lines.append(f"| ❌ 解析错误 | {len(report.parse_errors)} |")
     if report.parse_warnings:
         lines.append(f"| ⚠️ 解析警告 | {len(report.parse_warnings)} |")
+    if report.procedure_filter:
+        _n_target = sum(1 for m in report.procedure_mappings if m.selection == "target")
+        _n_closure = sum(1 for m in report.procedure_mappings if m.selection == "closure")
+        lines.append(f"| 🎯 procedure_filter 目标存过 | {_n_target} |")
+        lines.append(f"| 🔗 闭包自动纳入存过 | {_n_closure} |")
+        lines.append(f"| ⏭ 未选中存过（未生成） | {len(report.excluded_procedures)} |")
     if report.unresolved_calls:
         lines.append(f"| ⚠️ 未解析的跨包调用 | {len(report.unresolved_calls)} |")
     if TODO_SUMMARY:
         lines.append(f"| 🔍 TODO 待处理 | {len(TODO_SUMMARY)} |")
     lines.append("")
+
+    if report.excluded_procedures:
+        lines.append("---")
+        lines.append("")
+        lines.append("## 存过筛选（procedure_filter）")
+        lines.append("")
+        lines.append("以下存过未进入转换闭包，未生成任何 Java 产物：")
+        lines.append("")
+        _by_pkg = defaultdict(list)
+        for _pkg_name, _proc_name, _src in report.excluded_procedures:
+            _by_pkg[_pkg_name].append(_proc_name)
+        for _pkg_name in sorted(_by_pkg):
+            lines.append(f"- `{_pkg_name}` ({len(_by_pkg[_pkg_name])}): "
+                         + ", ".join(sorted(_by_pkg[_pkg_name])))
+        lines.append("")
+        if report.unmatched_filter:
+            lines.append("以下 procedure_filter 条目未匹配到任何存过：")
+            lines.append("")
+            for _u in report.unmatched_filter:
+                lines.append(f"- `{_u}`")
+            lines.append("")
 
     if report.procedure_mappings:
         lines.append("---")
@@ -16680,18 +16985,31 @@ def _render_report_markdown(report: ConversionReport) -> str:
             svc_name = mappings[0].java_service
             lines.append(f"### `{sql_file}` → `{svc_name}`")
             lines.append("")
-            lines.append("| SQL 存储过程/函数 | 类型 | Java 方法 | Mapper 方法 | 状态 | 备注 |")
-            lines.append("|-----------------|------|-----------|-------------|------|------|")
+            _has_sel = any(getattr(m, "selection", "") for m in mappings)
+            if _has_sel:
+                lines.append("| SQL 存储过程/函数 | 类型 | 筛选 | Java 方法 | Mapper 方法 | 状态 | 备注 |")
+                lines.append("|-----------------|------|------|-----------|-------------|------|------|")
+            else:
+                lines.append("| SQL 存储过程/函数 | 类型 | Java 方法 | Mapper 方法 | 状态 | 备注 |")
+                lines.append("|-----------------|------|-----------|-------------|------|------|")
             for m in mappings:
                 status = "⚠️ Stub" if m.is_stub else "✅"
                 mapper_str = ", ".join(m.mapper_methods) if m.mapper_methods else "—"
                 if not m.notes:
                     m.notes = ""
-                lines.append(
-                    f"| `{m.procedure_name}` | {m.procedure_type} | "
-                    f"`{m.java_service}.{m.java_method}()` | {mapper_str} | "
-                    f"{status} | {m.notes} |"
-                )
+                _sel = {"target": "🎯 目标", "closure": "🔗 闭包"}.get(getattr(m, "selection", ""), "—")
+                if _has_sel:
+                    lines.append(
+                        f"| `{m.procedure_name}` | {m.procedure_type} | {_sel} | "
+                        f"`{m.java_service}.{m.java_method}()` | {mapper_str} | "
+                        f"{status} | {m.notes} |"
+                    )
+                else:
+                    lines.append(
+                        f"| `{m.procedure_name}` | {m.procedure_type} | "
+                        f"`{m.java_service}.{m.java_method}()` | {mapper_str} | "
+                        f"{status} | {m.notes} |"
+                    )
             lines.append("")
 
             gen_files = mappings[0].generated_files
@@ -17048,9 +17366,15 @@ FLUXGAUSS_HELP = f"""\
       username: postgres
       password: postgres
       driver: org.postgresql.Driver
-    sources:                               SQL 源文件列表
+    sources:                               SQL 源文件列表（文件/目录/glob 均可）
       - sql/pkg_order.sql
       - sql/pkg_product.sql
+    # source_dirs:                         # 额外语料目录（与 sources 合并）
+    #   - sql/packages
+    # ddl_sources:                         # 仅扫描 CREATE TABLE 用于类型推断，不转换
+    #   - sql/ddl
+    # procedure_filter:                    # 按 包名.存过名[:参数个数] 筛选存过 (#120)
+    #   - pkg_order.create_order
     java_packages:                        自定义 Java 包名映射（可选）
       - package: com.example.order
         sources:
@@ -17262,7 +17586,11 @@ def _run_mcp_server():
         # ── Resolve inputs ──
         resolved_config = config or {}
         resolved_output_dir = output_dir or resolved_config.get("output_dir", "./dest")
-        resolved_sql_files = files or resolved_config.get("sources", [])
+        if files:
+            resolved_sql_files = _expand_source_patterns(files)
+            resolved_ddl_files = []
+        else:
+            resolved_sql_files, resolved_ddl_files = _resolve_config_file_sets(resolved_config)
         resolved_base_package = base_package or resolved_config.get("base_package", "com.example.demo")
 
         if not resolved_sql_files:
@@ -17318,7 +17646,7 @@ def _run_mcp_server():
 
         try:
             # ── Phase 0: Table DDL pre-scan ──
-            for sql_file in resolved_sql_files:
+            for sql_file in list(dict.fromkeys(resolved_sql_files + resolved_ddl_files)):
                 try:
                     with open(sql_file, "r", encoding=_SOURCE_ENCODING, errors="replace") as _f:
                         _content = _f.read()
@@ -17457,6 +17785,17 @@ def _run_mcp_server():
 
             packages = list({id(_p): _p for _p in all_package_names.values()}.values())
 
+            # ── Phase 3.5: procedure_filter + dependency closure (#120) ──
+            _pf_entries = _parse_procedure_filter_entries(
+                resolved_config.get("procedure_filter"))
+            if _pf_entries:
+                _pf_stats = _apply_procedure_filter(
+                    packages, all_package_names, _pf_entries)
+                if _pf_stats["unmatched"]:
+                    _log(f"  ⚠ procedure_filter 未匹配: {', '.join(_pf_stats['unmatched'])}", to_stdout=True)
+                _log(f"  procedure_filter: {_pf_stats['targets']} target + {_pf_stats['closure']} closure procs, "
+                     f"{_pf_stats['excluded']} excluded", to_stdout=True)
+
             # ── Phase 4: Analyze procedures ──
             if not packages:
                 raise _McpToolError("No procedures found in SQL files — nothing to convert.")
@@ -17504,6 +17843,9 @@ def _run_mcp_server():
                 output_dir_abs, packages, all_skipped, parse_errors_map,
                 config_path=str(resolved_config) if resolved_config else "MCP mode",
                 parse_warnings_map=parse_warnings_map,
+                procedure_filter=[n + (f":{a}" if a is not None else "") for n, a in _pf_entries],
+                dropped_packages=_pf_stats.get("dropped_packages") if _pf_entries else None,
+                unmatched_filter=_pf_stats.get("unmatched") if _pf_entries else None,
             )
             report_paths = write_conversion_report(report, output_dir_abs)
 
@@ -17621,6 +17963,7 @@ def main():
     # ── Resolve config ──
     output_dir = None
     sql_files = []
+    config_ddl_files = []
     config_path = None
     config = {}
 
@@ -17635,7 +17978,7 @@ def main():
             sys.exit(1)
         config = _parse_config(config_path)
         output_dir = config.get('output_dir', './dest')
-        sql_files = config.get('sources', [])
+        sql_files, config_ddl_files = _resolve_config_file_sets(config)
         if config.get('base_package'):
             global BASE_PACKAGE, BASE_DIR, _LOGGER_CONFIG
             BASE_PACKAGE = config['base_package']
@@ -17653,7 +17996,7 @@ def main():
 
     elif args.output and args.sources:
         output_dir = args.output
-        sql_files = args.sources
+        sql_files = _expand_source_patterns(args.sources)
     else:
         print(f"Error: 请指定配置文件 (-c) 或输出目录 + 源文件 (-o + -s)")
         print(f"  用法: fluxgauss -c fluxgauss.yaml")
@@ -17701,15 +18044,41 @@ def main():
             _log(f"  ❌ No valid source files. Exiting.", to_stdout=False)
             sys.exit(1)
 
+    # ── procedure_filter (#120) ──
+    _pf_raw = config.get('procedure_filter') if config else []
+    if isinstance(_pf_raw, str):
+        _pf_raw = [_pf_raw]
+    _proc_filter_entries = _parse_procedure_filter_entries(_pf_raw)
+    _filter_sig = sorted(str(e).strip() for e in (_pf_raw or []))
+
     # ── Incremental: hash comparison ──
     manifest = _load_manifest(output_dir) if not args.full else {"files": {}}
     old_files = manifest.get("files", {})
+    _filter_changed = bool(old_files) and (manifest.get("procedure_filter") or []) != _filter_sig
     changed_files = set()
     for f in sql_files:
         current_hash = _compute_file_hash(f)
         old_entry = old_files.get(f, {})
         if current_hash != old_entry.get("hash", ""):
             changed_files.add(f)
+
+    # DDL-only inputs (ddl_sources / init_sql) join the manifest so their
+    # changes invalidate generation; they are never parsed as routines. (#121)
+    _init_sql = (config.get("integration_test", {}) if config else {}).get("init_sql", [])
+    if isinstance(_init_sql, str):
+        _init_sql = [_init_sql]
+    _ddl_extra_files = list(dict.fromkeys(
+        [f for f in config_ddl_files if os.path.isfile(f)]
+        + [f for f in _init_sql if os.path.isfile(f)]
+    ))
+    old_ddl_files = manifest.get("ddl_files", {}) if not args.full else {}
+    new_ddl_hashes = {}
+    _ddl_changed = False
+    for f in _ddl_extra_files:
+        h = _compute_file_hash(f)
+        new_ddl_hashes[f] = h
+        if h != old_ddl_files.get(f):
+            _ddl_changed = True
 
     is_incremental = bool(old_files) and len(changed_files) < len(sql_files)
     full_regen = args.full or not old_files or len(changed_files) == len(sql_files)
@@ -17791,15 +18160,15 @@ def main():
             _log(f"  Validation: all files cached, skipping.", to_stdout=False)
 
     # ── Phase 0: Pre-scan for table DDL ──
-    _ddl_files = list(sql_files)
-    _init_sql = (config.get("integration_test", {}) if config else {}).get("init_sql", [])
-    if isinstance(_init_sql, str):
-        _init_sql = [_init_sql]
+    # Every DDL candidate is scanned on each run: TYPE_OVERRIDES is process
+    # state, so skipping unchanged files would silently drop their column
+    # types on incremental runs.  The Rust engine re-reads them every run too. (#121)
+    _ddl_files = list(dict.fromkeys(list(sql_files) + config_ddl_files))
     for _isf in _init_sql:
         if os.path.isfile(_isf) and _isf not in _ddl_files:
             _ddl_files.append(_isf)
     for sql_file in _ddl_files:
-        if sql_file not in changed_files and not full_regen:
+        if not os.path.isfile(sql_file):
             continue
         with open(sql_file, 'r', encoding=_SOURCE_ENCODING, errors='replace') as _f:
             _content = _f.read()
@@ -17924,6 +18293,14 @@ def main():
 
     packages = list({id(_p): _p for _p in all_package_names.values()}.values())
 
+    # ── Phase 1.5: procedure_filter + dependency closure (#120) ──
+    if _proc_filter_entries:
+        _pf_stats = _apply_procedure_filter(packages, all_package_names, _proc_filter_entries)
+        if _pf_stats["unmatched"]:
+            _log(f"  ⚠ procedure_filter 未匹配: {', '.join(_pf_stats['unmatched'])}", to_stdout=True)
+        _log(f"  procedure_filter: {_pf_stats['targets']} target + {_pf_stats['closure']} closure, "
+             f"{_pf_stats['excluded']} excluded", to_stdout=True)
+
     # ── Phase 2: Analyze all procedures ──
     all_procs = [(pkg, proc) for pkg in packages for proc in pkg.procedures]
     n_analyze = len(all_procs)
@@ -17957,7 +18334,9 @@ def main():
             pass
 
     # ── Determine affected packages (changed + transitive dependents) ──
-    if full_regen or not is_incremental:
+    # procedure_filter 非空时强制全量重生成：调用方变更可能把新包拉进闭包，
+    # 其 Service 必须写出（AST 缓存仍按文件哈希复用，不受影响）。(#121)
+    if full_regen or not is_incremental or _filter_changed or _proc_filter_entries or _ddl_changed:
         changed_pkg_names = None
     else:
         directly_changed = {
@@ -17970,7 +18349,7 @@ def main():
 
     # ── Phase 3: Generate ──
     _log(f"\n  Generating Spring Boot project...", to_stdout=False)
-    _resume_skip = _load_gen_checkpoint(output_dir) if args.resume else set()
+    _resume_skip = _load_gen_checkpoint(output_dir) if (args.resume and not _filter_changed) else set()
     if _resume_skip:
         _log(f"  ⏩ Resume: skipping {len(_resume_skip)} already-generated packages", to_stdout=True)
     _gen_ok = False
@@ -17994,7 +18373,7 @@ def main():
     _clean_stale_packages(output_dir, manifest, packages)
 
     # ── Save manifest ──
-    new_manifest = {"files": {}}
+    new_manifest = {"files": {}, "procedure_filter": _filter_sig, "ddl_files": new_ddl_hashes}
     for f in sql_files:
         new_manifest["files"][f] = {
             "hash": _compute_file_hash(f),
@@ -18006,7 +18385,10 @@ def main():
 
     report = build_conversion_report(
         output_dir, packages, all_skipped, parse_errors_map,
-        config_path=config_path or "", parse_warnings_map=parse_warnings_map
+        config_path=config_path or "", parse_warnings_map=parse_warnings_map,
+        procedure_filter=[n + (f":{a}" if a is not None else "") for n, a in _proc_filter_entries],
+        dropped_packages=_pf_stats.get("dropped_packages") if _proc_filter_entries else None,
+        unmatched_filter=_pf_stats.get("unmatched") if _proc_filter_entries else None,
     )
     report_paths = write_conversion_report(report, output_dir,
                                             report_file=args.report)

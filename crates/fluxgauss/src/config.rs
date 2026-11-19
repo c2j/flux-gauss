@@ -7,6 +7,13 @@ pub struct AppConfig {
     pub logger: Option<LoggerConfig>,
     pub database: Option<DatabaseConfig>,
     pub sources: Option<Vec<String>>,
+    /// Additional routine source roots (files, dirs, globs) merged into `sources` (#120)
+    pub source_dirs: Option<Vec<String>>,
+    /// DDL-only sources scanned for CREATE TABLE (never parsed/converted) (#120)
+    pub ddl_sources: Option<Vec<String>>,
+    pub ddl_source_dirs: Option<Vec<String>>,
+    /// Whitelist of `pkg.proc[:N]` routines; transitive call closure is auto-included (#120)
+    pub procedure_filter: Option<Vec<String>>,
     pub java_packages: Option<Vec<JavaPackageMapping>>,
     pub integration_test: Option<IntegrationTestConfig>,
     pub encoding: Option<String>,
@@ -23,6 +30,133 @@ impl AppConfig {
 
     pub fn encoding_or_default(&self) -> String {
         self.encoding.clone().unwrap_or_else(|| "utf-8".to_string())
+    }
+
+    /// Routine files: `sources` + `source_dirs`, with dir/glob expansion (#120)
+    pub fn resolve_source_files(&self) -> Vec<std::path::PathBuf> {
+        let mut entries = self.sources.clone().unwrap_or_default();
+        entries.extend(self.source_dirs.clone().unwrap_or_default());
+        expand_source_patterns(&entries)
+    }
+
+    /// DDL-only files: `ddl_sources` + `ddl_source_dirs` (#120)
+    pub fn resolve_ddl_files(&self) -> Vec<std::path::PathBuf> {
+        let mut entries = self.ddl_sources.clone().unwrap_or_default();
+        entries.extend(self.ddl_source_dirs.clone().unwrap_or_default());
+        expand_source_patterns(&entries)
+    }
+}
+
+/// Expand source entries: plain files pass through, directories contribute
+/// their *.sql files recursively, `*`/`?` glob patterns are expanded.
+/// Order-preserving dedupe; nonexistent paths are kept (caller validates).
+pub fn expand_source_patterns(entries: &[String]) -> Vec<std::path::PathBuf> {
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    for entry in entries {
+        let e = entry.trim();
+        if e.is_empty() {
+            continue;
+        }
+        if e.contains('*') || e.contains('?') || e.contains('[') {
+            files.extend(expand_glob(e));
+        } else {
+            let path = std::path::Path::new(e);
+            if path.is_dir() {
+                rglob_sql(path, &mut files);
+            } else {
+                files.push(path.to_path_buf());
+            }
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    files.retain(|p| seen.insert(p.clone()));
+    files
+}
+
+fn rglob_sql(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let mut entries: Vec<_> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
+        Err(_) => return,
+    };
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        let path = entry.path();
+        if path.is_dir() {
+            rglob_sql(&path, out);
+        } else if path.extension().map(|x| x == "sql").unwrap_or(false) {
+            out.push(path);
+        }
+    }
+}
+
+/// Minimal glob expansion supporting `*` (within a path segment), `**`
+/// (any depth) and `?`. Character classes `[...]` are treated literally.
+fn expand_glob(pattern: &str) -> Vec<std::path::PathBuf> {
+    // Literal base directory: everything up to the first path segment that
+    // contains a wildcard.
+    let mut base = if pattern.starts_with('/') { std::path::PathBuf::from("/") } else { std::path::PathBuf::new() };
+    let mut rest_start = 0usize;
+    for i in pattern.match_indices('/').map(|(i, _)| i).chain(std::iter::once(pattern.len())) {
+        let seg_str = &pattern[rest_start..i];
+        rest_start = i + 1;
+        if seg_str.contains('*') || seg_str.contains('?') || seg_str.contains('[') {
+            break;
+        }
+        if !seg_str.is_empty() {
+            base.push(seg_str);
+        }
+    }
+    let base_dir = if base.as_os_str().is_empty() { std::path::PathBuf::from(".") } else { base.clone() };
+    let re = glob_to_regex(pattern);
+    let mut out = Vec::new();
+    collect_glob_matches(&base_dir, &re, &mut out);
+    out.sort();
+    out
+}
+
+fn glob_to_regex(pattern: &str) -> regex::Regex {
+    let mut re = String::from("^");
+    let mut chars = pattern.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '*' => {
+                if chars.peek() == Some(&'*') {
+                    chars.next();
+                    // `**/` also matches zero directories
+                    if chars.peek() == Some(&'/') {
+                        chars.next();
+                        re.push_str("(?:.*/)?");
+                    } else {
+                        re.push_str(".*");
+                    }
+                } else {
+                    re.push_str("[^/]*");
+                }
+            }
+            '?' => re.push_str("[^/]"),
+            c => re.push_str(&regex::escape(&c.to_string())),
+        }
+    }
+    re.push('$');
+    regex::Regex::new(&re).unwrap_or_else(|_| regex::Regex::new("a^").unwrap())
+}
+
+fn collect_glob_matches(dir: &std::path::Path, re: &regex::Regex, out: &mut Vec<std::path::PathBuf>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let s = path.to_string_lossy().replace('\\', "/");
+        // Normalize "./" prefix produced when base dir is "."
+        let s = s.strip_prefix("./").unwrap_or(&s).to_string();
+        if re.is_match(&s) && path.is_file() {
+            out.push(std::path::PathBuf::from(&s));
+        }
+        if path.is_dir() {
+            collect_glob_matches(&path, re, out);
+        }
     }
 }
 
@@ -222,6 +356,33 @@ logger:
     fn test_output_dir_default() {
         let config = AppConfig::default();
         assert_eq!(config.output_dir_or_default(), "./dest");
+    }
+
+    #[test]
+    fn test_expand_source_patterns_dir_and_glob() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("a.sql"), "x").unwrap();
+        std::fs::write(root.join("sub").join("b.sql"), "x").unwrap();
+        std::fs::write(root.join("c.txt"), "x").unwrap();
+
+        // directory → recursive *.sql
+        let files = expand_source_patterns(&[root.to_string_lossy().into_owned()]);
+        assert_eq!(files.len(), 2);
+        assert!(files.iter().any(|f| f.ends_with("a.sql")));
+        assert!(files.iter().any(|f| f.ends_with("b.sql")));
+
+        // glob pattern
+        let pat = format!("{}/*.sql", root.display());
+        let files = expand_source_patterns(&[pat]);
+        assert_eq!(files.len(), 1);
+        assert!(files[0].ends_with("a.sql"));
+
+        // plain file passes through even if missing
+        let missing = root.join("nope.sql");
+        let files = expand_source_patterns(&[missing.to_string_lossy().into_owned()]);
+        assert_eq!(files, vec![missing]);
     }
 
     #[test]

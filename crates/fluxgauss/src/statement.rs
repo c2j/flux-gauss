@@ -2366,6 +2366,11 @@ pub fn process_statement(
                         args: String::new(),
                         hint: "add the defining SQL file to fluxgauss.yaml sources".to_string(),
                     });
+                } else if val.contains("TOBEFIX") {
+                    // Unresolved call exprs render as `/* TOBEFIX ... */ null` — emitting
+                    // that as a statement (`null;`) is not valid Java. Keep the marker as
+                    // a comment so it still surfaces in collect_tobefix_warnings.
+                    push_logic_line(proc, format!("// PERFORM(unresolved): {};", val));
                 } else {
                     push_logic_line(proc, format!("{};", val));
                 }

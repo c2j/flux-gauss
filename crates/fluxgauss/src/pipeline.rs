@@ -41,6 +41,10 @@ pub struct PipelineResult {
     pub itest_file_count: usize,
     pub total_dml: usize,
     pub total_cross_calls: usize,
+    /// Packages dropped entirely by procedure_filter (#120)
+    pub filter_dropped_packages: Vec<PackageInfo>,
+    /// procedure_filter entries that matched no routine (#121)
+    pub filter_unmatched: Vec<String>,
 }
 
 pub fn phase0_validate(sql_files: &[PathBuf]) -> ValidateResult {
@@ -288,13 +292,61 @@ pub fn run_pipeline(
     let _base_package = config.base_package_or_default();
     let mut ctx = AnalysisContext::new();
 
-    let parsed = phase1_parse(sql_files, config, incremental);
-    let mut analyzed = phase2_analyze(parsed, &mut ctx, sql_files, debug);
+    // Snapshot pre-run package set for stale-output cleanup (#120)
+    let old_pkg_names = incremental.manifest_packages();
+    let mut filter_unmatched: Vec<String> = Vec::new();
+
+    let mut parsed = phase1_parse(sql_files, config, incremental);
+
+    // ── Phase 1.5: procedure_filter + dependency closure (#120) ──
+    if let Some(filter_cfg) = &config.procedure_filter {
+        if !filter_cfg.is_empty() {
+            let entries = crate::proc_filter::parse_filter_entries(filter_cfg);
+            if !entries.is_empty() {
+                let stats = crate::proc_filter::apply_procedure_filter(&mut parsed, &entries);
+                filter_unmatched = stats.unmatched.clone();
+                if !stats.unmatched.is_empty() {
+                    tracing::warn!("procedure_filter unmatched entries: {:?}", stats.unmatched);
+                }
+                println!(
+                    "  procedure_filter: {} target + {} closure, {} excluded",
+                    stats.targets, stats.closure, stats.excluded
+                );
+            }
+        }
+    }
+
+    // DDL-only sources join routine files for schema scans (never parsed) (#120)
+    let ddl_files = config.resolve_ddl_files();
+    let schema_files: Vec<PathBuf> = if ddl_files.is_empty() {
+        sql_files.to_vec()
+    } else {
+        let mut v = sql_files.to_vec();
+        for f in ddl_files {
+            if !v.contains(&f) {
+                v.push(f);
+            }
+        }
+        v
+    };
+
+    let mut analyzed = phase2_analyze(parsed, &mut ctx, &schema_files, debug);
     let (generated, test_count, itest_count, errors) =
-        phase3_generate(&mut analyzed, config, incremental, sql_files, debug);
+        phase3_generate(&mut analyzed, config, incremental, &schema_files, debug);
+
+    // Remove generated files for packages that left the source set — including
+    // packages dropped entirely by procedure_filter (#120). Mirrors the
+    // Python engine's _clean_stale_packages.
+    clean_stale_package_files(
+        std::path::Path::new(&config.output_dir_or_default()),
+        &analyzed.packages,
+        &old_pkg_names,
+        &config.base_package_or_default(),
+    );
 
     let packages = analyzed.packages;
     let skipped = analyzed.skipped;
+    let filter_dropped_packages = analyzed.filter_dropped;
 
     let total_dml: usize = packages.iter().flat_map(|p| p.procedures.iter()).map(|p| p.dml_statements.len()).sum();
     let total_cross_calls: usize =
@@ -313,6 +365,40 @@ pub fn run_pipeline(
         itest_file_count: itest_count,
         total_dml,
         total_cross_calls,
+        filter_dropped_packages,
+        filter_unmatched,
+    }
+}
+
+/// Delete the four generated artifacts of packages present in the previous
+/// manifest but absent from the current package set (#120). The Rust engine
+/// lays out all packages under `base_package` (per-package `java_packages`
+/// mapping is not yet supported), so paths derive from it directly.
+fn clean_stale_package_files(
+    output_dir: &std::path::Path,
+    packages: &[PackageInfo],
+    old_pkg_names: &std::collections::HashSet<String>,
+    base_package: &str,
+) {
+    let current: std::collections::HashSet<&str> = packages.iter().map(|p| p.package_name.as_str()).collect();
+    let jp_path = base_package.replace('.', "/");
+    for pkg_name in old_pkg_names {
+        if current.contains(pkg_name.as_str()) {
+            continue;
+        }
+        let class_name = crate::naming::package_to_classname(pkg_name);
+        let stale = [
+            output_dir.join(format!("src/main/java/{}/service/{}Service.java", jp_path, class_name)),
+            output_dir.join(format!("src/main/java/{}/mapper/{}Mapper.java", jp_path, class_name)),
+            output_dir.join(format!("src/main/resources/mapper/{}Mapper.xml", class_name)),
+            output_dir.join(format!("src/test/java/{}/service/{}ServiceTest.java", jp_path, class_name)),
+        ];
+        for f in stale {
+            if f.exists() {
+                let _ = std::fs::remove_file(&f);
+                println!("    Removed: {}", f.strip_prefix(output_dir).unwrap_or(&f).display());
+            }
+        }
     }
 }
 
@@ -436,7 +522,7 @@ fn phase1_parse(sql_files: &[PathBuf], config: &AppConfig, incremental: &mut Inc
         })
         .collect();
 
-    ParsedPackages { packages, summaries, warnings, skipped, errors }
+    ParsedPackages { packages, summaries, warnings, skipped, errors, filter_dropped: Vec::new() }
 }
 
 fn merge_package_info(existing: &mut PackageInfo, incoming: PackageInfo, skipped: &mut Vec<SkippedItem>) {
@@ -629,6 +715,7 @@ fn phase2_analyze(
         warnings: parsed.warnings,
         skipped: parsed.skipped,
         errors,
+        filter_dropped: parsed.filter_dropped,
     }
 }
 
