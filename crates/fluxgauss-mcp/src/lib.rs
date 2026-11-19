@@ -231,6 +231,7 @@ impl FluxGaussMcpServer {
             "MCP",
             &output_dir,
             sql_files.len(),
+            &result.filter_dropped_packages,
         );
         let report_paths = report.save_auto(std::path::Path::new(&output_dir));
 

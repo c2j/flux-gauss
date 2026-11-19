@@ -130,6 +130,18 @@ impl IncrementalState {
         Ok(manifest)
     }
 
+    /// Snapshot of package names recorded in the manifest.
+    /// Call before phase1 mutates entries; used for stale-output cleanup (#120).
+    pub fn manifest_packages(&self) -> HashSet<String> {
+        let mut set = HashSet::new();
+        if let Some(manifest) = &self.manifest {
+            for entry in manifest.files.values() {
+                set.extend(entry.packages.iter().cloned());
+            }
+        }
+        set
+    }
+
     pub fn save_manifest(&self) -> std::io::Result<()> {
         let path = self.cache_dir.join("manifest.json");
         if let Some(manifest) = &self.manifest {
@@ -416,6 +428,7 @@ mod tests {
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),
                 extra_mapper_methods: Vec::new(),
+                excluded_procedures: Vec::new(),
             },
             PackageInfo {
                 package_name: "pkg_b".into(),
@@ -437,6 +450,7 @@ mod tests {
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),
                 extra_mapper_methods: Vec::new(),
+                excluded_procedures: Vec::new(),
             },
             PackageInfo {
                 package_name: "pkg_c".into(),
@@ -449,6 +463,7 @@ mod tests {
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),
                 extra_mapper_methods: Vec::new(),
+                excluded_procedures: Vec::new(),
             },
         ];
 
@@ -474,6 +489,7 @@ mod tests {
             java_package: "com.example".into(),
             custom_types: HashMap::new(),
             extra_mapper_methods: Vec::new(),
+            excluded_procedures: Vec::new(),
         }];
 
         let graph = IncrementalState::build_dependency_graph(&packages);
@@ -504,6 +520,7 @@ mod tests {
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),
                 extra_mapper_methods: Vec::new(),
+                excluded_procedures: Vec::new(),
             },
             PackageInfo {
                 package_name: "pkg_b".into(),
@@ -525,6 +542,7 @@ mod tests {
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),
                 extra_mapper_methods: Vec::new(),
+                excluded_procedures: Vec::new(),
             },
             PackageInfo {
                 package_name: "pkg_c".into(),
@@ -537,6 +555,7 @@ mod tests {
                 java_package: "com.example".into(),
                 custom_types: HashMap::new(),
                 extra_mapper_methods: Vec::new(),
+                excluded_procedures: Vec::new(),
             },
         ];
 

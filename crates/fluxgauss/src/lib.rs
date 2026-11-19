@@ -9,6 +9,7 @@ pub mod incremental;
 pub mod logging;
 pub mod naming;
 pub mod pipeline;
+pub mod proc_filter;
 pub mod progress;
 pub mod report;
 pub mod statement;

@@ -18,6 +18,10 @@ pub struct ConversionReport {
     pub errors: Vec<String>,
     pub unresolved_calls: Vec<UnresolvedCall>,
     pub stub_count: usize,
+    /// Raw `procedure_filter` entries (#120)
+    pub procedure_filter: Vec<String>,
+    /// (package, proc_name) pairs excluded by the filter (#120)
+    pub excluded_procedures: Vec<(String, String)>,
 }
 
 impl Default for ConversionReport {
@@ -43,6 +47,8 @@ impl ConversionReport {
             errors: Vec::new(),
             unresolved_calls: Vec::new(),
             stub_count: 0,
+            procedure_filter: Vec::new(),
+            excluded_procedures: Vec::new(),
         }
     }
 
@@ -70,10 +76,36 @@ impl ConversionReport {
             lines.push(format!("| ⚠️ Stub（需人工审查） | {} |", self.stub_count));
         }
         lines.push(format!("| ⏭ 跳过（不涉及存储过程） | {} |", self.skipped.len()));
+        if !self.procedure_filter.is_empty() {
+            let n_target = self.mappings.iter().filter(|m| m.selection == "target").count();
+            let n_closure = self.mappings.iter().filter(|m| m.selection == "closure").count();
+            lines.push(format!("| 🎯 procedure_filter 目标存过 | {} |", n_target));
+            lines.push(format!("| 🔗 闭包自动纳入存过 | {} |", n_closure));
+            lines.push(format!("| ⏭ 未选中存过（未生成） | {} |", self.excluded_procedures.len()));
+        }
         if !self.unresolved_calls.is_empty() {
             lines.push(format!("| ⚠️ 未解析的跨包调用 | {} |", self.unresolved_calls.len()));
         }
         lines.push(String::new());
+
+        if !self.excluded_procedures.is_empty() {
+            lines.push("---".into());
+            lines.push(String::new());
+            lines.push("## 存过筛选（procedure_filter）".into());
+            lines.push(String::new());
+            lines.push("以下存过未进入转换闭包，未生成任何 Java 产物：".into());
+            lines.push(String::new());
+            let mut by_pkg: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+            for (pkg, proc) in &self.excluded_procedures {
+                by_pkg.entry(pkg.clone()).or_default().push(proc.clone());
+            }
+            for (pkg, procs) in by_pkg {
+                let mut procs = procs;
+                procs.sort();
+                lines.push(format!("- `{}` ({}): {}", pkg, procs.len(), procs.join(", ")));
+            }
+            lines.push(String::new());
+        }
 
         if !self.mappings.is_empty() {
             lines.push("---".into());
@@ -181,6 +213,7 @@ pub fn build_report(
     config_path: &str,
     output_dir: &str,
     total_files: usize,
+    dropped_packages: &[PackageInfo],
 ) -> ConversionReport {
     let total_procedures: usize = packages.iter().map(|p| p.procedures.len()).sum();
     let total_dml: usize = packages.iter().flat_map(|p| p.procedures.iter()).map(|p| p.dml_statements.len()).sum();
@@ -188,6 +221,7 @@ pub fn build_report(
         packages.iter().flat_map(|p| p.procedures.iter()).map(|p| p.service_calls.len()).sum();
 
     let mut mappings = Vec::new();
+    let mut excluded_procedures = Vec::new();
     for pkg in packages {
         let class_name = crate::naming::package_to_classname(&pkg.package_name);
         for proc in &pkg.procedures {
@@ -198,7 +232,14 @@ pub fn build_report(
                 java_method: crate::naming::java_method_name(&proc.proc_name),
                 is_stub: proc.is_stub(),
                 notes: Vec::new(),
+                selection: proc.selection.clone(),
             });
+        }
+    }
+
+    for pkg in packages.iter().chain(dropped_packages.iter()) {
+        for proc in &pkg.excluded_procedures {
+            excluded_procedures.push((pkg.package_name.clone(), proc.name.clone()));
         }
     }
 
@@ -217,6 +258,8 @@ pub fn build_report(
         errors: Vec::new(),
         unresolved_calls,
         stub_count,
+        procedure_filter: Vec::new(),
+        excluded_procedures,
     }
 }
 
@@ -252,6 +295,7 @@ mod tests {
             java_method: "createOrder".into(),
             is_stub: false,
             notes: Vec::new(),
+            selection: String::new(),
         });
         let md = report.to_markdown();
         assert!(md.contains("create_order"));
@@ -272,8 +316,9 @@ mod tests {
             java_package: "com.example".into(),
             custom_types: Default::default(),
             extra_mapper_methods: Vec::new(),
+            excluded_procedures: Vec::new(),
         };
-        let report = build_report(&[pkg], vec![], vec![], vec![], 0, "test.yaml", "./dest", 1);
+        let report = build_report(&[pkg], vec![], vec![], vec![], 0, "test.yaml", "./dest", 1, &[]);
         assert_eq!(report.total_packages, 1);
         assert_eq!(report.total_procedures, 1);
         assert_eq!(report.mappings.len(), 1);

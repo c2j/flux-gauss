@@ -853,6 +853,7 @@ mod tests {
             java_package: String::new(),
             custom_types: Default::default(),
             extra_mapper_methods: Vec::new(),
+            excluded_procedures: Vec::new(),
         }
     }
 

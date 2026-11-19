@@ -645,6 +645,7 @@ fn issue_71_schema_qualified_cross_package_call_resolves() {
         "regress",
         &report_dir.to_string_lossy(),
         1,
+        &result.filter_dropped_packages,
     );
     assert!(report
         .mappings
@@ -698,6 +699,7 @@ fn issue_71_cross_schema_package_collision_is_reported() {
         "regress",
         &out_dir.to_string_lossy(),
         2,
+        &result.filter_dropped_packages,
     );
     assert!(
         report.to_markdown().contains("A.PKG_DUP, B.PKG_DUP"),
@@ -728,4 +730,86 @@ fn issue_70_distinct_paths_do_not_share_one_ast_cache_entry() {
     let a = state.cached_ast_path_for_test(&root.join("x/a.sql"));
     let b = state.cached_ast_path_for_test(&root.join("x_a.sql"));
     assert_ne!(a, b, "distinct source paths must not share one AST cache file: {:?}", a);
+}
+
+#[test]
+fn issue_120_procedure_filter_selects_closure_only() {
+    // #120: procedure_filter picks pkg.proc targets; same-package helpers and
+    // cross-package callees enter the closure transitively; everything else
+    // produces no mappings and is reported as excluded.
+    let tmp = tempfile::tempdir().expect("Failed to create temp dir");
+    let a = tmp.path().join("pkg_a.sql");
+    let b = tmp.path().join("pkg_b.sql");
+    let c = tmp.path().join("pkg_c.sql");
+    fs::write(
+        &a,
+        "CREATE OR REPLACE PACKAGE BODY pkg_a IS\n\
+         PROCEDURE helper IS BEGIN NULL; END;\n\
+         PROCEDURE proc_a IS BEGIN pkg_b.proc_b(); helper(); END;\n\
+         PROCEDURE proc_a_other IS BEGIN NULL; END;\n\
+         END pkg_a;\n/\n",
+    )
+    .unwrap();
+    fs::write(
+        &b,
+        "CREATE OR REPLACE PACKAGE BODY pkg_b IS\n\
+         PROCEDURE proc_b IS BEGIN NULL; END;\n\
+         PROCEDURE proc_b_other IS BEGIN NULL; END;\n\
+         END pkg_b;\n/\n",
+    )
+    .unwrap();
+    fs::write(
+        &c,
+        "CREATE OR REPLACE PACKAGE BODY pkg_c IS\n\
+         PROCEDURE proc_c IS BEGIN NULL; END;\n\
+         END pkg_c;\n/\n",
+    )
+    .unwrap();
+
+    let out_dir = tmp.path().join("dest");
+    let config = AppConfig {
+        output_dir: Some(out_dir.to_string_lossy().into()),
+        base_package: Some(BASE_PACKAGE.to_string()),
+        sources: Some(vec![a.to_string_lossy().into(), b.to_string_lossy().into(), c.to_string_lossy().into()]),
+        procedure_filter: Some(vec!["pkg_a.proc_a".to_string()]),
+        ..Default::default()
+    };
+    let mut inc = IncrementalState::new(out_dir.to_string_lossy().into_owned(), true);
+    inc.initialize().expect("Failed to initialize incremental state");
+    let result = run_pipeline(&[a, b, c], &config, &mut inc, false);
+
+    let names: Vec<(&str, &str, &str)> = result
+        .packages
+        .iter()
+        .flat_map(|p| {
+            p.procedures.iter().map(move |pr| (p.package_name.as_str(), pr.proc_name.as_str(), pr.selection.as_str()))
+        })
+        .collect();
+    assert!(names.contains(&("pkg_a", "proc_a", "target")), "{:?}", names);
+    assert!(names.contains(&("pkg_a", "helper", "closure")), "{:?}", names);
+    assert!(names.contains(&("pkg_b", "proc_b", "closure")), "{:?}", names);
+    assert!(!names.iter().any(|(_, n, _)| *n == "proc_a_other"), "{:?}", names);
+    assert!(!names.iter().any(|(_, n, _)| *n == "proc_b_other"), "{:?}", names);
+    assert!(!names.iter().any(|(p, _, _)| *p == "pkg_c"), "dropped pkg must not generate: {:?}", names);
+
+    // Dropped package survives for reporting via filter_dropped_packages.
+    assert_eq!(result.filter_dropped_packages.len(), 1);
+    assert_eq!(result.filter_dropped_packages[0].package_name, "pkg_c");
+    assert_eq!(result.filter_dropped_packages[0].excluded_procedures.len(), 1);
+
+    let mut report = fluxgauss::report::build_report(
+        &result.packages,
+        result.skipped,
+        result.warnings,
+        result.unresolved_calls,
+        result.stub_count,
+        "regress",
+        &out_dir.to_string_lossy(),
+        3,
+        &result.filter_dropped_packages,
+    );
+    report.procedure_filter = config.procedure_filter.clone().unwrap_or_default();
+    let md = report.to_markdown();
+    assert!(md.contains("proc_c"), "excluded proc from dropped pkg must be reported:\n{}", md);
+    assert!(report.procedure_filter.iter().any(|f| f.contains("pkg_a.proc_a")));
 }
