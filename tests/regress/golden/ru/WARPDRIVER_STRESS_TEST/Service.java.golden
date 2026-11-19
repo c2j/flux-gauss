@@ -259,7 +259,7 @@ public class WarpdriverStressTestService {
                 // COMMIT;
                 this.spAutonomousAudit("PURGE_BATCH", String.valueOf(String.valueOf("Deleted ").concat(String.valueOf(vRowcount))).concat(String.valueOf(" rows")));
             }
-        } while (vRowcount == vBatch);
+        } while (java.util.Objects.equals(vRowcount, vBatch));
         pDeletedCnt.set(vDeleted);
         // COMMIT;
     }
