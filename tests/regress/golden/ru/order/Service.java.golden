@@ -25,7 +25,7 @@ public class OrderService {
     public void createOrder(long pUserId, long pProductId, int pQty) {
         // CALL pkg_inventory.reserve_stock(pProductId, pQty)
         orderMapper.insertTOrders(pUserId, pProductId, pQty);
-        commonService.logOperation("ORDER", "CREATE", 0);
+        // PERFORM(unresolved): /* TOBEFIX: unresolved fn log_operation("ORDER", "CREATE", 0) - pkg=pkg_common, caller={FIXTURES_ROOT}/pkg_order.sql:create_order */ null;
     }
 
     // Source: pkg_order.cancel_order (PROCEDURE) — {FIXTURES_ROOT}/pkg_order.sql:14-29
@@ -40,8 +40,8 @@ public class OrderService {
         }
         // CALL pkg_inventory.release_stock(vProductId, vQty)
         orderMapper.updateTOrders(pOrderId);
-        commonService.logOperation("ORDER", "CANCEL", pOrderId);
-        commonService.sendNotification("SMS", "Order cancelled");
+        // PERFORM(unresolved): /* TOBEFIX: unresolved fn log_operation("ORDER", "CANCEL", pOrderId) - pkg=pkg_common, caller={FIXTURES_ROOT}/pkg_order.sql:cancel_order */ null;
+        // PERFORM(unresolved): /* TOBEFIX: unresolved fn send_notification("SMS", "Order cancelled") - pkg=pkg_common, caller={FIXTURES_ROOT}/pkg_order.sql:cancel_order */ null;
     }
 
     // Source: pkg_order.get_order_detail (PROCEDURE) — {FIXTURES_ROOT}/pkg_order.sql:31-40
@@ -52,15 +52,15 @@ public class OrderService {
     // Source: pkg_order.batch_create_orders (PROCEDURE) — {FIXTURES_ROOT}/pkg_order.sql:42-51
     public void batchCreateOrders(long pUserId, String pItems) {
         this.createOrder(pUserId, 1, 1);
-        commonService.logOperation("ORDER", "BATCH_CREATE", pUserId);
-        commonService.sendNotification("EMAIL", "Batch order created");
+        // PERFORM(unresolved): /* TOBEFIX: unresolved fn log_operation("ORDER", "BATCH_CREATE", pUserId) - pkg=pkg_common, caller={FIXTURES_ROOT}/pkg_order.sql:batch_create_orders */ null;
+        // PERFORM(unresolved): /* TOBEFIX: unresolved fn send_notification("EMAIL", "Batch order created") - pkg=pkg_common, caller={FIXTURES_ROOT}/pkg_order.sql:batch_create_orders */ null;
     }
 
     // Source: pkg_order.complete_order (PROCEDURE) — {FIXTURES_ROOT}/pkg_order.sql:53-61
     @Transactional
     public void completeOrder(long pOrderId) {
         orderMapper.updateTOrders_1(pOrderId);
-        commonService.logOperation("ORDER", "COMPLETE", pOrderId);
-        commonService.sendNotification("EMAIL", "Order completed");
+        // PERFORM(unresolved): /* TOBEFIX: unresolved fn log_operation("ORDER", "COMPLETE", pOrderId) - pkg=pkg_common, caller={FIXTURES_ROOT}/pkg_order.sql:complete_order */ null;
+        // PERFORM(unresolved): /* TOBEFIX: unresolved fn send_notification("EMAIL", "Order completed") - pkg=pkg_common, caller={FIXTURES_ROOT}/pkg_order.sql:complete_order */ null;
     }
 }

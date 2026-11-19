@@ -2581,32 +2581,48 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                 } else if ["dbescheduler", "dbmsoutput", "dbmsrandom", "dbmslob", "dbeoutput", "utlfile", "dbmssql", "dbmsjob"].iter().any(|sp| hint_lower.starts_with(sp)) {
                     (crate::naming::java_method_name(func_name), false, String::new(), None)
                 } else {
-                    let svc_name = format!("{}Service", {
-                        let cn = crate::naming::package_to_classname(&pkg_hint.to_lowercase());
-                        let mut c = cn.chars();
-                        match c.next() {
-                            Some(f) => f.to_ascii_lowercase().to_string() + c.as_str(),
-                            None => String::new(),
-                        }
-                    });
                     let method_name = crate::naming::java_method_name(func_name);
-                    // Only trust a unique (pkg + arity) match; ambiguous/absent lookups
-                    // fall back to `None` (no coercion), same as unresolved single-name calls.
-                    let target_params = proc.all_proc_params.get(&method_name).and_then(|candidates| {
-                        let matches: Vec<&GlobalFnEntry> = candidates
+                    // Qualified calls (pkg.func / schema.pkg.func) must resolve against the
+                    // global registry: emitting `{pkg}Service.m(...)` for a package that is
+                    // not among the sources produces a call to a service that is never
+                    // generated nor injected — uncompilable Java. Only emit the call when a
+                    // registry entry matches the package hint; otherwise fall through to the
+                    // TOBEFIX unresolved marker (same as the unqualified path).
+                    let pkg_matches: Vec<&GlobalFnEntry> = proc
+                        .all_proc_params
+                        .get(&method_name)
+                        .map(|candidates| {
+                            candidates
+                                .iter()
+                                .filter(|e| {
+                                    let e_pkg_lower = e.package.to_lowercase();
+                                    let e_pkg_no_prefix =
+                                        e_pkg_lower.trim_start_matches("pkg_").replace("_", "");
+                                    hint_lower == e_pkg_lower.replace("_", "")
+                                        || hint_lower == e_pkg_no_prefix
+                                        || hint_lower.ends_with(&e_pkg_no_prefix)
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if pkg_matches.is_empty() {
+                        (String::new(), false, String::new(), None)
+                    } else {
+                        let svc_var = pkg_matches[0].svc_var.clone();
+                        let arity_matches: Vec<&&GlobalFnEntry> = pkg_matches
                             .iter()
-                            .filter(|e| {
-                                let e_pkg_lower = e.package.to_lowercase();
-                                let e_pkg_no_prefix = e_pkg_lower.trim_start_matches("pkg_").replace("_", "");
-                                (hint_lower == e_pkg_lower.replace("_", "")
-                                    || hint_lower == e_pkg_no_prefix
-                                    || hint_lower.ends_with(&e_pkg_no_prefix))
-                                    && e.params.len() == jargs.len()
-                            })
+                            .filter(|e| e.params.len() == jargs.len())
                             .collect();
-                        if matches.len() == 1 { Some(matches[0].params.clone()) } else { None }
-                    });
-                    (method_name, false, svc_name, target_params)
+                        // Only trust a unique (pkg + arity) match for arg coercion;
+                        // ambiguous/absent arity matches still emit the call without
+                        // coercion (same as the previous unconditional behaviour).
+                        let target_params = if arity_matches.len() == 1 {
+                            Some(arity_matches[0].params.clone())
+                        } else {
+                            None
+                        };
+                        (method_name, false, svc_var, target_params)
+                    }
                 }
             } else if name_parts.len() == 1 {
                 let method_name = crate::naming::java_method_name(name_parts[0]);
@@ -3648,6 +3664,63 @@ mod tests {
         let out = expr_to_java(&expr, &proc);
         assert!(out.contains("TOBEFIX"), "ambiguous call must not resolve silently: {}", out);
         assert!(out.contains("candidates=[pkgAService, pkgBService]"), "candidates must be listed: {}", out);
+    }
+
+    #[test]
+    fn test_qualified_call_to_unknown_package_falls_back_to_tobefix() {
+        // Qualified `pkg.func(...)` where pkg is not among the sources must NOT emit
+        // `{pkg}Service.m(...)` — that service is never generated nor injected, so the
+        // Java does not compile. It must degrade to a TOBEFIX-marked `null` like the
+        // unqualified unresolved path.
+        let proc = empty_proc();
+        let expr = ogsql_parser::ast::Expr::FunctionCall {
+            name: vec!["pkg_not_in_sources".into(), "some_fn".into()],
+            args: vec![],
+            distinct: false,
+            over: None,
+            filter: None,
+            within_group: Vec::new(),
+            separator: None,
+            default: None,
+            conversion_format: None,
+            agg_from: None,
+            builtin: None,
+        };
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains("TOBEFIX"), "unknown qualified pkg must not emit a service call: {}", out);
+        assert!(out.trim_end().ends_with("null"), "got: {}", out);
+        assert!(!out.contains("Service."), "must not reference a non-existent service: {}", out);
+    }
+
+    #[test]
+    fn test_qualified_call_to_known_package_resolves_via_registry() {
+        // Same qualified shape, but the package IS in the registry: the call must
+        // resolve to the canonical svc_var from the GlobalFnEntry.
+        let mut proc = empty_proc();
+        proc.all_proc_params.insert(
+            "fncComGetday".into(),
+            vec![GlobalFnEntry {
+                svc_var: "pkgCommonToolService".into(),
+                package: "pkg_common_tool".into(),
+                params: vec![],
+                return_type: None,
+            }],
+        );
+        let expr = ogsql_parser::ast::Expr::FunctionCall {
+            name: vec!["pkg_common_tool".into(), "fnc_com_getday".into()],
+            args: vec![],
+            distinct: false,
+            over: None,
+            filter: None,
+            within_group: Vec::new(),
+            separator: None,
+            default: None,
+            conversion_format: None,
+            agg_from: None,
+            builtin: None,
+        };
+        let out = expr_to_java(&expr, &proc);
+        assert_eq!(out, "pkgCommonToolService.fncComGetday()");
     }
 
     #[test]
