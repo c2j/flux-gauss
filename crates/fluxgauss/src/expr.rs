@@ -1879,15 +1879,31 @@ fn binary_op_to_java(
         "->" => format!("this.jsonbGet({}, {})", l, r),
         "->>" => format!("this.jsonbGetText({}, {})", l, r),
         "=" => {
+            let l_kind = boxed_num_kind(&l, proc);
+            let r_kind = boxed_num_kind(&r, proc);
+            // Boxed numeric vs numeric literal: Objects.equals compares Java
+            // types, so the literal must carry the matching boxed suffix —
+            // `Objects.equals(vLong, 0)` is Long vs Integer and always false.
+            if let Some(k) = l_kind {
+                if let Some(lit) = boxed_literal(&r, k) {
+                    return format!("java.util.Objects.equals({}, {})", l, lit);
+                }
+            }
+            if let Some(k) = r_kind {
+                if let Some(lit) = boxed_literal(&l, k) {
+                    return format!("java.util.Objects.equals({}, {})", lit, r);
+                }
+            }
+            // Same-kind boxed pairs: `==`/`!=` on objects is reference
+            // equality — wrong for values outside the Integer cache.
+            if let (Some(a), Some(b)) = (l_kind, r_kind) {
+                if a == b {
+                    return format!("java.util.Objects.equals({}, {})", l, r);
+                }
+            }
             let l_numeric = is_integer_type(&l, proc) || l.chars().all(|c: char| c.is_ascii_digit());
             let r_numeric = is_integer_type(&r, proc) || r.chars().all(|c: char| c.is_ascii_digit());
-            let l_is_boxed = is_boxed_integer(&l, proc);
-            let r_is_boxed = is_boxed_integer(&r, proc);
-            if (l_is_boxed && r.chars().all(|c: char| c.is_ascii_digit()) && !r.is_empty())
-                || (r_is_boxed && l.chars().all(|c: char| c.is_ascii_digit()) && !l.is_empty())
-            {
-                format!("java.util.Objects.equals({}, {})", l, r)
-            } else if l_numeric && r_numeric {
+            if l_numeric && r_numeric {
                 format!("{} == {}", l, r)
             } else if is_string_var(&l, proc) && r.chars().all(|c: char| c.is_ascii_digit()) && !r.is_empty() {
                 format!("java.util.Objects.equals({}, \"{}\")", l, r)
@@ -1898,6 +1914,23 @@ fn binary_op_to_java(
             }
         }
         "!=" | "<>" => {
+            let l_kind = boxed_num_kind(&l, proc);
+            let r_kind = boxed_num_kind(&r, proc);
+            if let Some(k) = l_kind {
+                if let Some(lit) = boxed_literal(&r, k) {
+                    return format!("!java.util.Objects.equals({}, {})", l, lit);
+                }
+            }
+            if let Some(k) = r_kind {
+                if let Some(lit) = boxed_literal(&l, k) {
+                    return format!("!java.util.Objects.equals({}, {})", lit, r);
+                }
+            }
+            if let (Some(a), Some(b)) = (l_kind, r_kind) {
+                if a == b {
+                    return format!("!java.util.Objects.equals({}, {})", l, r);
+                }
+            }
             let l_numeric = is_integer_type(&l, proc) || l.chars().all(|c: char| c.is_ascii_digit());
             let r_numeric = is_integer_type(&r, proc) || r.chars().all(|c: char| c.is_ascii_digit());
             if l_numeric && r_numeric {
@@ -2947,20 +2980,112 @@ fn like_to_java(
     }
 }
 
-fn is_boxed_integer(expr_str: &str, proc: &ProcedureInfo) -> bool {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BoxedNum {
+    Long,
+    Integer,
+    Double,
+    Float,
+}
+
+/// Boxed numeric type produced by `expr_str`, if it resolves to a boxed
+/// numeric local. Method-call suffixes (.longValue() etc.) win over the
+/// declared receiver type because they determine the produced Java type.
+fn boxed_num_kind(expr_str: &str, proc: &ProcedureInfo) -> Option<BoxedNum> {
     let name = expr_str.trim();
+    let lower = name.to_lowercase();
+    for (suffix, kind) in [
+        (".longvalue()", BoxedNum::Long),
+        (".intvalue()", BoxedNum::Integer),
+        (".doublevalue()", BoxedNum::Double),
+        (".floatvalue()", BoxedNum::Float),
+    ] {
+        if lower.ends_with(suffix) {
+            return Some(kind);
+        }
+    }
+    let kind_of = |ty: &str| match ty {
+        "Long" => Some(BoxedNum::Long),
+        "Integer" => Some(BoxedNum::Integer),
+        "Double" => Some(BoxedNum::Double),
+        "Float" => Some(BoxedNum::Float),
+        _ => None,
+    };
     let base = name.split(['.', '(']).next().unwrap_or(name);
-    if let Some(ty) = proc.local_vars.get(&base.to_lowercase()) {
-        return ty == "Integer" || ty == "Long" || ty == "Double" || ty == "Float";
+    if let Some(k) = proc.local_vars.get(&base.to_lowercase()).and_then(|t| kind_of(t)) {
+        return Some(k);
     }
     let base_lower = base.to_lowercase().replace("_", "");
     for (var_name, var_type) in &proc.local_vars {
         let var_lower = var_name.to_lowercase().replace("_", "");
         if var_lower == base_lower {
-            return var_type == "Integer" || var_type == "Long" || var_type == "Double" || var_type == "Float";
+            return kind_of(var_type);
         }
     }
-    false
+    None
+}
+
+/// Rewrite an emitted numeric literal so `Objects.equals` against a
+/// `kind`-typed boxed value compares equal Java types: Long needs `L`,
+/// Float needs `f`, Double needs a decimal point. Returns None when the
+/// operand is not a plain numeric literal (or cannot match `kind`).
+fn boxed_literal(lit: &str, kind: BoxedNum) -> Option<String> {
+    let t = lit.trim();
+    let (sign, mut body) = match t.strip_prefix('-') {
+        Some(rest) => ("-", rest),
+        None => ("", t),
+    };
+    if let Some(last) = body.chars().last() {
+        if matches!(last, 'f' | 'F' | 'd' | 'D') {
+            body = &body[..body.len() - 1];
+        }
+    }
+    let is_int = !body.is_empty() && body.chars().all(|c| c.is_ascii_digit());
+    let is_dec = {
+        let mut parts = body.splitn(2, '.');
+        match (parts.next(), parts.next()) {
+            (Some(a), Some(b)) => {
+                !a.is_empty()
+                    && !b.is_empty()
+                    && a.chars().all(|c| c.is_ascii_digit())
+                    && b.chars().all(|c| c.is_ascii_digit())
+            }
+            _ => false,
+        }
+    };
+    if !is_int && !is_dec {
+        return None;
+    }
+    match kind {
+        BoxedNum::Integer => {
+            if is_int {
+                Some(format!("{}{}", sign, body))
+            } else {
+                None
+            }
+        }
+        BoxedNum::Long => {
+            if is_int {
+                Some(format!("{}{}L", sign, body))
+            } else {
+                None
+            }
+        }
+        BoxedNum::Double => {
+            if is_int {
+                Some(format!("{}{}.0", sign, body))
+            } else {
+                Some(format!("{}{}", sign, body))
+            }
+        }
+        BoxedNum::Float => {
+            if is_int {
+                Some(format!("{}{}.0f", sign, body))
+            } else {
+                Some(format!("{}{}f", sign, body))
+            }
+        }
+    }
 }
 
 fn type_cast_to_java(expr: &ogsql_parser::ast::Expr, type_name: &str, proc: &ProcedureInfo) -> String {
@@ -3743,5 +3868,84 @@ mod tests {
         };
         let out = expr_to_java(&expr, &proc);
         assert!(out.contains(".replace(\"'\", \"''\")"), "quote_literal must escape single quotes, got: {}", out);
+    }
+
+    fn cmp_expr(left: &str, op: &str, right_lit: i64) -> ogsql_parser::ast::Expr {
+        ogsql_parser::ast::Expr::BinaryOp {
+            left: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec![left.into()])),
+            op: op.into(),
+            right: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Integer(right_lit))),
+        }
+    }
+
+    #[test]
+    fn test_boxed_long_var_equals_int_literal_emits_long_literal() {
+        // Objects.equals(Long, int) is always false — the literal must carry
+        // the boxed type's suffix or every `v_flag = 0` branch is dead.
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_flag".into(), "Long".into());
+        let out = expr_to_java(&cmp_expr("v_flag", "=", 0), &proc);
+        assert_eq!(out, "java.util.Objects.equals(vFlag, 0L)");
+    }
+
+    #[test]
+    fn test_boxed_integer_var_equals_int_literal_stays_plain() {
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_count".into(), "Integer".into());
+        let out = expr_to_java(&cmp_expr("v_count", "=", 0), &proc);
+        assert_eq!(out, "java.util.Objects.equals(vCount, 0)");
+    }
+
+    #[test]
+    fn test_boxed_double_and_float_vars_equals_int_literal() {
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_dbl".into(), "Double".into());
+        proc.local_vars.insert("v_flt".into(), "Float".into());
+        assert_eq!(expr_to_java(&cmp_expr("v_dbl", "=", 0), &proc), "java.util.Objects.equals(vDbl, 0.0)");
+        assert_eq!(expr_to_java(&cmp_expr("v_flt", "=", 0), &proc), "java.util.Objects.equals(vFlt, 0.0f)");
+    }
+
+    #[test]
+    fn test_boxed_long_var_not_equals_int_literal() {
+        // `!=` must mirror `=`: null-safe AND type-correct (was `vFlag != 0`,
+        // which unboxes → NPE on null and compares correctly only by accident).
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_flag".into(), "Long".into());
+        let out = expr_to_java(&cmp_expr("v_flag", "!=", 1), &proc);
+        assert_eq!(out, "!java.util.Objects.equals(vFlag, 1L)");
+    }
+
+    #[test]
+    fn test_boxed_vars_same_kind_use_objects_equals() {
+        // Two Long locals compared with `==` is reference equality — wrong for
+        // values outside the Integer cache. Same-kind boxed pairs must use
+        // Objects.equals / !Objects.equals.
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_a".into(), "Long".into());
+        proc.local_vars.insert("v_b".into(), "Long".into());
+        let expr = ogsql_parser::ast::Expr::BinaryOp {
+            left: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["v_a".into()])),
+            op: "=".into(),
+            right: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["v_b".into()])),
+        };
+        assert_eq!(expr_to_java(&expr, &proc), "java.util.Objects.equals(vA, vB)");
+        let expr = ogsql_parser::ast::Expr::BinaryOp {
+            left: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["v_a".into()])),
+            op: "<>".into(),
+            right: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["v_b".into()])),
+        };
+        assert_eq!(expr_to_java(&expr, &proc), "!java.util.Objects.equals(vA, vB)");
+    }
+
+    #[test]
+    fn test_boxed_long_var_equals_literal_on_left() {
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_flag".into(), "Long".into());
+        let expr = ogsql_parser::ast::Expr::BinaryOp {
+            left: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Integer(3))),
+            op: "=".into(),
+            right: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["v_flag".into()])),
+        };
+        assert_eq!(expr_to_java(&expr, &proc), "java.util.Objects.equals(3L, vFlag)");
     }
 }
