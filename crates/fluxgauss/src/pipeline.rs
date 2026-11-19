@@ -43,6 +43,8 @@ pub struct PipelineResult {
     pub total_cross_calls: usize,
     /// Packages dropped entirely by procedure_filter (#120)
     pub filter_dropped_packages: Vec<PackageInfo>,
+    /// procedure_filter entries that matched no routine (#121)
+    pub filter_unmatched: Vec<String>,
 }
 
 pub fn phase0_validate(sql_files: &[PathBuf]) -> ValidateResult {
@@ -292,6 +294,7 @@ pub fn run_pipeline(
 
     // Snapshot pre-run package set for stale-output cleanup (#120)
     let old_pkg_names = incremental.manifest_packages();
+    let mut filter_unmatched: Vec<String> = Vec::new();
 
     let mut parsed = phase1_parse(sql_files, config, incremental);
 
@@ -301,6 +304,7 @@ pub fn run_pipeline(
             let entries = crate::proc_filter::parse_filter_entries(filter_cfg);
             if !entries.is_empty() {
                 let stats = crate::proc_filter::apply_procedure_filter(&mut parsed, &entries);
+                filter_unmatched = stats.unmatched.clone();
                 if !stats.unmatched.is_empty() {
                     tracing::warn!("procedure_filter unmatched entries: {:?}", stats.unmatched);
                 }
@@ -362,6 +366,7 @@ pub fn run_pipeline(
         total_dml,
         total_cross_calls,
         filter_dropped_packages,
+        filter_unmatched,
     }
 }
 

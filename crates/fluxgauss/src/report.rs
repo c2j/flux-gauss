@@ -22,6 +22,8 @@ pub struct ConversionReport {
     pub procedure_filter: Vec<String>,
     /// (package, proc_name) pairs excluded by the filter (#120)
     pub excluded_procedures: Vec<(String, String)>,
+    /// `procedure_filter` entries that matched no routine (#121)
+    pub unmatched_filter: Vec<String>,
 }
 
 impl Default for ConversionReport {
@@ -49,6 +51,7 @@ impl ConversionReport {
             stub_count: 0,
             procedure_filter: Vec::new(),
             excluded_procedures: Vec::new(),
+            unmatched_filter: Vec::new(),
         }
     }
 
@@ -105,6 +108,14 @@ impl ConversionReport {
                 lines.push(format!("- `{}` ({}): {}", pkg, procs.len(), procs.join(", ")));
             }
             lines.push(String::new());
+            if !self.unmatched_filter.is_empty() {
+                lines.push("以下 procedure_filter 条目未匹配到任何存过：".into());
+                lines.push(String::new());
+                for u in &self.unmatched_filter {
+                    lines.push(format!("- `{}`", u));
+                }
+                lines.push(String::new());
+            }
         }
 
         if !self.mappings.is_empty() {
@@ -112,17 +123,40 @@ impl ConversionReport {
             lines.push(String::new());
             lines.push("## SQL → Java 映射".into());
             lines.push(String::new());
-            lines.push("| SQL Procedure | Package | Java Service | Java Method | Stub |".into());
-            lines.push("|---|---|---|---|---|".into());
+            let has_sel = self.mappings.iter().any(|m| !m.selection.is_empty());
+            if has_sel {
+                lines.push("| SQL Procedure | Package | 筛选 | Java Service | Java Method | Stub |".into());
+                lines.push("|---|---|---|---|---|---|".into());
+            } else {
+                lines.push("| SQL Procedure | Package | Java Service | Java Method | Stub |".into());
+                lines.push("|---|---|---|---|---|".into());
+            }
             for m in &self.mappings {
-                lines.push(format!(
-                    "| `{}` | `{}` | `{}` | `{}` | {} |",
-                    m.sql_procedure,
-                    m.sql_package,
-                    m.java_service,
-                    m.java_method,
-                    if m.is_stub { "⚠️ Stub" } else { "✅" }
-                ));
+                let sel = match m.selection.as_str() {
+                    "target" => "🎯 目标",
+                    "closure" => "🔗 闭包",
+                    _ => "—",
+                };
+                if has_sel {
+                    lines.push(format!(
+                        "| `{}` | `{}` | {} | `{}` | `{}` | {} |",
+                        m.sql_procedure,
+                        m.sql_package,
+                        sel,
+                        m.java_service,
+                        m.java_method,
+                        if m.is_stub { "⚠️ Stub" } else { "✅" }
+                    ));
+                } else {
+                    lines.push(format!(
+                        "| `{}` | `{}` | `{}` | `{}` | {} |",
+                        m.sql_procedure,
+                        m.sql_package,
+                        m.java_service,
+                        m.java_method,
+                        if m.is_stub { "⚠️ Stub" } else { "✅" }
+                    ));
+                }
             }
             lines.push(String::new());
         }
@@ -260,6 +294,7 @@ pub fn build_report(
         stub_count,
         procedure_filter: Vec::new(),
         excluded_procedures,
+        unmatched_filter: Vec::new(),
     }
 }
 

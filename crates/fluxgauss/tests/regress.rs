@@ -812,4 +812,122 @@ fn issue_120_procedure_filter_selects_closure_only() {
     let md = report.to_markdown();
     assert!(md.contains("proc_c"), "excluded proc from dropped pkg must be reported:\n{}", md);
     assert!(report.procedure_filter.iter().any(|f| f.contains("pkg_a.proc_a")));
+    // #121: markdown must distinguish target/closure per mapping row
+    assert!(md.contains("筛选"), "mapping table must show selection column:\n{}", md);
+    assert!(md.contains("🎯 目标") && md.contains("🔗 闭包"), "{}", md);
+}
+
+#[test]
+fn issue_121_filter_edges_no_cross_layer_union_and_arity() {
+    // #121 review: unqualified same-name calls resolve in the caller's package
+    // only; qualified calls pick the overload matching the argument count;
+    // schema-qualified filter entries match schema-stripped package names.
+    let tmp = tempfile::tempdir().expect("Failed to create temp dir");
+    let a = tmp.path().join("pkg_a.sql");
+    let b = tmp.path().join("pkg_b.sql");
+    let e = tmp.path().join("pkg_e.sql");
+    let f = tmp.path().join("pkg_f.sql");
+    fs::write(
+        &a,
+        "CREATE OR REPLACE PACKAGE BODY pkg_a IS\n\
+         PROCEDURE log IS BEGIN NULL; END;\n\
+         PROCEDURE proc_main IS BEGIN log(); END;\n\
+         END pkg_a;\n/\n",
+    )
+    .unwrap();
+    fs::write(
+        &b,
+        "CREATE OR REPLACE PACKAGE BODY pkg_b IS\n\
+         PROCEDURE log IS BEGIN NULL; END;\n\
+         PROCEDURE proc_b_other IS BEGIN NULL; END;\n\
+         END pkg_b;\n/\n",
+    )
+    .unwrap();
+    fs::write(
+        &e,
+        "CREATE OR REPLACE PACKAGE BODY pkg_e IS\n\
+         PROCEDURE proc_ov(p IN NUMBER) IS BEGIN NULL; END;\n\
+         PROCEDURE proc_ov(p IN NUMBER, q IN NUMBER) IS BEGIN NULL; END;\n\
+         END pkg_e;\n/\n",
+    )
+    .unwrap();
+    fs::write(
+        &f,
+        "CREATE OR REPLACE PACKAGE BODY pkg_f IS\n\
+         PROCEDURE proc_caller IS BEGIN pkg_e.proc_ov(1); END;\n\
+         END pkg_f;\n/\n",
+    )
+    .unwrap();
+
+    let out_dir = tmp.path().join("dest");
+    let config = AppConfig {
+        output_dir: Some(out_dir.to_string_lossy().into()),
+        base_package: Some(BASE_PACKAGE.to_string()),
+        sources: Some(vec![
+            a.to_string_lossy().into(),
+            b.to_string_lossy().into(),
+            e.to_string_lossy().into(),
+            f.to_string_lossy().into(),
+        ]),
+        procedure_filter: Some(vec![
+            "pkg_a.proc_main".to_string(),
+            "pkg_f.proc_caller".to_string(),
+        ]),
+        ..Default::default()
+    };
+    let mut inc = IncrementalState::new(out_dir.to_string_lossy().into_owned(), true);
+    inc.initialize().expect("Failed to initialize incremental state");
+    let result = run_pipeline(&[a, b, e, f], &config, &mut inc, false);
+
+    let procs_of = |pkg: &str| -> Vec<(String, usize)> {
+        result
+            .packages
+            .iter()
+            .find(|p| p.package_name == pkg)
+            .map(|p| p.procedures.iter().map(|pr| (pr.proc_name.clone(), pr.parameters.len())).collect())
+            .unwrap_or_default()
+    };
+    // pkg_a.proc_main → closure pkg_a.log only; pkg_b.log must NOT be pulled in
+    assert_eq!(procs_of("pkg_a"), vec![("log".to_string(), 0), ("proc_main".to_string(), 0)]);
+    assert!(procs_of("pkg_b").is_empty(), "pkg_b.log must stay excluded: {:?}", result.packages.iter().map(|p| p.package_name.clone()).collect::<Vec<_>>());
+    assert_eq!(result.filter_dropped_packages.iter().map(|p| p.package_name.as_str()).collect::<Vec<_>>(), vec!["pkg_b"]);
+    // qualified call with 1 arg → only the 1-param overload of proc_ov
+    let ov = procs_of("pkg_e");
+    assert_eq!(ov.len(), 1, "{:?}", ov);
+    assert_eq!(ov[0].0, "proc_ov");
+    assert_eq!(ov[0].1, 1, "only the 1-arg overload may enter the closure: {:?}", ov);
+}
+
+#[test]
+fn issue_121_schema_qualified_filter_entry_selects_proc() {
+    // #121: filter entry `bigfund.pkg_s.proc_s` selects pkg_s.proc_s even
+    // though the schema is stripped from the package name at parse time.
+    let tmp = tempfile::tempdir().expect("Failed to create temp dir");
+    let s = tmp.path().join("pkg_s.sql");
+    fs::write(
+        &s,
+        "CREATE OR REPLACE PACKAGE BODY BIGFUND.PKG_S IS\n\
+         PROCEDURE proc_s IS BEGIN NULL; END;\n\
+         END PKG_S;\n/\n",
+    )
+    .unwrap();
+    let out_dir = tmp.path().join("dest");
+    let config = AppConfig {
+        output_dir: Some(out_dir.to_string_lossy().into()),
+        base_package: Some(BASE_PACKAGE.to_string()),
+        sources: Some(vec![s.to_string_lossy().into()]),
+        procedure_filter: Some(vec!["bigfund.pkg_s.proc_s".to_string()]),
+        ..Default::default()
+    };
+    let mut inc = IncrementalState::new(out_dir.to_string_lossy().into_owned(), true);
+    inc.initialize().expect("Failed to initialize incremental state");
+    let result = run_pipeline(&[s], &config, &mut inc, false);
+    let pkg = result
+        .packages
+        .iter()
+        .find(|p| p.package_name.eq_ignore_ascii_case("pkg_s"))
+        .expect("pkg_s must survive filtering");
+    assert_eq!(pkg.procedures.len(), 1);
+    assert_eq!(pkg.procedures[0].proc_name, "proc_s");
+    assert_eq!(pkg.procedures[0].selection, "target");
 }

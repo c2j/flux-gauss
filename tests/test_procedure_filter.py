@@ -7,6 +7,14 @@ Covers:
 - _iter_routine_call_nodes: ProcedureCall + FunctionCall extraction
 - _apply_procedure_filter: target/closure/excluded selection semantics
 """
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
 import converter.flux_gauss as fg
 
 
@@ -213,6 +221,71 @@ class TestApplyProcedureFilter:
         pkg_b = next(p for p in packages if p.package_name == "pkg_b")
         assert [p.proc_name for p in pkg_b.procedures] == ["proc_b2"]
 
+    def test_unqualified_same_name_stays_in_caller_package(self):
+        """#121: pkg_a and pkg_b both define `log`; an unqualified `log` call in
+        pkg_a must NOT drag pkg_b.log into the closure."""
+        a_log = _proc("pkg_a", "log", argc=0, source_file="PKG_A.sql")
+        a_main = _proc("pkg_a", "proc_main", body=_call_body((["log"], 0)),
+                       argc=0, source_file="PKG_A.sql")
+        pkg_a = _pkg("pkg_a", [a_main, a_log], "PKG_A.sql")
+        b_log = _proc("pkg_b", "log", argc=0, source_file="PKG_B.sql")
+        b_other = _proc("pkg_b", "proc_other", argc=0, source_file="PKG_B.sql")
+        pkg_b = _pkg("pkg_b", [b_log, b_other], "PKG_B.sql")
+        packages = [pkg_a, pkg_b]
+        all_packages = {p.package_name: p for p in packages}
+
+        fg._apply_procedure_filter(packages, all_packages, [("pkg_a.proc_main", None)])
+
+        assert sorted(p.proc_name for p in packages[0].procedures) == ["log", "proc_main"]
+        # pkg_b had no selected procs → dropped; its procs all excluded
+        assert "pkg_b" not in [p.package_name for p in packages]
+        assert sorted(p.proc_name for p in all_packages["pkg_b"].excluded_procedures) == ["log", "proc_other"]
+
+    def test_qualified_call_picks_matching_arity_overload(self):
+        """#121: pkg_e.proc_ov has 1-arg and 2-arg overloads; a call with one
+        argument pulls only the 1-arg overload."""
+        ov1 = _proc("pkg_e", "proc_ov", argc=1, source_file="PKG_E.sql")
+        ov2 = _proc("pkg_e", "proc_ov", argc=2, source_file="PKG_E.sql")
+        caller = _proc("pkg_f", "proc_caller",
+                       body={"statements": [{"ProcedureCall": {
+                           "name": ["pkg_e", "proc_ov"],
+                           "arguments": [{"Literal": {"Integer": 1}}]}}]},
+                       argc=0, source_file="PKG_F.sql")
+        pkg_e = _pkg("pkg_e", [ov1, ov2], "PKG_E.sql")
+        pkg_f = _pkg("pkg_f", [caller], "PKG_F.sql")
+        packages = [pkg_e, pkg_f]
+        all_packages = {p.package_name: p for p in packages}
+
+        fg._apply_procedure_filter(packages, all_packages, [("pkg_f.proc_caller", None)])
+
+        kept = packages[0].procedures
+        assert len(kept) == 1 and len(kept[0].parameters) == 1
+        assert len(packages[0].excluded_procedures) == 1
+
+    def test_schema_qualified_filter_entry_matches(self):
+        """#121: `bigfund.pkg_a.proc_x` must select the same routine as
+        `pkg_a.proc_x` when the parser stripped the schema from the package."""
+        proc = _proc("pkg_a", "proc_x", argc=0, source_file="PKG_A.sql")
+        pkg_a = _pkg("pkg_a", [proc], "PKG_A.sql")
+        packages = [pkg_a]
+        all_packages = {"pkg_a": pkg_a}
+
+        stats = fg._apply_procedure_filter(
+            packages, all_packages, [("bigfund.pkg_a.proc_x", None)])
+        assert stats["unmatched"] == []
+        assert stats["targets"] == 1
+        assert proc._selection == "target"
+
+        # and the plain spelling selects the same routine
+        proc2 = _proc("pkg_a", "proc_y", argc=0, source_file="PKG_A.sql")
+        pkg_a2 = _pkg("pkg_a", [proc, proc2], "PKG_A.sql")
+        packages2 = [pkg_a2]
+        all_packages2 = {"pkg_a": pkg_a2}
+        stats2 = fg._apply_procedure_filter(
+            packages2, all_packages2, [("bigfund.pkg_a.proc_y", None)])
+        assert stats2["unmatched"] == []
+        assert proc2._selection == "target"
+
     def test_self_recursion_stays_selected(self):
         rec = _proc("pkg_r", "proc_rec", body=_call_body((["proc_rec"], 0)), argc=0,
                     source_file="PKG_R.sql")
@@ -249,3 +322,136 @@ class TestResolveConfigFileSets:
         routine, ddl = fg._resolve_config_file_sets(cfg)
         assert routine == [str(d / "a.sql")]
         assert ddl == []
+
+def _ogsql_available() -> bool:
+    return bool(fg.OGSQL_BIN) and (os.path.isfile(fg.OGSQL_BIN) or __import__("shutil").which(fg.OGSQL_BIN))
+
+
+@pytest.mark.skipif(not _ogsql_available(), reason="ogsql binary not available")
+class TestIncrementalFilter:
+    """#121: with procedure_filter active, a caller change that pulls a new
+    package into the closure must regenerate that package's Service on the
+    next incremental run (changed_pkg_names forced to None)."""
+
+    def _write(self, path: Path, text: str):
+        path.write_text(text, encoding="utf-8")
+
+    def test_newly_closed_package_gets_service_written(self, tmp_path):
+        sql_dir = tmp_path / "sql"
+        sql_dir.mkdir()
+        pkg_a = sql_dir / "pkg_a.sql"
+        pkg_c = sql_dir / "pkg_c.sql"
+        self._write(pkg_a, """CREATE OR REPLACE PACKAGE BODY pkg_a IS
+  PROCEDURE proc_main IS BEGIN NULL; END;
+END pkg_a;
+/
+""")
+        self._write(pkg_c, """CREATE OR REPLACE PACKAGE BODY pkg_c IS
+  PROCEDURE proc_c IS BEGIN NULL; END;
+  PROCEDURE proc_c_other IS BEGIN NULL; END;
+END pkg_c;
+/
+""")
+        out_dir = tmp_path / "dest"
+        config = tmp_path / "fluxgauss.yaml"
+        config.write_text(f"""output_dir: {out_dir}
+base_package: com.example.demo
+procedure_filter:
+  - pkg_a.proc_main
+sources:
+  - {pkg_a}
+  - {pkg_c}
+""", encoding="utf-8")
+
+        env = {**os.environ, "OGSQL_BIN": fg.OGSQL_BIN}
+        cmd = [sys.executable, str(Path(fg.__file__).resolve()),
+               "-c", str(config), "--skip-validate"]
+        first = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=180)
+        assert first.returncode == 0, first.stderr + first.stdout
+        # pkg_c had no selected procs → dropped → no CService
+        assert not (out_dir / "src/main/java/com/example/demo/service/CService.java").exists()
+
+        # Step 2: caller now invokes pkg_c.proc_c → pkg_c enters the closure.
+        # Only pkg_a.sql changed; pkg_c.sql is served from the AST cache.
+        self._write(pkg_a, """CREATE OR REPLACE PACKAGE BODY pkg_a IS
+  PROCEDURE proc_main IS BEGIN pkg_c.proc_c(); END;
+END pkg_a;
+/
+""")
+        second = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=180)
+        assert second.returncode == 0, second.stderr + second.stdout
+
+        svc_c = out_dir / "src/main/java/com/example/demo/service/CService.java"
+        assert svc_c.exists(), "pkg_c entered the closure but its Service was not regenerated"
+        content = svc_c.read_text(encoding="utf-8")
+        assert "procC(" in content
+        assert "procCOther(" not in content
+
+
+    def test_ddl_sources_hashed_and_rescanned_each_run(self, tmp_path):
+        """#121: ddl_sources files join the manifest hash set; a DDL-only change
+        invalidates generation, and unchanged DDL is still scanned on
+        incremental runs (TYPE_OVERRIDES drives the %TYPE column type)."""
+        sql_dir = tmp_path / "sql"
+        sql_dir.mkdir()
+        pkg_a = sql_dir / "pkg_a.sql"
+        ddl = sql_dir / "acct_ddl.sql"
+        self._write(pkg_a, """CREATE OR REPLACE PACKAGE BODY pkg_a IS
+  PROCEDURE proc_main IS
+    v_x acct.status_note%TYPE;
+  BEGIN
+    v_x := 1;
+  END;
+END pkg_a;
+/
+""")
+        self._write(ddl, """CREATE TABLE acct (
+  id bigint,
+  acct_name varchar(20)
+);
+""")
+        out_dir = tmp_path / "dest"
+        config = tmp_path / "fluxgauss.yaml"
+        config.write_text(f"""output_dir: {out_dir}
+base_package: com.example.demo
+sources:
+  - {pkg_a}
+ddl_sources:
+  - {ddl}
+""", encoding="utf-8")
+
+        env = {**os.environ, "OGSQL_BIN": fg.OGSQL_BIN}
+        cmd = [sys.executable, str(Path(fg.__file__).resolve()),
+               "-c", str(config), "--skip-validate"]
+        first = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=180)
+        assert first.returncode == 0, first.stderr + first.stdout
+
+        manifest = json.loads((out_dir / ".fluxgauss" / "manifest.json").read_text())
+        assert str(ddl) in manifest.get("ddl_files", {}), manifest.keys()
+
+        svc = out_dir / "src/main/java/com/example/demo/service/AService.java"
+        assert "String vX" in svc.read_text(encoding="utf-8")
+
+        # Step 2: change ONLY the DDL file — routine sources untouched, so the
+        # AST cache is reused but the new column type must still take effect.
+        self._write(ddl, """CREATE TABLE acct (
+  id bigint,
+  acct_name varchar(20),
+  status_note numeric(18,2)
+);
+""")
+        second = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=180)
+        assert second.returncode == 0, second.stderr + second.stdout
+
+        content = svc.read_text(encoding="utf-8")
+        assert "BigDecimal vX" in content, (
+            "DDL hash change must invalidate generation and rescan TYPE_OVERRIDES"
+        )
+        log = (out_dir / ".fluxgauss" / "logs" / "conversion-latest.log").read_text(
+            encoding="utf-8", errors="replace")
+        assert "Incremental: regenerating" not in log, (
+            "DDL hash change must force full regeneration"
+        )
+
+        manifest2 = json.loads((out_dir / ".fluxgauss" / "manifest.json").read_text())
+        assert manifest2["ddl_files"][str(ddl)] != manifest["ddl_files"][str(ddl)]

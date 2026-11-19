@@ -598,11 +598,7 @@ pub(crate) fn should_stub_procedure(proc: &crate::types::ProcedureInfo, _object_
         let t = l.trim();
         t.contains("execute immediate") || t.contains("EXECUTE IMMEDIATE")
     });
-    if has_dynamic_sql {
-        return true;
-    }
-
-    false
+    has_dynamic_sql
 }
 
 fn build_service_method(

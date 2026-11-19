@@ -251,6 +251,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         &result.filter_dropped_packages,
     );
     report.procedure_filter = config.procedure_filter.clone().unwrap_or_default();
+    report.unmatched_filter = result.filter_unmatched.clone();
     let report_paths = report.save_auto(std::path::Path::new(&output_dir));
 
     if let Some(report_path) = &cli.report {

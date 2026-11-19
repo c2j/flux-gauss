@@ -1165,7 +1165,8 @@ class ConversionReport:
     total_procedures: int = 0
     total_dml: int = 0
     total_cross_calls: int = 0
-    procedure_filter: list = field(default_factory=list)   # raw filter entries (#120)
+    procedure_filter: list = field(default_factory=list)   # raw filter entries, keeps :N (#120)
+    unmatched_filter: list = field(default_factory=list)   # filter entries matching nothing (#121)
     excluded_procedures: list = field(default_factory=list)  # [(pkg, proc.name, source_file)]
 
 
@@ -15274,6 +15275,17 @@ def _proc_selection_key(pkg, proc):
     return (pkg.package_name, proc.proc_name.lower(), len(proc.parameters))
 
 
+def _filter_name_candidates(name: str) -> set:
+    """Spellings equivalent to a filter entry.  `schema.pkg.proc` entries must
+    also match `pkg.proc` because the parser strips the schema from package
+    names (#121)."""
+    cands = {name}
+    parts = name.split(".")
+    if len(parts) >= 3:
+        cands.add(".".join(parts[-2:]))
+    return cands
+
+
 def _proc_filter_names(pkg, proc) -> set:
     """All spellings a filter entry may use to reference this routine."""
     names = {proc.name.lower()}
@@ -15281,7 +15293,14 @@ def _proc_filter_names(pkg, proc) -> set:
         names.add(f"{proc.package}.{proc.proc_name}".lower())
     names.add(f"{pkg.package_name}.{proc.proc_name}".lower())
     names.add(proc.proc_name.lower())
-    return names
+    # schema-qualified proc.name (e.g. bigfund.pkg_a.proc_x) also offers its
+    # pkg.proc tail so both spellings select the same routine (#121)
+    tails = set()
+    for n in names:
+        parts = n.split(".")
+        if len(parts) >= 3:
+            tails.add(".".join(parts[-2:]))
+    return names | tails
 
 
 def _iter_routine_call_nodes(node):
@@ -15329,7 +15348,14 @@ def _apply_procedure_filter(packages: list, all_packages: dict, entries: list):
                 file_index[proc.source_file].append((pkg, proc))
             name_index[proc.proc_name.lower()].append((pkg, proc))
 
-    # ── Call-edge resolution (over-approximate: include every plausible target)
+    def _arity_pick(cands, argc):
+        """Within one resolution layer keep only overloads whose parameter
+        count matches the call site; when none match, keep the whole layer
+        (over-approximate).  Never unions across layers (#121)."""
+        exact = [pp for pp in cands if len(pp[1].parameters) == argc]
+        return exact if exact else list(cands)
+
+    # ── Call-edge resolution: first non-empty layer wins ──
     def resolve_edges(caller_pkg_name, caller_proc):
         out = set()
         for name_parts, argc in _iter_routine_call_nodes(caller_proc.body):
@@ -15341,19 +15367,19 @@ def _apply_procedure_filter(packages: list, all_packages: dict, entries: list):
                 matched = _find_registered_pkg(parts[-2], all_packages)
                 if not matched:
                     continue  # codegen emits an unresolved call; nothing to include
-                for tpkg, tproc in pkg_proc_index.get((matched.lower(), func), []):
+                layer = pkg_proc_index.get((matched.lower(), func), [])
+                for tpkg, tproc in _arity_pick(layer, argc):
                     out.add(_proc_selection_key(tpkg, tproc))
                 continue
-            # Unqualified: same package → same source file → global name match
-            for tpkg, tproc in pkg_proc_index.get((caller_pkg_name.lower(), func), []):
-                out.add(_proc_selection_key(tpkg, tproc))
-            for tpkg, tproc in file_index.get(caller_proc.source_file, []):
-                if tproc.proc_name.lower() == func:
-                    out.add(_proc_selection_key(tpkg, tproc))
-            exact = [pp for pp in name_index.get(func, [])
-                     if len(pp[1].parameters) == argc]
-            pool = exact if exact else name_index.get(func, [])
-            for tpkg, tproc in pool:
+            # Unqualified: same package → same source file → global name index.
+            # The first layer with any candidate wins; no cross-layer union.
+            layer = pkg_proc_index.get((caller_pkg_name.lower(), func), [])
+            if not layer:
+                layer = [pp for pp in file_index.get(caller_proc.source_file, [])
+                         if pp[1].proc_name.lower() == func]
+            if not layer:
+                layer = name_index.get(func, [])
+            for tpkg, tproc in _arity_pick(layer, argc):
                 out.add(_proc_selection_key(tpkg, tproc))
         return out
 
@@ -15363,11 +15389,12 @@ def _apply_procedure_filter(packages: list, all_packages: dict, entries: list):
     for name, argc in entries:
         name_l = name.lower()
         hits = []
+        entry_cands = _filter_name_candidates(name_l)
         for pkg in packages:
             for proc in pkg.procedures:
                 if argc is not None and len(proc.parameters) != argc:
                     continue
-                if name_l in _proc_filter_names(pkg, proc):
+                if entry_cands & _proc_filter_names(pkg, proc):
                     hits.append(_proc_selection_key(pkg, proc))
         if not hits:
             unmatched.append(name + (f":{argc}" if argc is not None else ""))
@@ -16788,7 +16815,8 @@ def _itest_write_class(base_path: Path, pkg: PackageInfo, itest_cfg: dict, schem
 def build_conversion_report(
     output_dir: str, packages: list, all_skipped: list, parse_errors_map: dict,
     config_path: str = "", parse_warnings_map: dict = None,
-    procedure_filter: list = None, dropped_packages: list = None
+    procedure_filter: list = None, dropped_packages: list = None,
+    unmatched_filter: list = None
 ) -> ConversionReport:
     if parse_warnings_map is None:
         parse_warnings_map = {}
@@ -16803,6 +16831,7 @@ def build_conversion_report(
         parse_warnings=[],
         unresolved_calls=list(UNRESOLVED_CALLS),
         procedure_filter=list(procedure_filter or []),
+        unmatched_filter=list(unmatched_filter or []),
         total_packages=len(packages),
         total_procedures=sum(len(pkg.procedures) for pkg in packages),
         total_dml=sum(len(proc.dml_statements) for pkg in packages for proc in pkg.procedures),
@@ -16935,6 +16964,12 @@ def _render_report_markdown(report: ConversionReport) -> str:
             lines.append(f"- `{_pkg_name}` ({len(_by_pkg[_pkg_name])}): "
                          + ", ".join(sorted(_by_pkg[_pkg_name])))
         lines.append("")
+        if report.unmatched_filter:
+            lines.append("以下 procedure_filter 条目未匹配到任何存过：")
+            lines.append("")
+            for _u in report.unmatched_filter:
+                lines.append(f"- `{_u}`")
+            lines.append("")
 
     if report.procedure_mappings:
         lines.append("---")
@@ -16950,18 +16985,31 @@ def _render_report_markdown(report: ConversionReport) -> str:
             svc_name = mappings[0].java_service
             lines.append(f"### `{sql_file}` → `{svc_name}`")
             lines.append("")
-            lines.append("| SQL 存储过程/函数 | 类型 | Java 方法 | Mapper 方法 | 状态 | 备注 |")
-            lines.append("|-----------------|------|-----------|-------------|------|------|")
+            _has_sel = any(getattr(m, "selection", "") for m in mappings)
+            if _has_sel:
+                lines.append("| SQL 存储过程/函数 | 类型 | 筛选 | Java 方法 | Mapper 方法 | 状态 | 备注 |")
+                lines.append("|-----------------|------|------|-----------|-------------|------|------|")
+            else:
+                lines.append("| SQL 存储过程/函数 | 类型 | Java 方法 | Mapper 方法 | 状态 | 备注 |")
+                lines.append("|-----------------|------|-----------|-------------|------|------|")
             for m in mappings:
                 status = "⚠️ Stub" if m.is_stub else "✅"
                 mapper_str = ", ".join(m.mapper_methods) if m.mapper_methods else "—"
                 if not m.notes:
                     m.notes = ""
-                lines.append(
-                    f"| `{m.procedure_name}` | {m.procedure_type} | "
-                    f"`{m.java_service}.{m.java_method}()` | {mapper_str} | "
-                    f"{status} | {m.notes} |"
-                )
+                _sel = {"target": "🎯 目标", "closure": "🔗 闭包"}.get(getattr(m, "selection", ""), "—")
+                if _has_sel:
+                    lines.append(
+                        f"| `{m.procedure_name}` | {m.procedure_type} | {_sel} | "
+                        f"`{m.java_service}.{m.java_method}()` | {mapper_str} | "
+                        f"{status} | {m.notes} |"
+                    )
+                else:
+                    lines.append(
+                        f"| `{m.procedure_name}` | {m.procedure_type} | "
+                        f"`{m.java_service}.{m.java_method}()` | {mapper_str} | "
+                        f"{status} | {m.notes} |"
+                    )
             lines.append("")
 
             gen_files = mappings[0].generated_files
@@ -17795,8 +17843,9 @@ def _run_mcp_server():
                 output_dir_abs, packages, all_skipped, parse_errors_map,
                 config_path=str(resolved_config) if resolved_config else "MCP mode",
                 parse_warnings_map=parse_warnings_map,
-                procedure_filter=[n for n, _ in _pf_entries],
+                procedure_filter=[n + (f":{a}" if a is not None else "") for n, a in _pf_entries],
                 dropped_packages=_pf_stats.get("dropped_packages") if _pf_entries else None,
+                unmatched_filter=_pf_stats.get("unmatched") if _pf_entries else None,
             )
             report_paths = write_conversion_report(report, output_dir_abs)
 
@@ -18013,6 +18062,24 @@ def main():
         if current_hash != old_entry.get("hash", ""):
             changed_files.add(f)
 
+    # DDL-only inputs (ddl_sources / init_sql) join the manifest so their
+    # changes invalidate generation; they are never parsed as routines. (#121)
+    _init_sql = (config.get("integration_test", {}) if config else {}).get("init_sql", [])
+    if isinstance(_init_sql, str):
+        _init_sql = [_init_sql]
+    _ddl_extra_files = list(dict.fromkeys(
+        [f for f in config_ddl_files if os.path.isfile(f)]
+        + [f for f in _init_sql if os.path.isfile(f)]
+    ))
+    old_ddl_files = manifest.get("ddl_files", {}) if not args.full else {}
+    new_ddl_hashes = {}
+    _ddl_changed = False
+    for f in _ddl_extra_files:
+        h = _compute_file_hash(f)
+        new_ddl_hashes[f] = h
+        if h != old_ddl_files.get(f):
+            _ddl_changed = True
+
     is_incremental = bool(old_files) and len(changed_files) < len(sql_files)
     full_regen = args.full or not old_files or len(changed_files) == len(sql_files)
 
@@ -18093,15 +18160,15 @@ def main():
             _log(f"  Validation: all files cached, skipping.", to_stdout=False)
 
     # ── Phase 0: Pre-scan for table DDL ──
+    # Every DDL candidate is scanned on each run: TYPE_OVERRIDES is process
+    # state, so skipping unchanged files would silently drop their column
+    # types on incremental runs.  The Rust engine re-reads them every run too. (#121)
     _ddl_files = list(dict.fromkeys(list(sql_files) + config_ddl_files))
-    _init_sql = (config.get("integration_test", {}) if config else {}).get("init_sql", [])
-    if isinstance(_init_sql, str):
-        _init_sql = [_init_sql]
     for _isf in _init_sql:
         if os.path.isfile(_isf) and _isf not in _ddl_files:
             _ddl_files.append(_isf)
     for sql_file in _ddl_files:
-        if sql_file not in changed_files and not full_regen:
+        if not os.path.isfile(sql_file):
             continue
         with open(sql_file, 'r', encoding=_SOURCE_ENCODING, errors='replace') as _f:
             _content = _f.read()
@@ -18267,7 +18334,9 @@ def main():
             pass
 
     # ── Determine affected packages (changed + transitive dependents) ──
-    if full_regen or not is_incremental or _filter_changed:
+    # procedure_filter 非空时强制全量重生成：调用方变更可能把新包拉进闭包，
+    # 其 Service 必须写出（AST 缓存仍按文件哈希复用，不受影响）。(#121)
+    if full_regen or not is_incremental or _filter_changed or _proc_filter_entries or _ddl_changed:
         changed_pkg_names = None
     else:
         directly_changed = {
@@ -18304,7 +18373,7 @@ def main():
     _clean_stale_packages(output_dir, manifest, packages)
 
     # ── Save manifest ──
-    new_manifest = {"files": {}, "procedure_filter": _filter_sig}
+    new_manifest = {"files": {}, "procedure_filter": _filter_sig, "ddl_files": new_ddl_hashes}
     for f in sql_files:
         new_manifest["files"][f] = {
             "hash": _compute_file_hash(f),
@@ -18317,8 +18386,9 @@ def main():
     report = build_conversion_report(
         output_dir, packages, all_skipped, parse_errors_map,
         config_path=config_path or "", parse_warnings_map=parse_warnings_map,
-        procedure_filter=[n for n, _ in _proc_filter_entries],
+        procedure_filter=[n + (f":{a}" if a is not None else "") for n, a in _proc_filter_entries],
         dropped_packages=_pf_stats.get("dropped_packages") if _proc_filter_entries else None,
+        unmatched_filter=_pf_stats.get("unmatched") if _proc_filter_entries else None,
     )
     report_paths = write_conversion_report(report, output_dir,
                                             report_file=args.report)

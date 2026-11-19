@@ -54,6 +54,18 @@ fn proc_key(pkg: &PackageInfo, proc: &ProcedureInfo) -> ProcKey {
     (pkg.package_name.clone(), proc.proc_name.to_lowercase(), proc.parameters.len())
 }
 
+/// Spellings equivalent to a filter entry. `schema.pkg.proc` entries must also
+/// match `pkg.proc` because the parser strips the schema from package names (#121).
+fn name_candidates(name: &str) -> HashSet<String> {
+    let mut cands = HashSet::new();
+    cands.insert(name.to_string());
+    let parts: Vec<&str> = name.split('.').collect();
+    if parts.len() >= 3 {
+        cands.insert(parts[parts.len() - 2..].join("."));
+    }
+    cands
+}
+
 /// All spellings a filter entry may use to reference this routine.
 fn filter_names(pkg: &PackageInfo, proc: &ProcedureInfo) -> HashSet<String> {
     let mut names = HashSet::new();
@@ -63,6 +75,17 @@ fn filter_names(pkg: &PackageInfo, proc: &ProcedureInfo) -> HashSet<String> {
     }
     names.insert(format!("{}.{}", pkg.package_name, proc.proc_name).to_lowercase());
     names.insert(proc.proc_name.to_lowercase());
+    // schema-qualified proc.name (e.g. bigfund.pkg_a.proc_x) also offers its
+    // pkg.proc tail so both spellings select the same routine (#121)
+    let tails: Vec<String> = names
+        .iter()
+        .filter(|n| n.split('.').count() >= 3)
+        .map(|n| {
+            let parts: Vec<&str> = n.split('.').collect();
+            parts[parts.len() - 2..].join(".")
+        })
+        .collect();
+    names.extend(tails);
     names
 }
 
@@ -161,48 +184,56 @@ fn resolve_edges(
             continue;
         }
         let func = parts.last().unwrap().to_lowercase();
+        // Within one resolution layer keep only overloads whose parameter
+        // count matches the call site; when none match, keep the whole layer.
+        // Never unions across layers (#121).
+        let pick = |keys: &[ProcKey]| -> Vec<ProcKey> {
+            let exact: Vec<ProcKey> = keys
+                .iter()
+                .filter(|k| {
+                    idx.loc
+                        .get(*k)
+                        .map(|&(pi, ri)| packages[pi].procedures[ri].parameters.len() == argc)
+                        .unwrap_or(false)
+                })
+                .cloned()
+                .collect();
+            if exact.is_empty() {
+                keys.to_vec()
+            } else {
+                exact
+            }
+        };
         if parts.len() >= 2 {
             let pkg_hint = parts[parts.len() - 2].to_lowercase();
             let Some(matched) = idx.registered.get(&pkg_hint) else {
                 continue; // codegen emits an unresolved call; nothing to include
             };
             if let Some(keys) = idx.pkg_proc.get(&(matched.to_lowercase(), func.clone())) {
-                out.extend(keys.iter().cloned());
+                out.extend(pick(keys));
             }
             continue;
         }
-        // Unqualified: same package → same source file → global name match
-        if let Some(keys) = idx.pkg_proc.get(&(caller_pkg_name.to_lowercase(), func.clone())) {
-            out.extend(keys.iter().cloned());
-        }
-        if !caller_proc.source_file.is_empty() {
-            if let Some(keys) = idx.file_func.get(&(caller_proc.source_file.clone(), func.clone())) {
-                out.extend(keys.iter().cloned());
-            }
-        }
-        let exact: Vec<ProcKey> = idx
-            .name
-            .get(&func)
-            .map(|keys| {
-                keys.iter()
-                    .filter(|k| {
-                        idx.loc
-                            .get(*k)
-                            .map(|&(pi, ri)| packages[pi].procedures[ri].parameters.len() == argc)
-                            .unwrap_or(false)
-                    })
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default();
-        let pool: &[ProcKey] = if exact.is_empty() {
-            idx.name.get(&func).map(|v| v.as_slice()).unwrap_or(&[])
+        // Unqualified: same package → same source file → global name index.
+        // The first layer with any candidate wins; no cross-layer union.
+        let layer: Vec<ProcKey> = if let Some(keys) =
+            idx.pkg_proc.get(&(caller_pkg_name.to_lowercase(), func.clone()))
+        {
+            keys.clone()
+        } else if !caller_proc.source_file.is_empty() {
+            idx.file_func
+                .get(&(caller_proc.source_file.clone(), func.clone()))
+                .cloned()
+                .unwrap_or_default()
         } else {
-            // leak-free: exact is a local Vec; handle by extending directly
-            out.extend(exact);
-            continue;
+            Vec::new()
         };
-        out.extend(pool.iter().cloned());
+        let layer = if layer.is_empty() {
+            idx.name.get(&func).cloned().unwrap_or_default()
+        } else {
+            layer
+        };
+        out.extend(pick(&layer));
     }
     out
 }
@@ -228,7 +259,8 @@ pub fn apply_procedure_filter(parsed: &mut ParsedPackages, entries: &[FilterEntr
                         continue;
                     }
                 }
-                if filter_names(pkg, proc).contains(&name_l) {
+                let names = filter_names(pkg, proc);
+                if name_candidates(&name_l).iter().any(|c| names.contains(c)) {
                     hits.push(proc_key(pkg, proc));
                 }
             }
@@ -406,4 +438,27 @@ mod tests {
         assert_eq!(stats.targets, 0);
         assert!(p.packages.is_empty());
     }
+    #[test]
+    fn schema_qualified_entry_matches_stripped_package() {
+        // #121: `bigfund.pkg_a.proc_x` must select the same routine as
+        // `pkg_a.proc_x` (apply-level, not just name parsing).
+        let mut p = parsed(vec![pkg(
+            "pkg_a",
+            vec![proc("pkg_a", "proc_x", 0, "PKG_A.sql")],
+            "PKG_A.sql",
+        )]);
+        let entries = parse_filter_entries(&["bigfund.pkg_a.proc_x".to_string()]);
+        let stats = apply_procedure_filter(&mut p, &entries);
+        assert!(stats.unmatched.is_empty(), "{:?}", stats.unmatched);
+        assert_eq!(stats.targets, 1);
+        assert_eq!(p.packages[0].procedures[0].selection, "target");
+    }
+
+    #[test]
+    fn name_candidates_offer_pkg_proc_tail() {
+        assert!(name_candidates("bigfund.pkg_a.proc_x").contains("pkg_a.proc_x"));
+        assert!(name_candidates("pkg_a.proc_x").contains("pkg_a.proc_x"));
+        assert_eq!(name_candidates("proc_x").len(), 1);
+    }
+
 }
