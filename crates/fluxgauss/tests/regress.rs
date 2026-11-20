@@ -869,10 +869,7 @@ fn issue_121_filter_edges_no_cross_layer_union_and_arity() {
             e.to_string_lossy().into(),
             f.to_string_lossy().into(),
         ]),
-        procedure_filter: Some(vec![
-            "pkg_a.proc_main".to_string(),
-            "pkg_f.proc_caller".to_string(),
-        ]),
+        procedure_filter: Some(vec!["pkg_a.proc_main".to_string(), "pkg_f.proc_caller".to_string()]),
         ..Default::default()
     };
     let mut inc = IncrementalState::new(out_dir.to_string_lossy().into_owned(), true);
@@ -889,8 +886,15 @@ fn issue_121_filter_edges_no_cross_layer_union_and_arity() {
     };
     // pkg_a.proc_main → closure pkg_a.log only; pkg_b.log must NOT be pulled in
     assert_eq!(procs_of("pkg_a"), vec![("log".to_string(), 0), ("proc_main".to_string(), 0)]);
-    assert!(procs_of("pkg_b").is_empty(), "pkg_b.log must stay excluded: {:?}", result.packages.iter().map(|p| p.package_name.clone()).collect::<Vec<_>>());
-    assert_eq!(result.filter_dropped_packages.iter().map(|p| p.package_name.as_str()).collect::<Vec<_>>(), vec!["pkg_b"]);
+    assert!(
+        procs_of("pkg_b").is_empty(),
+        "pkg_b.log must stay excluded: {:?}",
+        result.packages.iter().map(|p| p.package_name.clone()).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        result.filter_dropped_packages.iter().map(|p| p.package_name.as_str()).collect::<Vec<_>>(),
+        vec!["pkg_b"]
+    );
     // qualified call with 1 arg → only the 1-param overload of proc_ov
     let ov = procs_of("pkg_e");
     assert_eq!(ov.len(), 1, "{:?}", ov);

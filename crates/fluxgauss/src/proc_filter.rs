@@ -216,23 +216,15 @@ fn resolve_edges(
         }
         // Unqualified: same package → same source file → global name index.
         // The first layer with any candidate wins; no cross-layer union.
-        let layer: Vec<ProcKey> = if let Some(keys) =
-            idx.pkg_proc.get(&(caller_pkg_name.to_lowercase(), func.clone()))
+        let layer: Vec<ProcKey> = if let Some(keys) = idx.pkg_proc.get(&(caller_pkg_name.to_lowercase(), func.clone()))
         {
             keys.clone()
         } else if !caller_proc.source_file.is_empty() {
-            idx.file_func
-                .get(&(caller_proc.source_file.clone(), func.clone()))
-                .cloned()
-                .unwrap_or_default()
+            idx.file_func.get(&(caller_proc.source_file.clone(), func.clone())).cloned().unwrap_or_default()
         } else {
             Vec::new()
         };
-        let layer = if layer.is_empty() {
-            idx.name.get(&func).cloned().unwrap_or_default()
-        } else {
-            layer
-        };
+        let layer = if layer.is_empty() { idx.name.get(&func).cloned().unwrap_or_default() } else { layer };
         out.extend(pick(&layer));
     }
     out
@@ -442,11 +434,7 @@ mod tests {
     fn schema_qualified_entry_matches_stripped_package() {
         // #121: `bigfund.pkg_a.proc_x` must select the same routine as
         // `pkg_a.proc_x` (apply-level, not just name parsing).
-        let mut p = parsed(vec![pkg(
-            "pkg_a",
-            vec![proc("pkg_a", "proc_x", 0, "PKG_A.sql")],
-            "PKG_A.sql",
-        )]);
+        let mut p = parsed(vec![pkg("pkg_a", vec![proc("pkg_a", "proc_x", 0, "PKG_A.sql")], "PKG_A.sql")]);
         let entries = parse_filter_entries(&["bigfund.pkg_a.proc_x".to_string()]);
         let stats = apply_procedure_filter(&mut p, &entries);
         assert!(stats.unmatched.is_empty(), "{:?}", stats.unmatched);
@@ -460,5 +448,4 @@ mod tests {
         assert!(name_candidates("pkg_a.proc_x").contains("pkg_a.proc_x"));
         assert_eq!(name_candidates("proc_x").len(), 1);
     }
-
 }

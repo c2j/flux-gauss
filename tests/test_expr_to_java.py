@@ -65,7 +65,9 @@ class TestExprToJavaBinaryOp:
             {"BinaryOp": {"op": "=", "left": {"ColumnRef": ["x"]}, "right": {"Literal": {"Integer": 1}}}},
             proc,
         )
-        assert result == "x == 1"
+        # x is Integer: boxed-vs-literal must use Objects.equals (null-safe,
+        # type-matched) — mirrors the Rust engine.
+        assert result == "java.util.Objects.equals(x, 1)"
 
     def test_string_concat(self, proc):
         result = fg._expr_to_java(
@@ -93,7 +95,7 @@ class TestExprToJavaBinaryOp:
             {"BinaryOp": {"op": "<>", "left": {"ColumnRef": ["x"]}, "right": {"Literal": {"Integer": 0}}}},
             proc,
         )
-        assert "!=" in result
+        assert result == "!java.util.Objects.equals(x, 0)"
 
     def test_greater_than(self, proc):
         result = fg._expr_to_java(
@@ -395,3 +397,83 @@ class TestIntervalAndTypeCast:
         result = fg._expr_to_java(ast, proc)
         assert "Duration.ofDays" in result
         assert ".toMillis()" in result
+
+
+class TestBoxedNumCompare:
+    """Mirrors Rust expr::boxed_num_kind/boxed_literal — Objects.equals must
+    compare equal Java types or `Long = 0` is always false."""
+
+    def _proc_with(self, **local_vars):
+        return fg.ProcedureInfo(
+            name="pkg_test.proc_a", package="pkg_test", proc_name="proc_a",
+            is_function=False, return_type=None, parameters=[], body={}, sql_text="",
+            local_vars=local_vars,
+        )
+
+    def _eq(self, left_ref, right_lit, proc, op="="):
+        return fg._expr_to_java(
+            {"BinaryOp": {"op": op, "left": {"ColumnRef": [left_ref]},
+                          "right": {"Literal": {"Integer": right_lit}}}},
+            proc,
+        )
+
+    def test_long_var_equals_int_literal(self):
+        proc = self._proc_with(v_flag="Long")
+        assert self._eq("v_flag", 0, proc) == "java.util.Objects.equals(vFlag, 0L)"
+
+    def test_long_var_not_equals_int_literal(self):
+        proc = self._proc_with(v_flag="Long")
+        assert self._eq("v_flag", 1, proc, op="!=") == "!java.util.Objects.equals(vFlag, 1L)"
+
+    def test_double_and_float_vars_keep_compareto_path(self):
+        # Intentional divergence from Rust: Double/Float stay on
+        # compareTo/Double.compare because Objects.equals breaks
+        # -0.0 == 0.0 (SQL treats them equal, Double.equals does not).
+        proc = self._proc_with(v_dbl="Double", v_flt="Float")
+        assert self._eq("v_dbl", 0, proc) == "Double.compare(vDbl, Double.valueOf(0)) == 0"
+        assert self._eq("v_flt", 0, proc) == "vFlt == Float.valueOf(0)"
+
+    def test_literal_on_left(self):
+        proc = self._proc_with(v_flag="Long")
+        result = fg._expr_to_java(
+            {"BinaryOp": {"op": "=",
+                          "left": {"Literal": {"Integer": 3}},
+                          "right": {"ColumnRef": ["v_flag"]}}},
+            proc,
+        )
+        assert result == "java.util.Objects.equals(3L, vFlag)"
+
+    def test_same_kind_boxed_vars_use_objects_equals(self):
+        # `Long == Long` is reference equality — wrong outside Integer cache.
+        proc = self._proc_with(v_a="Long", v_b="Long")
+        result = fg._expr_to_java(
+            {"BinaryOp": {"op": "=",
+                          "left": {"ColumnRef": ["v_a"]},
+                          "right": {"ColumnRef": ["v_b"]}}},
+            proc,
+        )
+        assert result == "java.util.Objects.equals(vA, vB)"
+
+    def test_mixed_boxed_kinds_fall_through(self):
+        # Long vs Integer var: kinds differ → not Objects.equals (which would
+        # compare Long vs Integer and always be false). Falls through to the
+        # existing compareTo path. NOTE: `vA.compareTo(vB)` on an Integer arg
+        # is a pre-existing compile hazard, unchanged by this fix.
+        proc = self._proc_with(v_a="Long", v_b="Integer")
+        result = fg._expr_to_java(
+            {"BinaryOp": {"op": "=",
+                          "left": {"ColumnRef": ["v_a"]},
+                          "right": {"ColumnRef": ["v_b"]}}},
+            proc,
+        )
+        assert "Objects.equals" not in result
+
+    def test_atomic_reference_long_inner_type(self):
+        proc = self._proc_with(v_flag="AtomicReference<Long>")
+        result = fg._expr_to_java(
+            {"BinaryOp": {"op": "=",
+                          "left": {"ColumnRef": ["v_flag"]},
+                          "right": {"Literal": {"Integer": 0}}}},
+            proc,
+        )
+        assert "Objects.equals" in result and "0L" in result

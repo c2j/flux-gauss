@@ -33,7 +33,7 @@ public class Issue48LongComparetoStringService {
         }
         vCount = issue48LongComparetoStringMapper.selectDualCount(pProId);
         if (vCount == null) vCount = 0;
-        if (vCount == 0) {
+        if (java.util.Objects.equals(vCount, 0)) {
             pResult.set(String.valueOf(String.valueOf(pResult.get()).concat(String.valueOf("_ZERO"))));
         }
     }
@@ -41,9 +41,9 @@ public class Issue48LongComparetoStringService {
     // Source: pkg_issue48_compare.proc_check_count (PROCEDURE) — issue_48_long_compareto_string.sql:80-95
     public void procCheckCount(Long pCount, AtomicReference<String> pLabel) {
         pLabel.set(null);
-        if (pCount.compareTo(Long.valueOf(0)) == 0) {
+        if (java.util.Objects.equals(pCount, 0L)) {
             pLabel.set("ZERO");
-        } else if (pCount.compareTo(Long.valueOf(100)) == 0) {
+        } else if (java.util.Objects.equals(pCount, 100L)) {
             pLabel.set("HUNDRED");
         } else if (pCount.compareTo(Long.valueOf(1000)) > 0) {
             pLabel.set("LARGE");

@@ -10366,6 +10366,14 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     cmp_map = {"<": "<", ">": ">", "<=": "<=", ">=": ">="}
                     return f"{left}.compareTo({right}) {cmp_map[op]} 0"
 
+                # Integral boxed `=`/`<>`: route through Objects.equals so the
+                # comparison is null-safe (SQL NULL = 0 → false, not NPE) and
+                # type-matched — must run before the Long compareTo branch.
+                if op in ("=", "<>", "!="):
+                    _boxed = _boxed_num_compare(left, right, left_type, right_type, negated=op in ("<>", "!="))
+                    if _boxed:
+                        return _boxed
+
                 if ("Long" in left_type or "Long" in right_type) and op in (">", "<", ">=", "<=", "=", "<>"):
                     cmp_map = {"<": "<", ">": ">", "<=": "<=", ">=": ">=", "=": "==", "<>": "!="}
                     if _left_is_primitive or _right_is_primitive:
@@ -11227,6 +11235,79 @@ def _coerce_string_int_compare(binary_op: dict, left_java: str, right_java: str,
         int_val = left_ast["Literal"]["Integer"]
         eq = f'"{int_val}".equals({right_java})'
         return f"!{eq}" if neg else eq
+    return None
+
+
+# Only integral boxed types: Double/Float keep the compareTo/Double.compare
+# path because Objects.equals breaks -0.0 == 0.0 (SQL treats them equal).
+_BOXED_NUM_KINDS = ("Long", "Integer")
+
+
+def _boxed_num_kind(java_type: str) -> str | None:
+    """Boxed integral type (Long/Integer) of an inferred Java type, or None.
+    Mirrors the boxed-type scope of Rust expr::boxed_num_kind (which also
+    covers Double/Float — Python intentionally excludes them, see above)."""
+    t = java_type.strip()
+    if t.startswith("AtomicReference<") and t.endswith(">"):
+        t = t[len("AtomicReference<"):-1].strip()
+    return t if t in _BOXED_NUM_KINDS else None
+
+
+def _boxed_literal(java_expr: str, kind: str) -> str | None:
+    """Render an emitted numeric literal so Objects.equals against a
+    `kind`-typed boxed value compares equal Java types: Long needs `L`,
+    Integer needs a plain int-range literal. None when not a plain numeric
+    literal (or cannot match `kind`)."""
+    t = java_expr.strip()
+    sign = ""
+    body = t
+    if body.startswith("-"):
+        sign, body = "-", body[1:]
+    if body and body[-1] in "fFdDlL":
+        body = body[:-1]
+    is_int = bool(body) and all("0" <= c <= "9" for c in body)
+    is_dec = False
+    if not is_int and "." in body:
+        a, _, b = body.partition(".")
+        is_dec = (
+            bool(a)
+            and bool(b)
+            and all("0" <= c <= "9" for c in a)
+            and all("0" <= c <= "9" for c in b)
+        )
+    if not is_int or is_dec:
+        return None
+    if kind == "Long":
+        return f"{sign}{body}L"
+    # Integer: >int32 literals (emitted with `L`) cannot be an Integer —
+    # leave them to the unboxing path.
+    if int(body) <= 2147483647:
+        return f"{sign}{body}"
+    return None
+
+
+def _boxed_num_compare(left: str, right: str, left_type: str, right_type: str, *, negated: bool) -> str | None:
+    """Objects.equals-based `=`/`<>` for integral boxed operands.
+
+    `Objects.equals(Long, int)` is always false and `Long == Long` is
+    reference equality — both must go through Objects.equals. Literal
+    operands get a type-matched suffix. Mirrors the intent of the Rust
+    `=`/`!=` branches (Rust additionally covers Double/Float)."""
+    lk = _boxed_num_kind(left_type)
+    rk = _boxed_num_kind(right_type)
+    if lk is not None:
+        lit = _boxed_literal(right, lk)
+        if lit is not None:
+            eq = f"java.util.Objects.equals({left}, {lit})"
+            return f"!{eq}" if negated else eq
+    if rk is not None:
+        lit = _boxed_literal(left, rk)
+        if lit is not None:
+            eq = f"java.util.Objects.equals({lit}, {right})"
+            return f"!{eq}" if negated else eq
+    if lk is not None and lk == rk:
+        eq = f"java.util.Objects.equals({left}, {right})"
+        return f"!{eq}" if negated else eq
     return None
 
 
@@ -14875,8 +14956,12 @@ def _collect_count_usage(pkg: PackageInfo) -> dict:
 
     `v = mapper.selectX(...)` followed by `if (v == 0)` is an existence check
     (needs mock 1); `if (v > 0)` / `if (v != 0)` is a guard (needs mock 0).
+    Boxed numerics emit `Objects.equals(v, 0)` / `!Objects.equals(v, 0)` —
+    recognise those forms too.
     """
     usage: dict = {}
+    _eq0 = re.compile(r'(?<!!)java\.util\.Objects\.equals\(\s*{v}\s*,\s*0L?\s*\)')
+    _ne0 = re.compile(r'!\s*java\.util\.Objects\.equals\(\s*{v}\s*,\s*0L?\s*\)')
     for _p in pkg.procedures:
         lines = _p.java_logic_lines
         for i, line in enumerate(lines):
@@ -14884,12 +14969,14 @@ def _collect_count_usage(pkg: PackageInfo) -> dict:
             if not m:
                 continue
             var, method_id = m.group(1), m.group(2)
+            eq0 = _eq0.pattern.replace('{v}', re.escape(var))
+            ne0 = _ne0.pattern.replace('{v}', re.escape(var))
             for j in range(i, min(i + 3, len(lines))):
                 l2 = lines[j]
-                if re.search(r'if\s*\(\s*' + re.escape(var) + r'\s*==\s*0\s*\)', l2):
+                if re.search(r'if\s*\(\s*' + re.escape(var) + r'\s*==\s*0\s*\)', l2) or re.search(eq0, l2):
                     usage[method_id] = 'exists'
                     break
-                if re.search(r'if\s*\(\s*' + re.escape(var) + r'\s*(?:>\s*0|!=\s*0)\s*\)', l2):
+                if re.search(r'if\s*\(\s*' + re.escape(var) + r'\s*(?:>\s*0|!=\s*0)\s*\)', l2) or re.search(ne0, l2):
                     usage[method_id] = 'guard'
                     break
     return usage
