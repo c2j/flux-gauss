@@ -48,7 +48,7 @@ public class Issue60InstrCaseWhenService {
     // Source: pkg_issue60_instr.proc_instr_eq_zero (PROCEDURE) — issue_60_instr_case_when.sql:47-60
     public void procInstrEqZero(String pSrc, AtomicReference<String> pFound) {
         pFound.set(null);
-        if ((String.valueOf(String.valueOf(pSrc).toLowerCase()).indexOf("ipogh") + 1) == 0) {
+        if (java.util.Objects.equals((String.valueOf(String.valueOf(pSrc).toLowerCase()).indexOf("ipogh") + 1), 0)) {
             pFound.set("N");
         } else {
             pFound.set("Y");

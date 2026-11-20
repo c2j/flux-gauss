@@ -52,11 +52,11 @@ public class Issue44IfElsifGotoService {
         Integer vCount = 0;
         pResult.set(null);
         vSql = "SELECT COUNT(*) FROM t_issue44_orders WHERE 1=1";
-        if (pMode == 1) {
+        if (java.util.Objects.equals(pMode, 1)) {
             vSql = vSql + " AND status = 'ACTIVE'";
-        } else if (pMode == 2) {
+        } else if (java.util.Objects.equals(pMode, 2)) {
             vSql = vSql + " AND status = 'PENDING'";
-        } else if (pMode == 3) {
+        } else if (java.util.Objects.equals(pMode, 3)) {
             if (pFilter != null) {
                 vSql = vSql + " AND order_name LIKE '%" + pFilter + "%'";
             }

@@ -419,7 +419,7 @@ public class WarpdriverStressTestService {
         String vResult = "[]";
         String vItem = null;
         java.math.BigDecimal vNewPrice = java.math.BigDecimal.ZERO;
-        if (this.jsonbArrayLength(vArr) == 0) {
+        if (java.util.Objects.equals(this.jsonbArrayLength(vArr), 0)) {
             return "{\"error\":\"empty_array\"}";
         }
         for (int vIdx = 0; vIdx <= this.jsonbArrayLength(vArr) - 1; vIdx++) {
