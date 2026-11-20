@@ -1605,11 +1605,22 @@ def _box_primitive(java_type: str) -> str:
     return mapping.get(java_type, java_type)
 
 
+def _ident_str(part) -> str:
+    """Normalize an AST identifier part to str.
+
+    ogsql serializes quoted identifiers as {"quote_style": ..., "value": ...}
+    dicts inside name lists; plain identifiers are bare strings.
+    """
+    if isinstance(part, dict):
+        return str(part.get("value", ""))
+    return str(part) if part is not None else ""
+
+
 def extract_parameters(params_list: list) -> list:
     """Extract parameter info from AST parameter list."""
     result = []
     for p in params_list:
-        name = p.get("name", "")
+        name = _ident_str(p.get("name", ""))
         sql_type = p.get("data_type", "varchar")
         mode = p.get("mode")
 
@@ -1626,7 +1637,7 @@ def extract_parameters(params_list: list) -> list:
                 if name.lower() in known_modes and potential_name.lower() not in known_modes:
                     name = potential_name
                     sql_type = potential_type
-                    mode = p.get("name", "").lower()  # original name was the mode
+                    mode = _ident_str(p.get("name", "")).lower()  # original name was the mode
 
         # Handle data_type that could be a dict (e.g., PercentType, RefCursor)
         if isinstance(sql_type, dict):
@@ -1671,7 +1682,7 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
     for stmt_wrapper in ast.get("statements", []):
         for stmt_type, stmt_data in stmt_wrapper.items():
             if stmt_type in ("CreateFunction", "CreateProcedure"):
-                name_parts = stmt_data.get("name", [])
+                name_parts = [_ident_str(p) for p in stmt_data.get("name", [])]
                 package = name_parts[0] if len(name_parts) > 1 else ""
                 proc_name = name_parts[-1] if name_parts else "unknown"
                 full_name = ".".join(name_parts)
@@ -1709,7 +1720,7 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
                 for item in stmt_data.get("items", []):
                     for item_type, item_data in item.items():
                         if item_type == "Variable":
-                            var_name = item_data.get("name", "")
+                            var_name = _ident_str(item_data.get("name", ""))
                             if var_name in package_vars:
                                 continue
                             var_type_raw = item_data.get("data_type", {})
@@ -1726,13 +1737,13 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
                             package_vars[var_name] = {"java_type": var_type, "default": default_val}
                         elif item_type == "Type":
                             for type_kind, type_data in item_data.items():
-                                type_name = type_data.get("name", "")
+                                type_name = _ident_str(type_data.get("name", ""))
                                 if not type_name:
                                     continue
                                 if type_kind == "Record":
                                     fields = []
                                     for fld in type_data.get("fields", []):
-                                        fld_name = fld.get("name", "")
+                                        fld_name = _ident_str(fld.get("name", ""))
                                         fld_java_type = sql_type_to_java(fld.get("data_type", {}))
                                         fields.append((fld_name, fld_java_type))
                                     custom_types[type_name] = {"kind": "record", "fields": fields}
@@ -1747,7 +1758,7 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
                                     custom_types[type_name] = {"kind": "varray", "elem_type": elem_java_type, "size": size_val}
 
             elif stmt_type == "CreatePackageBody":
-                package_name_parts = stmt_data.get("name", [])
+                package_name_parts = [_ident_str(p) for p in stmt_data.get("name", [])]
                 package_name = package_name_parts[-1] if package_name_parts else "unknown"
 
                 # Only extract Variables that appear BEFORE the first Function/Procedure.
@@ -1757,7 +1768,7 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
                         if item_type in ("Function", "Procedure"):
                             break
                         if item_type == "Variable":
-                            var_name = item_data.get("name", "")
+                            var_name = _ident_str(item_data.get("name", ""))
                             var_type_raw = item_data.get("data_type", {})
                             if isinstance(var_type_raw, dict):
                                 var_type = sql_type_to_java(var_type_raw)
@@ -1778,8 +1789,8 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
                     for item_type, item_data in item.items():
                         if item_type not in ("Procedure", "Function"):
                             continue
-                        proc_name = item_data.get("name", [])
-                        proc_name = proc_name[-1] if proc_name else "unknown"
+                        proc_name_parts = [_ident_str(p) for p in item_data.get("name", [])]
+                        proc_name = proc_name_parts[-1] if proc_name_parts else "unknown"
                         full_name = f"{package_name}.{proc_name}"
                         is_function = item_type == "Function"
                         return_type = item_data.get("return_type") if is_function else None
@@ -9334,21 +9345,22 @@ def _infer_expr_type(expr, proc: ProcedureInfo) -> str:
             if len(parts) >= 2:
                 var_name_raw = parts[0]
                 field_name = parts[-1]
-                if var_name_raw in proc.local_vars:
+                if proc is not None and var_name_raw in proc.local_vars:
                     var_type = proc.local_vars[var_name_raw]
                     if var_type == "Map<String, Object>":
                         return _java_type_from_field_name(field_name)
                 # RECORD loop variable or undeclared Map — infer from field name
                 return _java_type_from_field_name(field_name)
-            if name in proc.local_vars:
+            if proc is not None and name in proc.local_vars:
                 return proc.local_vars[name]
             name_lower = name.lower()
-            for vn, vt in proc.local_vars.items():
-                if vn.lower() == name_lower:
-                    return vt
-            for p in proc.parameters:
-                if p.name.lower() == name.lower():
-                    return p.java_type
+            if proc is not None:
+                for vn, vt in proc.local_vars.items():
+                    if vn.lower() == name_lower:
+                        return vt
+                for p in proc.parameters:
+                    if p.name.lower() == name.lower():
+                        return p.java_type
             if name in _PACKAGE_CONSTANTS:
                 return _PACKAGE_CONSTANTS[name]
             # Bare function call without parens (PL/SQL allows e.g. func_get_frame_date)
@@ -10878,7 +10890,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     _arg_types.append(_at if _at and _at != "Object" else "?")
                 _sig = f"ret={_ret_type}, args=[{', '.join(_arg_types)}]"
                 _hint = f"pkg={_pkg_hint}" if _pkg_hint else "pkg=?"
-                _caller = f"caller={proc.source_file}:{proc.proc_name}"
+                _caller = f"caller={proc.source_file}:{proc.proc_name}" if proc else "caller=?"
                 return f"/* TODO: implement {_flatten_comment(func_name)}({_flatten_comment(args_str)}) — {_hint}, {_sig}, {_caller} */ null"
         elif key == "SpecialFunction":
             func_name = val.get("name", "").lower()

@@ -175,3 +175,42 @@ class TestExtractProceduresEmptyInput:
         ast = {"statements": [{"CreateTable": {"name": ["orders"]}}]}
         procs, _, _ = fg.extract_procedures(ast, "test.sql")
         assert procs == []
+
+
+class TestExtractProceduresQuotedIdentifiers:
+    """Quoted identifiers serialize as {"quote_style": ..., "value": ...}
+    dicts inside AST name lists — must normalize to the value string.
+
+    Regression: complex_clearing_pkg.sql has a quoted function name
+    ("私有函数_居然支持$特殊字符#"); proc_name stayed a dict and crashed
+    java_method_name() during report generation.
+    """
+
+    def test_package_body_quoted_function_name(self):
+        ast = {"statements": [{"CreatePackageBody": {
+            "name": ["pkg_a"],
+            "items": [{"Function": {
+                "name": [{"quote_style": '"', "value": "私有函数$特殊#"}],
+                "return_type": "varchar",
+                "parameters": [],
+                "block": {},
+            }}],
+        }}]}
+        procs, _, _ = fg.extract_procedures(ast, "pkg_a.sql")
+        assert len(procs) == 1
+        assert procs[0].proc_name == "私有函数$特殊#"
+        assert procs[0].name == "pkg_a.私有函数$特殊#"
+        # Downstream naming must not crash and must sanitize to a Java-safe id
+        assert fg.java_method_name(procs[0].proc_name) == "_unnamed"
+
+    def test_standalone_quoted_procedure_name(self):
+        ast = {"statements": [{"CreateProcedure": {
+            "name": [{"quote_style": '"', "value": "pkg_b"}, {"quote_style": '"', "value": "my proc"}],
+            "parameters": [],
+            "block": {},
+        }}]}
+        procs, _, _ = fg.extract_procedures(ast, "pkg_b.sql")
+        assert len(procs) == 1
+        assert procs[0].proc_name == "my proc"
+        assert procs[0].package == "pkg_b"
+        assert procs[0].name == "pkg_b.my proc"
