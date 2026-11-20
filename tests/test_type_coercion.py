@@ -322,11 +322,16 @@ class TestComparisonTypeCoercion:
         assert "compareTo" in result, f"Expected compareTo for BigDecimal comparison, got: {result}"
 
     def test_compare_same_type_no_extra_coercion(self):
-        """v_a = v_b (both Integer) -> simple =="""
+        """v_a = v_b (both Integer) -> Objects.equals, no coercion.
+
+        `==` on Integer objects is reference equality (wrong outside the
+        -128..127 cache), so same-kind boxed pairs use Objects.equals —
+        same fix as the Rust engine's boxed comparison path."""
         proc = self._make_proc(local_vars={"v_a": "Integer", "v_b": "Integer"})
         expr = {"BinaryOp": {"left": {"PlVariable": ["v_a"]}, "op": "=", "right": {"PlVariable": ["v_b"]}}}
         result = fg._expr_to_java(expr, proc)
-        assert "==" in result, f"Expected simple == comparison, got: {result}"
+        assert result == "java.util.Objects.equals(vA, vB)", \
+            f"Expected Objects.equals for same-kind boxed vars, got: {result}"
 
     def test_compare_integer_vs_double(self):
         """v_int > v_dbl -> coerce to Double comparison"""
@@ -383,3 +388,34 @@ class TestVarDeclDefaultCoercion:
             default_java = fg._coerce_type(default_java, default_inferred, var_type)
         assert "BigDecimal.valueOf(100)" in default_java, \
             f"Expected BigDecimal.valueOf coercion, got: {default_java}"
+
+
+class TestCollectCountUsage:
+    """_collect_count_usage must recognise boxed Objects.equals forms."""
+
+    @staticmethod
+    def _pkg(lines):
+        proc = type("P", (), {"java_logic_lines": lines})
+        return type("Pkg", (), {"procedures": [proc]})()
+
+    def test_objects_equals_zero_is_exists(self):
+        pkg = self._pkg([
+            "        vCount = mapper.selectDualCount(pProId);",
+            "        if (vCount == null) vCount = 0;",
+            "        if (java.util.Objects.equals(vCount, 0)) {",
+        ])
+        assert fg._collect_count_usage(pkg) == {"selectDualCount": "exists"}
+
+    def test_negated_objects_equals_zero_is_guard(self):
+        pkg = self._pkg([
+            "        vCount = mapper.selectOrderCount();",
+            "        if (!java.util.Objects.equals(vCount, 0L)) {",
+        ])
+        assert fg._collect_count_usage(pkg) == {"selectOrderCount": "guard"}
+
+    def test_plain_equals_still_works(self):
+        pkg = self._pkg([
+            "        vCount = mapper.selectDualCount(pProId);",
+            "        if (vCount == 0) {",
+        ])
+        assert fg._collect_count_usage(pkg) == {"selectDualCount": "exists"}

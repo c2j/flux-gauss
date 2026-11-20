@@ -97,7 +97,7 @@ public class GaussCompleteExamplesService {
                         vInsertId = (_row.get("bonus_id") != null ? (_row.get("bonus_id") instanceof Number ? ((Number) _row.get("bonus_id")).intValue() : Integer.parseInt(String.valueOf(_row.get("bonus_id")))) : 0);
                         vTotalBonus = vTotalBonus.add(vBonusAmt);
                         vProcessed = vProcessed + 1;
-                        if (((vProcessed) % (100)) == 0) {
+                        if (java.util.Objects.equals(((vProcessed) % (100)), 0)) {
                             // COMMIT — auto-committed by Spring @Transactional boundary
                         }
                     }
@@ -182,7 +182,7 @@ public class GaussCompleteExamplesService {
                     } else {
                         _sqlRowCount = gaussCompleteExamplesMapper.insertExceptionLog(pTableName, pWhereClause, pOrderBy, vRecId, vRecStatus);
                     }
-                    if (((vRowCount) % (vBatchSize)) == 0) {
+                    if (java.util.Objects.equals(((vRowCount) % (vBatchSize)), 0)) {
                         // COMMIT — auto-committed by Spring @Transactional boundary
                     }
                 } catch (Exception e) { // OTHERS
@@ -257,7 +257,7 @@ public class GaussCompleteExamplesService {
                 } else {
                     _sqlRowCount = gaussCompleteExamplesMapper.insertScanLog(pTableName, pSelectColumns, pWhereClause, pOrderBy, pProcessType, vPkId, vStatus);
                 }
-                if (((vRowCount) % (vBatchCommit)) == 0) {
+                if (java.util.Objects.equals(((vRowCount) % (vBatchCommit)), 0)) {
                     // COMMIT — auto-committed by Spring @Transactional boundary
                 }
             }

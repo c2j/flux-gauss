@@ -21,18 +21,18 @@ public class Issue47LongParseStringService {
     public void procSetStepNo(Integer pSeq, Integer pSubSeq, AtomicReference<String> pStepNo) {
         String vStepNo = null;
         pStepNo.set(null);
-        if (pSeq == 1) {
-            if (pSubSeq == 1) {
+        if (java.util.Objects.equals(pSeq, 1)) {
+            if (java.util.Objects.equals(pSubSeq, 1)) {
                 vStepNo = "1.1";
             } else {
                 vStepNo = "1." + pSubSeq;
             }
-        } else if (pSeq == 2) {
-            if (pSubSeq == 5) {
+        } else if (java.util.Objects.equals(pSeq, 2)) {
+            if (java.util.Objects.equals(pSubSeq, 5)) {
                 vStepNo = "2.5.1";
-            } else if (pSubSeq == 7) {
+            } else if (java.util.Objects.equals(pSubSeq, 7)) {
                 vStepNo = "2.7";
-            } else if (pSubSeq == 8) {
+            } else if (java.util.Objects.equals(pSubSeq, 8)) {
                 vStepNo = "2.8";
             } else {
                 vStepNo = "2." + pSubSeq;
@@ -63,7 +63,7 @@ public class Issue47LongParseStringService {
         String vLabel = null;
         pValue.set(null);
         vLabel = pLabel;
-        if (String.valueOf(vLabel).length() == 0) {
+        if (java.util.Objects.equals(String.valueOf(vLabel).length(), 0)) {
             vLabel = "DEFAULT";
         }
         pValue.set(String.valueOf(vLabel));
