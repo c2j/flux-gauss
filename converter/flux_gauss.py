@@ -15343,7 +15343,199 @@ def _resolve_config_file_sets(config: dict) -> tuple:
     routine += _expand_source_patterns(config.get("source_dirs"))
     ddl = _expand_source_patterns(config.get("ddl_sources"))
     ddl += _expand_source_patterns(config.get("ddl_source_dirs"))
+
+    # dependency_graph: codeweb file-level closure (#120).  Seeds default to
+    # `procedure_filter`; the resulting files are unioned into routine sources.
+    dg_files, _dg_stats = _resolve_dependency_graph_files(config)
+    if dg_files:
+        seen = set(routine)
+        routine += [f for f in dg_files if f not in seen]
     return routine, ddl
+
+
+def _resolve_codeweb_bin():
+    """Locate the codeweb CLI: CODEWEB_BIN env → PATH."""
+    env = os.environ.get("CODEWEB_BIN")
+    if env:
+        return env
+    return shutil.which("codeweb")
+
+
+def _depgraph_routine_spellings(node, routine_pkgs):
+    """All lowercase spellings a routine node answers to: bare name,
+    `pkg.name`, `schema.pkg.name` (via contains_routine package nodes) and
+    `schema.name` for standalone routines."""
+    name = (node.get("name") or "").strip().lower()
+    if not name:
+        return set()
+    out = {name}
+    for pkg in routine_pkgs.get(node.get("id"), []):
+        pname = (pkg.get("name") or "").strip().lower()
+        pschema = (pkg.get("schema") or "").strip().lower()
+        if pname:
+            out.add(f"{pname}.{name}")
+            if pschema:
+                out.add(f"{pschema}.{pname}.{name}")
+    schema = (node.get("schema") or "").strip().lower()
+    if schema:
+        out.add(f"{schema}.{name}")
+    return out
+
+
+def _depgraph_closure_from_graph(graph: dict, seeds: list, project_root: str) -> dict:
+    """BFS over codeweb `direct`/`dynamic` call edges from seed routines;
+    return the source files of every reached routine plus diagnostics."""
+    nodes = {n.get("id"): n for n in graph.get("nodes", []) if isinstance(n, dict)}
+    edges = [e for e in graph.get("edges", []) if isinstance(e, dict)]
+
+    routine_pkgs = defaultdict(list)
+    for e in edges:
+        if e.get("type") != "contains_routine":
+            continue
+        src, dst = nodes.get(e.get("source")), nodes.get(e.get("target"))
+        if src and dst and src.get("type") == "package":
+            routine_pkgs[dst.get("id")].append(src)
+
+    adj = defaultdict(list)
+    for e in edges:
+        if e.get("type") in ("direct", "dynamic"):
+            adj[e.get("source")].append(e.get("target"))
+
+    reached = set()
+    queue = []
+    matched = set()
+    for seed in seeds:
+        cands = _filter_name_candidates(seed.lower())
+        for node in nodes.values():
+            if node.get("type") not in ("procedure", "function"):
+                continue
+            spellings = _depgraph_routine_spellings(node, routine_pkgs)
+            if cands & spellings:
+                matched.add(seed.lower())
+                if node.get("id") not in reached:
+                    reached.add(node.get("id"))
+                    queue.append(node.get("id"))
+    while queue:
+        cur = queue.pop()
+        for tgt in adj.get(cur, []):
+            if tgt not in reached:
+                reached.add(tgt)
+                queue.append(tgt)
+
+    files = []
+    seen_files = set()
+    unresolved = []
+    seen_unres = set()
+    routines = 0
+    for nid in reached:
+        node = nodes.get(nid)
+        if not node:
+            continue
+        ntype = node.get("type")
+        if ntype in ("procedure", "function"):
+            routines += 1
+            f = node.get("file")
+            if f:
+                path = f if os.path.isabs(f) else os.path.join(project_root, f)
+                if not os.path.exists(path) and os.path.exists(f):
+                    path = f
+                if path not in seen_files:
+                    seen_files.add(path)
+                    files.append(path)
+        elif ntype == "unresolved":
+            raw = node.get("raw_expr") or ""
+            if raw and raw not in seen_unres:
+                seen_unres.add(raw)
+                unresolved.append(raw)
+
+    return {
+        "files": sorted(files),
+        "matched": sorted(matched),
+        "unmatched": sorted(set(s.lower() for s in seeds) - matched),
+        "routines": routines,
+        "unresolved": unresolved,
+    }
+
+
+def _resolve_dependency_graph_files(config: dict) -> tuple:
+    """Resolve routine source files via a codeweb dependency graph (#120).
+
+    Runs `codeweb analyze` (unless refresh=never) then `codeweb export
+    --format json`, computes the transitive call-edge closure of the seeds
+    (`dependency_graph.seeds`, defaulting to `procedure_filter`) and returns
+    (files, stats).  Returns ([], {}) when the section is absent/disabled.
+    """
+    dg = config.get("dependency_graph")
+    if not isinstance(dg, dict) or not dg.get("enabled"):
+        return [], {}
+    project = dg.get("project")
+    if not project:
+        print("Error: dependency_graph.project is required", file=sys.stderr)
+        sys.exit(1)
+    codeweb_bin = _resolve_codeweb_bin()
+    if not codeweb_bin:
+        print("Error: codeweb binary not found. Install codeweb or set CODEWEB_BIN.",
+              file=sys.stderr)
+        sys.exit(1)
+
+    # Auto-init: no codeweb.toml → `codeweb init` in place so users never run
+    # it by hand. `dirs` default to the whole project root; --force is required
+    # because a populated corpus dir has no codeweb.toml yet.
+    if not os.path.isfile(os.path.join(project, "codeweb.toml")):
+        name = dg.get("name") or os.path.basename(os.path.normpath(project)) \
+            or "fluxgauss"
+        cmd = [codeweb_bin, "init", name, "--root", project, "--force"]
+        for d in dg.get("dirs") or []:
+            cmd += ["--dir", str(d)]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"Error: codeweb init failed for {project}:\n{r.stderr.strip()}",
+                  file=sys.stderr)
+            sys.exit(1)
+        print(f"  dependency_graph: initialized codeweb project '{name}' at {project}")
+
+    if str(dg.get("refresh", "auto")).lower() != "never":
+        r = subprocess.run([codeweb_bin, "analyze", "-p", project],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"Error: codeweb analyze failed for {project}:\n{r.stderr.strip()}",
+                  file=sys.stderr)
+            sys.exit(1)
+
+    r = subprocess.run([codeweb_bin, "export", "--format", "json", "-p", project],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"Error: codeweb export failed for {project}:\n{r.stderr.strip()}",
+              file=sys.stderr)
+        sys.exit(1)
+    try:
+        graph = json.loads(r.stdout)
+    except json.JSONDecodeError as e:
+        print(f"Error: cannot parse codeweb export JSON: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    seeds_raw = dg.get("seeds") or config.get("procedure_filter") or []
+    entries = _parse_procedure_filter_entries(seeds_raw)
+    stats = _depgraph_closure_from_graph(
+        graph, [name for name, _argc in entries], project)
+
+    print(f"  dependency_graph: {len(stats['files'])} file(s) from "
+          f"{stats['routines']} closure routine(s)")
+    if stats["matched"]:
+        print(f"    seeds matched: {', '.join(stats['matched'])}")
+    if stats["unmatched"]:
+        print(f"    ⚠ seeds unmatched: {', '.join(stats['unmatched'])}")
+    if stats["unresolved"]:
+        print(f"    ⚠ unresolved calls in closure: {len(stats['unresolved'])}")
+        if str(dg.get("on_unresolved", "warn")).lower() == "fail":
+            print("Error: dependency_graph on_unresolved=fail: "
+                  + ", ".join(stats["unresolved"]), file=sys.stderr)
+            sys.exit(1)
+
+    files = list(stats["files"])
+    files += [f for f in _expand_source_patterns(dg.get("extra_sources"))
+              if f not in files]
+    return files, stats
 
 
 def _parse_procedure_filter_entries(entries) -> list:
@@ -17474,6 +17666,16 @@ FLUXGAUSS_HELP = f"""\
     #   - sql/ddl
     # procedure_filter:                    # 按 包名.存过名[:参数个数] 筛选存过 (#120)
     #   - pkg_order.create_order
+    # dependency_graph:                    # codeweb 依赖图自动圈定源文件 (#120)
+    #   enabled: true                        # 语料目录即 codeweb 项目根
+    #   project: /path/to/sql-corpus         # 无 codeweb.toml 时自动 init+analyze
+    #   # dirs: [sql/proc, sql/func]         # init 分析目录（缺省=整个 project）
+    #   # name: mycorpus                     # init 项目名（缺省=目录名）
+    #   refresh: auto                        # auto=自动增量 analyze；never=复用现有 store
+    #   # seeds:                             # 闭包种子，缺省用 procedure_filter
+    #   #   - pkg_order.create_order
+    #   # extra_sources: [sql/extra.sql]     # 兜底补充文件
+    #   # on_unresolved: warn                # warn(默认) | fail
     java_packages:                        自定义 Java 包名映射（可选）
       - package: com.example.order
         sources:

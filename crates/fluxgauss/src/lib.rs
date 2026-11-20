@@ -2,6 +2,7 @@ pub mod analyze;
 pub mod config;
 pub mod context;
 pub mod debug;
+pub mod depgraph;
 pub mod expr;
 pub mod extract;
 pub mod generate;
