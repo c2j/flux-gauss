@@ -267,24 +267,45 @@ fn strip_out_param_get(java: &str, proc: &ProcedureInfo) -> String {
     java.to_string()
 }
 
-fn dml_method_name(
-    dml_type: &str,
-    proc_name: &str,
-    counter: &mut HashMap<String, usize>,
-    semantic_key: Option<&str>,
-) -> String {
-    if let Some(sk) = semantic_key {
-        let key = format!("{}_{}", dml_type, sk);
-        let n = counter.entry(key).or_insert(0);
-        let suffix = if *n > 0 { format!("_{}", n) } else { String::new() };
-        *n += 1;
-        format!("{}{}{}", dml_type, snake_to_pascal(sk), suffix)
-    } else {
-        let key = format!("{}_{}", dml_type, proc_name);
-        let n = counter.entry(key).or_insert(0);
-        let suffix = if *n > 0 { format!("_{}", n) } else { String::new() };
-        *n += 1;
-        format!("{}{}{}", dml_type, snake_to_pascal(proc_name), suffix)
+fn dml_method_name(dml_type: &str, proc_name: &str, ctx: &mut StatementContext, semantic_key: Option<&str>) -> String {
+    let candidate = {
+        let counter = &mut ctx.dml_counter;
+        if let Some(sk) = semantic_key {
+            let key = format!("{}_{}", dml_type, sk);
+            let n = counter.entry(key).or_insert(0);
+            let suffix = if *n > 0 { format!("_{}", n) } else { String::new() };
+            *n += 1;
+            format!("{}{}{}", dml_type, snake_to_pascal(sk), suffix)
+        } else {
+            let key = format!("{}_{}", dml_type, proc_name);
+            let n = counter.entry(key).or_insert(0);
+            let suffix = if *n > 0 { format!("_{}", n) } else { String::new() };
+            *n += 1;
+            format!("{}{}{}", dml_type, snake_to_pascal(proc_name), suffix)
+        }
+    };
+    // The per-key counters above cannot see collisions ACROSS keys: a
+    // semantic-keyed `select{Table}` and a proc-name-keyed `select{Proc}`
+    // can render the same method_id when Pascal(table) == Pascal(proc)
+    // (issue #128 — two overloads shared one `<select id>` whose XML only
+    // bound the first parameter set → BindingException at runtime).
+    // `dml_used_ids` is the package-wide guard: first free `_N` suffix wins.
+    if !ctx.dml_used_ids.contains(&candidate) {
+        ctx.dml_used_ids.insert(candidate.clone());
+        return candidate;
+    }
+    let stem = match candidate.rsplit_once('_') {
+        Some((s, n)) if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) => s.to_string(),
+        _ => candidate.clone(),
+    };
+    let mut n = 1usize;
+    loop {
+        let alt = format!("{}_{}", stem, n);
+        if !ctx.dml_used_ids.contains(&alt) {
+            ctx.dml_used_ids.insert(alt.clone());
+            return alt;
+        }
+        n += 1;
     }
 }
 
@@ -834,7 +855,7 @@ fn handle_resolved_execute_sql(
                 DmlType::Delete => "delete",
             },
             &proc.proc_name,
-            &mut ctx.dml_counter,
+            ctx,
             semantic_key.as_deref(),
         );
 
@@ -1040,7 +1061,7 @@ fn process_execute_stmt(
                 DmlType::Delete => "delete",
             },
             &proc.proc_name,
-            &mut ctx.dml_counter,
+            ctx,
             semantic_key.as_deref(),
         );
         let args = build_mapper_call_args(proc);
@@ -1177,7 +1198,7 @@ fn process_execute_stmt(
                         DmlType::Delete => "delete",
                     },
                     &proc.proc_name,
-                    &mut ctx.dml_counter,
+                    ctx,
                     None,
                 );
                 let args = build_mapper_call_args(proc);
@@ -1305,7 +1326,7 @@ fn process_sql_statement(
         Statement::Select(select_stmt) => {
             let into_targets = &select_stmt.node.into_targets;
             let semantic_key = extract_dml_target_table(statement);
-            let method_id = dml_method_name("select", &proc.proc_name, &mut ctx.dml_counter, semantic_key.as_deref());
+            let method_id = dml_method_name("select", &proc.proc_name, ctx, semantic_key.as_deref());
             let clean_sql = clean_sql_for_mapper(sql_text, DmlType::Select);
             let args = build_mapper_call_args(proc);
 
@@ -1332,62 +1353,73 @@ fn process_sql_statement(
                     proc.parameters.iter().any(|p| p.name == var_name && p.is_out())
                 };
 
-                let (result_type, java_line, row_var_name) = if var_names.len() == 1 && targets.len() == 1 {
+                let (result_type, java_line, row_var_name, returns_list) = if var_names.len() == 1 && targets.len() == 1
+                {
                     let var_name = &var_names[0];
                     let var_java = snake_to_camel(var_name);
 
                     if is_out_param(var_name, proc) {
                         let line = out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc);
-                        ("Object".to_string(), line, String::new())
+                        ("Object".to_string(), line, String::new(), false)
                     } else {
                         let declared_type = proc
                             .local_vars
                             .get(&var_name.to_lowercase())
                             .cloned()
                             .unwrap_or_else(|| "Object".to_string());
-                        let rt = infer_select_result_type(&declared_type, &clean_sql);
-                        let line = if declared_type.contains("Map") {
-                            format!("{{ Object _tmp = mapper.{}({}); {} = (_tmp instanceof java.util.Map) ? (java.util.Map<String, Object>) _tmp : null; }}", method_id, args, var_java)
-                        } else if rt != declared_type
-                            && matches!(
-                                declared_type.as_str(),
-                                "Long"
-                                    | "long"
-                                    | "Integer"
-                                    | "int"
-                                    | "Double"
-                                    | "double"
-                                    | "Float"
-                                    | "float"
-                                    | "BigDecimal"
-                            )
-                        {
-                            format!("{{ Object _strResult = mapper.{}({}); if (_strResult != null) {{ /* concatenated string assigned to {} var */ }} }}", method_id, args, declared_type)
-                        } else if declared_type == "Long" || declared_type == "long" {
-                            format!("{{ Object _val = mapper.{}({}); if (_val != null) {} = (_val instanceof Number ? ((Number)_val).longValue() : Long.parseLong(String.valueOf(_val))); }}", method_id, args, var_java)
-                        } else if declared_type == "Integer" || declared_type == "int" {
-                            format!("{{ Object _val = mapper.{}({}); if (_val != null) {} = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }}", method_id, args, var_java)
-                        } else if declared_type == "String" {
-                            format!("{} = String.valueOf(mapper.{}({}));", var_java, method_id, args)
-                        } else if declared_type != "Object" {
-                            format!(
-                                "{{ Object _val = mapper.{}({}); if (_val != null) {} = ({}) _val; }}",
-                                method_id, args, var_java, declared_type
-                            )
+                        // Issue #124: `SELECT ... BULK COLLECT INTO coll` (or a
+                        // plain INTO targeting a record-collection variable)
+                        // assigns the mapper's row list directly.
+                        if declared_type.contains("List<") && declared_type.contains("Map") {
+                            proc.imports.insert("import java.util.List;".to_string());
+                            proc.imports.insert("import java.util.Map;".to_string());
+                            let line = format!("{} = mapper.{}({});", var_java, method_id, args);
+                            ("List<Map<String, Object>>".to_string(), line, String::new(), true)
                         } else {
-                            format!(
-                                "{{ Object _val = mapper.{}({}); if (_val != null) {} = _val; }}",
-                                method_id, args, var_java
-                            )
-                        };
-                        (rt, line, String::new())
+                            let rt = infer_select_result_type(&declared_type, &clean_sql);
+                            let line = if declared_type.contains("Map") {
+                                format!("{{ Object _tmp = mapper.{}({}); {} = (_tmp instanceof java.util.Map) ? (java.util.Map<String, Object>) _tmp : null; }}", method_id, args, var_java)
+                            } else if rt != declared_type
+                                && matches!(
+                                    declared_type.as_str(),
+                                    "Long"
+                                        | "long"
+                                        | "Integer"
+                                        | "int"
+                                        | "Double"
+                                        | "double"
+                                        | "Float"
+                                        | "float"
+                                        | "BigDecimal"
+                                )
+                            {
+                                format!("{{ Object _strResult = mapper.{}({}); if (_strResult != null) {{ /* concatenated string assigned to {} var */ }} }}", method_id, args, declared_type)
+                            } else if declared_type == "Long" || declared_type == "long" {
+                                format!("{{ Object _val = mapper.{}({}); if (_val != null) {} = (_val instanceof Number ? ((Number)_val).longValue() : Long.parseLong(String.valueOf(_val))); }}", method_id, args, var_java)
+                            } else if declared_type == "Integer" || declared_type == "int" {
+                                format!("{{ Object _val = mapper.{}({}); if (_val != null) {} = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }}", method_id, args, var_java)
+                            } else if declared_type == "String" {
+                                format!("{} = String.valueOf(mapper.{}({}));", var_java, method_id, args)
+                            } else if declared_type != "Object" {
+                                format!(
+                                    "{{ Object _val = mapper.{}({}); if (_val != null) {} = ({}) _val; }}",
+                                    method_id, args, var_java, declared_type
+                                )
+                            } else {
+                                format!(
+                                    "{{ Object _val = mapper.{}({}); if (_val != null) {} = _val; }}",
+                                    method_id, args, var_java
+                                )
+                            };
+                            (rt, line, String::new(), false)
+                        }
                     }
                 } else {
                     // Multiple INTO targets or qualified names — use Map
                     let row_var = next_select_var_name(proc);
                     let line = format!("Object {}_obj = mapper.{}({}); Map<String, Object> {} = ({}_obj instanceof java.util.Map) ? (java.util.Map<String, Object>) {}_obj : null;", row_var, method_id, args, row_var, row_var, row_var);
                     proc.imports.insert("import java.util.Map;".to_string());
-                    ("Map<String, Object>".to_string(), line, row_var)
+                    ("Map<String, Object>".to_string(), line, row_var, false)
                 };
 
                 proc.dml_statements.push(DmlStatement {
@@ -1395,6 +1427,7 @@ fn process_sql_statement(
                     method_id: method_id.clone(),
                     sql_text: clean_sql,
                     result_type: Some(result_type),
+                    returns_list,
                     ..Default::default()
                 });
                 push_logic_line(proc, java_line);
@@ -1476,7 +1509,7 @@ fn process_sql_statement(
         }
         Statement::Insert(_insert_stmt) => {
             let semantic_key = extract_dml_target_table(statement);
-            let method_id = dml_method_name("insert", &proc.proc_name, &mut ctx.dml_counter, semantic_key.as_deref());
+            let method_id = dml_method_name("insert", &proc.proc_name, ctx, semantic_key.as_deref());
             let args = build_mapper_call_args(proc);
             proc.dml_statements.push(DmlStatement {
                 sql_type: DmlType::Insert,
@@ -1489,7 +1522,7 @@ fn process_sql_statement(
         }
         Statement::Update(_update_stmt) => {
             let semantic_key = extract_dml_target_table(statement);
-            let method_id = dml_method_name("update", &proc.proc_name, &mut ctx.dml_counter, semantic_key.as_deref());
+            let method_id = dml_method_name("update", &proc.proc_name, ctx, semantic_key.as_deref());
             let args = build_mapper_call_args(proc);
             proc.dml_statements.push(DmlStatement {
                 sql_type: DmlType::Update,
@@ -1502,7 +1535,7 @@ fn process_sql_statement(
         }
         Statement::Delete(_delete_stmt) => {
             let semantic_key = extract_dml_target_table(statement);
-            let method_id = dml_method_name("delete", &proc.proc_name, &mut ctx.dml_counter, semantic_key.as_deref());
+            let method_id = dml_method_name("delete", &proc.proc_name, ctx, semantic_key.as_deref());
             let args = build_mapper_call_args(proc);
             proc.dml_statements.push(DmlStatement {
                 sql_type: DmlType::Delete,
@@ -1561,6 +1594,55 @@ fn infer_arg_type(arg: &str, proc: &ProcedureInfo) -> &'static str {
     "Object"
 }
 
+/// Issue #124: statement-position lowering of PL/SQL collection methods.
+/// `coll.DELETE(i[,j])`, `EXTEND`, `TRIM`, `LIMIT`, and value-returning
+/// pseudo-methods invoked as procedures (result discarded → comment).
+fn emit_collection_method_stmt(method: &str, obj: &str, args: &[String], proc: &mut ProcedureInfo) {
+    let var = crate::naming::snake_to_camel(obj);
+    let deref = proc.parameters.iter().any(|p| p.name.eq_ignore_ascii_case(obj) && p.is_out())
+        || proc.out_local_vars.contains_key(&obj.to_lowercase());
+    let base = if deref { format!("{}.get()", var) } else { var };
+    let idx = |i: usize| args.get(i).map(|s| s.as_str()).unwrap_or("1");
+    match method {
+        "DELETE" => match args.len() {
+            0 => push_logic_line(proc, format!("{}.clear();", base)),
+            1 => push_logic_line(proc, format!("{}.remove((int)({}) - 1);", base, idx(0))),
+            _ => push_logic_line(proc, format!("{}.subList((int)({}) - 1, (int)({})).clear();", base, idx(0), idx(1))),
+        },
+        "EXTEND" => {
+            if args.is_empty() {
+                push_logic_line(proc, format!("{}.add(null);", base));
+            } else {
+                push_logic_line(proc, format!("while ({}.size() < (int)({})) {{ {}.add(null); }}", base, idx(0), base));
+            }
+        }
+        "TRIM" => {
+            if args.is_empty() {
+                push_logic_line(proc, format!("if (!{}.isEmpty()) {{ {}.remove({}.size() - 1); }}", base, base, base));
+            } else {
+                push_logic_line(
+                    proc,
+                    format!("while ({}.size() > (int)({})) {{ {}.remove({}.size() - 1); }}", base, idx(0), base, base),
+                );
+            }
+        }
+        "LIMIT" => {
+            // Oracle raises if count > limit; keep a comment rather than
+            // silently dropping the check.
+            push_logic_line(
+                proc,
+                format!("// coll.LIMIT({}) bounds check omitted (Java List has no fixed limit)", idx(0)),
+            );
+        }
+        // Value-returning pseudo-methods used as statements: result is
+        // discarded, so emit the equivalent expression as a comment.
+        other => push_logic_line(
+            proc,
+            format!("// {}.{}({}) evaluated and discarded", obj, other.to_lowercase(), args.join(", ")),
+        ),
+    }
+}
+
 fn process_procedure_call(
     call: &ogsql_parser::ast::plpgsql::PlProcedureCall,
     proc: &mut ProcedureInfo,
@@ -1589,6 +1671,23 @@ fn process_procedure_call(
 
     let method = java_method_name(func);
     let raw_args: Vec<String> = call.arguments.iter().map(|a| crate::expr::expr_to_java(a, proc)).collect();
+
+    // Issue #124: PL/SQL collection pseudo-method procedure calls on a
+    // collection-typed variable — coll.DELETE/EXTEND/TRIM/LIMIT/EXISTS/...
+    if name_parts.len() == 2 {
+        let meth = name_parts[1].to_uppercase();
+        if matches!(
+            meth.as_str(),
+            "EXISTS" | "DELETE" | "EXTEND" | "TRIM" | "LIMIT" | "NEXT" | "PRIOR" | "COUNT" | "FIRST" | "LAST"
+        ) {
+            if let Some(t) = crate::expr::resolve_var_java_type(name_parts[0], proc) {
+                if t.contains("List") {
+                    emit_collection_method_stmt(&meth, name_parts[0], &raw_args, proc);
+                    return;
+                }
+            }
+        }
+    }
 
     // RAISE_APPLICATION_ERROR(code, msg) is parsed as a procedure call, not RAISE.
     if func.eq_ignore_ascii_case("raise_application_error") {
@@ -2035,7 +2134,7 @@ fn process_forall_stmt(
     }
 
     // Build mapper method name
-    let mapper_method = dml_method_name(&dml_type_str, &proc.proc_name, &mut ctx.dml_counter, None);
+    let mapper_method = dml_method_name(&dml_type_str, &proc.proc_name, ctx, None);
 
     let dml_type = match dml_type_str.as_str() {
         "insert" => DmlType::Insert,
@@ -2696,7 +2795,7 @@ pub fn process_statement(
                     proc.imports.insert("import java.util.Map;".to_string());
                     proc.imports.insert("import java.util.ArrayList;".to_string());
 
-                    let method_id = dml_method_name("select", &proc.proc_name, &mut ctx.dml_counter, None);
+                    let method_id = dml_method_name("select", &proc.proc_name, ctx, None);
                     let args = build_mapper_call_args(proc);
 
                     proc.dml_statements.push(DmlStatement {
@@ -2751,7 +2850,7 @@ pub fn process_statement(
 
                     if let Some(query_sql) = cursor_query {
                         let clean_sql = query_sql.replace('\n', " ");
-                        let method_id = dml_method_name("select", &proc.proc_name, &mut ctx.dml_counter, None);
+                        let method_id = dml_method_name("select", &proc.proc_name, ctx, None);
                         let args = build_mapper_call_args(proc);
 
                         proc.dml_statements.push(DmlStatement {
@@ -2949,7 +3048,7 @@ pub fn process_statement(
 
             if let Some(raw_sql) = sql_text_opt {
                 let sql_text = preprocess_cursor_sql(&raw_sql, &using_args, proc);
-                let method_id = dml_method_name("select", &proc.proc_name, &mut ctx.dml_counter, None);
+                let method_id = dml_method_name("select", &proc.proc_name, ctx, None);
                 let result_var = format!("{}Result", raw_cursor_java);
                 let index_var = format!("{}Idx", raw_cursor_java);
 
@@ -3169,7 +3268,7 @@ pub fn process_statement(
                         DmlType::Delete => "delete",
                     },
                     &proc.proc_name,
-                    &mut ctx.dml_counter,
+                    ctx,
                     None,
                 );
                 let args = build_mapper_call_args(proc);
@@ -3347,6 +3446,7 @@ mod tests {
         StatementContext {
             summaries: Box::leak(Box::new(HashMap::new())),
             dml_counter: HashMap::new(),
+            dml_used_ids: HashSet::new(),
             sm_enum_name: None,
             sm_labels: HashSet::new(),
             debug: false,
@@ -3478,5 +3578,62 @@ mod tests {
         assert!(proc.java_logic_lines[0].contains("throw new BusinessException"));
         assert!(proc.java_logic_lines[0].contains("p_mode must be REPLACE or SWAP"));
         assert!(ctx.unresolved_calls.is_empty());
+    }
+
+    // ── Issue #128-2: DML statement-id uniqueness across overloads ──
+
+    #[test]
+    fn test_dml_method_name_dedupes_against_package_used_ids() {
+        // Two DMLs whose per-key counters render the same method_id (e.g. a
+        // semantic-keyed `select{Table}` and a proc-name-keyed `select{Proc}`
+        // that Pascal-case identically) must not share one MyBatis statement
+        // id — the second gets the next free `_N` suffix.
+        let mut ctx = empty_stmt_ctx();
+        ctx.dml_used_ids.insert("selectMyProc".to_string());
+        let id = dml_method_name("select", "my_proc", &mut ctx, None);
+        assert_eq!(id, "selectMyProc_1", "collision must take next free suffix");
+        assert!(ctx.dml_used_ids.contains("selectMyProc_1"));
+        // A third distinct id keeps its own name.
+        let id2 = dml_method_name("select", "other_proc", &mut ctx, None);
+        assert_eq!(id2, "selectOtherProc");
+    }
+
+    // ── Issue #124: collection method procedure calls ──
+
+    #[test]
+    fn test_collection_delete_extend_trim_statements() {
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_coll".into(), "java.util.List<Long>".into());
+
+        emit_collection_method_stmt("DELETE", "v_coll", &["2L".to_string()], &mut proc);
+        assert!(
+            proc.java_logic_lines.iter().any(|l| l.contains("vColl.remove((int)(2L) - 1);")),
+            "DELETE(i) → List.remove(i-1): {:?}",
+            proc.java_logic_lines
+        );
+
+        proc.java_logic_lines.clear();
+        emit_collection_method_stmt("EXTEND", "v_coll", &[], &mut proc);
+        assert!(
+            proc.java_logic_lines.iter().any(|l| l.contains("vColl.add(null);")),
+            "EXTEND → add(null): {:?}",
+            proc.java_logic_lines
+        );
+
+        proc.java_logic_lines.clear();
+        emit_collection_method_stmt("TRIM", "v_coll", &[], &mut proc);
+        assert!(
+            proc.java_logic_lines.iter().any(|l| l.contains("vColl.remove(vColl.size() - 1)")),
+            "TRIM → remove last: {:?}",
+            proc.java_logic_lines
+        );
+
+        proc.java_logic_lines.clear();
+        emit_collection_method_stmt("DELETE", "v_coll", &[], &mut proc);
+        assert!(
+            proc.java_logic_lines.iter().any(|l| l.contains("vColl.clear();")),
+            "DELETE() → clear: {:?}",
+            proc.java_logic_lines
+        );
     }
 }

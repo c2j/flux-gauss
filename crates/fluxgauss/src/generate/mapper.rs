@@ -37,6 +37,56 @@ static RETURNING_INTO_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLoc
 static DOLLAR_PARAM_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 static PG_CAST_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 
+/// Issue #128: every `#{name}`/`${name}` placeholder in a mapper statement
+/// must have a matching `@Param("name")` on the interface method — MyBatis
+/// binds case-sensitively, so a mismatch surfaces only as a runtime
+/// BindingException. Returns human-readable warnings; generation continues
+/// and the warnings land in the conversion report.
+pub fn mapper_param_mismatches(pkg: &PackageInfo) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let placeholder_re = regex::Regex::new(r"[#\$]\{\s*([A-Za-z_]\w*)").unwrap();
+    let param_re = regex::Regex::new(r#"@Param\("([^"]+)"\)"#).unwrap();
+    let item_re = regex::Regex::new(r#"\bitem="([A-Za-z_]\w*)""#).unwrap();
+    let class_name = format!("{}Mapper", package_to_classname(&pkg.package_name));
+
+    for proc in &pkg.procedures {
+        for dml in &proc.dml_statements {
+            // Mirror write_mapper_interface: OUT params referenced by the SQL
+            // are promoted into extra_params before the signature is built.
+            let mut dml_mut = dml.clone();
+            promote_out_params_to_mapper(
+                &proc.parameters,
+                &dml.sql_text,
+                &mut dml_mut.extra_params,
+                &proc.out_local_vars,
+            );
+            let mut imports = BTreeSet::new();
+            let sig = build_mapper_method(proc, &dml_mut, &mut imports, &pkg.package_vars);
+            let expected: std::collections::HashSet<String> =
+                param_re.captures_iter(&sig).map(|c| c[1].to_string()).collect();
+
+            let stmt = build_mapper_statement(proc, dml, &pkg.package_vars);
+            let foreach_items: std::collections::HashSet<String> =
+                item_re.captures_iter(&stmt).map(|c| c[1].to_string()).collect();
+
+            let mut missing: Vec<String> = placeholder_re
+                .captures_iter(&stmt)
+                .map(|c| c[1].to_string())
+                .filter(|n| !expected.contains(n) && !foreach_items.contains(n) && !n.starts_with("arg") && n != "list")
+                .collect();
+            missing.sort();
+            missing.dedup();
+            for m in missing {
+                warnings.push(format!(
+                    "{}Mapper.{}: placeholder #{{{}}} has no matching @Param (issue #128)",
+                    class_name, dml.method_id, m
+                ));
+            }
+        }
+    }
+    warnings
+}
+
 pub fn write_mapper_interface(
     base_path: &Path,
     pkg: &PackageInfo,
@@ -589,6 +639,7 @@ fn build_mapper_statement(
     }
 
     sql = convert_params_to_mybatis(&sql, &proc.parameters, &proc.local_vars, package_vars);
+    sql = normalize_placeholder_param_case(&sql, proc, dml, package_vars);
 
     // Dynamic SQL stubs have #{param} in comments that MyBatis still tries to bind.
     // Strip all #{...} from DYNAMIC SQL comment stubs so MyBatis ignores them.
@@ -1476,6 +1527,45 @@ fn strip_generics(java_type: &str) -> &str {
     } else {
         java_type
     }
+}
+
+/// Issue #128: MyBatis binds `#{name}` case-sensitively against `@Param`.
+/// `convert_params_to_mybatis` emits `snake_to_camel` names, but placeholders
+/// can also originate from literal SQL text or dotted-field rewrites with a
+/// different casing. Rewrite the leading name of every `#{...}`/`${...}` to
+/// the canonical `@Param` spelling when it matches case-insensitively.
+fn normalize_placeholder_param_case(
+    sql: &str,
+    proc: &crate::types::ProcedureInfo,
+    dml: &crate::types::DmlStatement,
+    package_vars: &std::collections::HashMap<String, crate::types::VarInfo>,
+) -> String {
+    let mut known: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for p in &proc.parameters {
+        known.insert(snake_to_camel(&p.name));
+    }
+    for k in proc.local_vars.keys() {
+        known.insert(snake_to_camel(k));
+    }
+    for k in package_vars.keys() {
+        known.insert(snake_to_camel(k));
+    }
+    for (k, _) in &dml.extra_params {
+        known.insert(k.clone());
+    }
+    if known.is_empty() {
+        return sql.to_string();
+    }
+    let placeholder_name_re = regex::Regex::new(r"([#\$])\{\s*([A-Za-z_]\w*)").unwrap();
+    placeholder_name_re
+        .replace_all(sql, |caps: &regex::Captures| {
+            let name = &caps[2];
+            match known.iter().find(|k| k.eq_ignore_ascii_case(name)) {
+                Some(canon) => format!("{}{{{}", &caps[1], canon),
+                None => caps[0].to_string(),
+            }
+        })
+        .to_string()
 }
 
 fn convert_params_to_mybatis(

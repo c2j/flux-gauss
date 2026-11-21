@@ -664,6 +664,11 @@ fn domain_test_value(
 fn default_test_value(java_type: &str, param_name: &str) -> String {
     let tl = java_type.to_lowercase();
     let nl = param_name.to_lowercase();
+    // Issue #124: collection params must be checked before scalar `contains`
+    // tests — "java.util.list<double>" contains "double" and would yield "1.0d".
+    if tl.contains("list<") {
+        return "new java.util.ArrayList<>()".to_string();
+    }
     if tl.contains("long") {
         if nl.contains("id") {
             return "1L".to_string();
@@ -760,6 +765,10 @@ fn is_count_method(method_id: &str, sql_text: &str) -> bool {
 
 fn scalar_mock_value(java_type: &str) -> String {
     let tl = java_type.to_lowercase();
+    // Issue #124: same collection-before-scalar ordering as default_test_value.
+    if tl.contains("list<") {
+        return "new java.util.ArrayList<>()".to_string();
+    }
     if tl.contains("long") {
         return "999L".to_string();
     }

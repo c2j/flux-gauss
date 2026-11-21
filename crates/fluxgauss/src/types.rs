@@ -148,6 +148,16 @@ pub struct CursorInfo {
 pub struct CustomTypeInfo {
     pub fields: Vec<(String, String)>,
     pub is_record: bool,
+    /// Java element type for collection types (`TYPE t IS TABLE OF x`,
+    /// `VARRAY`, `INDEX BY`). `None` for records / ref cursors / object
+    /// types. Issue #124.
+    pub elem_java_type: Option<String>,
+}
+
+impl CustomTypeInfo {
+    pub fn is_collection(&self) -> bool {
+        self.elem_java_type.is_some() && !self.is_record
+    }
 }
 
 // ── Scheduler Task ──
@@ -645,9 +655,11 @@ mod tests {
         let ct = CustomTypeInfo {
             fields: vec![("id".into(), "Long".into()), ("name".into(), "String".into())],
             is_record: false,
+            elem_java_type: None,
         };
         assert_eq!(ct.fields.len(), 2);
         assert!(!ct.is_record);
+        assert!(!ct.is_collection());
     }
 
     #[test]

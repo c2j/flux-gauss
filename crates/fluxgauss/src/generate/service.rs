@@ -72,13 +72,19 @@ pub fn write_service_class(
     });
     let has_map_in_body = all_body.contains("Map<String") || has_list_return;
     let has_cursor_results = pkg.procedures.iter().any(|p| !p.open_cursors.is_empty());
-    if all_body.contains("List<") || has_list_return || has_cursor_results {
+    // Package-level vars are emitted as field initializers (`= new HashMap<>()`,
+    // `= new ArrayList<>()`) which never appear in java_logic_lines — scan their
+    // declared types too or the imports are missing (issue #124 exposed this:
+    // a record-typed package var now resolves to Map<String, Object>).
+    let has_pkg_map_var = pkg.package_vars.values().any(|v| v.java_type.contains("Map<"));
+    let has_pkg_list_var = pkg.package_vars.values().any(|v| v.java_type.contains("List<"));
+    if all_body.contains("List<") || has_list_return || has_cursor_results || has_pkg_list_var {
         all_imports.insert("import java.util.List;".to_string());
     }
-    if has_map_in_body || has_cursor_results {
+    if has_map_in_body || has_cursor_results || has_pkg_map_var {
         all_imports.insert("import java.util.Map;".to_string());
     }
-    if all_body.contains("HashMap<") || all_body.contains("new HashMap") {
+    if all_body.contains("HashMap<") || all_body.contains("new HashMap") || has_pkg_map_var {
         all_imports.insert("import java.util.HashMap;".to_string());
     }
     if all_body.contains("BigDecimal") {
@@ -355,6 +361,11 @@ pub(crate) fn boxed_to_primitive(t: &str) -> &str {
 
 fn default_for_type(t: &str) -> &'static str {
     let tl = t.to_lowercase();
+    // Issue #124: check collection types BEFORE scalar `contains` checks —
+    // "java.util.list<long>" contains "long" and would wrongly yield "0L".
+    if tl.contains("list<") {
+        return "new java.util.ArrayList<>()";
+    }
     if tl.contains("long") {
         return "0L";
     }

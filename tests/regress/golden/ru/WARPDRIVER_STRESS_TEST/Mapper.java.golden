@@ -13,75 +13,75 @@ public interface WarpdriverStressTestMapper {
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:106 — PKG_WARPDRIVER_STRESS_TEST.sp_autonomous_audit
     int insertAuditTrail(@Param("pAction") String pAction, @Param("pDetail") String pDetail);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:138 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator
-    List<Map<String, Object>> selectSpMainOrchestrator(@Param("pBizDate") String pBizDate, @Param("pMode") String pMode, @Param("vDate") java.sql.Date vDate, @Param("gBatchSize") Integer gBatchSize);
+    List<Map<String, Object>> selectSpMainOrchestrator_2(@Param("pBizDate") String pBizDate, @Param("pMode") String pMode, @Param("vDate") java.sql.Date vDate, @Param("gBatchSize") Integer gBatchSize);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:138 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator
-    List<Map<String, Object>> selectSpMainOrchestrator_1(@Param("pBizDate") String pBizDate, @Param("pMode") String pMode, @Param("vDate") java.sql.Date vDate);
+    List<Map<String, Object>> selectSpMainOrchestrator_3(@Param("pBizDate") String pBizDate, @Param("pMode") String pMode, @Param("vDate") java.sql.Date vDate);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:138 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator
-    int updateOrders(@Param("pBizDate") String pBizDate, @Param("pMode") String pMode, @Param("vRec") Map<String, Object> vRec);
+    int updateOrders_1(@Param("pBizDate") String pBizDate, @Param("pMode") String pMode, @Param("vRec") Map<String, Object> vRec);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:138 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator
-    int insertErrorLog(@Param("pBizDate") String pBizDate, @Param("pMode") String pMode, @Param("pLogId") Long pLogId, @Param("vRec") Map<String, Object> vRec);
+    int insertErrorLog_1(@Param("pBizDate") String pBizDate, @Param("pMode") String pMode, @Param("pLogId") Long pLogId, @Param("vRec") Map<String, Object> vRec);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:138 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator
-    int insertOrderItemSnapshot(@Param("pBizDate") String pBizDate, @Param("pMode") String pMode, @Param("pLogId") Long pLogId, @Param("i") int i, @Param("vItemTab") List<String> vItemTab);
+    int insertOrderItemSnapshot_1(@Param("pBizDate") String pBizDate, @Param("pMode") String pMode, @Param("pLogId") Long pLogId, @Param("i") int i, @Param("vItemTab") List<String> vItemTab);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master
-    int insertDistributedLocks(@Param("pOrderId") Long pOrderId, @Param("vConnId") Long vConnId, @Param("vLockKey") String vLockKey);
+    int insertDistributedLocks_1(@Param("pOrderId") Long pOrderId, @Param("vConnId") Long vConnId, @Param("vLockKey") String vLockKey);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master
-    java.math.BigDecimal selectOrders(@Param("pOrderId") Long pOrderId);
+    java.math.BigDecimal selectOrders_1(@Param("pOrderId") Long pOrderId);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master
-    int updateOrders(@Param("pOrderId") Long pOrderId);
+    int updateOrders_3(@Param("pOrderId") Long pOrderId);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master
-    int updateAccounts(@Param("pOrderId") Long pOrderId, @Param("vTempAmt") java.math.BigDecimal vTempAmt);
+    int updateAccounts_1(@Param("pOrderId") Long pOrderId, @Param("vTempAmt") java.math.BigDecimal vTempAmt);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master
-    int insertTransactionLog(@Param("pOrderId") Long pOrderId, @Param("vTempAmt") java.math.BigDecimal vTempAmt);
-    // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master
-    int deleteDistributedLocks(@Param("pOrderId") Long pOrderId, @Param("vLockKey") String vLockKey);
+    int insertTransactionLog_1(@Param("pOrderId") Long pOrderId, @Param("vTempAmt") java.math.BigDecimal vTempAmt);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master
     int deleteDistributedLocks_1(@Param("pOrderId") Long pOrderId, @Param("vLockKey") String vLockKey);
+    // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master
+    int deleteDistributedLocks_2(@Param("pOrderId") Long pOrderId, @Param("vLockKey") String vLockKey);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:356 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_loop_purge
-    int deleteOperationLogs(@Param("pRetentionDays") Integer pRetentionDays, @Param("vBatch") Integer vBatch, @Param("vCutoff") java.sql.Timestamp vCutoff);
+    int deleteOperationLogs_1(@Param("pRetentionDays") Integer pRetentionDays, @Param("vBatch") Integer vBatch, @Param("vCutoff") java.sql.Timestamp vCutoff);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:397 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_skip_logic
-    List<Map<String, Object>> selectSpGotoSkipLogic(@Param("pReportType") String pReportType, @Param("pBizDate") String pBizDate, @Param("vDate") java.sql.Date vDate);
+    List<Map<String, Object>> selectSpGotoSkipLogic_1(@Param("pReportType") String pReportType, @Param("pBizDate") String pBizDate, @Param("vDate") java.sql.Date vDate);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:397 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_skip_logic
-    String selectSettlement(@Param("pReportType") String pReportType, @Param("pBizDate") String pBizDate, @Param("vDate") java.sql.Date vDate);
+    String selectSettlement_1(@Param("pReportType") String pReportType, @Param("pBizDate") String pBizDate, @Param("vDate") java.sql.Date vDate);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:442 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape
-    int updateBulkOrders(@Param("pBatchId") Long pBatchId, @Param("mainRec") Map<String, Object> mainRec);
+    int updateBulkOrders_4(@Param("pBatchId") Long pBatchId, @Param("mainRec") Map<String, Object> mainRec);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:442 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape
-    Integer selectCustomerRisk(@Param("pBatchId") Long pBatchId, @Param("mainRec") Map<String, Object> mainRec, @Param("riskRec") Map<String, Object> riskRec);
+    Integer selectCustomerRisk_1(@Param("pBatchId") Long pBatchId, @Param("mainRec") Map<String, Object> mainRec, @Param("riskRec") Map<String, Object> riskRec);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:442 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape
-    int updateBulkOrders_1(@Param("pBatchId") Long pBatchId, @Param("mainRec") Map<String, Object> mainRec, @Param("riskRec") Map<String, Object> riskRec);
+    int updateBulkOrders_5(@Param("pBatchId") Long pBatchId, @Param("mainRec") Map<String, Object> mainRec, @Param("riskRec") Map<String, Object> riskRec);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:442 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape
-    Integer selectInventory(@Param("pBatchId") Long pBatchId, @Param("stockRec") Map<String, Object> stockRec);
+    Integer selectInventory_1(@Param("pBatchId") Long pBatchId, @Param("stockRec") Map<String, Object> stockRec);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:442 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape
-    int updateBulkOrders_2(@Param("pBatchId") Long pBatchId, @Param("mainRec") Map<String, Object> mainRec, @Param("stockRec") Map<String, Object> stockRec);
+    int updateBulkOrders_6(@Param("pBatchId") Long pBatchId, @Param("mainRec") Map<String, Object> mainRec, @Param("stockRec") Map<String, Object> stockRec);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:442 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape
-    int updateBulkOrders_3(@Param("pBatchId") Long pBatchId, @Param("mainRec") Map<String, Object> mainRec);
+    int updateBulkOrders_7(@Param("pBatchId") Long pBatchId, @Param("mainRec") Map<String, Object> mainRec);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine
-    int updateOrders(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
+    int updateOrders_16(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine
-    int updateOrders_1(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
+    int updateOrders_17(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine
-    int updateOrders_2(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
+    int updateOrders_18(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine
-    int updateOrders_3(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent, @Param("vRetry") Integer vRetry);
+    int updateOrders_19(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent, @Param("vRetry") Integer vRetry);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine
-    int updateOrders_4(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
+    int updateOrders_20(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine
-    int updateOrders_5(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
+    int updateOrders_21(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine
-    int updateOrders_6(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
+    int updateOrders_22(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine
-    int updateOrders_7(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
+    int updateOrders_23(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine
-    int updateOrders_8(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
+    int updateOrders_24(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine
-    int updateOrders_9(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
+    int updateOrders_25(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine
-    int updateOrders_10(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
+    int updateOrders_26(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine
-    int updateOrders_11(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
+    int updateOrders_27(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine
-    String selectOrders(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
+    String selectOrders_3(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:517 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_state_machine
-    int insertStateTransitions(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent, @Param("vState") String vState);
+    int insertStateTransitions_1(@Param("pOrderId") Long pOrderId, @Param("pEvent") String pEvent, @Param("vState") String vState);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:637 — PKG_WARPDRIVER_STRESS_TEST.sp_dynamic_scheduler_dispatch
     int insertJobDispatchLog(@Param("pTaskList") String pTaskList, @Param("pJobPrefix") String pJobPrefix, @Param("vJobName") String vJobName, @Param("vTaskId") Long vTaskId);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:697 — PKG_WARPDRIVER_STRESS_TEST.fn_recursive_tree_cleanup
@@ -95,17 +95,17 @@ public interface WarpdriverStressTestMapper {
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:769 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return
     List<Map<String, Object>> selectFnMultiCursorReturn_1(@Param("pCustomerId") Long pCustomerId);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:769 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return
-    Integer selectOrders_2(@Param("pCustomerId") Long pCustomerId);
+    Integer selectOrders_4(@Param("pCustomerId") Long pCustomerId);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:769 — PKG_WARPDRIVER_STRESS_TEST.fn_multi_cursor_return
     Integer selectPayments(@Param("pCustomerId") Long pCustomerId);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell
     java.math.BigDecimal selectAccounts(@Param("pAccountId") Long pAccountId, @Param("pAmount") java.math.BigDecimal pAmount);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell
-    int updateAccounts_1(@Param("pAccountId") Long pAccountId, @Param("pAmount") java.math.BigDecimal pAmount);
+    int updateAccounts_2(@Param("pAccountId") Long pAccountId, @Param("pAmount") java.math.BigDecimal pAmount);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell
     int insertAccountJournal(@Param("pAccountId") Long pAccountId, @Param("pAmount") java.math.BigDecimal pAmount);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell
-    int updateAccounts_2(@Param("pAccountId") Long pAccountId, @Param("pAmount") java.math.BigDecimal pAmount);
+    int updateAccounts_3(@Param("pAccountId") Long pAccountId, @Param("pAmount") java.math.BigDecimal pAmount);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell
     int insertRiskEvents(@Param("pAccountId") Long pAccountId, @Param("pAmount") java.math.BigDecimal pAmount);
     // {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:801 — PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell

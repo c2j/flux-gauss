@@ -295,10 +295,9 @@ pub fn rewrite_with_pattern(
     body: &[PlStatement],
     analysis: &GotoAnalysis,
     proc: &mut ProcedureInfo,
-    summaries: &std::collections::HashMap<String, crate::types::PackageSummary>,
+    stmt_ctx: &mut crate::context::StatementContext,
 ) -> Result<(), ConversionError> {
-    let mut stmt_ctx = crate::context::StatementContext::new(summaries);
-    rewrite_with_pattern_ctx(body, analysis, proc, &mut stmt_ctx)
+    rewrite_with_pattern_ctx(body, analysis, proc, stmt_ctx)
 }
 
 fn rewrite_with_pattern_ctx(

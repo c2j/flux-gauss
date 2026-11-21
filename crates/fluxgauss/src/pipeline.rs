@@ -686,7 +686,18 @@ fn phase2_analyze(
 
     for pkg in &mut packages {
         let pkg_custom_types = pkg.custom_types.clone();
-        let pkg_vars = pkg.package_vars.clone();
+        // Issue #124: package-level vars whose type is a custom collection /
+        // record were extracted as `Object`; resolve them once here so both
+        // per-procedure analysis and service generation see the real type.
+        let mut pkg_vars = pkg.package_vars.clone();
+        for vi in pkg_vars.values_mut() {
+            if vi.java_type == "Object" {
+                if let Some(ct) = crate::extract::find_custom_type(&pkg_custom_types, &vi.sql_type) {
+                    vi.java_type = crate::extract::custom_type_java_type(ct);
+                }
+            }
+        }
+        pkg.package_vars = pkg_vars.clone();
 
         let mut sibling_params: HashMap<String, Vec<Vec<_>>> = HashMap::new();
         for p in &pkg.procedures {
@@ -824,6 +835,10 @@ fn phase3_generate(
             });
             continue;
         }
+
+        // Issue #128: surface @Param/placeholder mismatches at generation
+        // time instead of as runtime BindingExceptions.
+        analyzed.warnings.extend(crate::generate::mapper::mapper_param_mismatches(pkg));
 
         if let Err(e) =
             crate::generate::test::write_service_test(output_dir, pkg, &base_package, &service_injections, encoding)

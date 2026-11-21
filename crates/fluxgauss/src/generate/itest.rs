@@ -1523,6 +1523,11 @@ fn itest_dollar_param_value(param_name: &str, sql_fragment: &str) -> String {
 fn default_test_value(java_type: &str, param_name: &str) -> String {
     let tl = java_type.to_lowercase();
     let nl = param_name.to_lowercase();
+    // Issue #124: collection params before scalar `contains` checks —
+    // "java.util.list<double>" contains "double" and would yield "1.0d".
+    if tl.contains("list<") {
+        return "new java.util.ArrayList<>()".to_string();
+    }
     if tl.contains("long") {
         if nl.contains("id") {
             return "1L".to_string();

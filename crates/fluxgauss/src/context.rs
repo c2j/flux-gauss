@@ -31,6 +31,12 @@ pub struct AnalysisContext {
     /// Debug mode enabled (--debug CLI flag)
     pub debug: bool,
     pub dml_counters: HashMap<String, HashMap<String, usize>>,
+    /// Per-package set of mapper statement ids already handed out. The
+    /// per-key `dml_counters` cannot see collisions ACROSS counter keys
+    /// (e.g. semantic-key `select{Table}` vs proc-name `select{Proc}` can
+    /// render the same method_id) — this set is the package-wide uniqueness
+    /// guard for `dml_method_name` (issue #128).
+    pub dml_used_ids: HashMap<String, HashSet<String>>,
 }
 
 impl AnalysisContext {
@@ -46,6 +52,7 @@ impl AnalysisContext {
             source_cache: HashMap::new(),
             debug: false,
             dml_counters: HashMap::new(),
+            dml_used_ids: HashMap::new(),
         }
     }
 }
@@ -70,6 +77,8 @@ impl GenerationContext {
 pub struct StatementContext<'a> {
     pub summaries: &'a HashMap<String, PackageSummary>,
     pub dml_counter: HashMap<String, usize>,
+    /// Mapper statement ids already used in this package (issue #128).
+    pub dml_used_ids: HashSet<String>,
     pub sm_enum_name: Option<String>,
     pub sm_labels: HashSet<String>,
     pub debug: bool,
@@ -83,6 +92,7 @@ impl<'a> StatementContext<'a> {
         Self {
             summaries,
             dml_counter: HashMap::new(),
+            dml_used_ids: HashSet::new(),
             sm_enum_name: None,
             sm_labels: HashSet::new(),
             debug: false,
