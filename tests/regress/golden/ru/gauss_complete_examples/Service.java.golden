@@ -31,7 +31,7 @@ public class CursorAdvancedService {
     public void procCursorDynamicUsing(String pTableName, String pStatusList, java.math.BigDecimal pMinAmount, java.sql.Date pStartDate, AtomicReference<Object> pResult) {
         String vInClause = null;
         String vSql = null;
-        List<String> vStatusArray = null;
+        List<String> vStatusArray = new java.util.ArrayList<>();
         Integer vStatusCount = 0;
         List<Map<String, Object>> pResultResult = null;
         int pResultIdx = 0;
@@ -128,6 +128,7 @@ package com.example.demo.service;
 import com.example.demo.exception.BusinessException;
 import com.example.demo.mapper.CursorLifecycleMapper;
 import java.math.BigDecimal;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -142,7 +143,7 @@ public class CursorLifecycleService {
     private static final Logger log = LoggerFactory.getLogger(CursorLifecycleService.class);
 
     private final CursorLifecycleMapper cursorLifecycleMapper;
-    private static final Object _return = null;
+    private static final Map<String, Object> _return = new HashMap<>();
 
     public CursorLifecycleService(CursorLifecycleMapper cursorLifecycleMapper) {
         this.cursorLifecycleMapper = cursorLifecycleMapper;
@@ -391,7 +392,7 @@ public class GaussCompleteExamplesService {
 
     // Source: string_split (FUNCTION) — {FIXTURES_ROOT}/gauss_complete_examples.sql:5-31
     public Object stringSplit(String pString, String pDelimiter) {
-        List<String> vArray = null;
+        List<String> vArray = new java.util.ArrayList<>();
         Integer vEnd = 0;
         Integer vIdx = 1;
         Integer vStart = 1;

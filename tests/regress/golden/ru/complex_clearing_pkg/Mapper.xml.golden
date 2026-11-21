@@ -26,8 +26,8 @@
                 LIMIT 1
     </select>
 
-    <!-- Source: {FIXTURES_ROOT}/complex_clearing_pkg.sql:208-375 — complex_clearing_pkg.handle_trade_change.updateTradeRecord -->
-    <update id="updateTradeRecord">
+    <!-- Source: {FIXTURES_ROOT}/complex_clearing_pkg.sql:208-375 — complex_clearing_pkg.handle_trade_change.updateTradeRecord_1 -->
+    <update id="updateTradeRecord_1">
         UPDATE trade_record SET status = 'ARCHIVED', deleted_at = current_timestamp WHERE trade_id = #{arg1}
     </update>
 

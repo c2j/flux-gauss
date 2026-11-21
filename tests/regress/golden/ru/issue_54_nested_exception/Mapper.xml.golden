@@ -17,6 +17,12 @@
 
     <!-- Source: {FIXTURES_ROOT}/issue_54_nested_exception.sql:48-74 — pkg_issue54_nested_exc.proc_three_level_nested.selectTIssue54Data_2 -->
     <select id="selectTIssue54Data_2" resultType="string">
+        select data_value FROM t_issue54_data WHERE data_key = 'key1'
+                LIMIT 1
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_54_nested_exception.sql:48-74 — pkg_issue54_nested_exc.proc_three_level_nested.selectTIssue54Data_3 -->
+    <select id="selectTIssue54Data_3" resultType="string">
         select data_value FROM t_issue54_data WHERE data_key = 'key2'
                 LIMIT 1
     </select>

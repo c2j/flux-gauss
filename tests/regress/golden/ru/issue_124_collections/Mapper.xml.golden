@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.CollTypesMapper">
+
+    <!-- Source: {FIXTURES_ROOT}/issue_124_collections.sql:13-31 — pkg_coll_types.prc_collection_demo.selectEmp -->
+    <select id="selectEmp" parameterType="string" resultType="java.util.LinkedHashMap">
+        SELECT item_id, item_name FROM emp
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_124_collections.sql:13-31 — pkg_coll_types.prc_collection_demo.updateCfgTable -->
+    <update id="updateCfgTable">
+        UPDATE cfg_table SET val = #{vCnt, jdbcType=BIGINT, javaType=Long} WHERE key = #{pMode, jdbcType=VARCHAR, javaType=String}
+    </update>
+
+</mapper>

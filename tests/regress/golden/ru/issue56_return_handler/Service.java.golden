@@ -68,7 +68,7 @@ public class Issue56ReturnHandlerService {
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
         try {
-            vData = String.valueOf(issue56ReturnHandlerMapper.selectTIssue56Data_2());
+            vData = String.valueOf(issue56ReturnHandlerMapper.selectTIssue56Data_3());
             pResult.set(String.valueOf(vData));
         } catch (BusinessException __e1) { // no_data_found
             __SQLERRM__ = __e1.getMessage();

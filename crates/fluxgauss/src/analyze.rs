@@ -3,6 +3,32 @@ use crate::types::{ConversionError, PackageInfo, ProcedureInfo, UnresolvedCall};
 use ogsql_parser::ast::plpgsql::PlStatement;
 use std::collections::HashMap;
 
+/// Issue #124: re-resolve parameter / package-variable Java types whose SQL
+/// type names a package custom type (record → Map, collection → List<elem>).
+/// `convert_params` ran during extraction before `custom_types` was fully
+/// populated, so these arrive as `Object`.
+fn resolve_custom_typed_symbols(proc: &mut ProcedureInfo) {
+    if proc.custom_types.is_empty() {
+        return;
+    }
+    for p in &mut proc.parameters {
+        if p.java_type != "Object" {
+            continue;
+        }
+        if let Some(ct) = crate::extract::find_custom_type(&proc.custom_types, &p.sql_type) {
+            p.java_type = crate::extract::custom_type_java_type(ct);
+        }
+    }
+    for vi in proc.package_vars.values_mut() {
+        if vi.java_type != "Object" {
+            continue;
+        }
+        if let Some(ct) = crate::extract::find_custom_type(&proc.custom_types, &vi.sql_type) {
+            vi.java_type = crate::extract::custom_type_java_type(ct);
+        }
+    }
+}
+
 pub fn analyze_procedure(
     proc: &mut ProcedureInfo,
     summaries: &std::collections::HashMap<String, crate::types::PackageSummary>,
@@ -10,6 +36,7 @@ pub fn analyze_procedure(
     ddl_schema: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
     debug: bool,
 ) -> Result<(), ConversionError> {
+    resolve_custom_typed_symbols(proc);
     let body = proc.body.take();
     let mut result = Ok(());
     if let Some(ref body_inner) = body {
@@ -95,6 +122,10 @@ pub fn analyze_procedure(
             ctx.dml_counters.insert(pkg_key.clone(), std::collections::HashMap::new());
         }
         stmt_ctx.dml_counter = ctx.dml_counters.get(&pkg_key).cloned().unwrap_or_default();
+        if !ctx.dml_used_ids.contains_key(&pkg_key) {
+            ctx.dml_used_ids.insert(pkg_key.clone(), std::collections::HashSet::new());
+        }
+        stmt_ctx.dml_used_ids = ctx.dml_used_ids.get(&pkg_key).cloned().unwrap_or_default();
         stmt_ctx.debug = debug;
         if debug {
             stmt_ctx.stmt_lines = crate::debug::find_body_stmt_lines(proc, ctx);
@@ -107,7 +138,6 @@ pub fn analyze_procedure(
                 break;
             }
         }
-        ctx.dml_counters.insert(pkg_key, stmt_ctx.dml_counter.clone());
         // After normal processing, if GOTO pattern detected, rewrite the procedure body
         if proc.goto_analysis.as_ref().is_some_and(|a| a.pattern.is_some()) {
             let analysis = proc.goto_analysis.take().unwrap();
@@ -116,7 +146,7 @@ pub fn analyze_procedure(
             proc.select_counter = 0;
             proc.for_loop_counter = 0;
             let rewrite_result =
-                crate::statements::goto::rewrite_with_pattern(&body_inner.body, &analysis, proc, summaries);
+                crate::statements::goto::rewrite_with_pattern(&body_inner.body, &analysis, proc, &mut stmt_ctx);
             proc.goto_analysis = Some(analysis);
             if let Err(e) = rewrite_result {
                 proc.java_logic_lines.push("// TODO: GOTO pattern requires manual implementation".into());
@@ -164,6 +194,8 @@ pub fn analyze_procedure(
                 proc.java_logic_lines.push("}".into());
             }
         }
+        ctx.dml_counters.insert(pkg_key.clone(), stmt_ctx.dml_counter.clone());
+        ctx.dml_used_ids.insert(pkg_key, stmt_ctx.dml_used_ids.clone());
         ctx.unresolved_calls.append(&mut stmt_ctx.unresolved_calls);
     }
     // Apply any bare-local-var promotions queued by emit_cross_pkg_call (see
@@ -246,12 +278,20 @@ pub fn process_declaration(
                     } else {
                         let sql_type = crate::extract::normalize_sql_type(&sql_type_raw);
                         let sql_type_lower = sql_type.to_lowercase();
-                        if let Some(ct) =
-                            proc.custom_types.get(&sql_type_lower).or_else(|| proc.custom_types.get(&sql_type))
-                        {
+                        let ct = crate::extract::find_custom_type(&proc.custom_types, &sql_type)
+                            .or_else(|| crate::extract::find_custom_type(&proc.custom_types, &sql_type_lower));
+                        if let Some(ct) = ct {
                             if ct.is_record {
                                 proc.imports.insert("import java.util.Map;".into());
                                 "Map<String, Object>".into()
+                            } else if let Some(ref elem) = ct.elem_java_type {
+                                // Issue #124: typed collections lower to
+                                // List<Elem> (record elem → List<Map<...>>).
+                                proc.imports.insert("import java.util.List;".into());
+                                if elem.contains("Map") {
+                                    proc.imports.insert("import java.util.Map;".into());
+                                }
+                                format!("java.util.List<{}>", elem)
                             } else {
                                 proc.imports.insert("import java.util.List;".into());
                                 "java.util.List<Object>".into()

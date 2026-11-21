@@ -21,4 +21,10 @@
                 LIMIT 1
     </select>
 
+    <!-- Source: {FIXTURES_ROOT}/pkg_issue56_return_handler.sql:64-81 — pkg_issue56_return_handler.proc_three_handlers_returns.selectTIssue56Data_3 -->
+    <select id="selectTIssue56Data_3" resultType="string">
+        select data_value FROM t_issue56_data WHERE data_key = 'key1'
+                LIMIT 1
+    </select>
+
 </mapper>

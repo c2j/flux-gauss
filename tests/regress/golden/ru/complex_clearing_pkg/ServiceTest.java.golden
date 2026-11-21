@@ -35,7 +35,7 @@ class ComplexClearingPkgServiceTest {
         when(complexClearingPkgMapper.selectTradeRecord((Long) any(), (Integer) any())).thenReturn(999L);
         when(complexClearingPkgMapper.selectAccount((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.selectTradeRecord_1((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
-        when(complexClearingPkgMapper.updateTradeRecord((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
+        when(complexClearingPkgMapper.updateTradeRecord_1((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_2((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.updateAccount((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_3((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(0);
@@ -51,7 +51,7 @@ class ComplexClearingPkgServiceTest {
         when(complexClearingPkgMapper.selectTradeRecord((Long) any(), (Integer) any())).thenReturn(999L);
         when(complexClearingPkgMapper.selectAccount((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.selectTradeRecord_1((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
-        when(complexClearingPkgMapper.updateTradeRecord((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
+        when(complexClearingPkgMapper.updateTradeRecord_1((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_2((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.updateAccount((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_3((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(0);
@@ -67,7 +67,7 @@ class ComplexClearingPkgServiceTest {
         when(complexClearingPkgMapper.selectTradeRecord((Long) any(), (Integer) any())).thenReturn(999L);
         when(complexClearingPkgMapper.selectAccount((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.selectTradeRecord_1((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
-        when(complexClearingPkgMapper.updateTradeRecord((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
+        when(complexClearingPkgMapper.updateTradeRecord_1((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_2((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.updateAccount((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_3((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(0);
@@ -84,7 +84,7 @@ class ComplexClearingPkgServiceTest {
         when(complexClearingPkgMapper.selectTradeRecord((Long) any(), (Integer) any())).thenReturn(999L);
         when(complexClearingPkgMapper.selectAccount((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.selectTradeRecord_1((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
-        when(complexClearingPkgMapper.updateTradeRecord((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
+        when(complexClearingPkgMapper.updateTradeRecord_1((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_2((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.updateAccount((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_3((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(0);
@@ -100,7 +100,7 @@ class ComplexClearingPkgServiceTest {
         when(complexClearingPkgMapper.selectTradeRecord((Long) any(), (Integer) any())).thenReturn(999L);
         when(complexClearingPkgMapper.selectAccount((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.selectTradeRecord_1((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
-        when(complexClearingPkgMapper.updateTradeRecord((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
+        when(complexClearingPkgMapper.updateTradeRecord_1((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_2((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.updateAccount((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_3((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(0);
@@ -118,7 +118,7 @@ class ComplexClearingPkgServiceTest {
         when(complexClearingPkgMapper.selectTradeRecord((Long) any(), (Integer) any())).thenReturn(999L);
         when(complexClearingPkgMapper.selectAccount((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.selectTradeRecord_1((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
-        when(complexClearingPkgMapper.updateTradeRecord((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
+        when(complexClearingPkgMapper.updateTradeRecord_1((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_2((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.updateAccount((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_3((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(0);
@@ -134,7 +134,7 @@ class ComplexClearingPkgServiceTest {
         when(complexClearingPkgMapper.selectTradeRecord((Long) any(), (Integer) any())).thenReturn(999L);
         when(complexClearingPkgMapper.selectAccount((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.selectTradeRecord_1((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
-        when(complexClearingPkgMapper.updateTradeRecord((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
+        when(complexClearingPkgMapper.updateTradeRecord_1((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_2((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.updateAccount((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_3((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(0);
@@ -153,12 +153,12 @@ class ComplexClearingPkgServiceTest {
         when(complexClearingPkgMapper.selectTradeRecord((Long) any(), (Integer) any())).thenReturn(999L);
         when(complexClearingPkgMapper.selectAccount((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.selectTradeRecord_1((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
-        when(complexClearingPkgMapper.updateTradeRecord((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
+        when(complexClearingPkgMapper.updateTradeRecord_1((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_2((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.updateAccount((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_3((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(0);
         service.handleTradeChange(pOp, pOldRec, pNewRec, pTriggerName, oSkipDefaultRef);
-        verify(complexClearingPkgMapper, atLeast(0)).updateTradeRecord((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any());
+        verify(complexClearingPkgMapper, atLeast(0)).updateTradeRecord_1((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any());
     }
 
     @Test
@@ -172,7 +172,7 @@ class ComplexClearingPkgServiceTest {
         when(complexClearingPkgMapper.selectTradeRecord((Long) any(), (Integer) any())).thenReturn(999L);
         when(complexClearingPkgMapper.selectAccount((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.selectTradeRecord_1((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
-        when(complexClearingPkgMapper.updateTradeRecord((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
+        when(complexClearingPkgMapper.updateTradeRecord_1((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_2((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.updateAccount((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_3((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(0);
@@ -191,7 +191,7 @@ class ComplexClearingPkgServiceTest {
         when(complexClearingPkgMapper.selectTradeRecord((Long) any(), (Integer) any())).thenReturn(999L);
         when(complexClearingPkgMapper.selectAccount((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.selectTradeRecord_1((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
-        when(complexClearingPkgMapper.updateTradeRecord((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
+        when(complexClearingPkgMapper.updateTradeRecord_1((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_2((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.updateAccount((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_3((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(0);
@@ -210,7 +210,7 @@ class ComplexClearingPkgServiceTest {
         when(complexClearingPkgMapper.selectTradeRecord((Long) any(), (Integer) any())).thenReturn(999L);
         when(complexClearingPkgMapper.selectAccount((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.selectTradeRecord_1((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
-        when(complexClearingPkgMapper.updateTradeRecord((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
+        when(complexClearingPkgMapper.updateTradeRecord_1((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_2((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.updateAccount((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_3((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(0);
@@ -225,7 +225,7 @@ class ComplexClearingPkgServiceTest {
         when(complexClearingPkgMapper.selectTradeRecord((Long) any(), (Integer) any())).thenReturn(999L);
         when(complexClearingPkgMapper.selectAccount((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.selectTradeRecord_1((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));
-        when(complexClearingPkgMapper.updateTradeRecord((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
+        when(complexClearingPkgMapper.updateTradeRecord_1((String) any(), (java.util.Map) any(), (java.util.Map) any(), (String) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_2((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(complexClearingPkgMapper.updateAccount((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord_3((String) any(), (java.util.Map) any(), (java.util.Map) any(), (Boolean) any())).thenReturn(0);

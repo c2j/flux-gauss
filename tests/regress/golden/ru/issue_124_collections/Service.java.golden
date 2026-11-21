@@ -1,0 +1,49 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.CollTypesMapper;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_124_collections.sql
+public class CollTypesService {
+    private static final Logger log = LoggerFactory.getLogger(CollTypesService.class);
+
+    private final CollTypesMapper collTypesMapper;
+
+    public CollTypesService(CollTypesMapper collTypesMapper) {
+        this.collTypesMapper = collTypesMapper;
+    }
+
+    public static class RecItem {
+        public Long itemId;
+        public Object itemName;
+    }
+
+    // Source: pkg_coll_types.prc_collection_demo (PROCEDURE) — {FIXTURES_ROOT}/issue_124_collections.sql:13-31
+    @Transactional
+    public void prcCollectionDemo(String pMode) {
+        Long vCnt = 0L;
+        java.sql.Date vD = null;
+        Long vI = 1L;
+        java.util.List<Long> vNums = new java.util.ArrayList<>();
+        java.util.List<Map<String, Object>> vRectab = new java.util.ArrayList<>();
+        vCnt = ((Number)(vNums.get((int)(vI) - 1))).longValue();
+        vCnt = ((Number)(((java.util.List<?>) vNums).size())).longValue();
+        if (((1) >= 1 && (1) <= (vNums).size())) {
+            vNums.remove((int)(1) - 1);
+        }
+        while (vNums.size() < (int)(2)) { vNums.add(null); }
+        while (vNums.size() > (int)(1)) { vNums.remove(vNums.size() - 1); }
+        vRectab = collTypesMapper.selectEmp(pMode);
+        vD = new java.sql.Date((new java.sql.Timestamp(System.currentTimeMillis())).getTime()).toLocalDate().plusMonths(Long.parseLong(String.valueOf(1)));
+        vD = new java.sql.Date((vD).getTime()).toLocalDate().withDayOfMonth(new java.sql.Date((vD).getTime()).toLocalDate().lengthOfMonth());
+        collTypesMapper.updateCfgTable(pMode, vCnt);
+    }
+}
