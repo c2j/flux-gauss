@@ -380,10 +380,16 @@ fn clean_stale_package_files(
     old_pkg_names: &std::collections::HashSet<String>,
     base_package: &str,
 ) {
-    let current: std::collections::HashSet<&str> = packages.iter().map(|p| p.package_name.as_str()).collect();
+    // Compare by emitted class name, not raw package_name: schema-qualified
+    // routines may register the same package under different casings
+    // (BIGFUND vs bigfund), which merge_package_info folds into one
+    // PackageInfo whose surviving package_name is order-dependent. Comparing
+    // raw names would treat the live package as stale and delete its files.
+    let current: std::collections::HashSet<String> =
+        packages.iter().map(|p| crate::naming::package_to_classname(&p.package_name)).collect();
     let jp_path = base_package.replace('.', "/");
     for pkg_name in old_pkg_names {
-        if current.contains(pkg_name.as_str()) {
+        if current.contains(&crate::naming::package_to_classname(pkg_name)) {
             continue;
         }
         let class_name = crate::naming::package_to_classname(pkg_name);
