@@ -10239,6 +10239,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             if op in ("<@", "@>", "&&", "<<", ">>", "&<", "&>", "-|-", "~", "@"):
                 return f"/* RangeOp: {op} */ false"
 
+            left_type = right_type = "Object"
             if proc is not None:
                 left_type = _infer_expr_type(val.get("left"), proc)
                 right_type = _infer_expr_type(val.get("right"), proc)
@@ -15369,7 +15370,8 @@ def _depgraph_routine_spellings(node, routine_pkgs):
     if not name:
         return set()
     out = {name}
-    for pkg in routine_pkgs.get(node.get("id"), []):
+    pkgs = routine_pkgs.get(node.get("id"), [])
+    for pkg in pkgs:
         pname = (pkg.get("name") or "").strip().lower()
         pschema = (pkg.get("schema") or "").strip().lower()
         if pname:
@@ -15377,7 +15379,10 @@ def _depgraph_routine_spellings(node, routine_pkgs):
             if pschema:
                 out.add(f"{pschema}.{pname}.{name}")
     schema = (node.get("schema") or "").strip().lower()
-    if schema:
+    # `schema.name` only for standalone routines — package members would
+    # produce a bogus `sch.proc` spelling that drops the package segment.
+    # Mirrors depgraph.rs::node_spellings (Some(s), None) arm.
+    if schema and not pkgs:
         out.add(f"{schema}.{name}")
     return out
 

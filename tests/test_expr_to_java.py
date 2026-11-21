@@ -505,6 +505,26 @@ class TestExprToJavaNoProcContext:
     def test_infer_expr_type_column_ref_no_proc(self):
         assert fg._infer_expr_type({"ColumnRef": ["v_x"]}, None) == "Object"
 
+    def test_binary_op_add_no_proc(self):
+        """BinaryOp read left_type/right_type unconditionally; proc=None must
+        not raise UnboundLocalError (package var `g_x := 1+2` case)."""
+        expr = {"BinaryOp": {
+            "op": "+",
+            "left": {"Literal": {"Integer": 1}},
+            "right": {"Literal": {"Integer": 2}},
+        }}
+        result = fg._expr_to_java(expr, None)
+        assert isinstance(result, str)
+
+    def test_binary_op_concat_no_proc(self):
+        expr = {"BinaryOp": {
+            "op": "||",
+            "left": {"Literal": {"String": "a"}},
+            "right": {"Literal": {"String": "b"}},
+        }}
+        result = fg._expr_to_java(expr, None)
+        assert isinstance(result, str)
+
     def test_infer_expr_type_function_call_no_proc(self):
         expr = {"FunctionCall": {
             "name": ["fn"],

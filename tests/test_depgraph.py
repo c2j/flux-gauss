@@ -78,6 +78,23 @@ def test_standalone_proc_schema_name():
     assert stats["routines"] == 1
 
 
+def test_package_member_with_schema_does_not_match_schema_name_seed():
+    """Parity with Rust node_spellings: a routine inside `sch.pkg` answers to
+    `pkg.proc`/`sch.pkg.proc` but NOT `sch.proc` (package segment dropped)."""
+    graph = {
+        "nodes": [
+            _pkg(10, "pkg", schema="sch"),
+            _node(0, "procedure", "proc", "s.sql", schema="sch"),
+        ],
+        "edges": [_edge(10, 0, "contains_routine")],
+    }
+    stats = fg._depgraph_closure_from_graph(graph, ["sch.proc"], "/proj")
+    assert stats["routines"] == 0
+    assert stats["unmatched"] == ["sch.proc"]
+    stats = fg._depgraph_closure_from_graph(graph, ["sch.pkg.proc"], "/proj")
+    assert stats["routines"] == 1
+
+
 def test_bare_name_overapproximates():
     graph = {
         "nodes": [

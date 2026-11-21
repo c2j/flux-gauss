@@ -48,7 +48,14 @@ fn ensure_codeweb_pool() {
     use std::sync::Once;
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        let _ = rayon::ThreadPoolBuilder::new().stack_size(4 * 1024 * 1024).build_global();
+        if let Err(e) = rayon::ThreadPoolBuilder::new().stack_size(4 * 1024 * 1024).build_global() {
+            // Global pool already installed by another crate with default
+            // stacks — the deep-recursion overflow fix would not apply.
+            tracing::warn!(
+                "rayon global pool already initialized ({}); codeweb analyze may stack-overflow on deeply nested SQL",
+                e
+            );
+        }
     });
 }
 
@@ -57,7 +64,7 @@ fn ensure_codeweb_pool() {
 pub fn resolve_dependency_files(config: &AppConfig) -> Result<ClosureStats, String> {
     ensure_codeweb_pool();
     let dg = config.dependency_graph.as_ref().ok_or_else(|| "dependency_graph section missing".to_string())?;
-    let project = dg.project.as_deref().unwrap_or(".");
+    let project = dg.project.as_deref().ok_or_else(|| "dependency_graph.project is required".to_string())?;
     let root = Path::new(project);
 
     // Auto-init: no codeweb.toml → create the project in place so users never
@@ -306,6 +313,23 @@ mod tests {
         let stats = closure_from_thin_graph(&graph, &["sch.pkg.proc".to_string()], Path::new("/proj"));
         assert_eq!(stats.closure_routines, 1);
         assert_eq!(stats.files.len(), 1);
+    }
+
+    #[test]
+    fn package_member_with_schema_does_not_match_schema_name_seed() {
+        // Routine inside sch.pkg answers to pkg.proc / sch.pkg.proc but NOT
+        // sch.proc — the package segment must not be dropped (#123 review).
+        let graph = ThinGraph {
+            nodes: vec![
+                ThinNodeEntry { id: 0, kind: ThinNodeKind::Package { schema: Some("sch".into()), name: "pkg".into() } },
+                proc_node(1, Some("sch"), Some("pkg"), "proc", "s.sql"),
+            ],
+            edges: vec![ThinEdge { source: 0, target: 1, kind: ThinEdgeKind::ContainsRoutine }],
+        };
+        let stats = closure_from_thin_graph(&graph, &["sch.proc".to_string()], Path::new("/proj"));
+        assert_eq!(stats.closure_routines, 0);
+        let stats = closure_from_thin_graph(&graph, &["sch.pkg.proc".to_string()], Path::new("/proj"));
+        assert_eq!(stats.closure_routines, 1);
     }
 
     #[test]
