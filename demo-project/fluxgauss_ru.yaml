@@ -58,3 +58,8 @@ sources:
   - demo-project/sql/PACK_LOG.sql
   - demo-project/sql/missing_tables.sql
   - demo-project/sql/pkg_dynamic_xml.sql
+  # Issue #124 review coverage: collections/temporal/BigDecimal lowering —
+  # included so the demo mvn-compile gate actually javac-checks this fixture
+  # (golden tests are text-only). Rust engine only; the Python engine does not
+  # yet lower PL/SQL collections.
+  - demo-project/sql/pkg_issue124_collections.sql

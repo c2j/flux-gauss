@@ -16,6 +16,7 @@ CREATE OR REPLACE PACKAGE BODY pkg_coll_types AS
     v_i       NUMBER := 1;
     v_d       DATE;
     v_cnt     NUMBER;
+    v_amt     NUMERIC;
   BEGIN
     v_cnt := v_nums(v_i);
     v_cnt := v_nums.COUNT;
@@ -24,6 +25,9 @@ CREATE OR REPLACE PACKAGE BODY pkg_coll_types AS
     END IF;
     v_nums.EXTEND(2);
     v_nums.TRIM(1);
+    v_nums(v_i) := v_cnt;
+    v_cnt := v_nums.NEXT(v_i);
+    v_amt := -v_amt;
     SELECT item_id, item_name BULK COLLECT INTO v_rectab FROM emp;
     v_d := ADD_MONTHS(SYSDATE, 1);
     v_d := LAST_DAY(v_d);

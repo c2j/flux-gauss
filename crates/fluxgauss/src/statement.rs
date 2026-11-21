@@ -361,6 +361,24 @@ fn select_capture_regex() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"(?i)^select\s+(.+)$").unwrap())
 }
 
+/// Parse a bare PL/SQL expression by wrapping it in `SELECT ...` and pulling
+/// the first projection back out. Used for the `:= v` fragment that
+/// ogsql-parser splits off a `coll(i) := v` assignment (review #129 P1-3).
+fn parse_select_expr(rhs: &str) -> Option<ogsql_parser::ast::Expr> {
+    use ogsql_parser::ast::{SelectTarget, Statement};
+    let (stmts, errors) = ogsql_parser::Parser::parse_sql(&format!("SELECT {}", rhs));
+    if !errors.is_empty() {
+        return None;
+    }
+    let stmt = stmts.into_iter().next()?;
+    if let Statement::Select(sel) = stmt.statement {
+        if let Some(SelectTarget::Expr(expr, _)) = sel.node.targets.into_iter().next() {
+            return Some(expr);
+        }
+    }
+    None
+}
+
 fn try_parse_inline_var_decl(sql: &str, _proc: &ProcedureInfo) -> Option<(String, String, Option<String>)> {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| Regex::new(
@@ -1606,23 +1624,46 @@ fn emit_collection_method_stmt(method: &str, obj: &str, args: &[String], proc: &
     match method {
         "DELETE" => match args.len() {
             0 => push_logic_line(proc, format!("{}.clear();", base)),
-            1 => push_logic_line(proc, format!("{}.remove((int)({}) - 1);", base, idx(0))),
-            _ => push_logic_line(proc, format!("{}.subList((int)({}) - 1, (int)({})).clear();", base, idx(0), idx(1))),
+            1 => push_logic_line(proc, format!("{}.remove({} - 1);", base, crate::expr::coll_idx_java(idx(0)))),
+            _ => push_logic_line(
+                proc,
+                format!(
+                    "{}.subList({}, {}).clear();",
+                    base,
+                    crate::expr::coll_idx_java(idx(0)),
+                    crate::expr::coll_idx_java(idx(1))
+                ),
+            ),
         },
         "EXTEND" => {
             if args.is_empty() {
                 push_logic_line(proc, format!("{}.add(null);", base));
             } else {
-                push_logic_line(proc, format!("while ({}.size() < (int)({})) {{ {}.add(null); }}", base, idx(0), base));
+                // Oracle EXTEND(n) appends n null elements (review #129 P1-2).
+                push_logic_line(
+                    proc,
+                    format!(
+                        "for (int _ext = 0; _ext < {}; _ext++) {{ {}.add(null); }}",
+                        crate::expr::coll_idx_java(idx(0)),
+                        base
+                    ),
+                );
             }
         }
         "TRIM" => {
             if args.is_empty() {
                 push_logic_line(proc, format!("if (!{}.isEmpty()) {{ {}.remove({}.size() - 1); }}", base, base, base));
             } else {
+                // Oracle TRIM(n) removes n elements from the end (review #129 P1-2).
                 push_logic_line(
                     proc,
-                    format!("while ({}.size() > (int)({})) {{ {}.remove({}.size() - 1); }}", base, idx(0), base, base),
+                    format!(
+                        "for (int _trim = 0; _trim < {} && !{}.isEmpty(); _trim++) {{ {}.remove({}.size() - 1); }}",
+                        crate::expr::coll_idx_java(idx(0)),
+                        base,
+                        base,
+                        base
+                    ),
                 );
             }
         }
@@ -1685,6 +1726,29 @@ fn process_procedure_call(
                     emit_collection_method_stmt(&meth, name_parts[0], &raw_args, proc);
                     return;
                 }
+            }
+        }
+    }
+
+    // Issue #124 P1-3 (review #129): `coll(i) := v` is misparsed by
+    // ogsql-parser as ProcedureCall(coll, [i]) + Sql(":= v"). When the callee
+    // name resolves to a List-typed variable this is an element write, not a
+    // procedure call — stash it for the Sql handler to pair.
+    if name_parts.len() == 1 && call.arguments.len() == 1 {
+        if let Some(t) = crate::expr::resolve_var_java_type(name_parts[0], proc) {
+            if t.contains("List") {
+                let var = snake_to_camel(name_parts[0]);
+                let deref = proc.parameters.iter().any(|p| p.name.eq_ignore_ascii_case(name_parts[0]) && p.is_out())
+                    || proc.out_local_vars.contains_key(&name_parts[0].to_lowercase());
+                let base = if deref { format!("{}.get()", var) } else { var };
+                let idx = crate::expr::expr_to_java(&call.arguments[0], proc);
+                let elem = t
+                    .strip_prefix("java.util.List<")
+                    .or_else(|| t.strip_prefix("List<"))
+                    .and_then(|s| s.strip_suffix('>'))
+                    .map(|s| s.to_string());
+                ctx.pending_coll_elem_assign = Some((base, idx, elem));
+                return;
             }
         }
     }
@@ -2228,7 +2292,7 @@ fn process_forall_stmt(
             // If this is an array ref var, use .get() access
             let is_array_param = array_names.iter().any(|an| an.to_lowercase() == lower);
             if is_array_param {
-                call_args.push(format!("{}.get((int)({}) - 1)", jn, index_var));
+                call_args.push(format!("{}.get({} - 1)", jn, crate::expr::coll_idx_java(index_var)));
             } else {
                 call_args.push(jn);
             }
@@ -2249,7 +2313,7 @@ fn process_forall_stmt(
         // Check if this param is an array ref in the FORALL
         let is_array_param = array_names.iter().any(|an| an.to_lowercase() == p.name.to_lowercase());
         if is_array_param {
-            call_args.push(format!("{}.get((int)({}) - 1)", pj, index_var));
+            call_args.push(format!("{}.get({} - 1)", pj, crate::expr::coll_idx_java(index_var)));
         } else {
             call_args.push(pj);
         }
@@ -2357,6 +2421,17 @@ pub fn process_statement(
     ctx: &mut StatementContext,
 ) -> Result<(), ConversionError> {
     use ogsql_parser::ast::plpgsql::PlStatement;
+
+    // Issue #124 P1-3 (review #129): a pending collection-element write stashed
+    // by process_procedure_call must be paired with the immediately following
+    // `Sql(":= v")`. If the next statement is anything else, the parser split
+    // did not happen as expected — emit a fallback comment, never drop silently.
+    if ctx.pending_coll_elem_assign.is_some()
+        && !matches!(stmt, PlStatement::Sql(t) if t.trim_start().starts_with(":="))
+    {
+        let (base, idx, _) = ctx.pending_coll_elem_assign.take().unwrap();
+        push_logic_line(proc, format!("// {}({}) — collection element assignment without := value", base, idx));
+    }
 
     if ctx.debug && !matches!(stmt, PlStatement::Null) {
         let stmt_line = get_stmt_line(stmt, ctx.current_stmt_idx, &ctx.stmt_lines);
@@ -3259,6 +3334,41 @@ pub fn process_statement(
             Ok(())
         }
         PlStatement::Sql(sql_text) => {
+            // Issue #124 P1-3 (review #129): pair the `coll(i)` half of a
+            // misparsed `coll(i) := v` with this `:= v` fragment.
+            if sql_text.trim_start().starts_with(":=") {
+                if let Some((base, idx, elem)) = ctx.pending_coll_elem_assign.take() {
+                    let rhs = sql_text.trim().trim_start_matches(":=").trim();
+                    let val = parse_select_expr(rhs).map(|e| {
+                        let mut v = crate::expr::expr_to_java(&e, proc);
+                        v = crate::expr::maybe_deref_promoted(&v, proc);
+                        match &elem {
+                            Some(et) => crate::expr::coerce_for_type(&v, Some(et), proc),
+                            None => v,
+                        }
+                    });
+                    match val {
+                        Some(v) => {
+                            // Auto-extend before set (review #129): Oracle
+                            // requires a prior EXTEND and raises otherwise;
+                            // padding with nulls keeps generated code total.
+                            let idx_java = crate::expr::coll_idx_java(&idx);
+                            push_logic_line(
+                                proc,
+                                format!("while ({}.size() < {}) {{ {}.add(null); }}", base, idx_java, base),
+                            );
+                            push_logic_line(proc, format!("{}.set({} - 1, {});", base, idx_java, v));
+                        }
+                        None => {
+                            push_logic_line(
+                                proc,
+                                format!("// {}({}) := {} — RHS expression could not be parsed", base, idx, rhs),
+                            );
+                        }
+                    }
+                    return Ok(());
+                }
+            }
             if let Some(dml_type) = detect_dml_type(sql_text) {
                 let method_id = dml_method_name(
                     match dml_type {
@@ -3453,6 +3563,7 @@ mod tests {
             current_stmt_idx: 0,
             stmt_lines: Vec::new(),
             unresolved_calls: Vec::new(),
+            pending_coll_elem_assign: None,
         }
     }
 
@@ -3607,7 +3718,7 @@ mod tests {
 
         emit_collection_method_stmt("DELETE", "v_coll", &["2L".to_string()], &mut proc);
         assert!(
-            proc.java_logic_lines.iter().any(|l| l.contains("vColl.remove((int)(2L) - 1);")),
+            proc.java_logic_lines.iter().any(|l| l.contains("vColl.remove((int)(long)(2L) - 1);")),
             "DELETE(i) → List.remove(i-1): {:?}",
             proc.java_logic_lines
         );
@@ -3633,6 +3744,64 @@ mod tests {
         assert!(
             proc.java_logic_lines.iter().any(|l| l.contains("vColl.clear();")),
             "DELETE() → clear: {:?}",
+            proc.java_logic_lines
+        );
+    }
+
+    #[test]
+    fn test_extend_trim_n_append_remove_n() {
+        // Review #129 P1-2: Oracle EXTEND(n)/TRIM(n) add/remove n elements,
+        // they do NOT resize to length n.
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_coll".into(), "java.util.List<Long>".into());
+
+        emit_collection_method_stmt("EXTEND", "v_coll", &["3".to_string()], &mut proc);
+        let line = proc.java_logic_lines.last().unwrap();
+        assert!(
+            line.contains("for (int _ext = 0; _ext < (int)(long)(3); _ext++)") && line.contains("vColl.add(null)"),
+            "EXTEND(3) must append 3 nulls: {}",
+            line
+        );
+
+        proc.java_logic_lines.clear();
+        emit_collection_method_stmt("TRIM", "v_coll", &["2".to_string()], &mut proc);
+        let line = proc.java_logic_lines.last().unwrap();
+        assert!(
+            line.contains("for (int _trim = 0; _trim < (int)(long)(2) && !vColl.isEmpty(); _trim++)")
+                && line.contains("vColl.remove(vColl.size() - 1)"),
+            "TRIM(2) must remove up to 2 tail elements: {}",
+            line
+        );
+    }
+
+    #[test]
+    fn test_collection_element_assign_via_parser_split() {
+        // Review #129 P1-3: ogsql-parser emits `v_coll(1) := v_i` as
+        // ProcedureCall(v_coll,[1]) + Sql(":= v_i"); the pair must lower to
+        // `vColl.set((int)(long)(1) - 1, vI);`.
+        use ogsql_parser::ast::plpgsql::PlStatement;
+        use ogsql_parser::ast::Spanned;
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_coll".into(), "java.util.List<Long>".into());
+        proc.local_vars.insert("v_i".into(), "Long".into());
+        let mut ctx = empty_stmt_ctx();
+
+        let call = ogsql_parser::ast::plpgsql::PlProcedureCall {
+            name: vec![ogsql_parser::ast::Ident::new("v_coll")],
+            arguments: vec![ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Integer(1))],
+            builtin: None,
+        };
+        process_statement(&PlStatement::ProcedureCall(Spanned::without_span(call)), &mut proc, &mut ctx).unwrap();
+        assert!(
+            proc.java_logic_lines.is_empty(),
+            "call half must be stashed, not emitted: {:?}",
+            proc.java_logic_lines
+        );
+
+        process_statement(&PlStatement::Sql(":= v_i".to_string()), &mut proc, &mut ctx).unwrap();
+        assert!(
+            proc.java_logic_lines.iter().any(|l| l.contains("vColl.set((int)(long)(1) - 1,") && l.contains("vI")),
+            "coll(i) := v must lower to List.set(i-1, v): {:?}",
             proc.java_logic_lines
         );
     }

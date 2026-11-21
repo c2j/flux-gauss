@@ -125,15 +125,15 @@ public class WarpdriverStressTestService {
                                 // UNREACHABLE: break;
                             }
                             vIdx = vIdx + 1;
-                            // CALL itemTab(vIdx) — procedure not found in current package
+                            // vItemTab(vIdx) — collection element assignment without := value
                             // SQL: . item_id := v_rec . order_id
-                            // CALL itemTab(vIdx) — procedure not found in current package
+                            // vItemTab(vIdx) — collection element assignment without := value
                             // SQL: . product_code := 'PROD_' || MOD ( v_rec . order_id , 100 )
-                            // CALL itemTab(vIdx) — procedure not found in current package
+                            // vItemTab(vIdx) — collection element assignment without := value
                             // SQL: . quantity := v_rec . total_amount / 100
-                            // CALL itemTab(vIdx) — procedure not found in current package
+                            // vItemTab(vIdx) — collection element assignment without := value
                             // SQL: . unit_price := 100
-                            // CALL itemTab(vIdx) — procedure not found in current package
+                            // vItemTab(vIdx) — collection element assignment without := value
                             // SQL: . metadata := jsonb_build_object ( 'order_id' , v_rec . order_id , 'mode' , p_mode , 'seq' , g_session_counter )
                             vSum = vSum.add(java.math.BigDecimal.valueOf(((Number) vRec.getOrDefault("totalAmount", vRec.get("total_amount"))).doubleValue()));
                             if (java.util.Optional.ofNullable((Number) vRec.getOrDefault("totalAmount", vRec.get("total_amount"))).map(Number::longValue).orElse(0L) > 1000000) {

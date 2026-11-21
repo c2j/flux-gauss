@@ -377,7 +377,7 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
             return format!("new java.sql.Date(({}).getTime())", trimmed);
         }
         if (t.contains("java.sql.Date") || t == "Date")
-            && trimmed.contains("java.time.LocalDate")
+            && (trimmed.contains("java.time.LocalDate") || trimmed.contains(".toLocalDate()"))
             && !trimmed.starts_with("java.sql.Date.valueOf(")
         {
             return format!("java.sql.Date.valueOf({})", trimmed);
@@ -648,6 +648,21 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
                 && !trimmed.starts_with("new ")
                 && !produces_double(trimmed)
                 && !produces_primitive_int(trimmed) =>
+        {
+            trimmed.to_string()
+        }
+        // Nullable boxed-Long producers must NOT be routed through
+        // Number.longValue() — that unboxes null into an NPE where Oracle
+        // semantics assign NULL. Keep the Long expression as-is. Covers
+        // coll.NEXT/PRIOR/FIRST/LAST (`cond ? Long.valueOf(..) : null`) and
+        // bounds-guarded element reads (`cond ? list.get(..) : null`); the
+        // `List<?>` carve-out keeps the (Number) wrap that untyped captures
+        // need to compile.
+        Some(t)
+            if t == "Long"
+                && trimmed.contains(" : null)")
+                && (trimmed.contains("Long.valueOf(")
+                    || (trimmed.contains(".get(") && !trimmed.contains("List<?>"))) =>
         {
             trimmed.to_string()
         }
@@ -1220,7 +1235,12 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
 
 pub(crate) fn is_bigdecimal_var(expr_str: &str, proc: &ProcedureInfo) -> bool {
     let name = expr_str.trim();
-    let base = name.split(['.', '(']).next().unwrap_or(name);
+    let mut base = name.split(['.', '(']).next().unwrap_or(name);
+    // Parenthesised receivers like `(vAmt).negate()` yield an empty base —
+    // strip the paren and re-split so the var lookup still fires.
+    if base.is_empty() {
+        base = name.trim_start_matches('(').split(['.', ')', '(']).next().unwrap_or(name);
+    }
     // Direct lookup (snake_case key)
     if let Some(ty) = proc.local_vars.get(&base.to_lowercase()) {
         return ty.contains("BigDecimal");
@@ -2223,10 +2243,22 @@ fn unary_op_to_java(op: &str, operand: &ogsql_parser::ast::Expr, proc: &Procedur
         return "0".to_string();
     }
     match op {
+        // P1-4 (review #129): BigDecimal has no Java unary minus — use negate().
+        "-" if is_bigdecimal_var(&inner, proc) || inner.contains("BigDecimal") => {
+            format!("({}).negate()", inner)
+        }
         "-" => format!("(-{})", inner),
         "NOT" => format!("!{}", inner),
         _ => format!("{}{}", op, inner),
     }
+}
+
+/// PL/SQL collection indices are 1-based and typically `Long`/`Integer`
+/// boxed or `long` arithmetic — a bare `(int)(expr)` cast fails javac on
+/// boxed types (`Long`↛`int` in one cast). `(int)(long)(expr)` is legal for
+/// every integral shape: primitives widen/narrow, boxed types unbox first.
+pub(crate) fn coll_idx_java(idx: &str) -> String {
+    format!("(int)(long)({})", idx)
 }
 
 /// Issue #124: lower PL/SQL collection pseudo-methods used in expression
@@ -2240,8 +2272,10 @@ fn collection_expr_method(method: &str, obj: &str, jargs: &[String], proc: &Proc
     let idx = jargs.first().map(|s| s.as_str()).unwrap_or("1");
     match method {
         "EXISTS" => format!("(({}) >= 1 && ({}) <= ({}).size())", idx, idx, base),
-        "NEXT" => format!("((({}) + 1) <= ({}).size() ? ({}) + 1 : null)", idx, base, idx),
-        "PRIOR" => format!("((({}) - 1) >= 1 ? ({}) - 1 : null)", idx, idx),
+        // Box both ternary arms as Long (review #129 P2): mixing a primitive
+        // numeric with `null` produces uncompilable or unboxing-surprise code.
+        "NEXT" => format!("((({}) + 1) <= ({}).size() ? java.lang.Long.valueOf(({}) + 1) : null)", idx, base, idx),
+        "PRIOR" => format!("((({}) - 1) >= 1 ? java.lang.Long.valueOf(({}) - 1) : null)", idx, idx),
         "COUNT" => format!("({}).size()", base),
         "FIRST" => format!("(({}).isEmpty() ? null : java.lang.Long.valueOf(1))", base),
         "LAST" => format!("(({}).isEmpty() ? null : java.lang.Long.valueOf(({}).size()))", base, base),
@@ -2278,7 +2312,18 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                 } else {
                     var_java
                 };
-                return format!("{}.get((int)({}) - 1)", base, idx);
+                // Bounds-guarded read (review #129): Oracle raises
+                // INDEX_OUT_OF_BOUNDS on missing elements, but generated
+                // callers/tests treat collection reads as nullable — emit
+                // `null` instead of crashing on `List.get`.
+                return format!(
+                    "(({}) >= 1 && ({}) <= ({}).size() ? {}.get({} - 1) : null)",
+                    idx,
+                    idx,
+                    base,
+                    base,
+                    coll_idx_java(&idx)
+                );
             }
         }
         // Issue #124: collection pseudo-methods in expression position —
@@ -2723,7 +2768,7 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                     // generated nor injected — uncompilable Java. Only emit the call when a
                     // registry entry matches the package hint; otherwise fall through to the
                     // TOBEFIX unresolved marker (same as the unqualified path).
-                    let pkg_matches: Vec<&GlobalFnEntry> = proc
+                    let mut pkg_matches: Vec<&GlobalFnEntry> = proc
                         .all_proc_params
                         .get(&method_name)
                         .map(|candidates| {
@@ -2740,6 +2785,10 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                                 .collect()
                         })
                         .unwrap_or_default();
+                    // Same determinism requirement as the unqualified path
+                    // (review #129 P0-2): HashMap iteration order must not
+                    // leak into generated code.
+                    pkg_matches.sort_by(|a, b| (&a.package, &a.svc_var).cmp(&(&b.package, &b.svc_var)));
                     if pkg_matches.is_empty() {
                         (String::new(), false, String::new(), None)
                     } else {
@@ -2765,13 +2814,28 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                     (method_name, true, String::new(), None)
                 } else if let Some(candidates) = proc.all_proc_params.get(&method_name) {
                     let proc_pkg_lower = proc.package.to_lowercase();
-                    let cross: Vec<&GlobalFnEntry> = candidates
+                    // P0-2 (review #129): candidate order comes from HashMap
+                    // iteration in pipeline.rs and is non-deterministic across
+                    // processes — sort by (package, svc_var, signature) so the
+                    // identical-signature pick and the TOBEFIX candidate list
+                    // are reproducible.
+                    let mut cross: Vec<&GlobalFnEntry> = candidates
                         .iter()
                         .filter(|e| e.package.to_lowercase() != proc_pkg_lower)
                         // 已知限制：跨包解析使用严格 arity 相等（不支持默认参数省略实参）；
                         // 同包重载（is_self_call 分支）支持 len>=jargs.len() 的宽松匹配
                         .filter(|e| e.params.len() == jargs.len())
                         .collect();
+                    cross.sort_by(|a, b| {
+                        (&a.package, &a.svc_var)
+                            .cmp(&(&b.package, &b.svc_var))
+                            .then_with(|| {
+                                let pa = a.params.iter().map(|p| p.java_type.as_str()).collect::<Vec<_>>().join(",");
+                                let pb = b.params.iter().map(|p| p.java_type.as_str()).collect::<Vec<_>>().join(",");
+                                pa.cmp(&pb)
+                            })
+                            .then_with(|| a.return_type.cmp(&b.return_type))
+                    });
                     match cross.len() {
                         1 => (method_name, false, cross[0].svc_var.clone(), Some(cross[0].params.clone())),
                         0 => (String::new(), false, String::new(), None),
@@ -4122,11 +4186,11 @@ mod tests {
 
     #[test]
     fn test_collection_element_access_uses_one_based_get() {
-        // `v_coll(3)` on a `List<Long>` var → `vColl.get((int)(3) - 1)`.
+        // `v_coll(3)` on a `List<Long>` var → bounds-guarded 1-based get.
         let mut proc = empty_proc();
         proc.local_vars.insert("v_coll".into(), "java.util.List<Long>".into());
         let out = expr_to_java(&fc_expr(&["v_coll"], vec![int_lit(3)]), &proc);
-        assert_eq!(out, "vColl.get((int)(3) - 1)");
+        assert_eq!(out, "((3) >= 1 && (3) <= (vColl).size() ? vColl.get((int)(long)(3) - 1) : null)");
     }
 
     #[test]
@@ -4144,7 +4208,7 @@ mod tests {
             },
         );
         let out = expr_to_java(&fc_expr(&["g_coll"], vec![int_lit(1)]), &proc);
-        assert_eq!(out, "gColl.get((int)(1) - 1)");
+        assert_eq!(out, "((1) >= 1 && (1) <= (gColl).size() ? gColl.get((int)(long)(1) - 1) : null)");
     }
 
     #[test]
@@ -4180,6 +4244,32 @@ mod tests {
         proc.local_vars.insert("v_rec".into(), "Map<String, Object>".into());
         let out = expr_to_java(&col_expr(&["v_rec", "first"]), &proc);
         assert!(!out.contains("isEmpty()"), "record field access must not become collection FIRST: {}", out);
+    }
+
+    #[test]
+    fn test_unary_minus_bigdecimal_uses_negate() {
+        // Review #129 P1-4: `-v_amt` on a BigDecimal must emit .negate(),
+        // not Java unary minus (which BigDecimal does not support).
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_amt".into(), "java.math.BigDecimal".into());
+        let expr = ogsql_parser::ast::Expr::UnaryOp {
+            op: "-".into(),
+            expr: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["v_amt".into()])),
+        };
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains(".negate()"), "BigDecimal unary minus must use negate(): {}", out);
+        assert!(!out.starts_with("(-"), "no Java unary minus on BigDecimal: {}", out);
+    }
+
+    #[test]
+    fn test_coerce_localdate_expr_to_sql_date() {
+        // Review #129 P0-1: temporal lowering ends in `.toLocalDate()` (a
+        // LocalDate) — assigning to java.sql.Date must wrap in Date.valueOf.
+        let proc = empty_proc();
+        let expr = "new java.sql.Date((new java.sql.Timestamp(System.currentTimeMillis())).getTime()).toLocalDate().plusMonths(Long.parseLong(String.valueOf(1)))";
+        let out = coerce_for_type(expr, Some("java.sql.Date"), &proc);
+        assert!(out.starts_with("java.sql.Date.valueOf("), "LocalDate expr must be wrapped: {}", out);
+        assert!(out.ends_with(')'), "wrapped expr must close: {}", out);
     }
 
     // ── Issue #127: cross-package disambiguation ──

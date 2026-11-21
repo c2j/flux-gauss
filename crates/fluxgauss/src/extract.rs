@@ -510,7 +510,11 @@ pub(crate) fn find_custom_type<'a>(
     let lower = name.to_lowercase();
     custom_types.get(name).or_else(|| custom_types.get(&lower)).or_else(|| {
         let bare = lower.rsplit('.').next().unwrap_or(&lower);
-        custom_types.iter().find(|(k, _)| k.to_lowercase() == bare).map(|(_, v)| v)
+        // Deterministic pick (review #129 P0-2): HashMap iteration order must
+        // not leak into generated code when several keys share the bare name.
+        let mut hits: Vec<&String> = custom_types.keys().filter(|k| k.to_lowercase() == bare).collect();
+        hits.sort();
+        hits.first().and_then(|k| custom_types.get(*k))
     })
 }
 

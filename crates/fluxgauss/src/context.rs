@@ -85,6 +85,11 @@ pub struct StatementContext<'a> {
     pub current_stmt_idx: usize,
     pub stmt_lines: Vec<u32>,
     pub unresolved_calls: Vec<UnresolvedCall>,
+    /// Issue #124 P1-3 (review #129): ogsql-parser misparses `coll(i) := v` as
+    /// `ProcedureCall(coll, [i])` followed by `Sql(":= v")`. The procedure-call
+    /// handler stashes the element write here; the Sql handler pairs it into
+    /// `coll.set(i-1, v)`. Tuple: (base java expr, index java expr, elem java type).
+    pub pending_coll_elem_assign: Option<(String, String, Option<String>)>,
 }
 
 impl<'a> StatementContext<'a> {
@@ -99,6 +104,7 @@ impl<'a> StatementContext<'a> {
             current_stmt_idx: 0,
             stmt_lines: Vec::new(),
             unresolved_calls: Vec::new(),
+            pending_coll_elem_assign: None,
         }
     }
 }

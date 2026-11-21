@@ -401,14 +401,14 @@ public class GaussCompleteExamplesService {
         }
         vEnd = String.valueOf(pString).indexOf(String.valueOf(pDelimiter), Math.max(0, (vStart) - 1)) + 1;
         while (vEnd > 0) {
-            // CALL v_array(vIdx)
-            // SQL: := trim ( SUBSTR ( p_string , v_start , v_end - v_start ) )
+            while (vArray.size() < (int)(long)(vIdx)) { vArray.add(null); }
+            vArray.set((int)(long)(vIdx) - 1, String.valueOf(pString).substring(Math.min(String.valueOf(pString).length(), Math.max(0, (vStart) - 1)), Math.min(String.valueOf(pString).length(), Math.max(0, (vStart) - 1) + (vEnd - vStart))).trim());
             vIdx = vIdx + 1;
             vStart = vEnd + pDelimiter.length();
             vEnd = String.valueOf(pString).indexOf(String.valueOf(pDelimiter), Math.max(0, (vStart) - 1)) + 1;
         }
-        // CALL v_array(vIdx)
-        // SQL: := trim ( SUBSTR ( p_string , v_start ) )
+        while (vArray.size() < (int)(long)(vIdx)) { vArray.add(null); }
+        vArray.set((int)(long)(vIdx) - 1, String.valueOf(pString).substring(Math.min(String.valueOf(pString).length(), Math.max(0, (vStart) - 1))).trim());
         return vArray;
     }
 
