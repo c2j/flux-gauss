@@ -15362,6 +15362,27 @@ def _resolve_codeweb_bin():
     return shutil.which("codeweb")
 
 
+# Must match the codeweb tag pinned in the workspace Cargo.toml — the Rust
+# engine links that exact version, so a divergent CLI could produce a
+# different closure file set for the same config.
+_EXPECTED_CODEWEB_VERSION = "0.9.11"
+
+
+def _warn_on_codeweb_version_mismatch(codeweb_bin: str) -> None:
+    """Warn (not fail) when the resolved codeweb CLI differs from the pinned
+    version; graph semantics may drift between releases."""
+    try:
+        r = subprocess.run([codeweb_bin, "--version"], capture_output=True,
+                           text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return
+    m = re.search(r"(\d+\.\d+\.\d+)", r.stdout or "")
+    if m and m.group(1) != _EXPECTED_CODEWEB_VERSION:
+        print(f"Warning: codeweb {m.group(1)} found but fluxgauss pins "
+              f"{_EXPECTED_CODEWEB_VERSION} (Cargo.toml); dependency_graph "
+              f"results may differ between engines.", file=sys.stderr)
+
+
 def _depgraph_routine_spellings(node, routine_pkgs):
     """All lowercase spellings a routine node answers to: bare name,
     `pkg.name`, `schema.pkg.name` (via contains_routine package nodes) and
@@ -15444,6 +15465,10 @@ def _depgraph_closure_from_graph(graph: dict, seeds: list, project_root: str) ->
                 path = f if os.path.isabs(f) else os.path.join(project_root, f)
                 if not os.path.exists(path) and os.path.exists(f):
                     path = f
+                # codeweb export paths may contain `/./` segments; Rust's
+                # PathBuf equality ignores `.` components, so normalize here
+                # to keep the string dedup below equivalent across engines.
+                path = os.path.normpath(path)
                 if path not in seen_files:
                     seen_files.add(path)
                     files.append(path)
@@ -15482,6 +15507,7 @@ def _resolve_dependency_graph_files(config: dict) -> tuple:
         print("Error: codeweb binary not found. Install codeweb or set CODEWEB_BIN.",
               file=sys.stderr)
         sys.exit(1)
+    _warn_on_codeweb_version_mismatch(codeweb_bin)
 
     # Auto-init: no codeweb.toml → `codeweb init` in place so users never run
     # it by hand. `dirs` default to the whole project root; --force is required

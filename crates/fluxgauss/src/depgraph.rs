@@ -51,8 +51,11 @@ fn ensure_codeweb_pool() {
         if let Err(e) = rayon::ThreadPoolBuilder::new().stack_size(4 * 1024 * 1024).build_global() {
             // Global pool already installed by another crate with default
             // stacks — the deep-recursion overflow fix would not apply.
-            tracing::warn!(
-                "rayon global pool already initialized ({}); codeweb analyze may stack-overflow on deeply nested SQL",
+            // eprintln! not tracing: the CLI binary installs no tracing
+            // subscriber, so tracing::warn! would be silently dropped exactly
+            // in the CLI-on-huge-corpus scenario this warning exists for.
+            eprintln!(
+                "warning: rayon global pool already initialized ({}); codeweb analyze may stack-overflow on deeply nested SQL",
                 e
             );
         }
@@ -88,7 +91,7 @@ pub fn resolve_dependency_files(config: &AppConfig) -> Result<ClosureStats, Stri
         let status = proj.diff().map_err(|e| format!("codeweb diff failed: {}", e))?;
         if !status.is_up_to_date() {
             let report = proj.analyze().map_err(|e| format!("codeweb analyze failed: {}", e))?;
-            tracing::info!("codeweb analyze: {:?}", report);
+            println!("  dependency_graph: codeweb analyze: {:?}", report);
         }
     }
 

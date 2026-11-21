@@ -3,6 +3,7 @@
 
 use std::collections::HashSet;
 use std::fs;
+use std::path::PathBuf;
 
 use fluxgauss::config::AppConfig;
 use fluxgauss::depgraph::resolve_dependency_files;
@@ -11,8 +12,8 @@ fn proc_sql(name: &str, calls: &str) -> String {
     format!("CREATE OR REPLACE PROCEDURE {name}()\nAS $$\nBEGIN\n{calls}\nEND;\n$$ LANGUAGE plpgsql;\n")
 }
 
-fn basenames(files: &[std::path::PathBuf]) -> HashSet<String> {
-    files.iter().map(|f| f.file_name().unwrap().to_string_lossy().into_owned()).collect()
+fn file_set(files: &[PathBuf]) -> HashSet<PathBuf> {
+    files.iter().cloned().collect()
 }
 
 #[test]
@@ -32,8 +33,12 @@ fn depgraph_auto_init_analyze_and_transitive_closure() {
     let config: AppConfig = serde_yaml::from_str(&yaml).unwrap();
 
     let stats = resolve_dependency_files(&config).expect("first resolve");
-    let names = basenames(&stats.files);
-    assert_eq!(names, HashSet::from(["a.sql".into(), "b.sql".into(), "c.sql".into()]));
+    // Exact path assertion (not basenames): PathBuf equality ignores `.`
+    // components, so a `/./`-polluted codeweb path would still dedup here —
+    // matching what the Python side now guarantees via os.path.normpath.
+    let expected: HashSet<PathBuf> = ["a.sql", "b.sql", "c.sql"].iter().map(|n| root.join(n)).collect();
+    assert_eq!(file_set(&stats.files), expected);
+    assert_eq!(stats.files.len(), 3, "closure files must be deduplicated");
     assert_eq!(stats.closure_routines, 3);
     assert!(stats.matched_seeds.iter().any(|s| s == "pkg_a.top"));
     assert!(stats.unmatched_seeds.is_empty());
@@ -42,7 +47,7 @@ fn depgraph_auto_init_analyze_and_transitive_closure() {
 
     // Second run reuses the fresh store (incremental path) and must agree.
     let stats2 = resolve_dependency_files(&config).expect("second resolve");
-    assert_eq!(basenames(&stats2.files), names);
+    assert_eq!(file_set(&stats2.files), expected);
     assert_eq!(stats2.closure_routines, 3);
 }
 

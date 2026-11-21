@@ -514,7 +514,7 @@ class TestExprToJavaNoProcContext:
             "right": {"Literal": {"Integer": 2}},
         }}
         result = fg._expr_to_java(expr, None)
-        assert isinstance(result, str)
+        assert result == "1 + 2"
 
     def test_binary_op_concat_no_proc(self):
         expr = {"BinaryOp": {
@@ -523,7 +523,7 @@ class TestExprToJavaNoProcContext:
             "right": {"Literal": {"String": "b"}},
         }}
         result = fg._expr_to_java(expr, None)
-        assert isinstance(result, str)
+        assert result == '"a" + "b"'
 
     def test_infer_expr_type_function_call_no_proc(self):
         expr = {"FunctionCall": {

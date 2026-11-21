@@ -138,6 +138,41 @@ def test_contains_routine_does_not_pull_package():
     assert stats["routines"] == 1
 
 
+def test_dot_slash_file_paths_dedup():
+    """codeweb export file fields may contain `/./` segments; string dedup must
+    not treat `/proj/sql/./a.sql` and `/proj/sql/a.sql` as different files
+    (Rust PathBuf equality already ignores `.` components)."""
+    graph = {
+        "nodes": [
+            _node(0, "procedure", "top", "sql/./a.sql"),
+            _node(1, "procedure", "sibling", "sql/a.sql"),
+        ],
+        "edges": [],
+    }
+    stats = fg._depgraph_closure_from_graph(graph, ["top"], "/proj")
+    assert stats["routines"] == 1
+    stats = fg._depgraph_closure_from_graph(graph, ["top", "sibling"], "/proj")
+    assert stats["routines"] == 2
+    assert stats["files"] == [os.path.join("/proj", "sql", "a.sql")]
+
+
+def test_codeweb_version_mismatch_warns(tmp_path, monkeypatch, capsys):
+    fake = tmp_path / "codeweb"
+    fake.write_text("#!/bin/sh\necho 'codeweb 0.9.10'\n")
+    fake.chmod(0o755)
+    fg._warn_on_codeweb_version_mismatch(str(fake))
+    err = capsys.readouterr().err
+    assert "0.9.10" in err and "0.9.11" in err
+
+
+def test_codeweb_version_match_is_quiet(tmp_path, capsys):
+    fake = tmp_path / "codeweb"
+    fake.write_text("#!/bin/sh\necho 'codeweb 0.9.11'\n")
+    fake.chmod(0o755)
+    fg._warn_on_codeweb_version_mismatch(str(fake))
+    assert capsys.readouterr().err == ""
+
+
 def test_missing_project_exits(tmp_path, monkeypatch):
     monkeypatch.setattr(fg, "_resolve_codeweb_bin", lambda: "/bin/true")
     with pytest.raises(SystemExit):
