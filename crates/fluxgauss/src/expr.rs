@@ -756,6 +756,11 @@ fn infer_arg_type_from_expr(expr: &str, proc: &ProcedureInfo) -> &'static str {
 }
 
 fn is_out_param(name: &str, proc: &ProcedureInfo) -> bool {
+    // Already-dereferenced or call expressions (e.g. `x.get()`) are not param names;
+    // matching them would make coerce_arg_to_type recurse forever appending `.get()`.
+    if name.contains('(') {
+        return false;
+    }
     let base_name = if name.contains('.') { name.split('.').next().unwrap() } else { name };
     let bn = base_name.to_lowercase().replace("_", "");
     proc.parameters.iter().any(|p| p.name.to_lowercase().replace("_", "") == bn && p.is_out())

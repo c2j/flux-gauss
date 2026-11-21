@@ -98,7 +98,12 @@ fn main() {
 fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let config_path_str = cli.config.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "CLI mode".into());
 
-    let (mut config, sql_files, output_dir) = resolve_inputs(&cli)?;
+    let (mut config, mut sql_files, output_dir) = resolve_inputs(&cli)?;
+
+    // ── dependency_graph: codeweb file-level closure (#120) ──
+    if fluxgauss::depgraph::is_enabled(&config) {
+        apply_dependency_graph(&config, &mut sql_files)?;
+    }
 
     // CLI --encoding takes precedence over config file
     if cli.encoding != "utf-8" {
@@ -278,6 +283,44 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|_| output_dir.clone());
     println!("\n  Output: {}", abs_output);
 
+    Ok(())
+}
+
+/// Merge codeweb closure files (+ `extra_sources`) into the routine source
+/// list. Prints a summary; `on_unresolved: fail` aborts on unresolved calls.
+fn apply_dependency_graph(
+    config: &config::AppConfig,
+    sql_files: &mut Vec<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let stats = fluxgauss::depgraph::resolve_dependency_files(config)?;
+
+    let extra = config.dependency_graph.as_ref().and_then(|d| d.extra_sources.clone()).unwrap_or_default();
+    let extra_files = fluxgauss::config::expand_source_patterns(&extra);
+
+    let mut seen: std::collections::HashSet<PathBuf> = sql_files.iter().cloned().collect();
+    for f in stats.files.iter().cloned().chain(extra_files) {
+        if seen.insert(f.clone()) {
+            sql_files.push(f);
+        }
+    }
+    println!("  dependency_graph: {} file(s) from {} closure routine(s)", stats.files.len(), stats.closure_routines);
+    if !stats.matched_seeds.is_empty() {
+        println!("    seeds matched: {}", stats.matched_seeds.join(", "));
+    }
+    if !stats.unmatched_seeds.is_empty() {
+        println!("    ⚠ seeds unmatched: {}", stats.unmatched_seeds.join(", "));
+    }
+    if !stats.unresolved.is_empty() {
+        println!("    ⚠ unresolved calls in closure: {}", stats.unresolved.len());
+        if config.dependency_graph.as_ref().map(|d| d.fail_on_unresolved()).unwrap_or(false) {
+            return Err(format!(
+                "dependency_graph on_unresolved=fail: {} unresolved call(s): {}",
+                stats.unresolved.len(),
+                stats.unresolved.join(", ")
+            )
+            .into());
+        }
+    }
     Ok(())
 }
 

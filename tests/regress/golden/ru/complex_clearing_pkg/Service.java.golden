@@ -172,7 +172,7 @@ public class ComplexClearingPkgService {
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
         gDdlStack = String.valueOf(String.valueOf(String.valueOf(String.valueOf(gDdlStack).concat(String.valueOf(String.valueOf((char)(10))))).concat(String.valueOf(pTag))).concat(String.valueOf(":"))).concat(String.valueOf(pObjectName));
-        if (pTag.contains("DROP") && pObjectName.contains("trade")) {
+        if ((pTag.contains("DROP") && pObjectName.contains("trade"))) {
             log.info("e_ddl_intercept");
         }
         this.logAuditAutonomous(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf("DDL executed: ").concat(String.valueOf(pTag))).concat(String.valueOf(" on "))).concat(String.valueOf(pObjectType))).concat(String.valueOf(" "))).concat(String.valueOf(pObjectName)), "INFO");

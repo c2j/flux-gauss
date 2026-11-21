@@ -1605,11 +1605,22 @@ def _box_primitive(java_type: str) -> str:
     return mapping.get(java_type, java_type)
 
 
+def _ident_str(part) -> str:
+    """Normalize an AST identifier part to str.
+
+    ogsql serializes quoted identifiers as {"quote_style": ..., "value": ...}
+    dicts inside name lists; plain identifiers are bare strings.
+    """
+    if isinstance(part, dict):
+        return str(part.get("value", ""))
+    return str(part) if part is not None else ""
+
+
 def extract_parameters(params_list: list) -> list:
     """Extract parameter info from AST parameter list."""
     result = []
     for p in params_list:
-        name = p.get("name", "")
+        name = _ident_str(p.get("name", ""))
         sql_type = p.get("data_type", "varchar")
         mode = p.get("mode")
 
@@ -1626,7 +1637,7 @@ def extract_parameters(params_list: list) -> list:
                 if name.lower() in known_modes and potential_name.lower() not in known_modes:
                     name = potential_name
                     sql_type = potential_type
-                    mode = p.get("name", "").lower()  # original name was the mode
+                    mode = _ident_str(p.get("name", "")).lower()  # original name was the mode
 
         # Handle data_type that could be a dict (e.g., PercentType, RefCursor)
         if isinstance(sql_type, dict):
@@ -1671,7 +1682,7 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
     for stmt_wrapper in ast.get("statements", []):
         for stmt_type, stmt_data in stmt_wrapper.items():
             if stmt_type in ("CreateFunction", "CreateProcedure"):
-                name_parts = stmt_data.get("name", [])
+                name_parts = [_ident_str(p) for p in stmt_data.get("name", [])]
                 package = name_parts[0] if len(name_parts) > 1 else ""
                 proc_name = name_parts[-1] if name_parts else "unknown"
                 full_name = ".".join(name_parts)
@@ -1709,7 +1720,7 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
                 for item in stmt_data.get("items", []):
                     for item_type, item_data in item.items():
                         if item_type == "Variable":
-                            var_name = item_data.get("name", "")
+                            var_name = _ident_str(item_data.get("name", ""))
                             if var_name in package_vars:
                                 continue
                             var_type_raw = item_data.get("data_type", {})
@@ -1726,13 +1737,13 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
                             package_vars[var_name] = {"java_type": var_type, "default": default_val}
                         elif item_type == "Type":
                             for type_kind, type_data in item_data.items():
-                                type_name = type_data.get("name", "")
+                                type_name = _ident_str(type_data.get("name", ""))
                                 if not type_name:
                                     continue
                                 if type_kind == "Record":
                                     fields = []
                                     for fld in type_data.get("fields", []):
-                                        fld_name = fld.get("name", "")
+                                        fld_name = _ident_str(fld.get("name", ""))
                                         fld_java_type = sql_type_to_java(fld.get("data_type", {}))
                                         fields.append((fld_name, fld_java_type))
                                     custom_types[type_name] = {"kind": "record", "fields": fields}
@@ -1747,7 +1758,7 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
                                     custom_types[type_name] = {"kind": "varray", "elem_type": elem_java_type, "size": size_val}
 
             elif stmt_type == "CreatePackageBody":
-                package_name_parts = stmt_data.get("name", [])
+                package_name_parts = [_ident_str(p) for p in stmt_data.get("name", [])]
                 package_name = package_name_parts[-1] if package_name_parts else "unknown"
 
                 # Only extract Variables that appear BEFORE the first Function/Procedure.
@@ -1757,7 +1768,7 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
                         if item_type in ("Function", "Procedure"):
                             break
                         if item_type == "Variable":
-                            var_name = item_data.get("name", "")
+                            var_name = _ident_str(item_data.get("name", ""))
                             var_type_raw = item_data.get("data_type", {})
                             if isinstance(var_type_raw, dict):
                                 var_type = sql_type_to_java(var_type_raw)
@@ -1778,8 +1789,8 @@ def extract_procedures(ast: dict, source_file: str = "") -> tuple:
                     for item_type, item_data in item.items():
                         if item_type not in ("Procedure", "Function"):
                             continue
-                        proc_name = item_data.get("name", [])
-                        proc_name = proc_name[-1] if proc_name else "unknown"
+                        proc_name_parts = [_ident_str(p) for p in item_data.get("name", [])]
+                        proc_name = proc_name_parts[-1] if proc_name_parts else "unknown"
                         full_name = f"{package_name}.{proc_name}"
                         is_function = item_type == "Function"
                         return_type = item_data.get("return_type") if is_function else None
@@ -9334,21 +9345,22 @@ def _infer_expr_type(expr, proc: ProcedureInfo) -> str:
             if len(parts) >= 2:
                 var_name_raw = parts[0]
                 field_name = parts[-1]
-                if var_name_raw in proc.local_vars:
+                if proc is not None and var_name_raw in proc.local_vars:
                     var_type = proc.local_vars[var_name_raw]
                     if var_type == "Map<String, Object>":
                         return _java_type_from_field_name(field_name)
                 # RECORD loop variable or undeclared Map — infer from field name
                 return _java_type_from_field_name(field_name)
-            if name in proc.local_vars:
+            if proc is not None and name in proc.local_vars:
                 return proc.local_vars[name]
             name_lower = name.lower()
-            for vn, vt in proc.local_vars.items():
-                if vn.lower() == name_lower:
-                    return vt
-            for p in proc.parameters:
-                if p.name.lower() == name.lower():
-                    return p.java_type
+            if proc is not None:
+                for vn, vt in proc.local_vars.items():
+                    if vn.lower() == name_lower:
+                        return vt
+                for p in proc.parameters:
+                    if p.name.lower() == name.lower():
+                        return p.java_type
             if name in _PACKAGE_CONSTANTS:
                 return _PACKAGE_CONSTANTS[name]
             # Bare function call without parens (PL/SQL allows e.g. func_get_frame_date)
@@ -10227,6 +10239,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             if op in ("<@", "@>", "&&", "<<", ">>", "&<", "&>", "-|-", "~", "@"):
                 return f"/* RangeOp: {op} */ false"
 
+            left_type = right_type = "Object"
             if proc is not None:
                 left_type = _infer_expr_type(val.get("left"), proc)
                 right_type = _infer_expr_type(val.get("right"), proc)
@@ -10878,7 +10891,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     _arg_types.append(_at if _at and _at != "Object" else "?")
                 _sig = f"ret={_ret_type}, args=[{', '.join(_arg_types)}]"
                 _hint = f"pkg={_pkg_hint}" if _pkg_hint else "pkg=?"
-                _caller = f"caller={proc.source_file}:{proc.proc_name}"
+                _caller = f"caller={proc.source_file}:{proc.proc_name}" if proc else "caller=?"
                 return f"/* TODO: implement {_flatten_comment(func_name)}({_flatten_comment(args_str)}) — {_hint}, {_sig}, {_caller} */ null"
         elif key == "SpecialFunction":
             func_name = val.get("name", "").lower()
@@ -15331,7 +15344,229 @@ def _resolve_config_file_sets(config: dict) -> tuple:
     routine += _expand_source_patterns(config.get("source_dirs"))
     ddl = _expand_source_patterns(config.get("ddl_sources"))
     ddl += _expand_source_patterns(config.get("ddl_source_dirs"))
+
+    # dependency_graph: codeweb file-level closure (#120).  Seeds default to
+    # `procedure_filter`; the resulting files are unioned into routine sources.
+    dg_files, _dg_stats = _resolve_dependency_graph_files(config)
+    if dg_files:
+        seen = set(routine)
+        routine += [f for f in dg_files if f not in seen]
     return routine, ddl
+
+
+def _resolve_codeweb_bin():
+    """Locate the codeweb CLI: CODEWEB_BIN env → PATH."""
+    env = os.environ.get("CODEWEB_BIN")
+    if env:
+        return env
+    return shutil.which("codeweb")
+
+
+# Must match the codeweb tag pinned in the workspace Cargo.toml — the Rust
+# engine links that exact version, so a divergent CLI could produce a
+# different closure file set for the same config.
+_EXPECTED_CODEWEB_VERSION = "0.9.11"
+
+
+def _warn_on_codeweb_version_mismatch(codeweb_bin: str) -> None:
+    """Warn (not fail) when the resolved codeweb CLI differs from the pinned
+    version; graph semantics may drift between releases."""
+    try:
+        r = subprocess.run([codeweb_bin, "--version"], capture_output=True,
+                           text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return
+    m = re.search(r"(\d+\.\d+\.\d+)", r.stdout or "")
+    if m and m.group(1) != _EXPECTED_CODEWEB_VERSION:
+        print(f"Warning: codeweb {m.group(1)} found but fluxgauss pins "
+              f"{_EXPECTED_CODEWEB_VERSION} (Cargo.toml); dependency_graph "
+              f"results may differ between engines.", file=sys.stderr)
+
+
+def _depgraph_routine_spellings(node, routine_pkgs):
+    """All lowercase spellings a routine node answers to: bare name,
+    `pkg.name`, `schema.pkg.name` (via contains_routine package nodes) and
+    `schema.name` for standalone routines."""
+    name = (node.get("name") or "").strip().lower()
+    if not name:
+        return set()
+    out = {name}
+    pkgs = routine_pkgs.get(node.get("id"), [])
+    for pkg in pkgs:
+        pname = (pkg.get("name") or "").strip().lower()
+        pschema = (pkg.get("schema") or "").strip().lower()
+        if pname:
+            out.add(f"{pname}.{name}")
+            if pschema:
+                out.add(f"{pschema}.{pname}.{name}")
+    schema = (node.get("schema") or "").strip().lower()
+    # `schema.name` only for standalone routines — package members would
+    # produce a bogus `sch.proc` spelling that drops the package segment.
+    # Mirrors depgraph.rs::node_spellings (Some(s), None) arm.
+    if schema and not pkgs:
+        out.add(f"{schema}.{name}")
+    return out
+
+
+def _depgraph_closure_from_graph(graph: dict, seeds: list, project_root: str) -> dict:
+    """BFS over codeweb `direct`/`dynamic` call edges from seed routines;
+    return the source files of every reached routine plus diagnostics."""
+    nodes = {n.get("id"): n for n in graph.get("nodes", []) if isinstance(n, dict)}
+    edges = [e for e in graph.get("edges", []) if isinstance(e, dict)]
+
+    routine_pkgs = defaultdict(list)
+    for e in edges:
+        if e.get("type") != "contains_routine":
+            continue
+        src, dst = nodes.get(e.get("source")), nodes.get(e.get("target"))
+        if src and dst and src.get("type") == "package":
+            routine_pkgs[dst.get("id")].append(src)
+
+    adj = defaultdict(list)
+    for e in edges:
+        if e.get("type") in ("direct", "dynamic"):
+            adj[e.get("source")].append(e.get("target"))
+
+    reached = set()
+    queue = []
+    matched = set()
+    for seed in seeds:
+        cands = _filter_name_candidates(seed.lower())
+        for node in nodes.values():
+            if node.get("type") not in ("procedure", "function"):
+                continue
+            spellings = _depgraph_routine_spellings(node, routine_pkgs)
+            if cands & spellings:
+                matched.add(seed.lower())
+                if node.get("id") not in reached:
+                    reached.add(node.get("id"))
+                    queue.append(node.get("id"))
+    while queue:
+        cur = queue.pop()
+        for tgt in adj.get(cur, []):
+            if tgt not in reached:
+                reached.add(tgt)
+                queue.append(tgt)
+
+    files = []
+    seen_files = set()
+    unresolved = []
+    seen_unres = set()
+    routines = 0
+    for nid in reached:
+        node = nodes.get(nid)
+        if not node:
+            continue
+        ntype = node.get("type")
+        if ntype in ("procedure", "function"):
+            routines += 1
+            f = node.get("file")
+            if f:
+                path = f if os.path.isabs(f) else os.path.join(project_root, f)
+                if not os.path.exists(path) and os.path.exists(f):
+                    path = f
+                # codeweb export paths may contain `/./` segments; Rust's
+                # PathBuf equality ignores `.` components, so normalize here
+                # to keep the string dedup below equivalent across engines.
+                path = os.path.normpath(path)
+                if path not in seen_files:
+                    seen_files.add(path)
+                    files.append(path)
+        elif ntype == "unresolved":
+            raw = node.get("raw_expr") or ""
+            if raw and raw not in seen_unres:
+                seen_unres.add(raw)
+                unresolved.append(raw)
+
+    return {
+        "files": sorted(files),
+        "matched": sorted(matched),
+        "unmatched": sorted(set(s.lower() for s in seeds) - matched),
+        "routines": routines,
+        "unresolved": unresolved,
+    }
+
+
+def _resolve_dependency_graph_files(config: dict) -> tuple:
+    """Resolve routine source files via a codeweb dependency graph (#120).
+
+    Runs `codeweb analyze` (unless refresh=never) then `codeweb export
+    --format json`, computes the transitive call-edge closure of the seeds
+    (`dependency_graph.seeds`, defaulting to `procedure_filter`) and returns
+    (files, stats).  Returns ([], {}) when the section is absent/disabled.
+    """
+    dg = config.get("dependency_graph")
+    if not isinstance(dg, dict) or not dg.get("enabled"):
+        return [], {}
+    project = dg.get("project")
+    if not project:
+        print("Error: dependency_graph.project is required", file=sys.stderr)
+        sys.exit(1)
+    codeweb_bin = _resolve_codeweb_bin()
+    if not codeweb_bin:
+        print("Error: codeweb binary not found. Install codeweb or set CODEWEB_BIN.",
+              file=sys.stderr)
+        sys.exit(1)
+    _warn_on_codeweb_version_mismatch(codeweb_bin)
+
+    # Auto-init: no codeweb.toml → `codeweb init` in place so users never run
+    # it by hand. `dirs` default to the whole project root; --force is required
+    # because a populated corpus dir has no codeweb.toml yet.
+    if not os.path.isfile(os.path.join(project, "codeweb.toml")):
+        name = dg.get("name") or os.path.basename(os.path.normpath(project)) \
+            or "fluxgauss"
+        cmd = [codeweb_bin, "init", name, "--root", project, "--force"]
+        for d in dg.get("dirs") or []:
+            cmd += ["--dir", str(d)]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"Error: codeweb init failed for {project}:\n{r.stderr.strip()}",
+                  file=sys.stderr)
+            sys.exit(1)
+        print(f"  dependency_graph: initialized codeweb project '{name}' at {project}")
+
+    if str(dg.get("refresh", "auto")).lower() != "never":
+        r = subprocess.run([codeweb_bin, "analyze", "-p", project],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"Error: codeweb analyze failed for {project}:\n{r.stderr.strip()}",
+                  file=sys.stderr)
+            sys.exit(1)
+
+    r = subprocess.run([codeweb_bin, "export", "--format", "json", "-p", project],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"Error: codeweb export failed for {project}:\n{r.stderr.strip()}",
+              file=sys.stderr)
+        sys.exit(1)
+    try:
+        graph = json.loads(r.stdout)
+    except json.JSONDecodeError as e:
+        print(f"Error: cannot parse codeweb export JSON: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    seeds_raw = dg.get("seeds") or config.get("procedure_filter") or []
+    entries = _parse_procedure_filter_entries(seeds_raw)
+    stats = _depgraph_closure_from_graph(
+        graph, [name for name, _argc in entries], project)
+
+    print(f"  dependency_graph: {len(stats['files'])} file(s) from "
+          f"{stats['routines']} closure routine(s)")
+    if stats["matched"]:
+        print(f"    seeds matched: {', '.join(stats['matched'])}")
+    if stats["unmatched"]:
+        print(f"    ⚠ seeds unmatched: {', '.join(stats['unmatched'])}")
+    if stats["unresolved"]:
+        print(f"    ⚠ unresolved calls in closure: {len(stats['unresolved'])}")
+        if str(dg.get("on_unresolved", "warn")).lower() == "fail":
+            print("Error: dependency_graph on_unresolved=fail: "
+                  + ", ".join(stats["unresolved"]), file=sys.stderr)
+            sys.exit(1)
+
+    files = list(stats["files"])
+    files += [f for f in _expand_source_patterns(dg.get("extra_sources"))
+              if f not in files]
+    return files, stats
 
 
 def _parse_procedure_filter_entries(entries) -> list:
@@ -17462,6 +17697,16 @@ FLUXGAUSS_HELP = f"""\
     #   - sql/ddl
     # procedure_filter:                    # 按 包名.存过名[:参数个数] 筛选存过 (#120)
     #   - pkg_order.create_order
+    # dependency_graph:                    # codeweb 依赖图自动圈定源文件 (#120)
+    #   enabled: true                        # 语料目录即 codeweb 项目根
+    #   project: /path/to/sql-corpus         # 无 codeweb.toml 时自动 init+analyze
+    #   # dirs: [sql/proc, sql/func]         # init 分析目录（缺省=整个 project）
+    #   # name: mycorpus                     # init 项目名（缺省=目录名）
+    #   refresh: auto                        # auto=自动增量 analyze；never=复用现有 store
+    #   # seeds:                             # 闭包种子，缺省用 procedure_filter
+    #   #   - pkg_order.create_order
+    #   # extra_sources: [sql/extra.sql]     # 兜底补充文件
+    #   # on_unresolved: warn                # warn(默认) | fail
     java_packages:                        自定义 Java 包名映射（可选）
       - package: com.example.order
         sources:

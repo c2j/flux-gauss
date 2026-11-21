@@ -14,6 +14,8 @@ pub struct AppConfig {
     pub ddl_source_dirs: Option<Vec<String>>,
     /// Whitelist of `pkg.proc[:N]` routines; transitive call closure is auto-included (#120)
     pub procedure_filter: Option<Vec<String>>,
+    /// codeweb dependency-graph file closure (#120)
+    pub dependency_graph: Option<DependencyGraphConfig>,
     pub java_packages: Option<Vec<JavaPackageMapping>>,
     pub integration_test: Option<IntegrationTestConfig>,
     pub encoding: Option<String>,
@@ -157,6 +159,52 @@ fn collect_glob_matches(dir: &std::path::Path, re: &regex::Regex, out: &mut Vec<
         if path.is_dir() {
             collect_glob_matches(&path, re, out);
         }
+    }
+}
+
+/// `dependency_graph` config: resolve routine source files via an embedded
+/// codeweb call graph before parsing (#120).
+#[derive(Debug, Default, Deserialize)]
+pub struct DependencyGraphConfig {
+    /// Master switch; the section is only active when `enabled: true`.
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    /// codeweb project root containing `codeweb.toml`. When the file is
+    /// absent fluxgauss auto-initializes the project in place.
+    pub project: Option<String>,
+    /// Source dirs for auto-init (project-root-relative or absolute).
+    /// Defaults to the whole project root.
+    #[serde(default)]
+    pub dirs: Option<Vec<String>>,
+    /// Project name for auto-init; defaults to the directory name.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// `auto` (default): run incremental analyze when the store is stale;
+    /// `never`: reuse the existing store as-is.
+    #[serde(default)]
+    pub refresh: Option<String>,
+    /// Closure seeds. Defaults to `procedure_filter` entries when omitted.
+    #[serde(default)]
+    pub seeds: Option<Vec<String>>,
+    /// Extra source files/dirs/globs always included alongside closure files.
+    #[serde(default)]
+    pub extra_sources: Option<Vec<String>>,
+    /// `warn` (default) or `fail` on unresolved call nodes inside the closure.
+    #[serde(default)]
+    pub on_unresolved: Option<String>,
+}
+
+impl DependencyGraphConfig {
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.unwrap_or(false)
+    }
+
+    pub fn refresh_never(&self) -> bool {
+        self.refresh.as_deref().map(|r| r.eq_ignore_ascii_case("never")).unwrap_or(false)
+    }
+
+    pub fn fail_on_unresolved(&self) -> bool {
+        self.on_unresolved.as_deref().map(|u| u.eq_ignore_ascii_case("fail")).unwrap_or(false)
     }
 }
 

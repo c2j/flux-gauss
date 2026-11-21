@@ -477,3 +477,71 @@ class TestBoxedNumCompare:
             proc,
         )
         assert "Objects.equals" in result and "0L" in result
+
+
+class TestExprToJavaNoProcContext:
+    """proc=None context: package-level variable defaults.
+
+    extract_procedures() evaluates package-var DEFAULT expressions via
+    _expr_to_java(default_expr, None) — there is no ProcedureInfo yet.
+    Regression: a package var initialized by a type-constructor call
+    (e.g. `g_cache t_nested_table := t_nested_table()`) crashed with
+    AttributeError on proc.source_file, dropping the whole file.
+    """
+
+    def test_unresolved_function_call_no_proc(self):
+        expr = {"FunctionCall": {"name": ["t_nested_table"], "args": []}}
+        result = fg._expr_to_java(expr, None)
+        assert "t_nested_table" in result
+
+    def test_function_call_with_column_ref_arg_no_proc(self):
+        expr = {"FunctionCall": {
+            "name": ["pkg_fn"],
+            "args": [{"ColumnRef": ["v_x"]}],
+        }}
+        result = fg._expr_to_java(expr, None)
+        assert isinstance(result, str)
+
+    def test_infer_expr_type_column_ref_no_proc(self):
+        assert fg._infer_expr_type({"ColumnRef": ["v_x"]}, None) == "Object"
+
+    def test_binary_op_add_no_proc(self):
+        """BinaryOp read left_type/right_type unconditionally; proc=None must
+        not raise UnboundLocalError (package var `g_x := 1+2` case)."""
+        expr = {"BinaryOp": {
+            "op": "+",
+            "left": {"Literal": {"Integer": 1}},
+            "right": {"Literal": {"Integer": 2}},
+        }}
+        result = fg._expr_to_java(expr, None)
+        assert result == "1 + 2"
+
+    def test_binary_op_concat_no_proc(self):
+        expr = {"BinaryOp": {
+            "op": "||",
+            "left": {"Literal": {"String": "a"}},
+            "right": {"Literal": {"String": "b"}},
+        }}
+        result = fg._expr_to_java(expr, None)
+        assert result == '"a" + "b"'
+
+    def test_infer_expr_type_function_call_no_proc(self):
+        expr = {"FunctionCall": {
+            "name": ["fn"],
+            "args": [{"ColumnRef": ["v_x"]}],
+        }}
+        fg._infer_expr_type(expr, None)  # must not raise
+
+    def test_extract_package_body_var_default_function_call(self):
+        """End-to-end: package var with FunctionCall default must not crash
+        extract_procedures (previously raised AttributeError)."""
+        ast = {"statements": [{"CreatePackageBody": {
+            "name": ["pkg_a"],
+            "items": [{"Variable": {
+                "name": "g_cache",
+                "data_type": {"TypeName": "t_nested_table"},
+                "default": {"FunctionCall": {"name": ["t_nested_table"], "args": []}},
+            }}],
+        }}]}
+        procs, pkg_vars, _ = fg.extract_procedures(ast, source_file="pkg_a.sql")
+        assert "g_cache" in pkg_vars

@@ -380,10 +380,16 @@ fn clean_stale_package_files(
     old_pkg_names: &std::collections::HashSet<String>,
     base_package: &str,
 ) {
-    let current: std::collections::HashSet<&str> = packages.iter().map(|p| p.package_name.as_str()).collect();
+    // Compare by emitted class name, not raw package_name: schema-qualified
+    // routines may register the same package under different casings
+    // (BIGFUND vs bigfund), which merge_package_info folds into one
+    // PackageInfo whose surviving package_name is order-dependent. Comparing
+    // raw names would treat the live package as stale and delete its files.
+    let current: std::collections::HashSet<String> =
+        packages.iter().map(|p| crate::naming::package_to_classname(&p.package_name)).collect();
     let jp_path = base_package.replace('.', "/");
     for pkg_name in old_pkg_names {
-        if current.contains(pkg_name.as_str()) {
+        if current.contains(&crate::naming::package_to_classname(pkg_name)) {
             continue;
         }
         let class_name = crate::naming::package_to_classname(pkg_name);
@@ -853,4 +859,83 @@ fn phase3_generate(
     crate::progress::progress_done("Generate", analyzed.packages.len());
 
     (generated, test_count, itest_count, errors)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::PackageInfo;
+    use std::collections::{HashMap, HashSet};
+
+    fn pkg(name: &str) -> PackageInfo {
+        PackageInfo {
+            package_name: name.into(),
+            procedures: Vec::new(),
+            table_refs: HashSet::new(),
+            package_vars: HashMap::new(),
+            source_file: String::new(),
+            source_files: Vec::new(),
+            comments: Vec::new(),
+            java_package: "com.example".into(),
+            custom_types: HashMap::new(),
+            extra_mapper_methods: Vec::new(),
+            excluded_procedures: Vec::new(),
+        }
+    }
+
+    fn artifact_paths(output_dir: &std::path::Path, base_package: &str, class: &str) -> Vec<std::path::PathBuf> {
+        let jp = base_package.replace('.', "/");
+        vec![
+            output_dir.join(format!("src/main/java/{jp}/service/{class}Service.java")),
+            output_dir.join(format!("src/main/java/{jp}/mapper/{class}Mapper.java")),
+            output_dir.join(format!("src/main/resources/mapper/{class}Mapper.xml")),
+            output_dir.join(format!("src/test/java/{jp}/service/{class}ServiceTest.java")),
+        ]
+    }
+
+    fn touch_all(paths: &[std::path::PathBuf]) {
+        for p in paths {
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, b"x").unwrap();
+        }
+    }
+
+    /// Manifest recorded `BIGFUND.PKG_X` but the merged PackageInfo survived as
+    /// `bigfund.pkg_x` — same emitted class `X`. Cleanup must not delete the
+    /// live package's artifacts.
+    #[test]
+    fn stale_cleanup_preserves_case_variant_of_live_package() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = tmp.path();
+        let base = "com.example";
+        // class name for both spellings is "X"
+        let paths = artifact_paths(out, base, "X");
+        touch_all(&paths);
+
+        let packages = vec![pkg("bigfund.pkg_x")];
+        let old: HashSet<String> = ["BIGFUND.PKG_X".to_string()].into_iter().collect();
+        clean_stale_package_files(out, &packages, &old, base);
+
+        for p in &paths {
+            assert!(p.exists(), "live package artifact must survive: {}", p.display());
+        }
+    }
+
+    /// Control case: a package truly absent from the current set is removed.
+    #[test]
+    fn stale_cleanup_removes_truly_stale_package() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = tmp.path();
+        let base = "com.example";
+        let paths = artifact_paths(out, base, "Gone");
+        touch_all(&paths);
+
+        let packages = vec![pkg("bigfund.pkg_x")];
+        let old: HashSet<String> = ["bigfund.pkg_gone".to_string()].into_iter().collect();
+        clean_stale_package_files(out, &packages, &old, base);
+
+        for p in &paths {
+            assert!(!p.exists(), "stale artifact must be removed: {}", p.display());
+        }
+    }
 }
