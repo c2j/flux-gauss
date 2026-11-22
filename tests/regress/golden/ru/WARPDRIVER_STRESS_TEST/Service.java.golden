@@ -33,9 +33,9 @@ public class WarpdriverStressTestService {
 
     public static class ROrderItem {
         public Long itemId;
-        public Object productCode;
-        public Object quantity;
-        public Object unitPrice;
+        public String productCode;
+        public java.math.BigDecimal quantity;
+        public java.math.BigDecimal unitPrice;
         public String metadata;
     }
 

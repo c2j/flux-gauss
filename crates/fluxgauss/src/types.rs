@@ -147,6 +147,12 @@ pub struct CursorInfo {
 #[derive(Debug, Clone)]
 pub struct CustomTypeInfo {
     pub fields: Vec<(String, String)>,
+    /// Review #129 B3: raw SQL type text per record field, parallel to
+    /// `fields` (same order). `fields` only stores the resolved Java type,
+    /// which loses the `<table>.<col>%TYPE` anchor needed to resolve column
+    /// types later once the DDL schema cache is available (extraction runs
+    /// before `parse_table_ddl`). Empty for non-record types.
+    pub field_sql_types: Vec<(String, String)>,
     pub is_record: bool,
     /// Java element type for collection types (`TYPE t IS TABLE OF x`,
     /// `VARRAY`, `INDEX BY`). `None` for records / ref cursors / object
@@ -660,6 +666,7 @@ mod tests {
     fn test_custom_type_info() {
         let ct = CustomTypeInfo {
             fields: vec![("id".into(), "Long".into()), ("name".into(), "String".into())],
+            field_sql_types: Vec::new(),
             is_record: false,
             elem_java_type: None,
         };

@@ -3394,6 +3394,18 @@ pub fn process_statement(
                             );
                         }
                         _ => {
+                            // Review #129 S5: a skipped record-field write must
+                            // not be silent — count it into unresolved_calls so
+                            // it shows up in the conversion report next to
+                            // `Unresolved: N` instead of only a code comment.
+                            ctx.unresolved_calls.push(crate::types::UnresolvedCall {
+                                caller: format!("{}.{}", proc.package, proc.proc_name),
+                                callee: format!("{}.{}({}).{}", base, "<coll>", idx, field),
+                                caller_file: proc.source_file.clone(),
+                                args: rhs.to_string(),
+                                hint: "collection element type is not record/map — field write emitted as comment"
+                                    .into(),
+                            });
                             push_logic_line(
                                 proc,
                                 format!(

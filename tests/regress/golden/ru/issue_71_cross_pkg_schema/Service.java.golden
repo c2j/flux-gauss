@@ -25,7 +25,7 @@ public class BizService {
 
     public static class Result {
         public Long statusCode;
-        public Object statusText;
+        public String statusText;
     }
 
     // Source: PKG_BIZ.do_it (PROCEDURE) — {FIXTURES_ROOT}/issue_71_cross_pkg_schema.sql:25-28

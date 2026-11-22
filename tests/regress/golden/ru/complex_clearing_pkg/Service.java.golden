@@ -34,7 +34,7 @@ public class ComplexClearingPkgService {
     private static final Long gLastTradeId = 0L;
     private static final Integer gLoopCounter = 0;
     private static Boolean gMutatingTableGuard = false;
-    private static final java.util.List<java.util.List<Object>> gPrivateCache = new java.util.ArrayList<>();
+    private static final java.util.List<java.util.List<java.math.BigDecimal>> gPrivateCache = new java.util.ArrayList<>();
     private static final Integer gSessionCounter = 0;
     private static Integer gTriggerDepth = 0;
     private static final Object _return = null;
@@ -46,7 +46,7 @@ public class ComplexClearingPkgService {
     public static class TradeRec {
         public Object base;
         public java.math.BigDecimal amount;
-        public Object status;
+        public String status;
     }
 
     // Source: complex_clearing_pkg.私有函数_居然支持$特殊字符# (FUNCTION) — {FIXTURES_ROOT}/complex_clearing_pkg.sql:90-91

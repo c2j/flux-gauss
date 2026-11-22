@@ -8,8 +8,8 @@ import java.util.Map;
         @Mapper
         public interface Issue124CollectionsMapper {
 
-                // issue_124_collections.sql:13 — pkg_coll_types.prc_collection_demo
+                // issue_124_collections.sql:14 — pkg_coll_types.prc_collection_demo
         List<Map<String, Object>> selectEmp(@Param("pMode") String pMode);
-        // issue_124_collections.sql:13 — pkg_coll_types.prc_collection_demo
+        // issue_124_collections.sql:14 — pkg_coll_types.prc_collection_demo
         int updateCfgTable(@Param("pMode") String pMode, @Param("vCnt") Long vCnt);
         }

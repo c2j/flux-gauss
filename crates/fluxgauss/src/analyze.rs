@@ -29,6 +29,66 @@ fn resolve_custom_typed_symbols(proc: &mut ProcedureInfo) {
     }
 }
 
+/// Review #129 B3: resolve a record field's raw SQL type text to a Java
+/// type. `<table>.<col>%TYPE` anchors resolve through the DDL schema cache
+/// first, then fall back to column-name inference; anything else goes
+/// through the normalizing type lookup. Returns `None` when nothing
+/// resolves (caller keeps the extraction-time value).
+fn record_field_java_type(
+    sql_type: &str,
+    ddl_schema: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+) -> Option<String> {
+    let lower = sql_type.to_lowercase();
+    if lower.contains("%rowtype") {
+        return Some("Map<String, Object>".into());
+    }
+    if lower.contains("%type") {
+        // "[schema.]table.column%TYPE" — anchor is everything before '%'.
+        let anchor = sql_type.split('%').next().unwrap_or("").trim();
+        let (tbl_part, col) = anchor.rsplit_once('.')?;
+        let tbl_lower = tbl_part.rsplit('.').next().unwrap_or(tbl_part).to_lowercase();
+        let col_lower = col.to_lowercase();
+        if let Some(cols) = ddl_schema.get(&tbl_lower) {
+            if let Some(raw) = cols.get(&col_lower) {
+                let normalized = crate::extract::normalize_sql_type(raw);
+                if let Some(j) = crate::type_map::sql_type_to_java(&normalized) {
+                    return Some(j.to_string());
+                }
+            }
+        }
+        // DDL not in sources (delivery configs may omit the table) — fall
+        // back to column-name inference rather than leaving Object, so
+        // generated fixtures get typed seeds instead of 145× null.
+        let inferred = crate::type_map::infer_sql_type_from_column_name(col);
+        return crate::type_map::sql_type_to_java(inferred).map(|s| s.to_string()).or_else(|| Some("String".into()));
+    }
+    crate::type_map::sql_type_to_java(sql_type).map(|s| s.to_string())
+}
+
+/// Review #129 B3: single source of truth for record field Java types.
+/// Extraction collapses `<table>.<col>%TYPE` to `Object` because the DDL
+/// schema cache does not exist yet; resolve it here — BEFORE the per-proc
+/// `custom_types` clone — so DTO declarations, unit fixtures and
+/// integration fixtures all consume the same resolved types.
+pub fn resolve_custom_record_field_types(
+    custom_types: &mut HashMap<String, crate::types::CustomTypeInfo>,
+    ddl_schema: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+) {
+    for ct in custom_types.values_mut() {
+        if !ct.is_record {
+            continue;
+        }
+        let sql_by_field: HashMap<&str, &str> =
+            ct.field_sql_types.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+        for (fname, jt) in ct.fields.iter_mut() {
+            let Some(sql) = sql_by_field.get(fname.as_str()).copied() else { continue };
+            if let Some(resolved) = record_field_java_type(sql, ddl_schema) {
+                *jt = resolved;
+            }
+        }
+    }
+}
+
 /// Resolve a `%ROWTYPE` table reference to { field_lower → Java type } using
 /// the DDL schema cache. Shared by local-var declarations and %ROWTYPE params.
 fn rowtype_fields_for_table(
@@ -526,6 +586,63 @@ mod tests {
     fn test_scan_context_new() {
         let ctx = ScanContext::new();
         assert!(ctx.type_overrides.is_empty());
+    }
+
+    #[test]
+    fn test_record_field_percent_type_resolves_via_ddl_and_inference() {
+        // Review #129 B3: `<table>.<col>%TYPE` record fields must resolve to
+        // concrete Java types — via DDL when present, column-name inference
+        // otherwise — instead of staying Object (which produced all-null
+        // fixtures and DateTimeParseException downstream).
+        let mut custom_types = HashMap::new();
+        custom_types.insert(
+            "deposit_receipt".to_string(),
+            crate::types::CustomTypeInfo {
+                fields: vec![
+                    ("maturity_date".to_string(), "Object".to_string()),
+                    ("amount".to_string(), "Object".to_string()),
+                    ("fund_code".to_string(), "Object".to_string()),
+                ],
+                field_sql_types: vec![
+                    ("maturity_date".to_string(), "dat_trd_deposit.maturity_date%TYPE".to_string()),
+                    ("amount".to_string(), "dat_trd_deposit.amount%TYPE".to_string()),
+                    ("fund_code".to_string(), "dat_trd_deposit.fund_code%TYPE".to_string()),
+                ],
+                is_record: true,
+                elem_java_type: None,
+            },
+        );
+        // DDL present for one column only.
+        let mut ddl = HashMap::new();
+        let mut cols = HashMap::new();
+        cols.insert("amount".to_string(), "NUMERIC(18,2)".to_string());
+        ddl.insert("dat_trd_deposit".to_string(), cols);
+
+        resolve_custom_record_field_types(&mut custom_types, &ddl);
+        let ct = &custom_types["deposit_receipt"];
+        let jt = |n: &str| ct.fields.iter().find(|(f, _)| f == n).map(|(_, t)| t.clone()).unwrap();
+        assert_eq!(jt("amount"), "java.math.BigDecimal");
+        // maturity_date: no DDL column → inference ("date" → timestamp).
+        assert_eq!(jt("maturity_date"), "java.sql.Timestamp");
+        // fund_code: inference → varchar → String.
+        assert_eq!(jt("fund_code"), "String");
+    }
+
+    #[test]
+    fn test_record_field_plain_types_still_resolve() {
+        // Non-%TYPE fields keep their extraction-time resolution.
+        let mut custom_types = HashMap::new();
+        custom_types.insert(
+            "t".to_string(),
+            crate::types::CustomTypeInfo {
+                fields: vec![("a".to_string(), "String".to_string())],
+                field_sql_types: vec![("a".to_string(), "VARCHAR2(50)".to_string())],
+                is_record: true,
+                elem_java_type: None,
+            },
+        );
+        resolve_custom_record_field_types(&mut custom_types, &HashMap::new());
+        assert_eq!(custom_types["t"].fields[0].1, "String");
     }
 
     #[test]

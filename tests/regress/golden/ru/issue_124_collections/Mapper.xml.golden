@@ -3,12 +3,12 @@
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.example.demo.mapper.CollTypesMapper">
 
-    <!-- Source: {FIXTURES_ROOT}/issue_124_collections.sql:13-35 — pkg_coll_types.prc_collection_demo.selectEmp -->
+    <!-- Source: {FIXTURES_ROOT}/issue_124_collections.sql:14-36 — pkg_coll_types.prc_collection_demo.selectEmp -->
     <select id="selectEmp" parameterType="string" resultType="java.util.LinkedHashMap">
         SELECT item_id, item_name FROM emp
     </select>
 
-    <!-- Source: {FIXTURES_ROOT}/issue_124_collections.sql:13-35 — pkg_coll_types.prc_collection_demo.updateCfgTable -->
+    <!-- Source: {FIXTURES_ROOT}/issue_124_collections.sql:14-36 — pkg_coll_types.prc_collection_demo.updateCfgTable -->
     <update id="updateCfgTable">
         UPDATE cfg_table SET val = #{vCnt, jdbcType=BIGINT, javaType=Long} WHERE key = #{pMode, jdbcType=VARCHAR, javaType=String}
     </update>

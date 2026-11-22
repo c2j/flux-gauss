@@ -33,4 +33,14 @@ class Issue124CollectionsServiceTest {
         service.prcCollectionDemo(pMode);
         verify(issue124CollectionsMapper, atLeast(0)).updateCfgTable(any(), any());
     }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_prcCollectionIndexDemo_success() {
+        String pMode = "test_pMode";
+        var _rowTmpl = new java.util.HashMap<String,Object>(); _rowTmpl.put("count", 5);
+        { var m = new java.util.HashMap<String,Object>(); m.put("item_id", 1); m.put("item_name", "test"); m.putAll(_rowTmpl); when(issue124CollectionsMapper.selectEmp(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        when(issue124CollectionsMapper.updateCfgTable(any(), any())).thenReturn(1);
+        service.prcCollectionIndexDemo(pMode);
+    }
 }

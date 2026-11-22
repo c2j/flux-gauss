@@ -23,10 +23,10 @@ public class CollTypesService {
 
     public static class RecItem {
         public Long itemId;
-        public Object itemName;
+        public String itemName;
     }
 
-    // Source: pkg_coll_types.prc_collection_demo (PROCEDURE) — {FIXTURES_ROOT}/issue_124_collections.sql:13-35
+    // Source: pkg_coll_types.prc_collection_demo (PROCEDURE) — {FIXTURES_ROOT}/issue_124_collections.sql:14-36
     @Transactional
     public void prcCollectionDemo(String pMode) {
         java.math.BigDecimal vAmt = java.math.BigDecimal.ZERO;
@@ -50,5 +50,19 @@ public class CollTypesService {
         vD = java.sql.Date.valueOf(new java.sql.Date((new java.sql.Timestamp(System.currentTimeMillis())).getTime()).toLocalDate().plusMonths(Long.parseLong(String.valueOf(1))));
         vD = java.sql.Date.valueOf(new java.sql.Date((vD).getTime()).toLocalDate().withDayOfMonth(new java.sql.Date((vD).getTime()).toLocalDate().lengthOfMonth()));
         collTypesMapper.updateCfgTable(pMode, vCnt);
+    }
+
+    // Source: pkg_coll_types.prc_collection_index_demo (PROCEDURE) — {FIXTURES_ROOT}/issue_124_collections.sql:40-50
+    public void prcCollectionIndexDemo(String pMode) {
+        Long vCnt = 7L;
+        Long vI = 1L;
+        java.util.List<Long> vNums = new java.util.ArrayList<>();
+        java.util.List<Map<String, Object>> vRectab = new java.util.ArrayList<>();
+        final int _collIdx1 = (int)(long)(vI + 1);
+        while (vNums.size() < _collIdx1) { vNums.add(null); }
+        vNums.set(_collIdx1 - 1, ((Number)(vCnt)).longValue());
+        ((java.util.Map<String, Object>) vRectab.get((int)(long)(vI) - 1)).put("itemId", vCnt);
+        ((java.util.Map<String, Object>) vRectab.get((int)(long)(vI) - 1)).put("itemName", "demo");
+        vCnt = ((vI + 1) >= 1 && (vI + 1) <= (vNums).size() ? vNums.get((int)(long)(vI + 1) - 1) : null);
     }
 }

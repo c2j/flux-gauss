@@ -2527,15 +2527,19 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             let s = jargs[0].trim();
             let a1 = jargs[1].trim();
             let a2 = jargs[2].trim();
-            let has_get = a1.contains(".get(") || a2.contains(".get(");
+            // Review #129 S2r: nullable reads come in two shapes — List.get
+            // element reads AND Map.getOrDefault record-field reads (the
+            // latter dominates the delivery corpus). Guard both.
+            let is_nullable_read = |a: &str| a.contains(".get(") || a.contains("getOrDefault(");
+            let has_get = is_nullable_read(a1) || is_nullable_read(a2);
             if has_get {
                 // Review #129 S2: PL/SQL string functions return NULL when any
                 // arg is NULL — `String.valueOf(null)` would silently replace
                 // the literal "null" text. Emit an explicit NULL short-circuit
-                // and only String.valueOf the `.get(` args (capture-of-? is
-                // not a CharSequence).
-                let r1 = if a1.contains(".get(") { format!("String.valueOf({})", a1) } else { a1.to_string() };
-                let r2 = if a2.contains(".get(") { format!("String.valueOf({})", a2) } else { a2.to_string() };
+                // and only String.valueOf the untyped `.get` args
+                // (capture-of-? is not a CharSequence).
+                let r1 = if is_nullable_read(a1) { format!("String.valueOf({})", a1) } else { a1.to_string() };
+                let r2 = if is_nullable_read(a2) { format!("String.valueOf({})", a2) } else { a2.to_string() };
                 format!(
                     "(({}) == null || ({}) == null || ({}) == null ? null : ({}).replace({}, {}))",
                     s, a1, a2, s, r1, r2

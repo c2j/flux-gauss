@@ -468,6 +468,10 @@ fn record_field_seed(java_type: &str) -> &'static str {
     let tl = java_type.to_lowercase();
     if tl.contains("long") {
         "1L"
+    } else if tl.contains("biginteger") {
+        // Review #129 S6: check before the `int` substring — "biginteger"
+        // contains "int" and would otherwise seed `1`.
+        "java.math.BigInteger.ONE"
     } else if tl.contains("int") || tl.contains("integer") {
         "1"
     } else if tl.contains("bigdecimal") {
@@ -1479,5 +1483,15 @@ mod tests {
             std::fs::read_to_string(dir.path().join("src/main/java/com/example/demo/service/OrderService.java"))
                 .unwrap();
         assert!(content.contains("String __SQLSTATE__ = \"\";"));
+    }
+
+    #[test]
+    fn test_record_field_seed_biginteger_not_int_substring() {
+        // Review #129 S6: "biginteger" contains "int" — the biginteger
+        // branch must run before the int check or the seed degrades to `1`.
+        assert_eq!(record_field_seed("java.math.BigInteger"), "java.math.BigInteger.ONE");
+        assert_eq!(record_field_seed("BigInteger"), "java.math.BigInteger.ONE");
+        assert_eq!(record_field_seed("Integer"), "1");
+        assert_eq!(record_field_seed("int"), "1");
     }
 }

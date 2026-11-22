@@ -715,6 +715,10 @@ fn phase2_analyze(
     let mut idx = 0;
 
     for pkg in &mut packages {
+        // Review #129 B3: resolve record field %TYPE anchors against the DDL
+        // schema cache before custom_types is cloned into each procedure —
+        // keeps DTO declarations and test fixtures on one resolved truth.
+        crate::analyze::resolve_custom_record_field_types(&mut pkg.custom_types, &ddl_schema);
         let pkg_custom_types = pkg.custom_types.clone();
         // Issue #124: package-level vars whose type is a custom collection /
         // record were extracted as `Object`; resolve them once here so both

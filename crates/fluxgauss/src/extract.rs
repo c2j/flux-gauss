@@ -215,18 +215,17 @@ pub fn extract_from_parse_output(
                 let type_name = object_name_to_string(&ct.name);
                 match &ct.type_kind {
                     TypeKind::Composite { attributes } => {
-                        let fields: Vec<(String, String)> = attributes
-                            .iter()
-                            .map(|attr| {
-                                let sql_t = format_sql_data_type(&attr.data_type);
-                                let jt =
-                                    sql_type_to_java(&sql_t).map(|s| s.to_string()).unwrap_or_else(|| "Object".into());
-                                (attr.name.clone(), jt)
-                            })
-                            .collect();
+                        let mut fields: Vec<(String, String)> = Vec::new();
+                        let mut field_sql_types: Vec<(String, String)> = Vec::new();
+                        for attr in attributes {
+                            let sql_t = format_sql_data_type(&attr.data_type);
+                            let jt = sql_type_to_java(&sql_t).map(|s| s.to_string()).unwrap_or_else(|| "Object".into());
+                            fields.push((attr.name.clone(), jt));
+                            field_sql_types.push((attr.name.clone(), sql_t));
+                        }
                         custom_types.insert(
                             type_name.clone(),
-                            CustomTypeInfo { fields, is_record: true, elem_java_type: None },
+                            CustomTypeInfo { fields, field_sql_types, is_record: true, elem_java_type: None },
                         );
                     }
                     // `CREATE TYPE t AS TABLE OF elem` / object collection types
@@ -235,7 +234,12 @@ pub fn extract_from_parse_output(
                         let elem_java = custom_type_elem_java_from_name(element_type, &custom_types);
                         custom_types.insert(
                             type_name.clone(),
-                            CustomTypeInfo { fields: Vec::new(), is_record: false, elem_java_type: Some(elem_java) },
+                            CustomTypeInfo {
+                                fields: Vec::new(),
+                                field_sql_types: Vec::new(),
+                                is_record: false,
+                                elem_java_type: Some(elem_java),
+                            },
                         );
                     }
                     _ => {}
@@ -404,17 +408,17 @@ fn extract_package_item(
             use ogsql_parser::ast::plpgsql::PlTypeDecl;
             match type_decl {
                 PlTypeDecl::Record { name, fields } => {
-                    let java_fields: Vec<(String, String)> = fields
-                        .iter()
-                        .map(|f| {
-                            let sql_t = format_pl_data_type(&f.data_type);
-                            let jt = sql_type_to_java(&sql_t).map(|s| s.to_string()).unwrap_or_else(|| "Object".into());
-                            (f.name.clone(), jt)
-                        })
-                        .collect();
+                    let mut java_fields: Vec<(String, String)> = Vec::new();
+                    let mut field_sql_types: Vec<(String, String)> = Vec::new();
+                    for f in fields {
+                        let sql_t = format_pl_data_type(&f.data_type);
+                        let jt = sql_type_to_java(&sql_t).map(|s| s.to_string()).unwrap_or_else(|| "Object".into());
+                        java_fields.push((f.name.clone(), jt));
+                        field_sql_types.push((f.name.clone(), sql_t));
+                    }
                     custom_types.insert(
                         name.clone(),
-                        CustomTypeInfo { fields: java_fields, is_record: true, elem_java_type: None },
+                        CustomTypeInfo { fields: java_fields, field_sql_types, is_record: true, elem_java_type: None },
                     );
                 }
                 PlTypeDecl::TableOf { name, elem_type, .. } | PlTypeDecl::VarrayOf { name, elem_type, .. } => {
@@ -423,13 +427,23 @@ fn extract_package_item(
                     let elem_java = custom_type_elem_java(elem_type, custom_types);
                     custom_types.insert(
                         name.clone(),
-                        CustomTypeInfo { fields: Vec::new(), is_record: false, elem_java_type: Some(elem_java) },
+                        CustomTypeInfo {
+                            fields: Vec::new(),
+                            field_sql_types: Vec::new(),
+                            is_record: false,
+                            elem_java_type: Some(elem_java),
+                        },
                     );
                 }
                 PlTypeDecl::RefCursor { name } => {
                     custom_types.insert(
                         name.clone(),
-                        CustomTypeInfo { fields: Vec::new(), is_record: false, elem_java_type: None },
+                        CustomTypeInfo {
+                            fields: Vec::new(),
+                            field_sql_types: Vec::new(),
+                            is_record: false,
+                            elem_java_type: None,
+                        },
                     );
                 }
             }
