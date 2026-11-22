@@ -30,7 +30,7 @@ class Issue49ConcatServiceTest {
     void test_procBuildIdList_success() {
         String pBaseIds = "1,2,3";
         String pExtraIds = "1,2,3";
-        AtomicReference<String> pResultRef = new AtomicReference<>(null);
+        AtomicReference<String> pResultRef = new AtomicReference<>("");
         service.procBuildIdList(pBaseIds, pExtraIds, pResultRef);
     }
 
@@ -38,7 +38,7 @@ class Issue49ConcatServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procAppendTradeIds_success() {
         String pNewId = "test_p_new_id";
-        AtomicReference<String> pResultRef = new AtomicReference<>(null);
+        AtomicReference<String> pResultRef = new AtomicReference<>("");
         service.procAppendTradeIds(pNewId, pResultRef);
     }
 
@@ -47,7 +47,7 @@ class Issue49ConcatServiceTest {
     void test_procConcatLabels_success() {
         String pPrefix = "test_p_prefix";
         String pSuffix = "test_p_suffix";
-        AtomicReference<String> pResultRef = new AtomicReference<>(null);
+        AtomicReference<String> pResultRef = new AtomicReference<>("");
         service.procConcatLabels(pPrefix, pSuffix, pResultRef);
     }
 }

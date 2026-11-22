@@ -3366,8 +3366,19 @@ pub fn process_statement(
                         v = crate::expr::maybe_deref_promoted(&v, proc);
                         v
                     });
-                    match (field.is_empty(), val) {
-                        (false, Some(v)) => {
+                    // Only emit the Map cast when the element type is
+                    // Map/Object/? — a concrete scalar element
+                    // (`List<String>`) makes the cast a compile error
+                    // (review #129 §4).
+                    let elem_is_maplike = elem
+                        .as_deref()
+                        .map(|e| {
+                            let el = e.trim();
+                            el.contains("Map") || el == "Object" || el == "?" || el.is_empty()
+                        })
+                        .unwrap_or(true);
+                    match (field.is_empty(), val, elem_is_maplike) {
+                        (false, Some(v), true) => {
                             let field_camel = crate::naming::snake_to_camel(field);
                             push_logic_line(
                                 proc,
@@ -3384,7 +3395,7 @@ pub fn process_statement(
                             push_logic_line(
                                 proc,
                                 format!(
-                                    "// {}({}) {} := {} — record field write could not be lowered",
+                                    "// {}({}) {} := {} — record field write skipped (element type is not a record map)",
                                     base, idx, field, rhs
                                 ),
                             );
@@ -3800,6 +3811,68 @@ mod tests {
             proc.java_logic_lines.iter().any(|l| l.contains("vColl.clear();")),
             "DELETE() → clear: {:?}",
             proc.java_logic_lines
+        );
+    }
+
+    #[test]
+    fn test_collection_delete_range_inclusive() {
+        // Review #129 R1: Oracle DELETE(m,n) removes the closed 1-based
+        // range m..n → Java subList(m-1, n) (end-exclusive).
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_coll".into(), "java.util.List<Long>".into());
+
+        emit_collection_method_stmt("DELETE", "v_coll", &["2".to_string(), "3".to_string()], &mut proc);
+        assert!(
+            proc.java_logic_lines
+                .iter()
+                .any(|l| l.contains("vColl.subList((int)(long)(2) - 1, (int)(long)(3)).clear();")),
+            "DELETE(2,3) → subList(1,3).clear(): {:?}",
+            proc.java_logic_lines
+        );
+    }
+
+    #[test]
+    fn test_collection_field_assign_map_vs_scalar_elem() {
+        // Review #129 §4: `coll(i).field := v` lowers to Map.put only when the
+        // element type is record-like; scalar elements must not get the cast.
+        use ogsql_parser::ast::plpgsql::PlStatement;
+        use ogsql_parser::ast::Spanned;
+
+        let mk_call = || {
+            PlStatement::ProcedureCall(Spanned::without_span(ogsql_parser::ast::plpgsql::PlProcedureCall {
+                name: vec![ogsql_parser::ast::Ident::new("v_tab")],
+                arguments: vec![ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Integer(1))],
+                builtin: None,
+            }))
+        };
+
+        // Record-element table → Map.put
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_tab".into(), "java.util.List<java.util.Map<String, Object>>".into());
+        let mut ctx = empty_stmt_ctx();
+        process_statement(&mk_call(), &mut proc, &mut ctx).unwrap();
+        process_statement(&PlStatement::Sql(". item_id := 9".to_string()), &mut proc, &mut ctx).unwrap();
+        assert!(
+            proc.java_logic_lines.iter().any(|l| l.contains(".put(\"itemId\", 9)")),
+            "record elem must emit Map.put: {:?}",
+            proc.java_logic_lines
+        );
+
+        // Scalar-element table → comment, no uncompilable cast
+        let mut proc2 = empty_proc();
+        proc2.local_vars.insert("v_tab".into(), "java.util.List<String>".into());
+        let mut ctx2 = empty_stmt_ctx();
+        process_statement(&mk_call(), &mut proc2, &mut ctx2).unwrap();
+        process_statement(&PlStatement::Sql(". item_id := 9".to_string()), &mut proc2, &mut ctx2).unwrap();
+        assert!(
+            proc2.java_logic_lines.iter().all(|l| !l.contains("Map<String, Object>)")),
+            "scalar elem must not emit Map cast: {:?}",
+            proc2.java_logic_lines
+        );
+        assert!(
+            proc2.java_logic_lines.iter().any(|l| l.contains("//")),
+            "scalar elem field write degrades to comment: {:?}",
+            proc2.java_logic_lines
         );
     }
 

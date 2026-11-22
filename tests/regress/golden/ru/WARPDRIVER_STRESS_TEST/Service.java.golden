@@ -125,11 +125,11 @@ public class WarpdriverStressTestService {
                                 // UNREACHABLE: break;
                             }
                             vIdx = vIdx + 1;
-                            ((java.util.Map<String, Object>) vItemTab.get((int)(long)(vIdx) - 1)).put("itemId", vRec.getOrDefault("orderId", vRec.get("order_id")));
-                            ((java.util.Map<String, Object>) vItemTab.get((int)(long)(vIdx) - 1)).put("productCode", String.valueOf("PROD_").concat(String.valueOf((((Number) java.util.Objects.requireNonNullElse(vRec.getOrDefault("orderId", vRec.get("order_id")), 0)).doubleValue() % 100))));
-                            ((java.util.Map<String, Object>) vItemTab.get((int)(long)(vIdx) - 1)).put("quantity", java.util.Optional.ofNullable((Number) vRec.getOrDefault("totalAmount", vRec.get("total_amount"))).map(Number::longValue).orElse(0L) / 100);
-                            ((java.util.Map<String, Object>) vItemTab.get((int)(long)(vIdx) - 1)).put("unitPrice", 100);
-                            ((java.util.Map<String, Object>) vItemTab.get((int)(long)(vIdx) - 1)).put("metadata", this.jsonbBuildObject(String.valueOf("order_id"), vRec.getOrDefault("orderId", vRec.get("order_id")), String.valueOf("mode"), pMode, String.valueOf("seq"), gSessionCounter));
+                            // vItemTab(vIdx) item_id := v_rec . order_id — record field write skipped (element type is not a record map)
+                            // vItemTab(vIdx) product_code := 'PROD_' || MOD ( v_rec . order_id , 100 ) — record field write skipped (element type is not a record map)
+                            // vItemTab(vIdx) quantity := v_rec . total_amount / 100 — record field write skipped (element type is not a record map)
+                            // vItemTab(vIdx) unit_price := 100 — record field write skipped (element type is not a record map)
+                            // vItemTab(vIdx) metadata := jsonb_build_object ( 'order_id' , v_rec . order_id , 'mode' , p_mode , 'seq' , g_session_counter ) — record field write skipped (element type is not a record map)
                             vSum = vSum.add(java.math.BigDecimal.valueOf(((Number) vRec.getOrDefault("totalAmount", vRec.get("total_amount"))).doubleValue()));
                             if (java.util.Optional.ofNullable((Number) vRec.getOrDefault("totalAmount", vRec.get("total_amount"))).map(Number::longValue).orElse(0L) > 1000000) {
                                 this.spDynamicSchedulerDispatch(String.valueOf(vRec.getOrDefault("orderId", vRec.get("order_id"))), "JOB_BIG_ORDER_");

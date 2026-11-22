@@ -2257,14 +2257,62 @@ fn unary_op_to_java(op: &str, operand: &ogsql_parser::ast::Expr, proc: &Procedur
     }
 }
 
+/// True when `s`'s outermost value is `java.time.LocalDate`: the first
+/// top-level `.toLocalDate()` is followed only by LocalDate-returning
+/// method calls (`plus*`/`minus*`/`with*`). Substring vetoes are unsafe —
+/// `new java.sql.Date(...).toLocalDate().plusMonths(x)` still yields
+/// LocalDate even though it contains `java.sql.Date.valueOf(`, while
+/// `String.valueOf(x.toLocalDate())` or `x.toLocalDate().toString()` do
+/// not (review #129 §3-A).
+fn expr_yields_localdate(s: &str) -> bool {
+    let Some(pos) = s.find(".toLocalDate()") else {
+        return false;
+    };
+    let mut rest = s[pos + ".toLocalDate()".len()..].trim_start();
+    while !rest.is_empty() {
+        if !rest.starts_with('.') {
+            return false;
+        }
+        rest = &rest[1..];
+        let name_len = rest.find(|c: char| !(c.is_alphanumeric() || c == '_')).unwrap_or(rest.len());
+        let name = &rest[..name_len];
+        if !(name.starts_with("plus") || name.starts_with("minus") || name.starts_with("with")) {
+            return false;
+        }
+        rest = rest[name_len..].trim_start();
+        if !rest.starts_with('(') {
+            return false;
+        }
+        let mut depth = 0usize;
+        let mut close = None;
+        for (i, c) in rest.char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        match close {
+            Some(i) => rest = rest[i + 1..].trim_start(),
+            None => return false,
+        }
+    }
+    true
+}
+
 /// Wrap an expression that yields `java.time.LocalDate` (temporal lowering
 /// ends in `.toLocalDate()`) into a `java.sql.Timestamp` so it can be passed
 /// to `java.util.Date`/`Timestamp.compareTo` and `SimpleDateFormat.format`.
 /// No-op for expressions already producing a Date/Timestamp.
 fn localdate_operand_to_ts(s: &str) -> String {
     let t = s.trim();
-    if t.contains(".toLocalDate()")
-        && !t.contains("java.sql.Date.valueOf(")
+    if expr_yields_localdate(t)
         && !t.starts_with("new java.sql.Timestamp")
         && !t.starts_with("new java.sql.Date.valueOf")
     {
@@ -2301,6 +2349,19 @@ fn collection_expr_method(method: &str, obj: &str, jargs: &[String], proc: &Proc
         "FIRST" => format!("(({}).isEmpty() ? null : java.lang.Long.valueOf(1))", base),
         "LAST" => format!("(({}).isEmpty() ? null : java.lang.Long.valueOf(({}).size()))", base, base),
         _ => format!("/* TOBEFIX: coll.{} */ null", method.to_lowercase()),
+    }
+}
+
+/// `String.replace(CharSequence, CharSequence)` rejects `List<?>` element
+/// reads (`capture-of-?` is not a CharSequence). Wrap `.get(` args in
+/// `String.valueOf` — idempotent for args already cast/converted
+/// (review #129 §2 residual: MtHandleService replace arg asymmetry).
+fn stringify_untyped_get(s: &str) -> String {
+    let t = s.trim();
+    if t.contains(".get(") && !t.contains("String.valueOf(") {
+        format!("String.valueOf({})", t)
+    } else {
+        s.to_string()
     }
 }
 
@@ -2475,7 +2536,12 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         "LEAST" if !jargs.is_empty() => {
             jargs.iter().skip(1).fold(jargs[0].clone(), |acc, arg| format!("Math.min({}, {})", acc, arg))
         }
-        "REPLACE" if jargs.len() >= 3 => format!("{}.replace({}, {})", jargs[0], jargs[1], jargs[2]),
+        "REPLACE" if jargs.len() >= 3 => format!(
+            "{}.replace({}, {})",
+            jargs[0],
+            stringify_untyped_get(&jargs[1]),
+            stringify_untyped_get(&jargs[2])
+        ),
         "SUBSTRING" | "SUBSTR" => {
             let wrap_s = |s: &str| -> String {
                 if s.starts_with('"') || s.starts_with('\'') {
@@ -4315,6 +4381,50 @@ mod tests {
         let out = coerce_for_type(expr, Some("java.sql.Date"), &proc);
         assert!(out.starts_with("java.sql.Date.valueOf("), "LocalDate expr must be wrapped: {}", out);
         assert!(out.ends_with(')'), "wrapped expr must close: {}", out);
+    }
+
+    #[test]
+    fn test_expr_yields_localdate_structural() {
+        // Review #129 §3-A: substring vetoes misfire — an expr containing
+        // `java.sql.Date.valueOf(` can still yield LocalDate, and a bare
+        // `.toLocalDate()` can be nested inside String.valueOf(...).
+        assert!(expr_yields_localdate(
+            "new java.sql.Date((vD).getTime()).toLocalDate().plusMonths(Long.parseLong(String.valueOf(1)))"
+        ));
+        assert!(expr_yields_localdate(
+            "new java.sql.Date((vD).getTime()).toLocalDate().withDayOfMonth(new java.sql.Date((vD).getTime()).toLocalDate().lengthOfMonth())"
+        ));
+        assert!(expr_yields_localdate("x.toLocalDate()"));
+        assert!(!expr_yields_localdate("String.valueOf(x.toLocalDate())"));
+        assert!(!expr_yields_localdate("x.toLocalDate().toString()"));
+        assert!(!expr_yields_localdate("new java.sql.Timestamp(System.currentTimeMillis())"));
+        assert!(!expr_yields_localdate("vD"));
+    }
+
+    #[test]
+    fn test_localdate_operand_to_ts_wraps_only_localdate() {
+        let localdate = "new java.sql.Date((vD).getTime()).toLocalDate().plusMonths(1L)";
+        let wrapped = localdate_operand_to_ts(localdate);
+        assert!(wrapped.starts_with("new java.sql.Timestamp(java.sql.Date.valueOf("), "got: {}", wrapped);
+        // Already-Date exprs and non-localdate exprs pass through.
+        assert_eq!(localdate_operand_to_ts("vD"), "vD");
+        assert_eq!(
+            localdate_operand_to_ts("new java.sql.Timestamp(System.currentTimeMillis())"),
+            "new java.sql.Timestamp(System.currentTimeMillis())"
+        );
+        assert_eq!(localdate_operand_to_ts("String.valueOf(x.toLocalDate())"), "String.valueOf(x.toLocalDate())");
+    }
+
+    #[test]
+    fn test_stringify_untyped_get_wraps_get_args() {
+        // Review #129 §2 residual: `List<?>` `.get` yields capture-of-? which
+        // is not a CharSequence — REPLACE args must be String.valueOf'd.
+        assert_eq!(
+            stringify_untyped_get("((java.util.List<?>) vOld).get((int)(long)(i) - 1)"),
+            "String.valueOf(((java.util.List<?>) vOld).get((int)(long)(i) - 1))"
+        );
+        assert_eq!(stringify_untyped_get("\"x\""), "\"x\"");
+        assert_eq!(stringify_untyped_get("String.valueOf(vX)"), "String.valueOf(vX)");
     }
 
     // ── Issue #127: cross-package disambiguation ──

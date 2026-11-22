@@ -110,19 +110,8 @@ pub fn write_itest_class(
             if p.is_refcursor() {
                 continue;
             }
-            let holder = format!("AtomicReference<{}>", p.java_type);
-            let init_val = if p.java_type.contains("Long") || p.java_type == "long" {
-                "1L"
-            } else if p.java_type.contains("Integer") || p.java_type == "int" {
-                "1"
-            } else if p.java_type.contains("BigDecimal") {
-                "java.math.BigDecimal.ZERO"
-            } else if p.java_type == "String" {
-                "\"\""
-            } else {
-                "null"
-            };
-            out_decls.push(format!("{} {} = new AtomicReference<>({});", holder, snake_to_camel(&p.name), init_val));
+            let decl = crate::generate::service::atomic_ref_decl(&p.java_type, &snake_to_camel(&p.name));
+            out_decls.push(decl);
             out_args.push(snake_to_camel(&p.name));
         }
 

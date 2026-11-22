@@ -204,8 +204,8 @@ class ComplexClearingPkgServiceTest {
         java.sql.Date pBatchDate = java.sql.Date.valueOf("2024-01-01");
         Integer pParallelDegree = 1;
         Boolean pDryRun = true;
-        AtomicReference<String> oSummaryRef = new AtomicReference<>(null);
-        AtomicReference<String> oStatusRef = new AtomicReference<>(null);
+        AtomicReference<String> oSummaryRef = new AtomicReference<>("");
+        AtomicReference<String> oStatusRef = new AtomicReference<>("");
         when(complexClearingPkgMapper.insertAuditLog((String) any(), (String) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord((Long) any(), (Integer) any())).thenReturn(999L);
         when(complexClearingPkgMapper.selectAccount((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));

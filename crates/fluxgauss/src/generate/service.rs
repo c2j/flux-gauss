@@ -389,26 +389,56 @@ fn default_for_type(t: &str) -> &'static str {
     }
     if tl.starts_with("atomicreference") {
         let inner = tl.trim_start_matches("atomicreference<").trim_end_matches('>');
-        // Compound inner types must be checked before scalar substring
-        // matches — `List<Long>` contains "long" but seeds 1L, which fails
-        // AtomicReference<> type inference (review #129 R3).
-        return if inner.contains("list<") || inner.contains("java.util.list") {
-            "new AtomicReference<>(new java.util.ArrayList<>())"
-        } else if inner.starts_with("map<") || inner.contains("map<string") {
-            "new AtomicReference<>(new HashMap<>())"
-        } else if inner.contains("long") || inner.contains("Long") {
-            "new AtomicReference<>(1L)"
-        } else if inner.contains("int") || inner.contains("Integer") {
-            "new AtomicReference<>(0)"
-        } else if inner.contains("BigDecimal") {
-            "new AtomicReference<>(java.math.BigDecimal.ZERO)"
-        } else if inner.contains("String") {
-            "new AtomicReference<>(\"\")"
-        } else {
-            "new AtomicReference<>(null)"
+        // Single-source seed classification lives in `ar_seed_literal`
+        // (review #129 §3-B); map the literal back to the full initializer.
+        return match ar_seed_literal(inner) {
+            "new java.util.ArrayList<>()" => "new AtomicReference<>(new java.util.ArrayList<>())",
+            "new java.util.HashMap<>()" => "new AtomicReference<>(new java.util.HashMap<>())",
+            "1L" => "new AtomicReference<>(1L)",
+            "0" => "new AtomicReference<>(0)",
+            "java.math.BigDecimal.ZERO" => "new AtomicReference<>(java.math.BigDecimal.ZERO)",
+            "\"\"" => "new AtomicReference<>(\"\")",
+            _ => "new AtomicReference<>(null)",
         };
     }
     "null"
+}
+
+/// Single source for `AtomicReference` seed selection (review #129 §3-B).
+/// Accepts either the bare inner java type or a full `AtomicReference<...>`
+/// type. Compound inners (`List`/`Map`) are checked before scalar substring
+/// matches — `List<Long>` contains "long" but must seed an empty list.
+pub(crate) fn ar_seed_literal(java_type: &str) -> &'static str {
+    let mut t = java_type.trim();
+    if let Some(inner) = t
+        .strip_prefix("AtomicReference<")
+        .or_else(|| t.strip_prefix("atomicreference<"))
+        .and_then(|s| s.strip_suffix('>'))
+    {
+        t = inner.trim();
+    }
+    let il = t.to_lowercase();
+    if il.contains("list<") || il.contains("java.util.list") {
+        "new java.util.ArrayList<>()"
+    } else if il.starts_with("map<") || il.contains("map<string") {
+        "new java.util.HashMap<>()"
+    } else if il.contains("long") {
+        "1L"
+    } else if il == "int" || il == "integer" || il.contains("java.lang.integer") {
+        "0"
+    } else if il.contains("bigdecimal") {
+        "java.math.BigDecimal.ZERO"
+    } else if il == "string" || il.contains("java.lang.string") {
+        "\"\""
+    } else {
+        "null"
+    }
+}
+
+/// Emit `AtomicReference<T> name = new AtomicReference<>(seed);` using the
+/// shared seed classifier — used by service/test/itest generators.
+pub(crate) fn atomic_ref_decl(java_type: &str, var_name: &str) -> String {
+    format!("AtomicReference<{}> {} = new AtomicReference<>({});", java_type, var_name, ar_seed_literal(java_type))
 }
 
 /// JLS unreachable-statement guard: statements after an unconditional
@@ -730,19 +760,7 @@ fn build_service_method(
                 }
                 // Check if this local var was promoted to AtomicReference for OUT param usage
                 if let Some(inner_type) = proc.out_local_vars.get(&var_name.to_lowercase()) {
-                    let ar_init = if inner_type.contains("Long") || inner_type == "long" {
-                        "1L"
-                    } else if inner_type.contains("Integer") || inner_type == "int" {
-                        "1"
-                    } else if inner_type.contains("BigDecimal") {
-                        "java.math.BigDecimal.ZERO"
-                    } else {
-                        "null"
-                    };
-                    body_lines.push(format!(
-                        "AtomicReference<{}> {} = new AtomicReference<>({});",
-                        inner_type, var_java, ar_init
-                    ));
+                    body_lines.push(crate::generate::service::atomic_ref_decl(inner_type, &var_java));
                 } else {
                     let default_val = proc
                         .local_var_defaults
@@ -1236,6 +1254,31 @@ mod tests {
 
     fn make_proc(name: &str) -> ProcedureInfo {
         ProcedureInfo::new(format!("pkg.{}", name), "pkg".to_string(), name.to_string())
+    }
+
+    #[test]
+    fn test_ar_seed_literal_compound_and_scalar() {
+        // Review #129 §3-B/R3: compound inners must be checked before scalar
+        // substring matches — `List<Long>` contains "long" but seeds 1L,
+        // which fails AtomicReference<> type inference.
+        assert_eq!(ar_seed_literal("java.util.List<Long>"), "new java.util.ArrayList<>()");
+        assert_eq!(ar_seed_literal("AtomicReference<java.util.List<Long>>"), "new java.util.ArrayList<>()");
+        assert_eq!(ar_seed_literal("Map<String, Object>"), "new java.util.HashMap<>()");
+        assert_eq!(ar_seed_literal("Long"), "1L");
+        assert_eq!(ar_seed_literal("java.lang.Integer"), "0");
+        assert_eq!(ar_seed_literal("java.math.BigDecimal"), "java.math.BigDecimal.ZERO");
+        assert_eq!(ar_seed_literal("String"), "\"\"");
+        assert_eq!(ar_seed_literal("java.sql.Date"), "null");
+        // BigInteger must not hit the "int" substring arm.
+        assert_eq!(ar_seed_literal("java.math.BigInteger"), "null");
+    }
+
+    #[test]
+    fn test_atomic_ref_decl_uses_shared_seed() {
+        assert_eq!(
+            atomic_ref_decl("java.util.List<Long>", "vTab"),
+            "AtomicReference<java.util.List<Long>> vTab = new AtomicReference<>(new java.util.ArrayList<>());"
+        );
     }
 
     #[test]

@@ -165,7 +165,7 @@ class CursorLifecycleServiceTest {
     void test_procConsumeCursor_success() {
         Object pCursor = new java.util.HashMap<String, Object>();
         AtomicReference<Object> pMapRef = new AtomicReference<>(null);
-        AtomicReference<String> pSummaryRef = new AtomicReference<>(null);
+        AtomicReference<String> pSummaryRef = new AtomicReference<>("");
         { var m = new java.util.HashMap<String,Object>(); m.put("employeeId", 1L); m.put("employeeName", "test"); m.put("salary", java.math.BigDecimal.TEN); m.put("departmentId", 1L); m.put("hireDate", java.sql.Date.valueOf("2024-01-01")); when(cursorLifecycleMapper.selectProcGetRawCursor((Integer) any())).thenReturn(java.util.List.of(m)); }
         when(cursorLifecycleMapper.insertProcEnhanceCursor((Object) any(), (Object) any(), (Integer) any(), (String) any(), (java.math.BigDecimal) any(), (Integer) any(), (java.sql.Date) any())).thenReturn(1);
         service.procConsumeCursor(pCursor, pMapRef, pSummaryRef);
