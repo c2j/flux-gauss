@@ -216,6 +216,11 @@ pub struct ProcedureInfo {
     /// Populated from the table's DDL so field access (v_wm.wm_ts_value) can
     /// emit typed extraction instead of raw Object Map.get.
     pub rowtype_field_types: HashMap<String, HashMap<String, String>>,
+    /// %ROWTYPE / record-typed PARAMETERS: param_lower → { field_lower →
+    /// Java type }. Kept separate from `rowtype_field_types` so dynamic-SQL
+    /// extra-param resolution (which scans locals) is not perturbed; used by
+    /// generated test fixtures to populate record-shaped param maps.
+    pub param_rowtype_fields: HashMap<String, HashMap<String, String>>,
     pub table_refs: HashSet<String>,
     pub var_assignments: HashMap<String, String>,
     pub dynamic_sql_templates: HashMap<String, (String, Vec<(String, bool)>)>,
@@ -296,6 +301,7 @@ impl ProcedureInfo {
             local_vars: HashMap::new(),
             local_var_defaults: HashMap::new(),
             rowtype_field_types: HashMap::new(),
+            param_rowtype_fields: HashMap::new(),
             table_refs: HashSet::new(),
             var_assignments: HashMap::new(),
             dynamic_sql_templates: HashMap::new(),

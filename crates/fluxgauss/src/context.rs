@@ -90,6 +90,10 @@ pub struct StatementContext<'a> {
     /// handler stashes the element write here; the Sql handler pairs it into
     /// `coll.set(i-1, v)`. Tuple: (base java expr, index java expr, elem java type).
     pub pending_coll_elem_assign: Option<(String, String, Option<String>)>,
+    /// Monotonic counter for `_collIdxN` locals bound from non-trivial
+    /// collection index expressions (review #129 R4/§7-2) — decoupled from
+    /// line numbers so copied/rewritten logic lines cannot collide.
+    pub coll_idx_counter: usize,
 }
 
 impl<'a> StatementContext<'a> {
@@ -105,6 +109,7 @@ impl<'a> StatementContext<'a> {
             stmt_lines: Vec::new(),
             unresolved_calls: Vec::new(),
             pending_coll_elem_assign: None,
+            coll_idx_counter: 0,
         }
     }
 }

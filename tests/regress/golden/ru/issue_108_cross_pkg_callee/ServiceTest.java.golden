@@ -38,7 +38,7 @@ class Issue108CrossPkgCalleeServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_prcGetEmpName_success() {
         Long pIId = 1L;
-        AtomicReference<String> pONameRef = new AtomicReference<>("");
+        AtomicReference<String> pONameRef = new AtomicReference<>(null);
         service.prcGetEmpName(pIId, pONameRef);
     }
 }

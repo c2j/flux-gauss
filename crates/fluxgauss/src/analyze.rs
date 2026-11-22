@@ -29,6 +29,29 @@ fn resolve_custom_typed_symbols(proc: &mut ProcedureInfo) {
     }
 }
 
+/// Resolve a `%ROWTYPE` table reference to { field_lower → Java type } using
+/// the DDL schema cache. Shared by local-var declarations and %ROWTYPE params.
+fn rowtype_fields_for_table(
+    table: &str,
+    ddl_schema: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+) -> HashMap<String, String> {
+    let table_lower = table.split('.').next_back().unwrap_or(table).to_lowercase();
+    ddl_schema
+        .get(&table_lower)
+        .map(|cols| {
+            cols.iter()
+                .map(|(col, raw_sql_type)| {
+                    let sql_type = crate::extract::normalize_sql_type(raw_sql_type);
+                    let java = crate::type_map::sql_type_to_java(&sql_type)
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "String".into());
+                    (col.to_lowercase(), java)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub fn analyze_procedure(
     proc: &mut ProcedureInfo,
     summaries: &std::collections::HashMap<String, crate::types::PackageSummary>,
@@ -37,6 +60,22 @@ pub fn analyze_procedure(
     debug: bool,
 ) -> Result<(), ConversionError> {
     resolve_custom_typed_symbols(proc);
+    // Review #129 B3: %ROWTYPE params lower to Map<String,Object>; resolve
+    // their field types from the DDL cache so generated unit/integration
+    // fixtures can populate the record-shaped map instead of emitting {}.
+    let rowtype_params: Vec<(String, String)> = proc
+        .parameters
+        .iter()
+        .filter(|p| p.sql_type.to_lowercase().contains("%rowtype"))
+        .map(|p| (p.name.clone(), p.sql_type.clone()))
+        .collect();
+    for (pname, sql_type) in rowtype_params {
+        let table = sql_type.split('%').next().unwrap_or("").trim();
+        let fields = rowtype_fields_for_table(table, ddl_schema);
+        if !fields.is_empty() {
+            proc.param_rowtype_fields.insert(pname.to_lowercase(), fields);
+        }
+    }
     let body = proc.body.take();
     let mut result = Ok(());
     if let Some(ref body_inner) = body {
@@ -223,21 +262,7 @@ pub fn process_declaration(
                     proc.imports.insert("import java.util.Map;".into());
                     // Resolve field types from the table's DDL so field access
                     // (v_wm.wm_ts_value) can emit typed extraction.
-                    let table_lower = table.split('.').next_back().unwrap_or(table).to_lowercase();
-                    let field_types: HashMap<String, String> = ddl_schema
-                        .get(&table_lower)
-                        .map(|cols| {
-                            cols.iter()
-                                .map(|(col, raw_sql_type)| {
-                                    let sql_type = crate::extract::normalize_sql_type(raw_sql_type);
-                                    let java = crate::type_map::sql_type_to_java(&sql_type)
-                                        .map(|s| s.to_string())
-                                        .unwrap_or_else(|| "String".into());
-                                    (col.to_lowercase(), java)
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
+                    let field_types = rowtype_fields_for_table(table, ddl_schema);
                     proc.rowtype_field_types.insert(var.name.to_lowercase(), field_types);
                     "Map<String, Object>".into()
                 }
@@ -265,37 +290,41 @@ pub fn process_declaration(
                 }
                 _ => {
                     let sql_type_raw = crate::extract::format_pl_data_type(&var.data_type);
-                    let sql_type_lower = sql_type_raw.to_lowercase();
-                    // Detect array-like types (e.g., pkg_param_common.arrytype, VARCHAR2_ARRAY)
-                    if sql_type_lower.contains("arrytype")
-                        || sql_type_lower.contains("array_type")
-                        || sql_type_lower.ends_with("_array")
-                    {
-                        proc.imports.insert("import java.util.List;".into());
-                        proc.imports.insert("import java.util.Collections;".into());
-                        proc.has_array_vars = true;
-                        "List<String>".into()
-                    } else {
-                        let sql_type = crate::extract::normalize_sql_type(&sql_type_raw);
-                        let sql_type_lower = sql_type.to_lowercase();
-                        let ct = crate::extract::find_custom_type(&proc.custom_types, &sql_type)
-                            .or_else(|| crate::extract::find_custom_type(&proc.custom_types, &sql_type_lower));
-                        if let Some(ct) = ct {
-                            if ct.is_record {
+                    let sql_type = crate::extract::normalize_sql_type(&sql_type_raw);
+                    let sql_type_lower = sql_type.to_lowercase();
+                    // Review #129 S1: resolve declared custom types BEFORE the
+                    // array-name heuristic — `TYPE t_item_array IS TABLE OF
+                    // r_order_item` must not be flattened to List<String> by
+                    // its "_array" suffix.
+                    let ct = crate::extract::find_custom_type(&proc.custom_types, &sql_type)
+                        .or_else(|| crate::extract::find_custom_type(&proc.custom_types, &sql_type_lower));
+                    if let Some(ct) = ct {
+                        if ct.is_record {
+                            proc.imports.insert("import java.util.Map;".into());
+                            "Map<String, Object>".into()
+                        } else if let Some(ref elem) = ct.elem_java_type {
+                            // Issue #124: typed collections lower to
+                            // List<Elem> (record elem → List<Map<...>>).
+                            proc.imports.insert("import java.util.List;".into());
+                            if elem.contains("Map") {
                                 proc.imports.insert("import java.util.Map;".into());
-                                "Map<String, Object>".into()
-                            } else if let Some(ref elem) = ct.elem_java_type {
-                                // Issue #124: typed collections lower to
-                                // List<Elem> (record elem → List<Map<...>>).
-                                proc.imports.insert("import java.util.List;".into());
-                                if elem.contains("Map") {
-                                    proc.imports.insert("import java.util.Map;".into());
-                                }
-                                format!("java.util.List<{}>", elem)
-                            } else {
-                                proc.imports.insert("import java.util.List;".into());
-                                "java.util.List<Object>".into()
                             }
+                            format!("java.util.List<{}>", elem)
+                        } else {
+                            proc.imports.insert("import java.util.List;".into());
+                            "java.util.List<Object>".into()
+                        }
+                    } else {
+                        // Detect array-like types (e.g., pkg_param_common.arrytype, VARCHAR2_ARRAY)
+                        let raw_lower = sql_type_raw.to_lowercase();
+                        if raw_lower.contains("arrytype")
+                            || raw_lower.contains("array_type")
+                            || raw_lower.ends_with("_array")
+                        {
+                            proc.imports.insert("import java.util.List;".into());
+                            proc.imports.insert("import java.util.Collections;".into());
+                            proc.has_array_vars = true;
+                            "List<String>".into()
                         } else {
                             crate::type_map::sql_type_to_java(&sql_type)
                                 .map(|s| s.to_string())

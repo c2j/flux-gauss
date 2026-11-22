@@ -5,7 +5,6 @@ import com.example.demo.mapper.WarpdriverStressTestMapper;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -71,7 +70,7 @@ public class WarpdriverStressTestService {
         java.sql.Date vDate = java.sql.Date.valueOf(java.time.LocalDate.parse(String.valueOf(pBizDate), java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd][yyyy-M-d]")));
         Boolean vHasError = false;
         Integer vIdx = 0;
-        List<String> vItemTab = new java.util.ArrayList<>();
+        java.util.List<Map<String, Object>> vItemTab = new java.util.ArrayList<>();
         Map<String, Object> vRec = new HashMap<>();
         String vSavepoint1 = null;
         java.math.BigDecimal vSum = java.math.BigDecimal.ZERO;
@@ -125,11 +124,11 @@ public class WarpdriverStressTestService {
                                 // UNREACHABLE: break;
                             }
                             vIdx = vIdx + 1;
-                            // vItemTab(vIdx) item_id := v_rec . order_id — record field write skipped (element type is not a record map)
-                            // vItemTab(vIdx) product_code := 'PROD_' || MOD ( v_rec . order_id , 100 ) — record field write skipped (element type is not a record map)
-                            // vItemTab(vIdx) quantity := v_rec . total_amount / 100 — record field write skipped (element type is not a record map)
-                            // vItemTab(vIdx) unit_price := 100 — record field write skipped (element type is not a record map)
-                            // vItemTab(vIdx) metadata := jsonb_build_object ( 'order_id' , v_rec . order_id , 'mode' , p_mode , 'seq' , g_session_counter ) — record field write skipped (element type is not a record map)
+                            ((java.util.Map<String, Object>) vItemTab.get((int)(long)(vIdx) - 1)).put("itemId", vRec.getOrDefault("orderId", vRec.get("order_id")));
+                            ((java.util.Map<String, Object>) vItemTab.get((int)(long)(vIdx) - 1)).put("productCode", String.valueOf("PROD_").concat(String.valueOf((((Number) java.util.Objects.requireNonNullElse(vRec.getOrDefault("orderId", vRec.get("order_id")), 0)).doubleValue() % 100))));
+                            ((java.util.Map<String, Object>) vItemTab.get((int)(long)(vIdx) - 1)).put("quantity", java.util.Optional.ofNullable((Number) vRec.getOrDefault("totalAmount", vRec.get("total_amount"))).map(Number::longValue).orElse(0L) / 100);
+                            ((java.util.Map<String, Object>) vItemTab.get((int)(long)(vIdx) - 1)).put("unitPrice", 100);
+                            ((java.util.Map<String, Object>) vItemTab.get((int)(long)(vIdx) - 1)).put("metadata", this.jsonbBuildObject(String.valueOf("order_id"), vRec.getOrDefault("orderId", vRec.get("order_id")), String.valueOf("mode"), pMode, String.valueOf("seq"), gSessionCounter));
                             vSum = vSum.add(java.math.BigDecimal.valueOf(((Number) vRec.getOrDefault("totalAmount", vRec.get("total_amount"))).doubleValue()));
                             if (java.util.Optional.ofNullable((Number) vRec.getOrDefault("totalAmount", vRec.get("total_amount"))).map(Number::longValue).orElse(0L) > 1000000) {
                                 this.spDynamicSchedulerDispatch(String.valueOf(vRec.getOrDefault("orderId", vRec.get("order_id"))), "JOB_BIG_ORDER_");
@@ -586,11 +585,6 @@ public class WarpdriverStressTestService {
             try { TransactionAspectSupport.currentTransactionStatus().setRollbackOnly(); } catch (Exception _tx) {}
             log.info("");
         }
-    }
-
-    public java.util.List<String> stringToArray(String str, String delimiter) {
-        if (str == null || str.isEmpty()) return java.util.Collections.emptyList();
-        return java.util.Arrays.asList(str.split(java.util.regex.Pattern.quote(delimiter)));
     }
 
     public Integer jsonbArrayLength(String jsonb) {

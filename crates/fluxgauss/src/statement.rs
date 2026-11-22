@@ -3370,13 +3370,15 @@ pub fn process_statement(
                     // Map/Object/? — a concrete scalar element
                     // (`List<String>`) makes the cast a compile error
                     // (review #129 §4).
+                    // Review #129 S1: unknown element type must NOT default to
+                    // emitting the Map cast — degrade to comment instead.
                     let elem_is_maplike = elem
                         .as_deref()
                         .map(|e| {
                             let el = e.trim();
                             el.contains("Map") || el == "Object" || el == "?" || el.is_empty()
                         })
-                        .unwrap_or(true);
+                        .unwrap_or(false);
                     match (field.is_empty(), val, elem_is_maplike) {
                         (false, Some(v), true) => {
                             let field_camel = crate::naming::snake_to_camel(field);
@@ -3427,7 +3429,8 @@ pub fn process_statement(
                             let idx_ref = if idx_simple {
                                 idx_java
                             } else {
-                                let local = format!("_collIdx{}", proc.java_logic_lines.len());
+                                ctx.coll_idx_counter += 1;
+                                let local = format!("_collIdx{}", ctx.coll_idx_counter);
                                 push_logic_line(proc, format!("final int {} = {};", local, idx_java));
                                 local
                             };
@@ -3642,6 +3645,7 @@ mod tests {
             stmt_lines: Vec::new(),
             unresolved_calls: Vec::new(),
             pending_coll_elem_assign: None,
+            coll_idx_counter: 0,
         }
     }
 

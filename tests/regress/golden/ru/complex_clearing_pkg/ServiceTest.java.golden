@@ -145,8 +145,8 @@ class ComplexClearingPkgServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_handleTradeChange_success() {
         String pOp = "test_p_op";
-        Map<String, Object> pOldRec = new java.util.HashMap<>();
-        Map<String, Object> pNewRec = new java.util.HashMap<>();
+        Map<String, Object> pOldRec = new java.util.HashMap<String, Object>();
+        Map<String, Object> pNewRec = new java.util.HashMap<String, Object>();
         String pTriggerName = "test_p_trigger_name";
         AtomicReference<Boolean> oSkipDefaultRef = new AtomicReference<>(null);
         when(complexClearingPkgMapper.insertAuditLog((String) any(), (String) any())).thenReturn(1);
@@ -165,8 +165,8 @@ class ComplexClearingPkgServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_handleAccountChange_success() {
         String pOp = "test_p_op";
-        Map<String, Object> pOldRec = new java.util.HashMap<>();
-        Map<String, Object> pNewRec = new java.util.HashMap<>();
+        Map<String, Object> pOldRec = new java.util.HashMap<String, Object>();
+        Map<String, Object> pNewRec = new java.util.HashMap<String, Object>();
         Boolean pCascade = true;
         when(complexClearingPkgMapper.insertAuditLog((String) any(), (String) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord((Long) any(), (Integer) any())).thenReturn(999L);
@@ -204,8 +204,8 @@ class ComplexClearingPkgServiceTest {
         java.sql.Date pBatchDate = java.sql.Date.valueOf("2024-01-01");
         Integer pParallelDegree = 1;
         Boolean pDryRun = true;
-        AtomicReference<String> oSummaryRef = new AtomicReference<>("");
-        AtomicReference<String> oStatusRef = new AtomicReference<>("");
+        AtomicReference<String> oSummaryRef = new AtomicReference<>(null);
+        AtomicReference<String> oStatusRef = new AtomicReference<>(null);
         when(complexClearingPkgMapper.insertAuditLog((String) any(), (String) any())).thenReturn(1);
         when(complexClearingPkgMapper.selectTradeRecord((Long) any(), (Integer) any())).thenReturn(999L);
         when(complexClearingPkgMapper.selectAccount((Long) any(), (Integer) any())).thenReturn(new java.math.BigDecimal("999.99"));

@@ -28,7 +28,7 @@ class Issue75ExceptionInLoopServiceTest {
     @Test
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_issue75DeadReturn_success() {
-        AtomicReference<String> pOSucceedRef = new AtomicReference<>("");
+        AtomicReference<String> pOSucceedRef = new AtomicReference<>(null);
         when(issue75ExceptionInLoopMapper.deleteTIssue75()).thenReturn(1);
         when(issue75ExceptionInLoopMapper.insertTIssue75(anyInt())).thenReturn(1);
         service.issue75DeadReturn(pOSucceedRef);

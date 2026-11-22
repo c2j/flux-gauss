@@ -85,7 +85,25 @@ pub fn write_itest_class(
         let mut param_values: Vec<String> = Vec::new();
         let mut param_args: Vec<String> = Vec::new();
         for p in in_params {
-            let mut val = default_test_value(&p.java_type, &snake_to_camel(&p.name));
+            // Review #129 B3: record-typed params get a populated fixture.
+            let mut val = if p.java_type.contains("Map<") {
+                match crate::extract::find_custom_type(&proc.custom_types, &p.sql_type) {
+                    Some(ct) if ct.is_record && !ct.fields.is_empty() => {
+                        crate::generate::service::populated_record_fixture(&ct.fields)
+                    }
+                    _ => match proc.param_rowtype_fields.get(&p.name.to_lowercase()) {
+                        Some(fields) if !fields.is_empty() => {
+                            let mut pairs: Vec<(String, String)> =
+                                fields.iter().map(|(f, t)| (f.clone(), t.clone())).collect();
+                            pairs.sort();
+                            crate::generate::service::populated_record_fixture(&pairs)
+                        }
+                        _ => default_test_value(&p.java_type, &snake_to_camel(&p.name)),
+                    },
+                }
+            } else {
+                default_test_value(&p.java_type, &snake_to_camel(&p.name))
+            };
             if p.java_type == "String"
                 && (numeric_string_params.contains(&p.name.to_lowercase())
                     || numeric_string_params.contains(&snake_to_camel(&p.name).to_lowercase()))
@@ -1548,7 +1566,7 @@ fn default_test_value(java_type: &str, param_name: &str) -> String {
         return "java.sql.Date.valueOf(\"2024-01-01\")".to_string();
     }
     if tl.contains("map") {
-        return "new java.util.HashMap<>()".to_string();
+        return "new java.util.HashMap<String, Object>()".to_string();
     }
     if tl == "object" {
         if nl.contains("spectrum") {
@@ -1928,7 +1946,9 @@ mod tests {
             dir.path().join("src/test/java/com/example/demo/itest/DataServiceIntegrationTest.java"),
         )
         .unwrap();
-        assert!(content.contains("AtomicReference<String> pResult = new AtomicReference<>(\"\");"));
+        // Review #129 B2/B4: String OUT params seed `null`, not `""` — an
+        // empty string breaks MyBatis BIGINT binding and IS NULL semantics.
+        assert!(content.contains("AtomicReference<String> pResult = new AtomicReference<>(null);"));
         assert!(content.contains("dataService.getData(pId, pResult);"));
     }
 

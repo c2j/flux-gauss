@@ -29,7 +29,7 @@ class Issue72ServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_prcTypeWall_success() {
         String pIDate = "20240101";
-        AtomicReference<String> pOSucceedRef = new AtomicReference<>("");
+        AtomicReference<String> pOSucceedRef = new AtomicReference<>(null);
         service.prcTypeWall(pIDate, pOSucceedRef);
     }
 
@@ -37,7 +37,7 @@ class Issue72ServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_prcStrMethodWall_success() {
         String pIn = "test_p_in";
-        AtomicReference<String> pOSucceedRef = new AtomicReference<>("");
+        AtomicReference<String> pOSucceedRef = new AtomicReference<>(null);
         service.prcStrMethodWall(pIn, pOSucceedRef);
     }
 }

@@ -31,8 +31,8 @@ class Issue61ExcServiceTest {
         String pISecurityId = "test_p_i_security_id";
         String pIMarketType = "test_p_i_market_type";
         AtomicReference<java.math.BigDecimal> pOMarketPriceRef = new AtomicReference<>(java.math.BigDecimal.ZERO);
-        AtomicReference<String> pOPassFlagRef = new AtomicReference<>("");
-        AtomicReference<String> pOSucceedRef = new AtomicReference<>("");
+        AtomicReference<String> pOPassFlagRef = new AtomicReference<>(null);
+        AtomicReference<String> pOSucceedRef = new AtomicReference<>(null);
         when(issue61ExcMapper.selectTIssue61Bond((String) any(), (String) any())).thenReturn(999);
         when(issue61ExcMapper.selectTIssue61Bond_1((String) any(), (String) any())).thenReturn(999);
         when(issue61ExcMapper.selectTIssue61Bond_2((String) any(), (String) any())).thenReturn(999);

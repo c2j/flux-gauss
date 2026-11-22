@@ -215,7 +215,7 @@ class WarpdriverStressTestServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_spGotoCleanupMaster_success() {
         Long pOrderId = 1L;
-        AtomicReference<String> pResultRef = new AtomicReference<>("");
+        AtomicReference<String> pResultRef = new AtomicReference<>(null);
         when(warpdriverStressTestMapper.insertAuditTrail((String) any(), (String) any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_2((String) any(), (String) any(), (java.sql.Date) any(), (Integer) any())).thenReturn(java.util.List.of(m)); }
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_3((String) any(), (String) any(), (java.sql.Date) any())).thenReturn(java.util.List.of(m)); }
@@ -338,7 +338,7 @@ class WarpdriverStressTestServiceTest {
     void test_spGotoSkipLogic_success() {
         String pReportType = "test_p_report_type";
         String pBizDate = "20240101";
-        AtomicReference<String> pContentRef = new AtomicReference<>("");
+        AtomicReference<String> pContentRef = new AtomicReference<>(null);
         when(warpdriverStressTestMapper.insertAuditTrail((String) any(), (String) any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_2((String) any(), (String) any(), (java.sql.Date) any(), (Integer) any())).thenReturn(java.util.List.of(m)); }
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_3((String) any(), (String) any(), (java.sql.Date) any())).thenReturn(java.util.List.of(m)); }
@@ -462,7 +462,7 @@ class WarpdriverStressTestServiceTest {
     void test_spGotoStateMachine_success() {
         Long pOrderId = 1L;
         String pEvent = "test_p_event";
-        AtomicReference<String> pFinalStateRef = new AtomicReference<>("");
+        AtomicReference<String> pFinalStateRef = new AtomicReference<>(null);
         when(warpdriverStressTestMapper.insertAuditTrail((String) any(), (String) any())).thenReturn(1);
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_2((String) any(), (String) any(), (java.sql.Date) any(), (Integer) any())).thenReturn(java.util.List.of(m)); }
         { var m = new java.util.HashMap<String,Object>(); m.put("orderId", 1L); m.put("totalAmount", java.math.BigDecimal.TEN); m.put("status", "test"); when(warpdriverStressTestMapper.selectSpMainOrchestrator_3((String) any(), (String) any(), (java.sql.Date) any())).thenReturn(java.util.List.of(m)); }

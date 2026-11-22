@@ -1,0 +1,50 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue124CollectionsMapper;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue124CollectionsService {
+    private static final Logger log = LoggerFactory.getLogger(Issue124CollectionsService.class);
+
+    private final Issue124CollectionsMapper issue124CollectionsMapper;
+
+    public Issue124CollectionsService(Issue124CollectionsMapper issue124CollectionsMapper) {
+        this.issue124CollectionsMapper = issue124CollectionsMapper;
+    }
+    // Source: pkg_coll_types.prc_collection_demo (PROCEDURE) — issue_124_collections.sql:13-35
+    @Transactional
+    public void prcCollectionDemo(String pMode) {
+        Long vI = Long.valueOf(1);
+        Long vCnt = 0L;
+        java.math.BigDecimal vAmt = java.math.BigDecimal.ZERO;
+        int _sqlRowCount = 0;
+        Map<String, Object> vNums = new HashMap<>();
+        Map<String, Object> vRectab = new HashMap<>();
+        java.sql.Date vD = null;
+        vCnt = (long) (0L);
+        vCnt = (long) ((vNums.get("count") != null ? (vNums.get("count") instanceof Number ? ((Number) (vNums.get("count"))).longValue() : Long.parseLong(String.valueOf(vNums.get("count")))) : 0L));
+        if (/* TODO: implement exists(1) — pkg=v_nums, ret=?, args=[Integer], caller=issue_124_collections.sql:prc_collection_demo */ false) {
+            // CALL v_nums.delete(...)
+        }
+        // CALL v_nums.EXTEND(...)
+        // CALL v_nums.trim(...)
+        // CALL v_nums(...)
+        vCnt = (long) (0L);
+        vAmt = -vAmt;
+        List<Map<String, Object>> _bulkResult_0 = issue124CollectionsMapper.selectEmp(pMode);
+        for (Map<String, Object> _bulkRow : _bulkResult_0) {
+            // TODO: BULK COLLECT extraction for vRectab requires manual implementation
+        }
+        vD = java.time.LocalDate.now().plusMonths(1);
+        vD = java.sql.Date.valueOf(java.time.LocalDate.now().withDayOfMonth(java.time.LocalDate.now().lengthOfMonth()));
+        _sqlRowCount = issue124CollectionsMapper.updateCfgTable(pMode, vCnt);
+    }
+}

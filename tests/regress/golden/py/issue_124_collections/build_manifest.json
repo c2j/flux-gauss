@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_124_collections.sql",
+  "package_name": "issue_124_collections",
+  "files": {
+    "Service.java": "ba0b58e40dba642b",
+    "Mapper.java": "1e0ef0aae039e93e",
+    "Mapper.xml": "850ddcfa7affb0ed",
+    "ServiceTest.java": "6915bb077a7ecb28"
+  }
+}

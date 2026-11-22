@@ -29,7 +29,7 @@ class Issue38MainServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procDoWork_success() {
         String pInput = "test_p_input";
-        AtomicReference<String> pStatusRef = new AtomicReference<>("");
+        AtomicReference<String> pStatusRef = new AtomicReference<>(null);
         service.procDoWork(pInput, pStatusRef);
     }
 

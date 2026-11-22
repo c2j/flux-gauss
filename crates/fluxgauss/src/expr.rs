@@ -2352,19 +2352,6 @@ fn collection_expr_method(method: &str, obj: &str, jargs: &[String], proc: &Proc
     }
 }
 
-/// `String.replace(CharSequence, CharSequence)` rejects `List<?>` element
-/// reads (`capture-of-?` is not a CharSequence). Wrap `.get(` args in
-/// `String.valueOf` — idempotent for args already cast/converted
-/// (review #129 §2 residual: MtHandleService replace arg asymmetry).
-fn stringify_untyped_get(s: &str) -> String {
-    let t = s.trim();
-    if t.contains(".get(") && !t.contains("String.valueOf(") {
-        format!("String.valueOf({})", t)
-    } else {
-        s.to_string()
-    }
-}
-
 fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &ProcedureInfo) -> String {
     {
         let name_parts: Vec<&str> = name.split('.').collect();
@@ -2536,12 +2523,27 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         "LEAST" if !jargs.is_empty() => {
             jargs.iter().skip(1).fold(jargs[0].clone(), |acc, arg| format!("Math.min({}, {})", acc, arg))
         }
-        "REPLACE" if jargs.len() >= 3 => format!(
-            "{}.replace({}, {})",
-            jargs[0],
-            stringify_untyped_get(&jargs[1]),
-            stringify_untyped_get(&jargs[2])
-        ),
+        "REPLACE" if jargs.len() >= 3 => {
+            let s = jargs[0].trim();
+            let a1 = jargs[1].trim();
+            let a2 = jargs[2].trim();
+            let has_get = a1.contains(".get(") || a2.contains(".get(");
+            if has_get {
+                // Review #129 S2: PL/SQL string functions return NULL when any
+                // arg is NULL — `String.valueOf(null)` would silently replace
+                // the literal "null" text. Emit an explicit NULL short-circuit
+                // and only String.valueOf the `.get(` args (capture-of-? is
+                // not a CharSequence).
+                let r1 = if a1.contains(".get(") { format!("String.valueOf({})", a1) } else { a1.to_string() };
+                let r2 = if a2.contains(".get(") { format!("String.valueOf({})", a2) } else { a2.to_string() };
+                format!(
+                    "(({}) == null || ({}) == null || ({}) == null ? null : ({}).replace({}, {}))",
+                    s, a1, a2, s, r1, r2
+                )
+            } else {
+                format!("{}.replace({}, {})", s, a1, a2)
+            }
+        }
         "SUBSTRING" | "SUBSTR" => {
             let wrap_s = |s: &str| -> String {
                 if s.starts_with('"') || s.starts_with('\'') {
@@ -4416,15 +4418,30 @@ mod tests {
     }
 
     #[test]
-    fn test_stringify_untyped_get_wraps_get_args() {
-        // Review #129 §2 residual: `List<?>` `.get` yields capture-of-? which
-        // is not a CharSequence — REPLACE args must be String.valueOf'd.
-        assert_eq!(
-            stringify_untyped_get("((java.util.List<?>) vOld).get((int)(long)(i) - 1)"),
-            "String.valueOf(((java.util.List<?>) vOld).get((int)(long)(i) - 1))"
+    fn test_replace_with_get_args_null_short_circuits() {
+        // Review #129 S2: `REPLACE(s, coll(i), r)` must NULL-short-circuit
+        // (PL/SQL semantics) instead of `String.valueOf(null)` → "null".
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_content".into(), "String".into());
+        proc.local_vars.insert("v_old_char_list".into(), "Object".into());
+        proc.local_vars.insert("v_i".into(), "Long".into());
+        let coll_read = fc_expr(&["v_old_char_list"], vec![col_expr(&["v_i"])]);
+        let expr = fc_expr(
+            &["replace"],
+            vec![
+                col_expr(&["v_content"]),
+                coll_read,
+                ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String("X".into())),
+            ],
         );
-        assert_eq!(stringify_untyped_get("\"x\""), "\"x\"");
-        assert_eq!(stringify_untyped_get("String.valueOf(vX)"), "String.valueOf(vX)");
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains("== null ? null :"), "REPLACE must NULL-guard: {}", out);
+        assert!(
+            out.contains("String.valueOf(((java.util.List<?>) vOldCharList).get("),
+            "get arg must be String.valueOf'd: {}",
+            out
+        );
+        assert!(!out.contains("replace(String.valueOf(null)"), "must not stringify null: {}", out);
     }
 
     // ── Issue #127: cross-package disambiguation ──

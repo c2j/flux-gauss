@@ -397,7 +397,6 @@ fn default_for_type(t: &str) -> &'static str {
             "1L" => "new AtomicReference<>(1L)",
             "0" => "new AtomicReference<>(0)",
             "java.math.BigDecimal.ZERO" => "new AtomicReference<>(java.math.BigDecimal.ZERO)",
-            "\"\"" => "new AtomicReference<>(\"\")",
             _ => "new AtomicReference<>(null)",
         };
     }
@@ -428,9 +427,10 @@ pub(crate) fn ar_seed_literal(java_type: &str) -> &'static str {
         "0"
     } else if il.contains("bigdecimal") {
         "java.math.BigDecimal.ZERO"
-    } else if il == "string" || il.contains("java.lang.string") {
-        "\"\""
     } else {
+        // Review #129 B2/B4: String seeds must stay `null` — `""` flips
+        // `IS NULL` branches and feeds "" into mapper slots typed Long/etc.
+        // (baseline behavior: unassigned String OUT/local = NULL).
         "null"
     }
 }
@@ -439,6 +439,52 @@ pub(crate) fn ar_seed_literal(java_type: &str) -> &'static str {
 /// shared seed classifier — used by service/test/itest generators.
 pub(crate) fn atomic_ref_decl(java_type: &str, var_name: &str) -> String {
     format!("AtomicReference<{}> {} = new AtomicReference<>({});", java_type, var_name, ar_seed_literal(java_type))
+}
+
+/// Review #129 B3: record-typed (Map) test/itest fixtures must be populated —
+/// an empty HashMap makes every `getOrDefault(...)` fall through to `null`
+/// and breaks generated assertions. Emits a double-brace HashMap literal
+/// with both camelCase and snake_case keys (record reads use
+/// `getOrDefault("camel", get("snake"))`).
+pub(crate) fn populated_record_fixture(fields: &[(String, String)]) -> String {
+    let mut body = String::new();
+    for (fname, ftype) in fields {
+        let camel = crate::naming::snake_to_camel(fname);
+        let v = record_field_seed(ftype);
+        body.push_str(&format!("put(\"{}\", {}); ", camel, v));
+        // Emit the raw (snake_case) key too when it differs — field reads
+        // fall back across both spellings.
+        if fname != &camel {
+            body.push_str(&format!("put(\"{}\", {}); ", fname, v));
+        }
+    }
+    // Double-brace init: outer {} = anonymous class body, inner {} = instance
+    // initializer block. Single braces would be a compile error (bare
+    // statements are not class members).
+    format!("new java.util.HashMap<String, Object>() {{{{ {} }}}}", body)
+}
+
+fn record_field_seed(java_type: &str) -> &'static str {
+    let tl = java_type.to_lowercase();
+    if tl.contains("long") {
+        "1L"
+    } else if tl.contains("int") || tl.contains("integer") {
+        "1"
+    } else if tl.contains("bigdecimal") {
+        "java.math.BigDecimal.ONE"
+    } else if tl.contains("double") || tl.contains("float") {
+        "1.0d"
+    } else if tl.contains("boolean") {
+        "true"
+    } else if tl.contains("timestamp") {
+        "java.sql.Timestamp.valueOf(\"2024-01-01 00:00:00\")"
+    } else if tl.contains("date") {
+        "java.sql.Date.valueOf(\"2024-01-01\")"
+    } else if tl.contains("string") {
+        "\"test\""
+    } else {
+        "null"
+    }
 }
 
 /// JLS unreachable-statement guard: statements after an unconditional
@@ -1267,7 +1313,10 @@ mod tests {
         assert_eq!(ar_seed_literal("Long"), "1L");
         assert_eq!(ar_seed_literal("java.lang.Integer"), "0");
         assert_eq!(ar_seed_literal("java.math.BigDecimal"), "java.math.BigDecimal.ZERO");
-        assert_eq!(ar_seed_literal("String"), "\"\"");
+        // Review #129 B2/B4: String must seed null, not "" — "" breaks IS NULL
+        // branches and String-typed mapper params bound to numeric slots.
+        assert_eq!(ar_seed_literal("String"), "null");
+        assert_eq!(ar_seed_literal("java.lang.String"), "null");
         assert_eq!(ar_seed_literal("java.sql.Date"), "null");
         // BigInteger must not hit the "int" substring arm.
         assert_eq!(ar_seed_literal("java.math.BigInteger"), "null");

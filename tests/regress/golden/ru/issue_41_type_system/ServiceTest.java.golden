@@ -34,7 +34,7 @@ class Issue41TypesServiceTest {
         java.sql.Date pTransferDate = java.sql.Date.valueOf("2024-01-01");
         Boolean pIsUrgent = true;
         AtomicReference<java.math.BigDecimal> pNewBalanceRef = new AtomicReference<>(java.math.BigDecimal.ZERO);
-        AtomicReference<String> pStatusRef = new AtomicReference<>("");
+        AtomicReference<String> pStatusRef = new AtomicReference<>(null);
         when(issue41TypesMapper.selectTIssue41Account((Long) any(), (Long) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (Boolean) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(issue41TypesMapper.updateTIssue41Account((Long) any(), (Long) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (Boolean) any(), (java.math.BigDecimal) any())).thenReturn(1);
         when(issue41TypesMapper.selectTIssue41Account_1((Long) any(), (Long) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (Boolean) any())).thenReturn(new java.math.BigDecimal("999.99"));
@@ -52,7 +52,7 @@ class Issue41TypesServiceTest {
         Long pAccountId = 1L;
         java.math.BigDecimal pAmount = new java.math.BigDecimal("99.99");
         AtomicReference<java.math.BigDecimal> pNewBalanceRef = new AtomicReference<>(java.math.BigDecimal.ZERO);
-        AtomicReference<String> pStatusRef = new AtomicReference<>("");
+        AtomicReference<String> pStatusRef = new AtomicReference<>(null);
         when(issue41TypesMapper.selectTIssue41Account((Long) any(), (Long) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (Boolean) any())).thenReturn(new java.math.BigDecimal("999.99"));
         when(issue41TypesMapper.updateTIssue41Account((Long) any(), (Long) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (Boolean) any(), (java.math.BigDecimal) any())).thenReturn(1);
         when(issue41TypesMapper.selectTIssue41Account_1((Long) any(), (Long) any(), (java.math.BigDecimal) any(), (java.sql.Date) any(), (Boolean) any())).thenReturn(new java.math.BigDecimal("999.99"));

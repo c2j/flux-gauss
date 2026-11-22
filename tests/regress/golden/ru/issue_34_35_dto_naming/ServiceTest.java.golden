@@ -35,7 +35,7 @@ class Issue34OrderServiceTest {
         String pCreatedBy = "test_p_created_by";
         AtomicReference<Long> pOrderIdRef = new AtomicReference<>(1L);
         AtomicReference<java.math.BigDecimal> pTotalAmountRef = new AtomicReference<>(java.math.BigDecimal.ZERO);
-        AtomicReference<String> pStatusMsgRef = new AtomicReference<>("");
+        AtomicReference<String> pStatusMsgRef = new AtomicReference<>(null);
         when(issue34OrderMapper.selectTIssue34Order((String) any(), (String) any(), (Integer) any(), (java.math.BigDecimal) any(), (String) any())).thenReturn(999L);
         when(issue34OrderMapper.insertTIssue34Order((String) any(), (String) any(), (Integer) any(), (java.math.BigDecimal) any(), (String) any(), (java.math.BigDecimal) any(), (Long) any())).thenReturn(1);
         when(issue34OrderMapper.insertTIssue34OrderLog((String) any(), (String) any(), (Integer) any(), (java.math.BigDecimal) any(), (String) any(), (Long) any())).thenReturn(1);
@@ -77,7 +77,7 @@ class Issue34OrderServiceTest {
         Long pOrderId = 1L;
         String pNewStatus = "test_p_new_status";
         String pUpdatedBy = "20240101";
-        AtomicReference<String> pOldStatusRef = new AtomicReference<>("");
+        AtomicReference<String> pOldStatusRef = new AtomicReference<>(null);
         AtomicReference<Integer> pRowsUpdatedRef = new AtomicReference<>(0);
         when(issue34OrderMapper.selectTIssue34Order((String) any(), (String) any(), (Integer) any(), (java.math.BigDecimal) any(), (String) any())).thenReturn(999L);
         when(issue34OrderMapper.insertTIssue34Order((String) any(), (String) any(), (Integer) any(), (java.math.BigDecimal) any(), (String) any(), (java.math.BigDecimal) any(), (Long) any())).thenReturn(1);
