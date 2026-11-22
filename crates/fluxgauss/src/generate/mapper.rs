@@ -57,8 +57,16 @@ pub fn mapper_param_mismatches(pkg: &PackageInfo, stmts: &[(String, String)]) ->
 
     for proc in &pkg.procedures {
         for dml in &proc.dml_statements {
-            let Some(&stmt) = stmt_by_id.get(dml.method_id.as_str()) else {
-                continue;
+            // Review #129: a dml skipped by write_mapper_xml's id dedup (or an
+            // id collision) must still be validated — build the statement on
+            // demand rather than silently continuing.
+            let stmt_storage;
+            let stmt = match stmt_by_id.get(dml.method_id.as_str()) {
+                Some(&s) => s,
+                None => {
+                    stmt_storage = crate::generate::mapper::build_mapper_statement(proc, dml, &pkg.package_vars);
+                    stmt_storage.as_str()
+                }
             };
             // Mirror write_mapper_interface: OUT params referenced by the SQL
             // are promoted into extra_params before the signature is built.

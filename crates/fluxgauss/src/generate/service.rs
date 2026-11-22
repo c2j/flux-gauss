@@ -389,7 +389,14 @@ fn default_for_type(t: &str) -> &'static str {
     }
     if tl.starts_with("atomicreference") {
         let inner = tl.trim_start_matches("atomicreference<").trim_end_matches('>');
-        return if inner.contains("long") || inner.contains("Long") {
+        // Compound inner types must be checked before scalar substring
+        // matches — `List<Long>` contains "long" but seeds 1L, which fails
+        // AtomicReference<> type inference (review #129 R3).
+        return if inner.contains("list<") || inner.contains("java.util.list") {
+            "new AtomicReference<>(new java.util.ArrayList<>())"
+        } else if inner.starts_with("map<") || inner.contains("map<string") {
+            "new AtomicReference<>(new HashMap<>())"
+        } else if inner.contains("long") || inner.contains("Long") {
             "new AtomicReference<>(1L)"
         } else if inner.contains("int") || inner.contains("Integer") {
             "new AtomicReference<>(0)"

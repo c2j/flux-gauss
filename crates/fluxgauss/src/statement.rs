@@ -1625,10 +1625,12 @@ fn emit_collection_method_stmt(method: &str, obj: &str, args: &[String], proc: &
         "DELETE" => match args.len() {
             0 => push_logic_line(proc, format!("{}.clear();", base)),
             1 => push_logic_line(proc, format!("{}.remove({} - 1);", base, crate::expr::coll_idx_java(idx(0)))),
+            // Oracle DELETE(m,n) removes the 1-based inclusive range m..n;
+            // subList is 0-based [from, to) → from = m-1, to = n.
             _ => push_logic_line(
                 proc,
                 format!(
-                    "{}.subList({}, {}).clear();",
+                    "{}.subList({} - 1, {}).clear();",
                     base,
                     crate::expr::coll_idx_java(idx(0)),
                     crate::expr::coll_idx_java(idx(1))
@@ -1867,6 +1869,14 @@ fn process_procedure_call(
                                 arg = format!("((Number) {}).intValue()", arg);
                             } else if target_is_long && arg_has_get {
                                 arg = format!("((Number) {}).longValue()", arg);
+                            } else if target_type.starts_with("Map<")
+                                && arg_type_inferred == "Object"
+                                && !arg.trim().contains('.')
+                                && !arg.contains("Map<")
+                            {
+                                // Review #129: record-typed (Map) params fed
+                                // by Object-typed vars need an explicit cast.
+                                arg = format!("((Map<String, Object>) {})", arg);
                             }
                         }
                     }
@@ -2427,7 +2437,11 @@ pub fn process_statement(
     // `Sql(":= v")`. If the next statement is anything else, the parser split
     // did not happen as expected — emit a fallback comment, never drop silently.
     if ctx.pending_coll_elem_assign.is_some()
-        && !matches!(stmt, PlStatement::Sql(t) if t.trim_start().starts_with(":="))
+        && !matches!(
+            stmt,
+            PlStatement::Sql(t)
+                if t.trim_start().starts_with(":=") || t.trim_start().starts_with('.')
+        )
     {
         let (base, idx, _) = ctx.pending_coll_elem_assign.take().unwrap();
         push_logic_line(proc, format!("// {}({}) — collection element assignment without := value", base, idx));
@@ -3335,9 +3349,50 @@ pub fn process_statement(
         }
         PlStatement::Sql(sql_text) => {
             // Issue #124 P1-3 (review #129): pair the `coll(i)` half of a
-            // misparsed `coll(i) := v` with this `:= v` fragment.
-            if sql_text.trim_start().starts_with(":=") {
-                if let Some((base, idx, elem)) = ctx.pending_coll_elem_assign.take() {
+            // misparsed `coll(i) := v` (or `coll(i).field := v`) with this
+            // `:= v` / `. field := v` fragment.
+            let sql_trimmed = sql_text.trim_start();
+            if (sql_trimmed.starts_with(":=") || sql_trimmed.starts_with('.')) && ctx.pending_coll_elem_assign.is_some()
+            {
+                let (base, idx, elem) = ctx.pending_coll_elem_assign.take().unwrap();
+                if sql_trimmed.starts_with('.') {
+                    // `. field := expr` — record-element field write:
+                    // `((Map) coll.get(i-1)).put("field", v)`.
+                    let field_part = sql_trimmed.split(":=").next().unwrap_or("");
+                    let field = field_part.trim_start_matches('.').trim();
+                    let rhs = sql_trimmed.split(":=").nth(1).unwrap_or("").trim();
+                    let val = parse_select_expr(rhs).map(|e| {
+                        let mut v = crate::expr::expr_to_java(&e, proc);
+                        v = crate::expr::maybe_deref_promoted(&v, proc);
+                        v
+                    });
+                    match (field.is_empty(), val) {
+                        (false, Some(v)) => {
+                            let field_camel = crate::naming::snake_to_camel(field);
+                            push_logic_line(
+                                proc,
+                                format!(
+                                    "((java.util.Map<String, Object>) {}.get({} - 1)).put(\"{}\", {});",
+                                    base,
+                                    crate::expr::coll_idx_java(&idx),
+                                    field_camel,
+                                    v
+                                ),
+                            );
+                        }
+                        _ => {
+                            push_logic_line(
+                                proc,
+                                format!(
+                                    "// {}({}) {} := {} — record field write could not be lowered",
+                                    base, idx, field, rhs
+                                ),
+                            );
+                        }
+                    }
+                    return Ok(());
+                }
+                if sql_trimmed.starts_with(":=") {
                     let rhs = sql_text.trim().trim_start_matches(":=").trim();
                     let val = parse_select_expr(rhs).map(|e| {
                         let mut v = crate::expr::expr_to_java(&e, proc);

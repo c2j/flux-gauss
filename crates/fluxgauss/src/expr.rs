@@ -2093,7 +2093,11 @@ fn binary_op_to_java(
                     "<=" => " <= 0",
                     _ => " != 0",
                 };
-                format!("{}.compareTo({}){}", l, r, cmp_method)
+                // Review #129 P0-1: operands ending in `.toLocalDate()` yield
+                // java.time.LocalDate, which is not a java.util.Date — wrap
+                // as Timestamp so compareTo compiles for both Date and
+                // Timestamp receivers.
+                format!("{}.compareTo({}){}", localdate_operand_to_ts(&l), localdate_operand_to_ts(&r), cmp_method)
             } else {
                 let has_get_l = needs_get_unwrap(&l);
                 let has_get_r = needs_get_unwrap(&r);
@@ -2253,6 +2257,23 @@ fn unary_op_to_java(op: &str, operand: &ogsql_parser::ast::Expr, proc: &Procedur
     }
 }
 
+/// Wrap an expression that yields `java.time.LocalDate` (temporal lowering
+/// ends in `.toLocalDate()`) into a `java.sql.Timestamp` so it can be passed
+/// to `java.util.Date`/`Timestamp.compareTo` and `SimpleDateFormat.format`.
+/// No-op for expressions already producing a Date/Timestamp.
+fn localdate_operand_to_ts(s: &str) -> String {
+    let t = s.trim();
+    if t.contains(".toLocalDate()")
+        && !t.contains("java.sql.Date.valueOf(")
+        && !t.starts_with("new java.sql.Timestamp")
+        && !t.starts_with("new java.sql.Date.valueOf")
+    {
+        format!("new java.sql.Timestamp(java.sql.Date.valueOf({}).getTime())", t)
+    } else {
+        s.to_string()
+    }
+}
+
 /// PL/SQL collection indices are 1-based and typically `Long`/`Integer`
 /// boxed or `long` arithmetic — a bare `(int)(expr)` cast fails javac on
 /// boxed types (`Long`↛`int` in one cast). `(int)(long)(expr)` is legal for
@@ -2304,18 +2325,24 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             if is_list {
                 let var_java = snake_to_camel(snake_name);
                 let idx = expr_to_java(&args[0], proc);
-                let base = if type_str.is_empty() || type_str == "Object" {
-                    format!("((java.util.List<?>) {})", var_java)
-                } else if is_out_param(snake_name, proc) || proc.out_local_vars.contains_key(&snake_name.to_lowercase())
-                {
-                    format!("{}.get()", var_java)
-                } else {
-                    var_java
-                };
+                // Untyped/Object vars lower through a `List<?>` cast whose
+                // element type is unknowable — keep the bare `.get` so
+                // downstream `(String)`/`(Number)` cast rules still match the
+                // `.get(` shape (review #129 R2).
+                if type_str.is_empty() || type_str == "Object" {
+                    return format!("((java.util.List<?>) {}).get({} - 1)", var_java, coll_idx_java(&idx));
+                }
+                let base =
+                    if is_out_param(snake_name, proc) || proc.out_local_vars.contains_key(&snake_name.to_lowercase()) {
+                        format!("{}.get()", var_java)
+                    } else {
+                        var_java
+                    };
                 // Bounds-guarded read (review #129): Oracle raises
                 // INDEX_OUT_OF_BOUNDS on missing elements, but generated
                 // callers/tests treat collection reads as nullable — emit
-                // `null` instead of crashing on `List.get`.
+                // `null` instead of crashing on `List.get`. Only applied to
+                // typed lists so the ternary yields the concrete element type.
                 return format!(
                     "(({}) >= 1 && ({}) <= ({}).size() ? {}.get({} - 1) : null)",
                     idx,
@@ -2496,8 +2523,17 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                     for (sql_pat, java_pat) in &date_pats {
                         java_fmt = java_fmt.replace(sql_pat, java_pat);
                     }
-                    if is_timestamp_or_date_var(arg, proc) || arg.contains("Timestamp") || arg.contains("currentTimeMillis") {
-                        format!("new java.text.SimpleDateFormat(\"{}\").format({})", java_fmt, arg)
+                    // Review #129 P0-1: `.toLocalDate()` operands are
+                    // java.time.LocalDate — SimpleDateFormat.format(Object)
+                    // accepts them at compile time but throws at runtime;
+                    // route through Timestamp instead.
+                    let fmt_arg = localdate_operand_to_ts(arg);
+                    if is_timestamp_or_date_var(arg, proc)
+                        || arg.contains("Timestamp")
+                        || arg.contains("currentTimeMillis")
+                        || fmt_arg != arg
+                    {
+                        format!("new java.text.SimpleDateFormat(\"{}\").format({})", java_fmt, fmt_arg)
                     } else {
                         format!("new java.text.SimpleDateFormat(\"{}\").format(new java.util.Date(java.sql.Timestamp.valueOf(String.valueOf({})).getTime()))", java_fmt, arg)
                     }
@@ -2788,7 +2824,16 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                     // Same determinism requirement as the unqualified path
                     // (review #129 P0-2): HashMap iteration order must not
                     // leak into generated code.
-                    pkg_matches.sort_by(|a, b| (&a.package, &a.svc_var).cmp(&(&b.package, &b.svc_var)));
+                    pkg_matches.sort_by(|a, b| {
+                        (&a.package, &a.svc_var)
+                            .cmp(&(&b.package, &b.svc_var))
+                            .then_with(|| {
+                                let pa = a.params.iter().map(|p| p.java_type.as_str()).collect::<Vec<_>>().join(",");
+                                let pb = b.params.iter().map(|p| p.java_type.as_str()).collect::<Vec<_>>().join(",");
+                                pa.cmp(&pb)
+                            })
+                            .then_with(|| a.return_type.cmp(&b.return_type))
+                    });
                     if pkg_matches.is_empty() {
                         (String::new(), false, String::new(), None)
                     } else {
