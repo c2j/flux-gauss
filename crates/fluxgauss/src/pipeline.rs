@@ -718,7 +718,18 @@ fn phase2_analyze(
         // Review #129 B3: resolve record field %TYPE anchors against the DDL
         // schema cache before custom_types is cloned into each procedure —
         // keeps DTO declarations and test fixtures on one resolved truth.
-        crate::analyze::resolve_custom_record_field_types(&mut pkg.custom_types, &ddl_schema);
+        let unresolved_anchors = crate::analyze::resolve_custom_record_field_types(&mut pkg.custom_types, &ddl_schema);
+        for (tname, fname, sql) in unresolved_anchors {
+            // Review #129 §4.4: unresolvable %TYPE anchors (e.g. variable
+            // anchors `x%TYPE`) must surface in the report, not stay silent.
+            ctx.unresolved_calls.push(crate::types::UnresolvedCall {
+                caller: pkg.package_name.clone(),
+                callee: format!("{}.{}", tname, fname),
+                caller_file: pkg.source_file.clone(),
+                args: sql,
+                hint: "%TYPE anchor unresolved — no DDL in sources and no column-name match; field stays Object".into(),
+            });
+        }
         let pkg_custom_types = pkg.custom_types.clone();
         // Issue #124: package-level vars whose type is a custom collection /
         // record were extracted as `Object`; resolve them once here so both

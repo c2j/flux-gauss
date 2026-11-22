@@ -992,17 +992,31 @@ fn expr_to_java_impl(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> St
             }
         }
         Expr::FieldAccess { object, field } => {
+            let mut object_java = expr_to_java(object, proc);
+            // Review #129 §4.3: `coll(i).field` reads must be gated on the
+            // collection's element type — scalar elements (List<Long> etc.)
+            // have no fields and `.getOrDefault` on them is a javac error;
+            // Object/? elements need an explicit Map cast to compile.
+            match coll_field_access_elem(object, proc) {
+                Some(CollElem::Scalar) => {
+                    return "/* TOBEFIX: coll(i).field — collection element type is not a record map */ null".into();
+                }
+                Some(CollElem::Unknown) => {
+                    object_java = format!("((java.util.Map<String, Object>) ({}))", object_java);
+                }
+                _ => {}
+            }
             let camel = snake_to_camel(field);
             if camel != field.to_lowercase() {
                 format!(
                     "{}.getOrDefault(\"{}\", {}.get(\"{}\"))",
-                    expr_to_java(object, proc),
+                    object_java,
                     camel,
-                    expr_to_java(object, proc),
+                    object_java,
                     field.to_lowercase()
                 )
             } else {
-                format!("{}.get(\"{}\")", expr_to_java(object, proc), camel)
+                format!("{}.get(\"{}\")", object_java, camel)
             }
         }
         Expr::CursorAttribute { cursor, attribute } => {
@@ -1087,6 +1101,51 @@ fn literal_to_java(lit: &ogsql_parser::ast::Literal) -> String {
         }
         Literal::Null => "null".into(),
     }
+}
+
+/// Element-kind classification for `coll(i).field` reads (review #129 §4.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CollElem {
+    /// Element type contains Map — `.get/.getOrDefault` compile directly.
+    Map,
+    /// Element type is Object/?/unresolved — needs an explicit Map cast.
+    Unknown,
+    /// Concrete scalar element (Long, String, …) — field access is invalid.
+    Scalar,
+}
+
+/// If `object` is a single-argument collection element access `coll(i)` on a
+/// `List<Elem>`-typed variable/param/package-var, classify `Elem`. Returns
+/// `None` for non-collection objects (records, plain vars, nested exprs).
+fn coll_field_access_elem(object: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> Option<CollElem> {
+    use ogsql_parser::ast::Expr;
+    let Expr::FunctionCall { name, args, .. } = object else { return None };
+    if args.len() != 1 {
+        return None;
+    }
+    let base = name.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(".");
+    let base_lower = base.to_lowercase();
+    let jt = proc
+        .local_vars
+        .get(&base_lower)
+        .map(|s| s.as_str())
+        .or_else(|| proc.parameters.iter().find(|p| p.name.eq_ignore_ascii_case(&base)).map(|p| p.java_type.as_str()))
+        .or_else(|| proc.package_vars.get(&base_lower).map(|v| v.java_type.as_str()))
+        .or_else(|| proc.out_local_vars.get(&base_lower).map(|s| s.as_str()))?;
+    let t = jt.trim();
+    let start = t.find('<')?;
+    let end = t.rfind('>')?;
+    if !t[..start].to_lowercase().contains("list") || end <= start {
+        return None;
+    }
+    let elem = t[start + 1..end].trim();
+    Some(if elem.contains("Map") {
+        CollElem::Map
+    } else if elem == "Object" || elem == "?" || elem.is_empty() {
+        CollElem::Unknown
+    } else {
+        CollElem::Scalar
+    })
 }
 
 fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
@@ -4419,6 +4478,51 @@ mod tests {
             "new java.sql.Timestamp(System.currentTimeMillis())"
         );
         assert_eq!(localdate_operand_to_ts("String.valueOf(x.toLocalDate())"), "String.valueOf(x.toLocalDate())");
+    }
+
+    #[test]
+    fn test_field_access_on_scalar_collection_elem_degrades() {
+        // Review #129 §4.3: `v_tab(1).child_flag` on `List<Long>` must NOT
+        // emit `.getOrDefault` on a Long (javac: cannot find symbol) —
+        // degrade to a TOBEFIX null instead.
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_tab".into(), "java.util.List<Long>".into());
+        let expr = ogsql_parser::ast::Expr::FieldAccess {
+            object: Box::new(fc_expr(&["v_tab"], vec![int_lit(1)])),
+            field: "child_flag".into(),
+        };
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains("TOBEFIX"), "scalar elem field read must degrade: {}", out);
+        assert!(!out.contains("getOrDefault"), "must not emit Map read on Long: {}", out);
+    }
+
+    #[test]
+    fn test_field_access_on_map_collection_elem_emits_map_read() {
+        // `v_rectab(1).item_id` on `List<Map<String,Object>>` keeps the
+        // getOrDefault lowering (element IS a record map).
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_rectab".into(), "java.util.List<Map<String, Object>>".into());
+        let expr = ogsql_parser::ast::Expr::FieldAccess {
+            object: Box::new(fc_expr(&["v_rectab"], vec![int_lit(1)])),
+            field: "item_id".into(),
+        };
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains("getOrDefault(\"itemId\""), "map elem field read: {}", out);
+        assert!(!out.contains("TOBEFIX"), "{}", out);
+    }
+
+    #[test]
+    fn test_field_access_on_object_collection_elem_casts() {
+        // `List<Object>`/`List<?>` elements need an explicit Map cast or
+        // `.getOrDefault` does not compile on Object.
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_any".into(), "java.util.List<Object>".into());
+        let expr = ogsql_parser::ast::Expr::FieldAccess {
+            object: Box::new(fc_expr(&["v_any"], vec![int_lit(1)])),
+            field: "item_id".into(),
+        };
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains("(java.util.Map<String, Object>)"), "object elem needs cast: {}", out);
     }
 
     #[test]

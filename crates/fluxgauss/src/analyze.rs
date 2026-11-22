@@ -59,7 +59,20 @@ fn record_field_java_type(
         // DDL not in sources (delivery configs may omit the table) — fall
         // back to column-name inference rather than leaving Object, so
         // generated fixtures get typed seeds instead of 145× null.
-        let inferred = crate::type_map::infer_sql_type_from_column_name(col);
+        let mut inferred = crate::type_map::infer_sql_type_from_column_name(col);
+        // Review #129 §3: `*_date` columns are overwhelmingly Oracle DATE,
+        // not TIMESTAMP — a Timestamp seed stringifies to
+        // "yyyy-MM-dd HH:mm:ss.S" which LocalDate.parse rejects. Narrow
+        // override ONLY on this record-field fallback path; the shared
+        // infer_sql_type_from_column_name feeds local-var declarations
+        // whose timestamp branch has a self-consistent initializer, so
+        // changing it globally breaks compilation (verified rc=1).
+        if inferred == "timestamp" {
+            let col_l = col.to_lowercase();
+            if col_l == "date" || col_l.ends_with("_date") {
+                inferred = "date";
+            }
+        }
         return crate::type_map::sql_type_to_java(inferred).map(|s| s.to_string()).or_else(|| Some("String".into()));
     }
     crate::type_map::sql_type_to_java(sql_type).map(|s| s.to_string())
@@ -73,8 +86,13 @@ fn record_field_java_type(
 pub fn resolve_custom_record_field_types(
     custom_types: &mut HashMap<String, crate::types::CustomTypeInfo>,
     ddl_schema: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
-) {
-    for ct in custom_types.values_mut() {
+) -> Vec<(String, String, String)> {
+    // Review #129 §4.4: returns (type_name, field_name, sql_type) for every
+    // `%TYPE` anchor that could not be resolved at all (e.g. variable-anchored
+    // `x%TYPE` with no `table.column` shape) — the caller reports these into
+    // unresolved_calls instead of letting them silently stay Object/null.
+    let mut unresolved = Vec::new();
+    for (tname, ct) in custom_types.iter_mut() {
         if !ct.is_record {
             continue;
         }
@@ -82,11 +100,17 @@ pub fn resolve_custom_record_field_types(
             ct.field_sql_types.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
         for (fname, jt) in ct.fields.iter_mut() {
             let Some(sql) = sql_by_field.get(fname.as_str()).copied() else { continue };
-            if let Some(resolved) = record_field_java_type(sql, ddl_schema) {
-                *jt = resolved;
+            match record_field_java_type(sql, ddl_schema) {
+                Some(resolved) => *jt = resolved,
+                None => {
+                    if sql.to_lowercase().contains("%type") {
+                        unresolved.push((tname.clone(), fname.clone(), sql.to_string()));
+                    }
+                }
             }
         }
     }
+    unresolved
 }
 
 /// Resolve a `%ROWTYPE` table reference to { field_lower → Java type } using
@@ -622,8 +646,10 @@ mod tests {
         let ct = &custom_types["deposit_receipt"];
         let jt = |n: &str| ct.fields.iter().find(|(f, _)| f == n).map(|(_, t)| t.clone()).unwrap();
         assert_eq!(jt("amount"), "java.math.BigDecimal");
-        // maturity_date: no DDL column → inference ("date" → timestamp).
-        assert_eq!(jt("maturity_date"), "java.sql.Timestamp");
+        // maturity_date: no DDL column → inference; `*_date` overrides the
+        // timestamp guess to `date` (review #129 §3 — Timestamp seeds break
+        // LocalDate.parse consumers).
+        assert_eq!(jt("maturity_date"), "java.sql.Date");
         // fund_code: inference → varchar → String.
         assert_eq!(jt("fund_code"), "String");
     }
