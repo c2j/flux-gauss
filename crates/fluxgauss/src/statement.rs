@@ -3419,11 +3419,23 @@ pub fn process_statement(
                             // requires a prior EXTEND and raises otherwise;
                             // padding with nulls keeps generated code total.
                             let idx_java = crate::expr::coll_idx_java(&idx);
+                            // Review #129 R4: a non-trivial index (function
+                            // call, NEXT/ternary, arithmetic) would be
+                            // evaluated twice (while + set) — bind it once.
+                            // Bare identifiers/literals stay inline.
+                            let idx_simple = idx.chars().all(|c| c.is_alphanumeric() || c == '_');
+                            let idx_ref = if idx_simple {
+                                idx_java
+                            } else {
+                                let local = format!("_collIdx{}", proc.java_logic_lines.len());
+                                push_logic_line(proc, format!("final int {} = {};", local, idx_java));
+                                local
+                            };
                             push_logic_line(
                                 proc,
-                                format!("while ({}.size() < {}) {{ {}.add(null); }}", base, idx_java, base),
+                                format!("while ({}.size() < {}) {{ {}.add(null); }}", base, idx_ref, base),
                             );
-                            push_logic_line(proc, format!("{}.set({} - 1, {});", base, idx_java, v));
+                            push_logic_line(proc, format!("{}.set({} - 1, {});", base, idx_ref, v));
                         }
                         None => {
                             push_logic_line(
@@ -3932,5 +3944,47 @@ mod tests {
             "coll(i) := v must lower to List.set(i-1, v): {:?}",
             proc.java_logic_lines
         );
+    }
+
+    #[test]
+    fn test_collection_element_assign_binds_nontrivial_index() {
+        // Review #129 R4: `coll(i + 1) := v` must evaluate the index once —
+        // the auto-extend while and set share a `final int` local instead of
+        // inlining the expression twice.
+        use ogsql_parser::ast::plpgsql::PlStatement;
+        use ogsql_parser::ast::Spanned;
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_coll".into(), "java.util.List<Long>".into());
+        proc.local_vars.insert("v_i".into(), "Long".into());
+        let mut ctx = empty_stmt_ctx();
+
+        let idx_expr = ogsql_parser::ast::Expr::BinaryOp {
+            left: Box::new(ogsql_parser::ast::Expr::PlVariable(vec!["v_i".into()])),
+            op: "+".into(),
+            right: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Integer(1))),
+        };
+        let call = ogsql_parser::ast::plpgsql::PlProcedureCall {
+            name: vec![ogsql_parser::ast::Ident::new("v_coll")],
+            arguments: vec![idx_expr],
+            builtin: None,
+        };
+        process_statement(&PlStatement::ProcedureCall(Spanned::without_span(call)), &mut proc, &mut ctx).unwrap();
+        process_statement(&PlStatement::Sql(":= v_i".to_string()), &mut proc, &mut ctx).unwrap();
+
+        let lines = &proc.java_logic_lines;
+        assert!(
+            lines.iter().any(|l| l.starts_with("final int _collIdx")),
+            "non-trivial idx must be bound once: {:?}",
+            lines
+        );
+        assert!(
+            lines.iter().any(|l| l.contains("while (vColl.size() < _collIdx")),
+            "while must reference the bound local: {:?}",
+            lines
+        );
+        assert!(lines.iter().any(|l| l.contains(".set(_collIdx")), "set must reference the bound local: {:?}", lines);
+        // The raw index expression must not appear twice.
+        let idx_occurrences = lines.iter().filter(|l| l.contains("vI") && l.contains("+ 1")).count();
+        assert!(idx_occurrences <= 1, "index expr must be evaluated once, got {} lines: {:?}", idx_occurrences, lines);
     }
 }
