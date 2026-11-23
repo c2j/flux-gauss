@@ -1,0 +1,9 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface LobStrMapper {
+
+    // No direct DML operations for pkg_lob_str
+}

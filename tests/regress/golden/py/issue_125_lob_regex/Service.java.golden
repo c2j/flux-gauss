@@ -1,0 +1,76 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue125LobRegexMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue125LobRegexService {
+    private static final Logger log = LoggerFactory.getLogger(Issue125LobRegexService.class);
+
+    private final Issue125LobRegexMapper issue125LobRegexMapper;
+
+    public Issue125LobRegexService(Issue125LobRegexMapper issue125LobRegexMapper) {
+        this.issue125LobRegexMapper = issue125LobRegexMapper;
+    }
+
+    private String _substr(String str, Object pos) {
+        return _substr(str, pos, str.length());
+    }
+
+    private String _substr(String str, Object pos, Object len) {
+        if (str == null) str = "";
+        int p = (pos instanceof Number) ? ((Number) pos).intValue() : Integer.parseInt(String.valueOf(pos));
+        int l = (len instanceof Number) ? ((Number) len).intValue() : Integer.parseInt(String.valueOf(len));
+        int start = Math.max(0, p - 1);
+        int end = Math.min(str.length(), start + l);
+        if (start > end) start = end;
+        return str.substring(start, end);
+    }
+    // Source: pkg_lob_str.prc_lob_demo (PROCEDURE) — issue_125_lob_regex.sql:10-27
+    public void prcLobDemo(String pSrc, AtomicReference<String> pOut) {
+        String vClob = null;
+        String vTxt = null;
+        Long vLen = 0L;
+        String vPart = null;
+        pOut.set(null);
+        vTxt = "";
+        vTxt = pSrc;
+        vTxt = "";
+        vLen = (long) (0L);
+        vPart = "";
+        vPart = _substr(String.valueOf(vClob), (5), (2));
+        if (vTxt == null) {
+            pOut.set("null");
+        } else {
+            pOut.set(String.valueOf(vTxt));
+        }
+    }
+
+    // Source: pkg_lob_str.prc_byte_demo (PROCEDURE) — issue_125_lob_regex.sql:30-38
+    public void prcByteDemo(String pSrc, AtomicReference<String> pOut) {
+        Long vN = 0L;
+        Long vPos = 0L;
+        pOut.set(null);
+        vN = (long) (0L);
+        vPos = (long) (0L);
+        pOut.set(String.valueOf(String.valueOf(pSrc).substring(1)));
+        pOut.set(String.valueOf(String.valueOf(pSrc).substring(-4)));
+    }
+
+    // Source: pkg_lob_str.prc_regex_demo (PROCEDURE) — issue_125_lob_regex.sql:41-50
+    public void prcRegexDemo(String pSrc, AtomicReference<String> pOut) {
+        Long vN = 0L;
+        Boolean vFlag = false;
+        pOut.set(null);
+        vFlag = String.valueOf(pSrc).matches("[0-9]+");
+        pOut.set("");
+        vN = (long) (0L);
+        vN = (long) (0L);
+        pOut.set(String.valueOf(pSrc).replaceAll("([a-z]+)([0-9]*)", "\2-\1"));
+    }
+}

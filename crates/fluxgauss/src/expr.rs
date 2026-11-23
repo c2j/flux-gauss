@@ -666,6 +666,14 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
         {
             trimmed.to_string()
         }
+        // Issue #125: fluxgauss.plsql numeric helpers return boxed Long and
+        // propagate SQL NULL — routing them through ((Number) expr).longValue()
+        // would NPE where Oracle assigns NULL. Keep the call as-is for Long
+        // targets; Integer targets get a null-safe intValue() unwrap.
+        Some(t) if (t == "Long" || t == "long") && is_nullable_plsql_numeric_call(trimmed) => trimmed.to_string(),
+        Some(t) if t == "Integer" && is_nullable_plsql_numeric_call(trimmed) => {
+            format!("({} == null ? null : {}.intValue())", trimmed, trimmed)
+        }
         Some(t) if (t == "Long" || t == "long") => {
             if looks_like_timestamp_expr(trimmed, proc) {
                 format!("{}.getTime()", trimmed)
@@ -680,6 +688,26 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
         }
         _ => expr.to_string(),
     }
+}
+
+/// Issue #125: true when `expr` is a `fluxgauss.plsql` helper call whose
+/// return type is boxed `Long` (nullable). String/boolean helpers are
+/// excluded — they take different coercion paths.
+fn is_nullable_plsql_numeric_call(expr: &str) -> bool {
+    let e = expr.trim();
+    if !e.starts_with("fluxgauss.plsql.") {
+        return false;
+    }
+    const NUMERIC_HELPERS: &[&str] = &[
+        "StrUtil.byteLength(",
+        "StrUtil.byteInstr(",
+        "StrUtil.lobLength(",
+        "StrUtil.lobInstr(",
+        "StrUtil.ascii(",
+        "Regexp.instr(",
+        "Regexp.count(",
+    ];
+    NUMERIC_HELPERS.iter().any(|h| e.contains(h))
 }
 
 fn coerce_arg_to_type(arg: &str, target_type: &str, proc: &ProcedureInfo) -> String {
@@ -2814,7 +2842,59 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         "CURRENT_SETTING" => "/* CURRENT_SETTING */ null".into(),
         "PG_BACKEND_PID" => "Thread.currentThread().getId()".into(),
         "LISTAGG" | "STRING_AGG" => format!("/* {} */ null", upper),
-        "REGEXP_REPLACE" if jargs.len() >= 3 => format!("{}.replaceAll({}, {})", jargs[0], jargs[1], jargs[2]),
+        // Issue #125: regex family → fluxgauss.plsql.Regexp (Oracle pos/occ/
+        // match_param semantics; fixes the previous bare .replaceAll lowering
+        // which ignored position/occurrence and Oracle \N backrefs).
+        "REGEXP_REPLACE" if jargs.len() >= 3 => {
+            format!("fluxgauss.plsql.Regexp.replace({})", jargs[..jargs.len().min(6)].join(", "))
+        }
+        "REGEXP_SUBSTR" if jargs.len() >= 2 => {
+            format!("fluxgauss.plsql.Regexp.substr({})", jargs[..jargs.len().min(5)].join(", "))
+        }
+        "REGEXP_INSTR" if jargs.len() >= 2 => {
+            format!("fluxgauss.plsql.Regexp.instr({})", jargs[..jargs.len().min(6)].join(", "))
+        }
+        "REGEXP_LIKE" if jargs.len() >= 2 => {
+            format!("fluxgauss.plsql.Regexp.like({})", jargs[..jargs.len().min(3)].join(", "))
+        }
+        "REGEXP_COUNT" if jargs.len() >= 2 => {
+            format!("fluxgauss.plsql.Regexp.count({})", jargs[..jargs.len().min(4)].join(", "))
+        }
+        // Issue #125: LOB family — scalar reads map to String ops via
+        // fluxgauss.plsql.StrUtil; char semantics for LOB_SUBSTR family,
+        // UTF-8 byte semantics for the *B variants.
+        "EMPTY_CLOB" | "EMPTY_BLOB" => "\"\"".to_string(),
+        "GETCLOBVAL" | "GETBLOBVAL" | "TO_CLOB" | "TO_BLOB" if jargs.len() == 1 => {
+            format!("fluxgauss.plsql.StrUtil.toText({})", jargs[0])
+        }
+        "SUBSTRB" if jargs.len() >= 2 => {
+            format!("fluxgauss.plsql.StrUtil.byteSubstr({})", jargs[..jargs.len().min(3)].join(", "))
+        }
+        "INSTRB" if jargs.len() >= 2 => {
+            format!("fluxgauss.plsql.StrUtil.byteInstr({})", jargs[..jargs.len().min(4)].join(", "))
+        }
+        "LENGTHB" if jargs.len() == 1 => format!("fluxgauss.plsql.StrUtil.byteLength({})", jargs[0]),
+        "ASCIISTR" if jargs.len() == 1 => format!("fluxgauss.plsql.StrUtil.asciiStr({})", jargs[0]),
+        "UNISTR" if jargs.len() == 1 => format!("fluxgauss.plsql.StrUtil.unistr({})", jargs[0]),
+        "ASCII2" if jargs.len() == 1 => format!("fluxgauss.plsql.StrUtil.ascii({})", jargs[0]),
+        "DBMS_LOB.SUBSTR" | "DBE_LOB.SUBSTR" | "DBE_LOB.LOB_SUBSTR" | "LOB_SUBSTR"
+            if !jargs.is_empty() =>
+        {
+            format!("fluxgauss.plsql.StrUtil.lobSubstr({})", jargs[..jargs.len().min(3)].join(", "))
+        }
+        "DBE_LOB.GET_LENGTH" | "DBE_LOB.LOB_GET_LENGTH" | "PKG_UTIL.LOB_GET_LENGTH" | "LOB_GET_LENGTH"
+            if jargs.len() == 1 =>
+        {
+            format!("fluxgauss.plsql.StrUtil.lobLength({})", jargs[0])
+        }
+        "DBE_LOB.INSTR" | "PKG_UTIL.LOB_MATCH" | "LOB_INSTR" if jargs.len() >= 2 => {
+            format!("fluxgauss.plsql.StrUtil.lobInstr({})", jargs[..jargs.len().min(4)].join(", "))
+        }
+        // Charset/collation-dependent builtins have no faithful Java
+        // equivalent — report explicitly instead of silent null.
+        "CONVERT" | "NLSSORT" | "COMPOSE" => {
+            format!("/* TOBEFIX: {} - charset/collation semantics not mapped */ null", upper)
+        }
         "LEFT" if jargs.len() >= 2 => format!("{}.substring(0, Math.min({}.length(), {}))", jargs[0], jargs[0], jargs[1]),
         "RIGHT" if jargs.len() >= 2 => format!("{}.substring(Math.max(0, {}.length() - {}))", jargs[0], jargs[0], jargs[1]),
         "LPAD" => {
@@ -4642,5 +4722,71 @@ mod tests {
         let expr = fc_expr(&["last_day"], vec![col_expr(&["v_ts"])]);
         let out = expr_to_java(&expr, &proc);
         assert!(!out.contains("LocalDate.parse(String.valueOf"), "Timestamp local must not string-parse: {}", out);
+    }
+
+    // ── Issue #125: LOB / byte-semantic / regex builtins ──
+
+    #[test]
+    fn test_issue125_empty_lob_and_clob_val_lower_inline() {
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_doc".into(), "String".into());
+        assert_eq!(expr_to_java(&fc_expr(&["empty_clob"], vec![]), &proc), "\"\"");
+        assert_eq!(expr_to_java(&fc_expr(&["empty_blob"], vec![]), &proc), "\"\"");
+        let out = expr_to_java(&fc_expr(&["getclobval"], vec![col_expr(&["v_doc"])]), &proc);
+        assert_eq!(out, "fluxgauss.plsql.StrUtil.toText(vDoc)");
+        let out =
+            expr_to_java(&fc_expr(&["dbms_lob", "substr"], vec![col_expr(&["v_doc"]), int_lit(10), int_lit(1)]), &proc);
+        assert_eq!(out, "fluxgauss.plsql.StrUtil.lobSubstr(vDoc, 10, 1)");
+    }
+
+    #[test]
+    fn test_issue125_byte_semantic_functions_route_to_strutil() {
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_s".into(), "String".into());
+        proc.local_vars.insert("v_sub".into(), "String".into());
+        let out = expr_to_java(&fc_expr(&["substrb"], vec![col_expr(&["v_s"]), int_lit(1), int_lit(10)]), &proc);
+        assert_eq!(out, "fluxgauss.plsql.StrUtil.byteSubstr(vS, 1, 10)");
+        let out = expr_to_java(&fc_expr(&["instrb"], vec![col_expr(&["v_s"]), col_expr(&["v_sub"])]), &proc);
+        assert_eq!(out, "fluxgauss.plsql.StrUtil.byteInstr(vS, vSub)");
+        let out = expr_to_java(&fc_expr(&["lengthb"], vec![col_expr(&["v_s"])]), &proc);
+        assert_eq!(out, "fluxgauss.plsql.StrUtil.byteLength(vS)");
+    }
+
+    #[test]
+    fn test_issue125_regexp_family_routes_to_regexp_helper() {
+        let mut proc = empty_proc();
+        for v in ["v_s", "v_pat", "v_rep", "v_flags"] {
+            proc.local_vars.insert(v.into(), "String".into());
+        }
+        let out = expr_to_java(&fc_expr(&["regexp_substr"], vec![col_expr(&["v_s"]), col_expr(&["v_pat"])]), &proc);
+        assert_eq!(out, "fluxgauss.plsql.Regexp.substr(vS, vPat)");
+        // REGEXP_REPLACE must keep position/occurrence/match_param args —
+        // the old `.replaceAll` arm dropped them and broke Oracle \N backrefs.
+        let out = expr_to_java(
+            &fc_expr(
+                &["regexp_replace"],
+                vec![
+                    col_expr(&["v_s"]),
+                    col_expr(&["v_pat"]),
+                    col_expr(&["v_rep"]),
+                    int_lit(1),
+                    int_lit(2),
+                    col_expr(&["v_flags"]),
+                ],
+            ),
+            &proc,
+        );
+        assert_eq!(out, "fluxgauss.plsql.Regexp.replace(vS, vPat, vRep, 1, 2, vFlags)");
+        assert!(!out.contains("replaceAll"), "must not use bare String.replaceAll: {}", out);
+    }
+
+    #[test]
+    fn test_issue125_charset_functions_report_tobefix() {
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_s".into(), "String".into());
+        proc.local_vars.insert("v_cs".into(), "String".into());
+        let out = expr_to_java(&fc_expr(&["convert"], vec![col_expr(&["v_s"]), col_expr(&["v_cs"])]), &proc);
+        assert!(out.contains("TOBEFIX"), "CONVERT must degrade explicitly: {}", out);
+        assert!(out.contains("charset"), "hint should name the reason: {}", out);
     }
 }

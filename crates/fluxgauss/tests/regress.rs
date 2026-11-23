@@ -136,6 +136,33 @@ fn run_conversion(sql_file: &Path, out_dir: &Path) -> GeneratedFiles {
         }
     }
 
+    // Issue #125: on-demand `fluxgauss.plsql` support classes live outside
+    // base_package — collect them under a synthetic "Support.java" golden key
+    // (same multi-file concat convention as the scan_dirs above).
+    let plsql_dir = base.join("src/main/java").join("fluxgauss").join("plsql");
+    if let Ok(entries) = fs::read_dir(&plsql_dir) {
+        let mut matched: Vec<(String, String)> = entries
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "java"))
+            .filter_map(|p| {
+                let name = p.file_name().unwrap().to_string_lossy().to_string();
+                fs::read_to_string(&p).ok().map(|content| (name, content))
+            })
+            .collect();
+        matched.sort_by(|a, b| a.0.cmp(&b.0));
+        if matched.len() == 1 {
+            files.insert("Support.java".to_string(), matched.into_iter().next().unwrap().1);
+        } else if matched.len() > 1 {
+            let content = matched
+                .into_iter()
+                .map(|(name, c)| format!("// ===== FILE: {} =====\n{}", name, c))
+                .collect::<Vec<_>>()
+                .join("\n");
+            files.insert("Support.java".to_string(), content);
+        }
+    }
+
     GeneratedFiles {
         files,
         total_cross_calls: result.total_cross_calls,

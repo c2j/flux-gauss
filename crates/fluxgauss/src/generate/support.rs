@@ -1,0 +1,515 @@
+//! On-demand PL/SQL runtime support classes (issue #125).
+//!
+//! Oracle/GaussDB scalar builtins that have no inline Java equivalent are
+//! lowered to static calls on `fluxgauss.plsql.StrUtil` / `fluxgauss.plsql.Regexp`.
+//! The package is fixed (independent of `base_package`) so generated call
+//! sites never need an import; each class file is written only when the
+//! analysed logic actually references it.
+
+use std::path::Path;
+
+use encoding_rs::Encoding;
+
+use crate::types::PackageInfo;
+
+/// Scan analysed procedures for support-class references and emit the
+/// corresponding `fluxgauss/plsql/*.java` files. Returns written paths.
+pub fn write_support_classes(output_dir: &Path, packages: &[PackageInfo], encoding: &'static Encoding) -> Vec<String> {
+    let mut text = String::new();
+    for pkg in packages {
+        for proc in &pkg.procedures {
+            for line in &proc.java_logic_lines {
+                text.push_str(line);
+                text.push(' ');
+            }
+        }
+    }
+
+    let dir = output_dir.join("src/main/java/fluxgauss/plsql");
+    let mut written = Vec::new();
+    for (marker, file_name, source) in [
+        ("fluxgauss.plsql.StrUtil", "StrUtil.java", STRUTIL_JAVA),
+        ("fluxgauss.plsql.Regexp", "Regexp.java", REGEXP_JAVA),
+    ] {
+        if !text.contains(marker) {
+            continue;
+        }
+        let path = dir.join(file_name);
+        if let Some(parent) = path.parent() {
+            if std::fs::create_dir_all(parent).is_err() {
+                continue;
+            }
+        }
+        let (cow, _, _) = encoding.encode(source);
+        if std::fs::write(&path, &cow).is_ok() {
+            written.push(path.to_string_lossy().into_owned());
+        }
+    }
+    written
+}
+
+const STRUTIL_JAVA: &str = r#"package fluxgauss.plsql;
+
+import java.nio.charset.StandardCharsets;
+
+/**
+ * Oracle/GaussDB string & LOB scalar helpers lowered from PL/pgSQL builtins.
+ *
+ * Byte-semantic functions (SUBSTRB / INSTRB / LENGTHB) operate on UTF-8
+ * bytes, matching the openGauss/GaussDB database encoding; LOB_* /
+ * DBMS_LOB.* scalar reads use character semantics. All entry points
+ * propagate SQL NULL as Java null.
+ */
+public final class StrUtil {
+    private StrUtil() {}
+
+    private static String str(Object o) {
+        if (o == null) return null;
+        if (o instanceof byte[] b) return new String(b, StandardCharsets.UTF_8);
+        return String.valueOf(o);
+    }
+
+    private static byte[] bytes(Object o) {
+        String s = str(o);
+        return s == null ? null : s.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static long num(Object o, long dflt) {
+        if (o == null) return dflt;
+        if (o instanceof Number n) return n.longValue();
+        try {
+            return Long.parseLong(String.valueOf(o).trim());
+        } catch (RuntimeException e) {
+            return dflt;
+        }
+    }
+
+    /** CLOB/BLOB → text; null propagates (Oracle NULL semantics). */
+    public static String toText(Object o) {
+        return str(o);
+    }
+
+    /** LENGTHB — UTF-8 byte length; null → null. */
+    public static Long byteLength(Object o) {
+        byte[] b = bytes(o);
+        return b == null ? null : (long) b.length;
+    }
+
+    /** SUBSTRB(str, start[, len]) — byte window, 1-based / negative-from-end start. */
+    public static String byteSubstr(Object s, Object start) {
+        return byteSubstr(s, start, null);
+    }
+
+    public static String byteSubstr(Object s, Object start, Object len) {
+        byte[] b = bytes(s);
+        if (b == null) return null;
+        long st = num(start, 1);
+        int from;
+        if (st > 0) {
+            from = (int) Math.min(st - 1, Integer.MAX_VALUE);
+        } else if (st < 0) {
+            from = b.length + (int) st;
+        } else {
+            return null;
+        }
+        if (from < 0 || from >= b.length) return null;
+        int lo;
+        int hi;
+        if (len == null) {
+            lo = from;
+            hi = b.length;
+        } else {
+            long l = num(len, 0);
+            if (l >= 0) {
+                lo = from;
+                hi = (int) Math.min((long) b.length, from + Math.min(l, Integer.MAX_VALUE));
+            } else {
+                hi = from;
+                lo = (int) Math.max(0L, from + Math.max(l, Integer.MIN_VALUE + 1L));
+            }
+        }
+        if (hi <= lo) return "";
+        return new String(b, lo, hi - lo, StandardCharsets.UTF_8);
+    }
+
+    /** INSTRB(str, sub[, pos[, occ]]) — 1-based byte position of nth occurrence; 0 if absent. */
+    public static Long byteInstr(Object s, Object sub) {
+        return byteInstr(s, sub, null, null);
+    }
+
+    public static Long byteInstr(Object s, Object sub, Object pos) {
+        return byteInstr(s, sub, pos, null);
+    }
+
+    public static Long byteInstr(Object s, Object sub, Object pos, Object occ) {
+        byte[] b = bytes(s);
+        byte[] n = bytes(sub);
+        if (b == null || n == null) return null;
+        if (n.length == 0) return 0L;
+        long st = num(pos, 1);
+        int from;
+        if (st > 0) {
+            from = (int) Math.min(st - 1, Integer.MAX_VALUE);
+        } else if (st < 0) {
+            from = Math.max(0, b.length + (int) st);
+        } else {
+            return null;
+        }
+        if (from >= b.length) return 0L;
+        long nth = Math.max(1, num(occ, 1));
+        int idx = indexOf(b, n, from);
+        for (long k = 1; k < nth && idx >= 0; k++) {
+            idx = indexOf(b, n, idx + 1);
+        }
+        return idx < 0 ? 0L : (long) (idx + 1);
+    }
+
+    private static int indexOf(byte[] hay, byte[] needle, int from) {
+        outer:
+        for (int i = from; i + needle.length <= hay.length; i++) {
+            for (int j = 0; j < needle.length; j++) {
+                if (hay[i + j] != needle[j]) continue outer;
+            }
+            return i;
+        }
+        return -1;
+    }
+
+    /** LOB_GET_LENGTH / DBMS_LOB length — character count; null → null. */
+    public static Long lobLength(Object lob) {
+        String s = str(lob);
+        return s == null ? null : (long) s.length();
+    }
+
+    /** DBMS_LOB.SUBSTR / DBE_LOB.SUBSTR — (lob[, amount[, offset]]); 1-based char offset. */
+    public static String lobSubstr(Object lob) {
+        return lobSubstr(lob, null, null);
+    }
+
+    public static String lobSubstr(Object lob, Object amount) {
+        return lobSubstr(lob, amount, null);
+    }
+
+    public static String lobSubstr(Object lob, Object amount, Object offset) {
+        String s = str(lob);
+        if (s == null) return null;
+        long off = num(offset, 1);
+        if (off < 1) return null;
+        int start = (int) Math.min(off - 1, s.length());
+        if (start >= s.length()) return null;
+        long amt = Math.max(0, num(amount, s.length()));
+        int end = (int) Math.min((long) s.length(), start + Math.min(amt, Integer.MAX_VALUE));
+        return s.substring(start, end);
+    }
+
+    /** DBE_LOB.INSTR / PKG_UTIL.LOB_MATCH — (lob, pattern[, offset[, nth]]); 1-based position, 0 if absent. */
+    public static Long lobInstr(Object lob, Object pattern) {
+        return lobInstr(lob, pattern, null, null);
+    }
+
+    public static Long lobInstr(Object lob, Object pattern, Object offset) {
+        return lobInstr(lob, pattern, offset, null);
+    }
+
+    public static Long lobInstr(Object lob, Object pattern, Object offset, Object nth) {
+        String s = str(lob);
+        String p = str(pattern);
+        if (s == null || p == null) return null;
+        if (p.isEmpty()) return 0L;
+        long off = num(offset, 1);
+        if (off < 1) return 0L;
+        int from = (int) Math.min(off - 1, s.length());
+        long n = Math.max(1, num(nth, 1));
+        int idx = s.indexOf(p, from);
+        for (long k = 1; k < n && idx >= 0; k++) {
+            idx = s.indexOf(p, idx + 1);
+        }
+        return idx < 0 ? 0L : (long) (idx + 1);
+    }
+
+    /** ASCII — code point of first char; null/empty → null. */
+    public static Long ascii(Object o) {
+        String s = str(o);
+        return s == null || s.isEmpty() ? null : (long) s.codePointAt(0);
+    }
+
+    /** ASCIISTR — non-ASCII chars escaped as \XXXX. */
+    public static String asciiStr(Object o) {
+        String s = str(o);
+        if (s == null) return null;
+        StringBuilder sb = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c > 127) {
+                sb.append(String.format("\\%04X", (int) c));
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    /** UNISTR — decode \XXXX unicode escapes (BMP). */
+    public static String unistr(Object o) {
+        String s = str(o);
+        if (s == null) return null;
+        StringBuilder sb = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '\\' && i + 4 < s.length() && isHex4(s, i + 1)) {
+                sb.append((char) Integer.parseInt(s.substring(i + 1, i + 5), 16));
+                i += 4;
+            } else if (c == '\\' && i + 1 < s.length() && s.charAt(i + 1) == '\\') {
+                sb.append('\\');
+                i += 1;
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    private static boolean isHex4(String s, int off) {
+        for (int i = 0; i < 4; i++) {
+            char c = s.charAt(off + i);
+            boolean hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+            if (!hex) return false;
+        }
+        return true;
+    }
+}
+"#;
+
+const REGEXP_JAVA: &str = r#"package fluxgauss.plsql;
+
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
+
+/**
+ * Oracle REGEXP_* family lowered from PL/pgSQL builtins (issue #125).
+ * Oracle uses POSIX-style patterns; java.util.regex covers the common
+ * subset used by migrated code. match_parameter letters: i=caseless,
+ * m=multiline, n=dotall, x=ignore-whitespace, c=caseless-off.
+ */
+public final class Regexp {
+    private Regexp() {}
+
+    private static String str(Object o) {
+        return o == null ? null : String.valueOf(o);
+    }
+
+    private static long num(Object o, long dflt) {
+        if (o == null) return dflt;
+        if (o instanceof Number n) return n.longValue();
+        try {
+            return Long.parseLong(String.valueOf(o).trim());
+        } catch (RuntimeException e) {
+            return dflt;
+        }
+    }
+
+    private static int flags(Object params) {
+        int f = 0;
+        String p = str(params);
+        if (p == null) return f;
+        for (char c : p.toLowerCase(java.util.Locale.ROOT).toCharArray()) {
+            switch (c) {
+                case 'i': f |= Pattern.CASE_INSENSITIVE; break;
+                case 'm': f |= Pattern.MULTILINE; break;
+                case 'n': f |= Pattern.DOTALL; break;
+                case 'x': f |= Pattern.COMMENTS; break;
+                default: break;
+            }
+        }
+        return f;
+    }
+
+    private static int regionStart(Object pos, int len) {
+        long p = num(pos, 1);
+        if (p < 1) return -1;
+        return (int) Math.min(p - 1, len);
+    }
+
+    /** REGEXP_LIKE(source, pattern[, match_parameter]) — partial match; null → false. */
+    public static boolean like(Object s, Object p) {
+        return like(s, p, null);
+    }
+
+    public static boolean like(Object s, Object p, Object params) {
+        String src = str(s);
+        String pat = str(p);
+        if (src == null || pat == null) return false;
+        try {
+            return Pattern.compile(pat, flags(params)).matcher(src).find();
+        } catch (PatternSyntaxException e) {
+            return false;
+        }
+    }
+
+    /** REGEXP_SUBSTR — nth match text from position; null if absent. */
+    public static String substr(Object s, Object p) {
+        return substr(s, p, null, null, null);
+    }
+
+    public static String substr(Object s, Object p, Object pos) {
+        return substr(s, p, pos, null, null);
+    }
+
+    public static String substr(Object s, Object p, Object pos, Object occ) {
+        return substr(s, p, pos, occ, null);
+    }
+
+    public static String substr(Object s, Object p, Object pos, Object occ, Object params) {
+        String src = str(s);
+        String pat = str(p);
+        if (src == null || pat == null) return null;
+        int start = regionStart(pos, src.length());
+        if (start < 0) return null;
+        try {
+            Matcher m = Pattern.compile(pat, flags(params)).matcher(src);
+            m.region(start, src.length());
+            long nth = Math.max(1, num(occ, 1));
+            for (long k = 0; k < nth; k++) {
+                if (!m.find()) return null;
+            }
+            return m.group();
+        } catch (PatternSyntaxException | IndexOutOfBoundsException e) {
+            return null;
+        }
+    }
+
+    /** REGEXP_INSTR — 1-based position of nth match (return_option=1 → after match); 0 if absent. */
+    public static Long instr(Object s, Object p) {
+        return instr(s, p, null, null, null, null);
+    }
+
+    public static Long instr(Object s, Object p, Object pos) {
+        return instr(s, p, pos, null, null, null);
+    }
+
+    public static Long instr(Object s, Object p, Object pos, Object occ) {
+        return instr(s, p, pos, occ, null, null);
+    }
+
+    public static Long instr(Object s, Object p, Object pos, Object occ, Object retOpt) {
+        return instr(s, p, pos, occ, retOpt, null);
+    }
+
+    public static Long instr(Object s, Object p, Object pos, Object occ, Object retOpt, Object params) {
+        String src = str(s);
+        String pat = str(p);
+        if (src == null || pat == null) return null;
+        int start = regionStart(pos, src.length());
+        if (start < 0) return null;
+        try {
+            Matcher m = Pattern.compile(pat, flags(params)).matcher(src);
+            m.region(start, src.length());
+            long nth = Math.max(1, num(occ, 1));
+            for (long k = 0; k < nth; k++) {
+                if (!m.find()) return 0L;
+            }
+            int at = num(retOpt, 0) != 0 ? m.end() : m.start();
+            return (long) (at + 1);
+        } catch (PatternSyntaxException | IndexOutOfBoundsException e) {
+            return 0L;
+        }
+    }
+
+    /** REGEXP_COUNT — non-overlapping match count from position; null → null, none → 0. */
+    public static Long count(Object s, Object p) {
+        return count(s, p, null, null);
+    }
+
+    public static Long count(Object s, Object p, Object pos) {
+        return count(s, p, pos, null);
+    }
+
+    public static Long count(Object s, Object p, Object pos, Object occ) {
+        String src = str(s);
+        String pat = str(p);
+        if (src == null || pat == null) return null;
+        int start = regionStart(pos, src.length());
+        if (start < 0) return null;
+        try {
+            // Oracle occurrence skips the first (nth-1) matches entirely.
+            Matcher m = Pattern.compile(pat).matcher(src);
+            m.region(start, src.length());
+            long nth = Math.max(1, num(occ, 1));
+            long seen = 0;
+            int n = 0;
+            while (m.find()) {
+                seen++;
+                if (seen >= nth) n++;
+            }
+            return (long) n;
+        } catch (PatternSyntaxException e) {
+            return null;
+        }
+    }
+
+    /** REGEXP_REPLACE — replaces only the nth match; Oracle \N backrefs. */
+    public static String replace(Object s, Object p, Object r) {
+        return replace(s, p, r, null, null, null);
+    }
+
+    public static String replace(Object s, Object p, Object r, Object pos) {
+        return replace(s, p, r, pos, null, null);
+    }
+
+    public static String replace(Object s, Object p, Object r, Object pos, Object occ) {
+        return replace(s, p, r, pos, occ, null);
+    }
+
+    public static String replace(Object s, Object p, Object r, Object pos, Object occ, Object params) {
+        String src = str(s);
+        String pat = str(p);
+        String repl = str(r);
+        if (src == null || pat == null || repl == null) return null;
+        int start = regionStart(pos, src.length());
+        if (start < 0) return src;
+        try {
+            Matcher m = Pattern.compile(pat, flags(params)).matcher(src);
+            m.region(start, src.length());
+            long nth = Math.max(1, num(occ, 1));
+            long seen = 0;
+            while (m.find()) {
+                seen++;
+                if (seen == nth) {
+                    return src.substring(0, m.start()) + expand(repl, m) + src.substring(m.end());
+                }
+            }
+            return src;
+        } catch (PatternSyntaxException | IndexOutOfBoundsException e) {
+            return null;
+        }
+    }
+
+    /** Oracle replacement: \1..\9 group refs, \\ literal backslash. */
+    private static String expand(String repl, Matcher m) {
+        StringBuilder sb = new StringBuilder(repl.length());
+        for (int i = 0; i < repl.length(); i++) {
+            char c = repl.charAt(i);
+            if (c == '\\' && i + 1 < repl.length()) {
+                char d = repl.charAt(i + 1);
+                if (d >= '1' && d <= '9') {
+                    try {
+                        sb.append(m.group(d - '0'));
+                    } catch (IndexOutOfBoundsException e) {
+                        sb.append('\\').append(d);
+                    }
+                    i++;
+                    continue;
+                }
+                if (d == '\\') {
+                    sb.append('\\');
+                    i++;
+                    continue;
+                }
+            }
+            sb.append(c);
+        }
+        return sb.toString();
+    }
+}
+"#;

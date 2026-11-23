@@ -1,0 +1,61 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.LobStrMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_125_lob_regex.sql
+public class LobStrService {
+    private static final Logger log = LoggerFactory.getLogger(LobStrService.class);
+
+    private final LobStrMapper lobStrMapper;
+
+    public LobStrService(LobStrMapper lobStrMapper) {
+        this.lobStrMapper = lobStrMapper;
+    }
+
+    // Source: pkg_lob_str.prc_lob_demo (PROCEDURE) — {FIXTURES_ROOT}/issue_125_lob_regex.sql:10-27
+    public void prcLobDemo(String pSrc, AtomicReference<String> pOut) {
+        String vClob = null;
+        Long vLen = 0L;
+        String vPart = null;
+        String vTxt = null;
+        vTxt = String.valueOf(fluxgauss.plsql.StrUtil.toText(vClob));
+        vTxt = String.valueOf(fluxgauss.plsql.StrUtil.toText(pSrc));
+        vTxt = "";
+        vLen = fluxgauss.plsql.StrUtil.lobLength(vClob);
+        vPart = String.valueOf(fluxgauss.plsql.StrUtil.lobSubstr(vClob, 10, 1));
+        vPart = String.valueOf(fluxgauss.plsql.StrUtil.lobSubstr(vClob, 5, 2));
+        if (vTxt == null) {
+            pOut.set("null");
+        } else {
+            pOut.set(String.valueOf(vTxt));
+        }
+    }
+
+    // Source: pkg_lob_str.prc_byte_demo (PROCEDURE) — {FIXTURES_ROOT}/issue_125_lob_regex.sql:30-38
+    public void prcByteDemo(String pSrc, AtomicReference<String> pOut) {
+        Long vN = 0L;
+        Long vPos = 0L;
+        vN = fluxgauss.plsql.StrUtil.byteLength(pSrc);
+        vPos = fluxgauss.plsql.StrUtil.byteInstr(pSrc, "中");
+        pOut.set(String.valueOf(fluxgauss.plsql.StrUtil.byteSubstr(pSrc, 1, 10)));
+        pOut.set(String.valueOf(fluxgauss.plsql.StrUtil.byteSubstr(pSrc, (-4))));
+    }
+
+    // Source: pkg_lob_str.prc_regex_demo (PROCEDURE) — {FIXTURES_ROOT}/issue_125_lob_regex.sql:41-50
+    public void prcRegexDemo(String pSrc, AtomicReference<String> pOut) {
+        Boolean vFlag = false;
+        Long vN = 0L;
+        vFlag = fluxgauss.plsql.Regexp.like(pSrc, "[0-9]+");
+        pOut.set(String.valueOf(fluxgauss.plsql.Regexp.substr(pSrc, "[a-z]+", 1, 2)));
+        vN = fluxgauss.plsql.Regexp.instr(pSrc, "[0-9]+");
+        vN = fluxgauss.plsql.Regexp.count(pSrc, "[aeiou]");
+        pOut.set(String.valueOf(fluxgauss.plsql.Regexp.replace(pSrc, "([a-z]+)([0-9]*)", "\\2-\\1", 1, 1, "i")));
+    }
+}

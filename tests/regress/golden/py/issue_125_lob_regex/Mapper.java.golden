@@ -1,0 +1,9 @@
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue125LobRegexMapper {
+
+    // No direct DML operations for issue_125_lob_regex
+}
