@@ -106,7 +106,15 @@ pub fn assignment_to_java(
             });
             let coerced = if let Some(p) = param {
                 let ptype = p.java_type.trim();
-                if ptype == "String" && !val.starts_with('"') && val != "null" && !is_nullish_java_expr(&val) {
+                // Issue #125 review: nullable plsql string helpers already
+                // return String — String.valueOf would turn SQL NULL into
+                // the literal "null".
+                if ptype == "String"
+                    && !val.starts_with('"')
+                    && val != "null"
+                    && !is_nullish_java_expr(&val)
+                    && !is_nullable_plsql_string_call(&val)
+                {
                     format!("String.valueOf({})", val)
                 } else if ptype == "Long" && val.starts_with('"') {
                     format!("Long.valueOf({})", val)
@@ -614,6 +622,7 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
         Some(t)
             if t == "String"
                 && trimmed != "null"
+                && !is_nullable_plsql_string_call(trimmed)
                 && !trimmed.starts_with("String.valueOf(")
                 && !trimmed.contains(".concat(String")
                 && !trimmed.contains(".substring(")
@@ -674,6 +683,17 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
         Some(t) if t == "Integer" && is_nullable_plsql_numeric_call(trimmed) => {
             format!("({} == null ? null : {}.intValue())", trimmed, trimmed)
         }
+        // Issue #125 review: BLOB lowers to byte[] while CLOB lowers to
+        // String — cross-assignments must convert or javac fails
+        // (`byte[] v = ""` / `String v = toBytes(..)`).
+        Some(t) if t.contains("byte[]") && trimmed.starts_with("fluxgauss.plsql.StrUtil.toText(") => {
+            format!("fluxgauss.plsql.StrUtil.toBytes({})", trimmed)
+        }
+        Some(t) if t.contains("byte[]") && (trimmed == "\"\"" || trimmed == "''") => "new byte[0]".to_string(),
+        Some(t) if t == "String" && trimmed == "new byte[0]" => "\"\"".to_string(),
+        Some(t) if t == "String" && trimmed.starts_with("fluxgauss.plsql.StrUtil.toBytes(") => {
+            format!("fluxgauss.plsql.StrUtil.toText({})", trimmed)
+        }
         Some(t) if (t == "Long" || t == "long") => {
             if looks_like_timestamp_expr(trimmed, proc) {
                 format!("{}.getTime()", trimmed)
@@ -698,16 +718,84 @@ fn is_nullable_plsql_numeric_call(expr: &str) -> bool {
     if !e.starts_with("fluxgauss.plsql.") {
         return false;
     }
-    const NUMERIC_HELPERS: &[&str] = &[
-        "StrUtil.byteLength(",
-        "StrUtil.byteInstr(",
-        "StrUtil.lobLength(",
-        "StrUtil.lobInstr(",
-        "StrUtil.ascii(",
-        "Regexp.instr(",
-        "Regexp.count(",
-    ];
-    NUMERIC_HELPERS.iter().any(|h| e.contains(h))
+    NUMERIC_PLSQL_HELPERS.iter().any(|h| e.contains(h))
+}
+
+/// Numeric plsql helpers anywhere inside `s` (not just at the head) —
+/// used to detect helper results feeding arithmetic/comparison operands.
+fn contains_numeric_plsql_helper(s: &str) -> bool {
+    NUMERIC_PLSQL_HELPERS.iter().any(|h| s.contains(h))
+}
+
+const NUMERIC_PLSQL_HELPERS: &[&str] = &[
+    "StrUtil.byteLength(",
+    "StrUtil.byteInstr(",
+    "StrUtil.lobLength(",
+    "StrUtil.lobInstr(",
+    "StrUtil.ascii(",
+    "Regexp.instr(",
+    "Regexp.count(",
+];
+
+/// String-returning plsql helpers — already `String`, so wrapping them in
+/// `String.valueOf` only serves to materialize SQL NULL as `"null"`.
+fn is_nullable_plsql_string_call(expr: &str) -> bool {
+    let e = expr.trim();
+    e.starts_with("fluxgauss.plsql.StrUtil.toText(")
+        || e.starts_with("fluxgauss.plsql.StrUtil.byteSubstr(")
+        || e.starts_with("fluxgauss.plsql.StrUtil.lobSubstr(")
+        || e.starts_with("fluxgauss.plsql.StrUtil.asciiStr(")
+        || e.starts_with("fluxgauss.plsql.StrUtil.unistr(")
+        || e.starts_with("fluxgauss.plsql.Regexp.substr(")
+        || e.starts_with("fluxgauss.plsql.Regexp.replace(")
+}
+
+/// Normalize one side of an `=`/`!=` involving a plsql numeric helper
+/// (which yields `Long`): bare integer literals get an `L` suffix and
+/// integer-typed vars are boxed via `Long.valueOf`, so `Objects.equals`
+/// compares Long-vs-Long instead of Long-vs-Integer (always false).
+fn normalize_plsql_eq_operand(s: &str, proc: &ProcedureInfo) -> String {
+    let t = s.trim();
+    if !t.is_empty() && t.chars().all(|c: char| c.is_ascii_digit()) {
+        return format!("{}L", t);
+    }
+    if is_integer_type(t, proc) {
+        return format!("Long.valueOf({})", t);
+    }
+    t.to_string()
+}
+
+/// True when `s` yields `byte[]` — BLOB values and EMPTY_BLOB()/TO_BLOB()
+/// lowerings. Used to pick `Arrays.equals` over `Objects.equals` (which is
+/// reference equality on arrays and would silently always return false).
+fn expr_yields_byte_array(s: &str, proc: &ProcedureInfo) -> bool {
+    let t = s.trim();
+    if t == "new byte[0]" || t.starts_with("fluxgauss.plsql.StrUtil.toBytes(") {
+        return true;
+    }
+    let base = t.split(['.', '(']).next().unwrap_or(t);
+    if base.is_empty() {
+        return false;
+    }
+    if let Some(ty) = proc.local_vars.get(&base.to_lowercase()) {
+        return ty == "byte[]";
+    }
+    let base_lower = base.to_lowercase().replace("_", "");
+    for (var_name, var_type) in &proc.local_vars {
+        if var_name.to_lowercase().replace("_", "") == base_lower {
+            return var_type == "byte[]";
+        }
+    }
+    for p in &proc.parameters {
+        let p_lower = p.name.to_lowercase().replace("_", "");
+        if p_lower == base_lower || crate::naming::snake_to_camel(&p.name) == base {
+            return p.java_type == "byte[]";
+        }
+    }
+    if let Some(vi) = proc.package_vars.get(base) {
+        return vi.java_type == "byte[]";
+    }
+    false
 }
 
 fn coerce_arg_to_type(arg: &str, target_type: &str, proc: &ProcedureInfo) -> String {
@@ -747,7 +835,18 @@ fn coerce_arg_to_type(arg: &str, target_type: &str, proc: &ProcedureInfo) -> Str
         return format!("((Number) {}).intValue()", trimmed);
     }
 
+    // Issue #125 review: plsql numeric helpers yield nullable Long; a plain
+    // .intValue() unboxes null into an NPE where the DB assigns NULL.
+    if target_is_int && is_nullable_plsql_numeric_call(trimmed) {
+        return format!("({} == null ? null : {}.intValue())", trimmed, trimmed);
+    }
+
     if target_is_long {
+        // Issue #125 review: plsql numeric helpers already yield nullable
+        // Long — parseLong(String.valueOf(..)) would NPE/throw on SQL NULL.
+        if is_nullable_plsql_numeric_call(trimmed) {
+            return trimmed.to_string();
+        }
         let arg_type = infer_arg_type_from_expr(trimmed, proc);
         if arg_type == "BigDecimal" {
             return format!("({}).longValue()", trimmed);
@@ -760,7 +859,10 @@ fn coerce_arg_to_type(arg: &str, target_type: &str, proc: &ProcedureInfo) -> Str
         }
     }
 
-    if target_type == "String" && (trimmed.contains(".get(") || infer_arg_type_from_expr(trimmed, proc) == "Object") {
+    if target_type == "String"
+        && !is_nullable_plsql_string_call(trimmed)
+        && (trimmed.contains(".get(") || infer_arg_type_from_expr(trimmed, proc) == "Object")
+    {
         return format!("String.valueOf({})", trimmed);
     }
 
@@ -2022,6 +2124,15 @@ fn binary_op_to_java(
 
     match op {
         "||" => {
+            // Issue #125 review: plsql helpers yield Java null for SQL NULL;
+            // String.valueOf would materialize it as "null". Propagate NULL
+            // through the concat instead (Oracle || semantics).
+            if l.contains("fluxgauss.plsql.") || r.contains("fluxgauss.plsql.") {
+                return format!(
+                    "(({} == null || {} == null) ? null : String.valueOf({}).concat(String.valueOf({})))",
+                    l, r, l, r
+                );
+            }
             // TOBEFIX-marked operands must keep their marker (and null value)
             // so unresolved-name warnings stay visible; plain nullish operands
             // concat as the empty string as before.
@@ -2045,6 +2156,26 @@ fn binary_op_to_java(
         "->" => format!("this.jsonbGet({}, {})", l, r),
         "->>" => format!("this.jsonbGetText({}, {})", l, r),
         "=" => {
+            // Issue #125 review: byte[] equality needs Arrays.equals —
+            // Objects.equals is reference equality on arrays, so
+            // `v_blob = EMPTY_BLOB()` would silently always be false.
+            let l_ba = expr_yields_byte_array(&l, proc);
+            let r_ba = expr_yields_byte_array(&r, proc);
+            if l_ba && r_ba {
+                return format!("java.util.Arrays.equals({}, {})", l, r);
+            }
+            if l_ba != r_ba {
+                return format!("java.util.Objects.equals({}, {})", l, r);
+            }
+            // plsql numeric helpers yield Long — normalize the other side so
+            // Objects.equals doesn't compare Long vs Integer (always false).
+            if contains_numeric_plsql_helper(&l) || contains_numeric_plsql_helper(&r) {
+                return format!(
+                    "java.util.Objects.equals({}, {})",
+                    normalize_plsql_eq_operand(&l, proc),
+                    normalize_plsql_eq_operand(&r, proc)
+                );
+            }
             let l_kind = boxed_num_kind(&l, proc);
             let r_kind = boxed_num_kind(&r, proc);
             // Boxed numeric vs numeric literal: Objects.equals compares Java
@@ -2080,6 +2211,21 @@ fn binary_op_to_java(
             }
         }
         "!=" | "<>" => {
+            let l_ba = expr_yields_byte_array(&l, proc);
+            let r_ba = expr_yields_byte_array(&r, proc);
+            if l_ba && r_ba {
+                return format!("!java.util.Arrays.equals({}, {})", l, r);
+            }
+            if l_ba != r_ba {
+                return format!("!java.util.Objects.equals({}, {})", l, r);
+            }
+            if contains_numeric_plsql_helper(&l) || contains_numeric_plsql_helper(&r) {
+                return format!(
+                    "!java.util.Objects.equals({}, {})",
+                    normalize_plsql_eq_operand(&l, proc),
+                    normalize_plsql_eq_operand(&r, proc)
+                );
+            }
             let l_kind = boxed_num_kind(&l, proc);
             let r_kind = boxed_num_kind(&r, proc);
             if let Some(k) = l_kind {
@@ -2186,8 +2332,14 @@ fn binary_op_to_java(
                 // Timestamp receivers.
                 format!("{}.compareTo({}){}", localdate_operand_to_ts(&l), localdate_operand_to_ts(&r), cmp_method)
             } else {
-                let has_get_l = needs_get_unwrap(&l);
-                let has_get_r = needs_get_unwrap(&r);
+                // Issue #125 review: plsql numeric helpers yield nullable
+                // Long — route through safe_long_value (NULL→0L, same
+                // precedent as .get() unwraps) or the comparison unboxes
+                // null into an NPE where the DB yields NULL.
+                let has_get_l =
+                    needs_get_unwrap(&l) || (contains_numeric_plsql_helper(&l) && !l.contains("Optional.ofNullable"));
+                let has_get_r =
+                    needs_get_unwrap(&r) || (contains_numeric_plsql_helper(&r) && !r.contains("Optional.ofNullable"));
                 let (l_out, r_out) = if has_get_l || has_get_r {
                     let lo = if has_get_l { safe_long_value(&l) } else { l.clone() };
                     let ro = if has_get_r { safe_long_value(&r) } else { r.clone() };
@@ -2265,8 +2417,12 @@ fn binary_op_to_java(
             }
         }
         _ => {
-            let has_get_l = needs_get_unwrap(&l);
-            let has_get_r = needs_get_unwrap(&r);
+            // Same nullable-helper treatment as the comparison arm above:
+            // arithmetic on a plsql numeric helper must not unbox null.
+            let has_get_l =
+                needs_get_unwrap(&l) || (contains_numeric_plsql_helper(&l) && !l.contains("Optional.ofNullable"));
+            let has_get_r =
+                needs_get_unwrap(&r) || (contains_numeric_plsql_helper(&r) && !r.contains("Optional.ofNullable"));
             let is_comparison = matches!(op, ">" | "<" | ">=" | "<=");
             let is_arith = matches!(op, "+" | "-" | "*" | "/");
             let (l_out, r_out) = if is_comparison {
@@ -2860,12 +3016,16 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         "REGEXP_COUNT" if jargs.len() >= 2 => {
             format!("fluxgauss.plsql.Regexp.count({})", jargs[..jargs.len().min(4)].join(", "))
         }
-        // Issue #125: LOB family — scalar reads map to String ops via
-        // fluxgauss.plsql.StrUtil; char semantics for LOB_SUBSTR family,
-        // UTF-8 byte semantics for the *B variants.
-        "EMPTY_CLOB" | "EMPTY_BLOB" => "\"\"".to_string(),
-        "GETCLOBVAL" | "GETBLOBVAL" | "TO_CLOB" | "TO_BLOB" if jargs.len() == 1 => {
+        // Issue #125: LOB family — CLOB reads map to String via toText,
+        // BLOB reads to byte[] via toBytes (BLOB columns lower to byte[]).
+        // EMPTY_* are non-NULL empty locators: CLOB→"", BLOB→new byte[0].
+        "EMPTY_CLOB" => "\"\"".to_string(),
+        "EMPTY_BLOB" => "new byte[0]".to_string(),
+        "GETCLOBVAL" | "TO_CLOB" if jargs.len() == 1 => {
             format!("fluxgauss.plsql.StrUtil.toText({})", jargs[0])
+        }
+        "GETBLOBVAL" | "TO_BLOB" if jargs.len() == 1 => {
+            format!("fluxgauss.plsql.StrUtil.toBytes({})", jargs[0])
         }
         "SUBSTRB" if jargs.len() >= 2 => {
             format!("fluxgauss.plsql.StrUtil.byteSubstr({})", jargs[..jargs.len().min(3)].join(", "))
@@ -3551,8 +3711,27 @@ fn type_cast_to_java(expr: &ogsql_parser::ast::Expr, type_name: &str, proc: &Pro
     let inner = expr_to_java(expr, proc);
     let lower = type_name.to_lowercase();
     match lower.as_str() {
-        s if s.contains("bigint") || s.contains("int8") => format!("((Long) {})", inner),
-        s if s.contains("integer") || s == "int" || s == "int4" => format!("((Integer) {})", inner),
+        // Issue #125 review: `((Long) intExpr)` / `((Integer) longExpr)` are
+        // illegal casts (no widening+narrowing+boxing in one cast). Route
+        // through Number so any numeric inner compiles; `.longValue()`/
+        // `.intValue()` yield primitives that autobox at use sites.
+        s if s.contains("bigint") || s.contains("int8") => {
+            if is_integer_type(&inner, proc) || inner.contains(".intValue()") {
+                format!("((Number)({})).longValue()", inner)
+            } else {
+                format!("((Long) {})", inner)
+            }
+        }
+        s if s.contains("integer") || s == "int" || s == "int4" => {
+            if inner.contains(".longValue()")
+                || inner.contains("Optional.ofNullable")
+                || contains_numeric_plsql_helper(&inner)
+            {
+                format!("((Number)({})).intValue()", inner)
+            } else {
+                format!("((Integer) {})", inner)
+            }
+        }
         s if s.contains("numeric") || s.contains("decimal") => {
             if inner.contains("String.valueOf(") && !inner.starts_with('"') {
                 "java.math.BigDecimal.ZERO".to_string()
@@ -4731,7 +4910,7 @@ mod tests {
         let mut proc = empty_proc();
         proc.local_vars.insert("v_doc".into(), "String".into());
         assert_eq!(expr_to_java(&fc_expr(&["empty_clob"], vec![]), &proc), "\"\"");
-        assert_eq!(expr_to_java(&fc_expr(&["empty_blob"], vec![]), &proc), "\"\"");
+        assert_eq!(expr_to_java(&fc_expr(&["empty_blob"], vec![]), &proc), "new byte[0]");
         let out = expr_to_java(&fc_expr(&["getclobval"], vec![col_expr(&["v_doc"])]), &proc);
         assert_eq!(out, "fluxgauss.plsql.StrUtil.toText(vDoc)");
         let out =

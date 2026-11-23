@@ -3,7 +3,7 @@
   "fixture": "issue_125_lob_regex.sql",
   "package_name": "issue_125_lob_regex",
   "files": {
-    "Service.java": "49df46a75ad16f71",
+    "Service.java": "df5ea6b212d67a66",
     "Mapper.java": "79205fbe768bebe9",
     "Mapper.xml": "51938208c972fbf5",
     "ServiceTest.java": "d89c5a678bd8b3b1"

@@ -9,6 +9,7 @@ CREATE OR REPLACE PACKAGE BODY pkg_lob_str AS
   -- Issue #125 Phase A: LOB scalar family.
   PROCEDURE prc_lob_demo(p_src IN VARCHAR2, p_out OUT VARCHAR2) IS
     v_clob    CLOB;
+    v_blob    BLOB;
     v_txt     VARCHAR2(4000);
     v_len     NUMBER;
     v_part    VARCHAR2(4000);
@@ -16,6 +17,12 @@ CREATE OR REPLACE PACKAGE BODY pkg_lob_str AS
     v_txt := GETCLOBVAL(v_clob);
     v_txt := TO_CLOB(p_src);
     v_txt := EMPTY_CLOB();
+    v_blob := EMPTY_BLOB();
+    v_txt := TO_CLOB(v_blob);
+    v_txt := v_txt || TO_CLOB(p_src);
+    IF v_blob = EMPTY_BLOB() THEN
+      v_txt := 'empty';
+    END IF;
     v_len := DBE_LOB.LOB_GET_LENGTH(v_clob);
     v_part := DBE_LOB.LOB_SUBSTR(v_clob, 10, 1);
     v_part := DBMS_LOB.SUBSTR(v_clob, 5, 2);
@@ -47,6 +54,7 @@ CREATE OR REPLACE PACKAGE BODY pkg_lob_str AS
     v_n := REGEXP_INSTR(p_src, '[0-9]+');
     v_n := REGEXP_COUNT(p_src, '[aeiou]');
     p_out := REGEXP_REPLACE(p_src, '([a-z]+)([0-9]*)', '\2-\1', 1, 1, 'i');
+    p_out := REGEXP_REPLACE(p_src, '[aeiou]', '*');
   END;
 END pkg_lob_str;
 /

@@ -31,16 +31,23 @@ public class Issue125LobRegexService {
         if (start > end) start = end;
         return str.substring(start, end);
     }
-    // Source: pkg_lob_str.prc_lob_demo (PROCEDURE) — issue_125_lob_regex.sql:10-27
+    // Source: pkg_lob_str.prc_lob_demo (PROCEDURE) — issue_125_lob_regex.sql:10-34
     public void prcLobDemo(String pSrc, AtomicReference<String> pOut) {
         String vClob = null;
         String vTxt = null;
         Long vLen = 0L;
         String vPart = null;
+        byte[] vBlob = null;
         pOut.set(null);
         vTxt = "";
         vTxt = pSrc;
         vTxt = "";
+        vBlob = null;
+        vTxt = vBlob;
+        vTxt = vTxt + pSrc;
+        if (vBlob == ((Number) (/* TODO: implement EMPTY_BLOB() — pkg=?, ret=?, args=[], caller=issue_125_lob_regex.sql:prc_lob_demo */ null != null ? /* TODO: implement EMPTY_BLOB() — pkg=?, ret=?, args=[], caller=issue_125_lob_regex.sql:prc_lob_demo */ null : 0)).intValue()) {
+            vTxt = "empty";
+        }
         vLen = (long) (0L);
         vPart = "";
         vPart = _substr(String.valueOf(vClob), (5), (2));
@@ -51,7 +58,7 @@ public class Issue125LobRegexService {
         }
     }
 
-    // Source: pkg_lob_str.prc_byte_demo (PROCEDURE) — issue_125_lob_regex.sql:30-38
+    // Source: pkg_lob_str.prc_byte_demo (PROCEDURE) — issue_125_lob_regex.sql:37-45
     public void prcByteDemo(String pSrc, AtomicReference<String> pOut) {
         Long vN = 0L;
         Long vPos = 0L;
@@ -62,7 +69,7 @@ public class Issue125LobRegexService {
         pOut.set(String.valueOf(String.valueOf(pSrc).substring(-4)));
     }
 
-    // Source: pkg_lob_str.prc_regex_demo (PROCEDURE) — issue_125_lob_regex.sql:41-50
+    // Source: pkg_lob_str.prc_regex_demo (PROCEDURE) — issue_125_lob_regex.sql:48-58
     public void prcRegexDemo(String pSrc, AtomicReference<String> pOut) {
         Long vN = 0L;
         Boolean vFlag = false;
@@ -72,5 +79,6 @@ public class Issue125LobRegexService {
         vN = (long) (0L);
         vN = (long) (0L);
         pOut.set(String.valueOf(pSrc).replaceAll("([a-z]+)([0-9]*)", "\2-\1"));
+        pOut.set(String.valueOf(pSrc).replaceAll("[aeiou]", "*"));
     }
 }

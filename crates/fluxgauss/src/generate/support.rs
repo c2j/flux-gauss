@@ -13,12 +13,23 @@ use encoding_rs::Encoding;
 use crate::types::PackageInfo;
 
 /// Scan analysed procedures for support-class references and emit the
-/// corresponding `fluxgauss/plsql/*.java` files. Returns written paths.
-pub fn write_support_classes(output_dir: &Path, packages: &[PackageInfo], encoding: &'static Encoding) -> Vec<String> {
+/// corresponding `src/main/java/fluxgauss/plsql/*.java` files (paths
+/// relative to `output_dir`, matching the other `generated` entries).
+/// Files whose marker is absent are removed so shrinking the source set
+/// does not leave stale helpers behind. Returns written paths.
+pub fn write_support_classes(
+    output_dir: &Path,
+    packages: &[PackageInfo],
+    encoding: &'static Encoding,
+) -> Result<Vec<String>, std::io::Error> {
     let mut text = String::new();
     for pkg in packages {
         for proc in &pkg.procedures {
             for line in &proc.java_logic_lines {
+                text.push_str(line);
+                text.push(' ');
+            }
+            for line in proc.local_var_defaults.values() {
                 text.push_str(line);
                 text.push(' ');
             }
@@ -27,25 +38,69 @@ pub fn write_support_classes(output_dir: &Path, packages: &[PackageInfo], encodi
 
     let dir = output_dir.join("src/main/java/fluxgauss/plsql");
     let mut written = Vec::new();
+    let java_charset = java_charset_name(encoding);
     for (marker, file_name, source) in [
-        ("fluxgauss.plsql.StrUtil", "StrUtil.java", STRUTIL_JAVA),
-        ("fluxgauss.plsql.Regexp", "Regexp.java", REGEXP_JAVA),
+        ("fluxgauss.plsql.StrUtil", "StrUtil.java", strutil_java(java_charset)),
+        ("fluxgauss.plsql.Regexp", "Regexp.java", REGEXP_JAVA.to_string()),
     ] {
+        let path = dir.join(file_name);
         if !text.contains(marker) {
+            // Source set no longer references this helper — drop the stale
+            // file instead of leaving dead code in the generated project.
+            let _ = std::fs::remove_file(&path);
             continue;
         }
-        let path = dir.join(file_name);
         if let Some(parent) = path.parent() {
-            if std::fs::create_dir_all(parent).is_err() {
-                continue;
-            }
+            std::fs::create_dir_all(parent)?;
         }
-        let (cow, _, _) = encoding.encode(source);
-        if std::fs::write(&path, &cow).is_ok() {
-            written.push(path.to_string_lossy().into_owned());
-        }
+        let (cow, _, _) = encoding.encode(&source);
+        std::fs::write(&path, &cow)?;
+        written.push(format!("src/main/java/fluxgauss/plsql/{}", file_name));
     }
-    written
+    Ok(written)
+}
+
+/// Map the configured SQL encoding to a `java.nio.charset.Charset` name.
+/// Byte-semantic builtins (SUBSTRB/INSTRB/LENGTHB) follow the database
+/// `server_encoding`; the generated helper must use the same charset or
+/// CJK byte counts diverge (UTF-8: 3 B/char, GBK: 2 B/char).
+fn java_charset_name(encoding: &'static Encoding) -> &'static str {
+    match encoding.name() {
+        "UTF-8" => "UTF-8",
+        "GBK" => "GBK",
+        "gb18030" | "GB18030" => "GB18030",
+        "Big5" | "big5" => "Big5",
+        "windows-1252" => "windows-1252",
+        "Shift_JIS" | "shift_jis" => "Shift_JIS",
+        "EUC-JP" | "euc-jp" => "EUC-JP",
+        "ISO-2022-JP" | "iso-2022-jp" => "ISO-2022-JP",
+        "UTF-16BE" | "utf-16be" => "UTF-16BE",
+        "UTF-16LE" | "utf-16le" => "UTF-16LE",
+        "US-ASCII" | "us-ascii" => "US-ASCII",
+        "ISO-8859-1" | "iso-8859-1" => "ISO-8859-1",
+        "ISO-8859-15" | "iso-8859-15" => "ISO-8859-15",
+        "KOI8-R" | "koi8-r" => "KOI8-R",
+        "macintosh" => "MacRoman",
+        "x-mac-cyrillic" => "x-MacCyrillic",
+        _ => "UTF-8",
+    }
+}
+
+/// StrUtil source with the DB charset injected as a constant. Byte-window
+/// decoding goes through a REPORT-mode decoder that shrinks the window
+/// instead of emitting U+FFFD when SUBSTRB/INSTRB split a multi-byte char
+/// (the DB backs off to the character boundary).
+fn strutil_java(java_charset: &str) -> String {
+    STRUTIL_JAVA
+        .replace("import java.nio.charset.StandardCharsets;\n", "")
+        .replace("StandardCharsets.UTF_8", "DB")
+        .replace(
+            "public final class StrUtil {\n    private StrUtil() {}",
+            &format!(
+                "public final class StrUtil {{\n    private static final java.nio.charset.Charset DB = java.nio.charset.Charset.forName(\"{}\");\n    private StrUtil() {{}}",
+                java_charset
+            ),
+        )
 }
 
 const STRUTIL_JAVA: &str = r#"package fluxgauss.plsql;
@@ -89,6 +144,12 @@ public final class StrUtil {
         return str(o);
     }
 
+    /** BLOB → raw bytes in the DB charset; byte[] passes through; null → null. */
+    public static byte[] toBytes(Object o) {
+        if (o instanceof byte[] b) return b;
+        return bytes(o);
+    }
+
     /** LENGTHB — UTF-8 byte length; null → null. */
     public static Long byteLength(Object o) {
         byte[] b = bytes(o);
@@ -129,7 +190,43 @@ public final class StrUtil {
             }
         }
         if (hi <= lo) return "";
-        return new String(b, lo, hi - lo, StandardCharsets.UTF_8);
+        return decodeWindow(b, lo, hi);
+    }
+
+    /**
+     * Decode a byte window without emitting U+FFFD for split characters:
+     * shrink whichever edge the decoder chokes on and retry, matching the
+     * DB behaviour of backing SUBSTRB off to a character boundary.
+     */
+    private static String decodeWindow(byte[] b, int lo, int hi) {
+        int curLo = lo;
+        int curHi = hi;
+        for (int guard = 0; guard < 16 && curHi > curLo; guard++) {
+            java.nio.charset.CharsetDecoder dec = DB.newDecoder()
+                .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT);
+            java.nio.ByteBuffer in = java.nio.ByteBuffer.wrap(b, curLo, curHi - curLo);
+            java.nio.CharBuffer out = java.nio.CharBuffer.allocate(curHi - curLo + 1);
+            // decode(..)/flush(..) return CoderResult rather than throwing;
+            // an error result means the window splits a character.
+            java.nio.charset.CoderResult cr = dec.decode(in, out, true);
+            if (!cr.isError()) {
+                cr = dec.flush(out);
+            }
+            if (!cr.isError()) {
+                return out.flip().toString();
+            }
+            // Decoder stopped at the malformed boundary: wrap() offsets the
+            // buffer, so position()==curLo means a leading partial char
+            // (drop lo), anything further means a trailing one (drop hi).
+            // Bounded loop; clean windows decode first try.
+            if (in.position() <= curLo) {
+                curLo++;
+            } else {
+                curHi--;
+            }
+        }
+        return new String(b, lo, hi - lo, DB);
     }
 
     /** INSTRB(str, sub[, pos[, occ]]) — 1-based byte position of nth occurrence; 0 if absent. */
@@ -145,7 +242,7 @@ public final class StrUtil {
         byte[] b = bytes(s);
         byte[] n = bytes(sub);
         if (b == null || n == null) return null;
-        if (n.length == 0) return 0L;
+        if (n.length == 0) return null; // DB: INSTRB(x, '') is NULL, not 0
         long st = num(pos, 1);
         int from;
         if (st > 0) {
@@ -215,7 +312,7 @@ public final class StrUtil {
         String s = str(lob);
         String p = str(pattern);
         if (s == null || p == null) return null;
-        if (p.isEmpty()) return 0L;
+        if (p.isEmpty()) return null; // DB: empty pattern position is NULL
         long off = num(offset, 1);
         if (off < 1) return 0L;
         int from = (int) Math.min(off - 1, s.length());
@@ -309,6 +406,12 @@ public final class Regexp {
         }
     }
 
+    /**
+     * Oracle/GaussDB-O match_parameter letters: i=caseless, c=caseless-off,
+     * m=multiline, n=dotall, x=ignore-whitespace. Unknown letters throw —
+     * the DB rejects them too (e.g. 'g' is invalid for REGEXP_REPLACE in
+     * O-mode), so failing loudly beats silently ignoring.
+     */
     private static int flags(Object params) {
         int f = 0;
         String p = str(params);
@@ -316,10 +419,12 @@ public final class Regexp {
         for (char c : p.toLowerCase(java.util.Locale.ROOT).toCharArray()) {
             switch (c) {
                 case 'i': f |= Pattern.CASE_INSENSITIVE; break;
+                case 'c': break; // explicit case-sensitive: default already
                 case 'm': f |= Pattern.MULTILINE; break;
                 case 'n': f |= Pattern.DOTALL; break;
                 case 'x': f |= Pattern.COMMENTS; break;
-                default: break;
+                default:
+                    throw new IllegalArgumentException("invalid regexp option: " + c);
             }
         }
         return f;
@@ -416,7 +521,11 @@ public final class Regexp {
         }
     }
 
-    /** REGEXP_COUNT — non-overlapping match count from position; null → null, none → 0. */
+    /**
+     * REGEXP_COUNT(string, pattern[, position[, flags]]) — openGauss/O-mode
+     * signature: the 4th arg is match flags, NOT an occurrence (DB-verified:
+     * regexp_count('Aba','a',1,'i') = 2).
+     */
     public static Long count(Object s, Object p) {
         return count(s, p, null, null);
     }
@@ -425,22 +534,18 @@ public final class Regexp {
         return count(s, p, pos, null);
     }
 
-    public static Long count(Object s, Object p, Object pos, Object occ) {
+    public static Long count(Object s, Object p, Object pos, Object params) {
         String src = str(s);
         String pat = str(p);
         if (src == null || pat == null) return null;
         int start = regionStart(pos, src.length());
         if (start < 0) return null;
         try {
-            // Oracle occurrence skips the first (nth-1) matches entirely.
-            Matcher m = Pattern.compile(pat).matcher(src);
+            Matcher m = Pattern.compile(pat, flags(params)).matcher(src);
             m.region(start, src.length());
-            long nth = Math.max(1, num(occ, 1));
-            long seen = 0;
             int n = 0;
             while (m.find()) {
-                seen++;
-                if (seen >= nth) n++;
+                n++;
             }
             return (long) n;
         } catch (PatternSyntaxException e) {
@@ -448,7 +553,7 @@ public final class Regexp {
         }
     }
 
-    /** REGEXP_REPLACE — replaces only the nth match; Oracle \N backrefs. */
+    /** REGEXP_REPLACE — occurrence 0 (default) replaces all matches, N>0 only the Nth; Oracle \N backrefs. */
     public static String replace(Object s, Object p, Object r) {
         return replace(s, p, r, null, null, null);
     }
@@ -471,7 +576,19 @@ public final class Regexp {
         try {
             Matcher m = Pattern.compile(pat, flags(params)).matcher(src);
             m.region(start, src.length());
-            long nth = Math.max(1, num(occ, 1));
+            // Oracle/GaussDB occurrence: 0 (default) replaces ALL matches in
+            // the region; N>0 replaces only the Nth.
+            long nth = num(occ, 0);
+            if (nth <= 0) {
+                StringBuilder sb = new StringBuilder(src.length());
+                int last = start;
+                while (m.find()) {
+                    sb.append(src, last, m.start()).append(expand(repl, m));
+                    last = m.end();
+                }
+                sb.append(src.substring(last));
+                return sb.toString();
+            }
             long seen = 0;
             while (m.find()) {
                 seen++;
@@ -494,7 +611,10 @@ public final class Regexp {
                 char d = repl.charAt(i + 1);
                 if (d >= '1' && d <= '9') {
                     try {
-                        sb.append(m.group(d - '0'));
+                        // Unmatched optional groups yield null — Oracle
+                        // substitutes the empty string, not "null".
+                        String g = m.group(d - '0');
+                        if (g != null) sb.append(g);
                     } catch (IndexOutOfBoundsException e) {
                         sb.append('\\').append(d);
                     }

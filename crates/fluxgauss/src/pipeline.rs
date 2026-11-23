@@ -813,7 +813,13 @@ fn phase3_generate(
 
     // Issue #125: emit on-demand PL/SQL support classes (StrUtil/Regexp)
     // referenced by lowered builtin calls in generated logic.
-    generated.extend(crate::generate::support::write_support_classes(output_dir, &analyzed.packages, encoding));
+    match crate::generate::support::write_support_classes(output_dir, &analyzed.packages, encoding) {
+        Ok(files) => generated.extend(files),
+        Err(e) => errors.push(ConversionError::Io {
+            path: output_dir.join("src/main/java/fluxgauss/plsql").to_string_lossy().into_owned(),
+            message: e.to_string(),
+        }),
+    }
 
     let itest_mode =
         config.integration_test.as_ref().and_then(|it| it.mode.as_deref()).unwrap_or("testcontainers").to_string();
