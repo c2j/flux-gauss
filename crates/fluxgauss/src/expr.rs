@@ -710,11 +710,40 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
     }
 }
 
+/// Strip redundant wrapping parentheses — `(GETCLOBVAL(x))` lowers to
+/// `(fluxgauss.plsql.StrUtil.toText(x))`, which defeats `starts_with`
+/// guards. Only strips when the outer parens are balanced wrappers.
+fn strip_wrapping_parens(s: &str) -> &str {
+    let mut t = s.trim();
+    while t.starts_with('(') && t.ends_with(')') {
+        let mut depth = 0i32;
+        let mut wraps_all = false;
+        for (i, c) in t.char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        wraps_all = i == t.len() - 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !wraps_all {
+            break;
+        }
+        t = t[1..t.len() - 1].trim();
+    }
+    t
+}
+
 /// Issue #125: true when `expr` is a `fluxgauss.plsql` helper call whose
 /// return type is boxed `Long` (nullable). String/boolean helpers are
 /// excluded — they take different coercion paths.
 fn is_nullable_plsql_numeric_call(expr: &str) -> bool {
-    let e = expr.trim();
+    let e = strip_wrapping_parens(expr);
     if !e.starts_with("fluxgauss.plsql.") {
         return false;
     }
@@ -740,8 +769,9 @@ const NUMERIC_PLSQL_HELPERS: &[&str] = &[
 /// String-returning plsql helpers — already `String`, so wrapping them in
 /// `String.valueOf` only serves to materialize SQL NULL as `"null"`.
 fn is_nullable_plsql_string_call(expr: &str) -> bool {
-    let e = expr.trim();
+    let e = strip_wrapping_parens(expr);
     e.starts_with("fluxgauss.plsql.StrUtil.toText(")
+        || e.starts_with("fluxgauss.plsql.StrUtil.concat(")
         || e.starts_with("fluxgauss.plsql.StrUtil.byteSubstr(")
         || e.starts_with("fluxgauss.plsql.StrUtil.lobSubstr(")
         || e.starts_with("fluxgauss.plsql.StrUtil.asciiStr(")
@@ -769,7 +799,7 @@ fn normalize_plsql_eq_operand(s: &str, proc: &ProcedureInfo) -> String {
 /// lowerings. Used to pick `Arrays.equals` over `Objects.equals` (which is
 /// reference equality on arrays and would silently always return false).
 fn expr_yields_byte_array(s: &str, proc: &ProcedureInfo) -> bool {
-    let t = s.trim();
+    let t = strip_wrapping_parens(s);
     if t == "new byte[0]" || t.starts_with("fluxgauss.plsql.StrUtil.toBytes(") {
         return true;
     }
@@ -1848,7 +1878,14 @@ fn needs_get_unwrap(expr: &str) -> bool {
         && !expr.contains(".floatValue()")
 }
 
-/// Generate null-safe Number extraction from Map .get() or .getOrDefault() result
+/// Generate null-safe Number extraction from Map .get() or .getOrDefault() result.
+///
+/// Issue #125 review R2 (3.3): NULL→0L is a deliberate, documented
+/// deviation — full three-valued logic would require context-aware
+/// lowering (IF-condition vs assignment), which the expression layer
+/// cannot see. The known divergence: `NULL + n <= threshold` takes the
+/// branch in Java where the DB evaluates the predicate to NULL (not
+/// taken). Tracked as a follow-up on #125.
 fn safe_long_value(expr: &str) -> String {
     format!("java.util.Optional.ofNullable((Number) {}).map(Number::longValue).orElse(0L)", expr)
 }
@@ -2124,14 +2161,15 @@ fn binary_op_to_java(
 
     match op {
         "||" => {
-            // Issue #125 review: plsql helpers yield Java null for SQL NULL;
-            // String.valueOf would materialize it as "null". Propagate NULL
-            // through the concat instead (Oracle || semantics).
-            if l.contains("fluxgauss.plsql.") || r.contains("fluxgauss.plsql.") {
-                return format!(
-                    "(({} == null || {} == null) ? null : String.valueOf({}).concat(String.valueOf({})))",
-                    l, r, l, r
-                );
+            // Issue #125 review R2: plsql helpers yield Java null for SQL
+            // NULL, but DB `||` treats NULL as the empty string
+            // ('a' || NULL = 'a'). StrUtil.concat evaluates each operand
+            // once and returns NULL only when BOTH sides are NULL.
+            if (l.contains("fluxgauss.plsql.") || r.contains("fluxgauss.plsql."))
+                && !l.contains("/* TOBEFIX")
+                && !r.contains("/* TOBEFIX")
+            {
+                return format!("fluxgauss.plsql.StrUtil.concat({}, {})", l, r);
             }
             // TOBEFIX-marked operands must keep their marker (and null value)
             // so unresolved-name warnings stay visible; plain nullish operands
@@ -4967,5 +5005,55 @@ mod tests {
         let out = expr_to_java(&fc_expr(&["convert"], vec![col_expr(&["v_s"]), col_expr(&["v_cs"])]), &proc);
         assert!(out.contains("TOBEFIX"), "CONVERT must degrade explicitly: {}", out);
         assert!(out.contains("charset"), "hint should name the reason: {}", out);
+    }
+
+    // ── Issue #125 review R2 ──
+
+    fn binop_expr(left: ogsql_parser::ast::Expr, op: &str, right: ogsql_parser::ast::Expr) -> ogsql_parser::ast::Expr {
+        ogsql_parser::ast::Expr::BinaryOp { left: Box::new(left), op: op.into(), right: Box::new(right) }
+    }
+
+    #[test]
+    fn test_issue125_concat_with_helper_routes_to_strutil_concat() {
+        // `v_txt || GETCLOBVAL(v_clob)` — DB treats NULL as empty string in
+        // ||; an inline ternary would double-evaluate the helper call, so
+        // the lowering routes through StrUtil.concat (single evaluation).
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_txt".into(), "String".into());
+        proc.local_vars.insert("v_clob".into(), "String".into());
+        let expr = binop_expr(col_expr(&["v_txt"]), "||", fc_expr(&["getclobval"], vec![col_expr(&["v_clob"])]));
+        let out = expr_to_java(&expr, &proc);
+        assert_eq!(out, "fluxgauss.plsql.StrUtil.concat(vTxt, fluxgauss.plsql.StrUtil.toText(vClob))");
+    }
+
+    #[test]
+    fn test_issue125_wrapped_string_helper_escapes_string_valueof() {
+        // `(GETCLOBVAL(p_i))` keeps its parens in the lowered expr — the
+        // nullable-helper guard must strip them or String.valueOf turns
+        // SQL NULL into the literal "null".
+        let proc = empty_proc();
+        let out = coerce_for_type("(fluxgauss.plsql.StrUtil.toText(pI))", Some("String"), &proc);
+        assert_eq!(out, "(fluxgauss.plsql.StrUtil.toText(pI))");
+    }
+
+    #[test]
+    fn test_issue125_wrapped_numeric_helper_keeps_nullable_long() {
+        let proc = empty_proc();
+        let out = coerce_for_type("(fluxgauss.plsql.StrUtil.lobLength(vClob))", Some("Long"), &proc);
+        assert_eq!(out, "(fluxgauss.plsql.StrUtil.lobLength(vClob))");
+        // Integer target still gets the null-safe narrowing.
+        let out = coerce_for_type("(fluxgauss.plsql.StrUtil.lobLength(vClob))", Some("Integer"), &proc);
+        assert_eq!(out, "((fluxgauss.plsql.StrUtil.lobLength(vClob)) == null ? null : (fluxgauss.plsql.StrUtil.lobLength(vClob)).intValue())");
+    }
+
+    #[test]
+    fn test_issue125_blob_equality_uses_arrays_equals() {
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_blob".into(), "byte[]".into());
+        let expr = binop_expr(col_expr(&["v_blob"]), "=", fc_expr(&["empty_blob"], vec![]));
+        let out = expr_to_java(&expr, &proc);
+        assert_eq!(out, "java.util.Arrays.equals(vBlob, new byte[0])");
+        let expr = binop_expr(col_expr(&["v_blob"]), "!=", fc_expr(&["empty_blob"], vec![]));
+        assert_eq!(expr_to_java(&expr, &proc), "!java.util.Arrays.equals(vBlob, new byte[0])");
     }
 }

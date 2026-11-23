@@ -28,6 +28,22 @@ from tests.regress.conftest import (
 ENGINE = "py"
 FOUR_FILE_TYPES = ["Service.java", "Mapper.java", "Mapper.xml", "ServiceTest.java"]
 
+# Issue #125 review R2 (3.6): the Python engine has no lowering for the
+# LOB/byte-semantic/regex builtins — its output for this fixture is
+# uncompilable Java (e.g. `byte[] == ((Number)…).intValue()`, `\2`
+# octal-escape replacement strings). Locking that output as a golden
+# would bless broken code, so the fixture is excluded from py golden
+# save/compare/integrity until the Python engine catches up. The Rust
+# engine covers it via tests/regress/golden/ru/. Tracked as a known
+# dual-engine gap on #125.
+PY_GOLDEN_EXCLUDED_FIXTURES = {
+    "issue_125_lob_regex.sql",
+}
+
+
+def _golden_fixture_sql_files() -> list:
+    return [f for f in _fixture_sql_files() if f not in PY_GOLDEN_EXCLUDED_FIXTURES]
+
 
 def _normalize_output(content: str) -> str:
     stripped = "\n".join(line.rstrip() for line in content.splitlines())
@@ -128,7 +144,7 @@ def _all_golden_files_present(pkg_name: str, engine: str) -> bool:
 class TestGoldenSave:
     """Generate golden files from current output."""
 
-    @pytest.mark.parametrize("sql_file", _fixture_sql_files())
+    @pytest.mark.parametrize("sql_file", _golden_fixture_sql_files())
     def test_save_golden_files(self, sql_file, cached_ast_by_pkg, tmp_path, regress_save):
         if not regress_save:
             pytest.skip("Use --regress-save to generate golden files")
@@ -155,7 +171,7 @@ class TestGoldenSave:
         manifest_path = Path(GOLDEN_DIR) / ENGINE / pkg_name / "build_manifest.json"
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
-    @pytest.mark.parametrize("sql_file", _fixture_sql_files())
+    @pytest.mark.parametrize("sql_file", _golden_fixture_sql_files())
     def test_update_golden_files(self, sql_file, cached_ast_by_pkg, tmp_path, regress_update):
         if not regress_update:
             pytest.skip("Use --regress-update to overwrite golden files")
@@ -181,7 +197,7 @@ class TestGoldenCompare:
 
         # Find the fixture SQL for this package
         sql_file = None
-        for f in _fixture_sql_files():
+        for f in _golden_fixture_sql_files():
             if _fixture_pkg_name(f) == pkg_name:
                 sql_file = f
                 break
@@ -203,7 +219,7 @@ class TestGoldenCompare:
 class TestGoldenStructure:
     """Verify golden directory has correct structure after save."""
 
-    @pytest.mark.parametrize("sql_file", _fixture_sql_files())
+    @pytest.mark.parametrize("sql_file", _golden_fixture_sql_files())
     def test_all_file_types_present_after_save(
         self, sql_file, cached_ast_by_pkg, tmp_path, regress_save
     ):
@@ -252,7 +268,7 @@ class TestGoldenIntegrity:
 
     def test_every_fixture_has_golden_package(self):
         missing = [
-            f for f in _fixture_sql_files()
+            f for f in _golden_fixture_sql_files()
             if _fixture_pkg_name(f) not in _collect_golden_packages(ENGINE)
         ]
         assert not missing, (

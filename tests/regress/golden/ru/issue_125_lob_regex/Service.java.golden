@@ -32,7 +32,7 @@ public class LobStrService {
         vTxt = "";
         vBlob = new byte[0];
         vTxt = fluxgauss.plsql.StrUtil.toText(vBlob);
-        vTxt = ((vTxt == null || fluxgauss.plsql.StrUtil.toText(pSrc) == null) ? null : String.valueOf(vTxt).concat(String.valueOf(fluxgauss.plsql.StrUtil.toText(pSrc))));
+        vTxt = fluxgauss.plsql.StrUtil.concat(vTxt, fluxgauss.plsql.StrUtil.toText(pSrc));
         if (java.util.Arrays.equals(vBlob, new byte[0])) {
             vTxt = "empty";
         }

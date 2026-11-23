@@ -150,6 +150,20 @@ public final class StrUtil {
         return bytes(o);
     }
 
+    /**
+     * Oracle/GaussDB `||`: a NULL operand acts as the empty string
+     * (DB-verified: 'a' || NULL = 'a'), so the result is NULL only when
+     * BOTH sides are NULL. Routing through a helper keeps each operand
+     * single-evaluated (an inline ternary would evaluate it twice).
+     */
+    public static String concat(Object a, Object b) {
+        String sa = str(a);
+        String sb = str(b);
+        if (sa == null) return sb;
+        if (sb == null) return sa;
+        return sa + sb;
+    }
+
     /** LENGTHB — UTF-8 byte length; null → null. */
     public static Long byteLength(Object o) {
         byte[] b = bytes(o);
@@ -553,7 +567,7 @@ public final class Regexp {
         }
     }
 
-    /** REGEXP_REPLACE — occurrence 0 (default) replaces all matches, N>0 only the Nth; Oracle \N backrefs. */
+    /** REGEXP_REPLACE — absent occurrence replaces the first match only (O-mode), explicit 0 replaces all; Oracle \N backrefs. */
     public static String replace(Object s, Object p, Object r) {
         return replace(s, p, r, null, null, null);
     }
@@ -576,9 +590,10 @@ public final class Regexp {
         try {
             Matcher m = Pattern.compile(pat, flags(params)).matcher(src);
             m.region(start, src.length());
-            // Oracle/GaussDB occurrence: 0 (default) replaces ALL matches in
-            // the region; N>0 replaces only the Nth.
-            long nth = num(occ, 0);
+            // openGauss O-mode occurrence: absent → replace only the FIRST
+            // match (DB-verified: regexp_replace('a1b2c3','[a-z]','X') =
+            // 'X1b2c3'); explicit 0 → replace ALL matches in the region.
+            long nth = num(occ, 1);
             if (nth <= 0) {
                 StringBuilder sb = new StringBuilder(src.length());
                 int last = start;
