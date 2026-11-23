@@ -31,6 +31,12 @@ pub struct AnalysisContext {
     /// Debug mode enabled (--debug CLI flag)
     pub debug: bool,
     pub dml_counters: HashMap<String, HashMap<String, usize>>,
+    /// Per-package set of mapper statement ids already handed out. The
+    /// per-key `dml_counters` cannot see collisions ACROSS counter keys
+    /// (e.g. semantic-key `select{Table}` vs proc-name `select{Proc}` can
+    /// render the same method_id) — this set is the package-wide uniqueness
+    /// guard for `dml_method_name` (issue #128).
+    pub dml_used_ids: HashMap<String, HashSet<String>>,
 }
 
 impl AnalysisContext {
@@ -46,6 +52,7 @@ impl AnalysisContext {
             source_cache: HashMap::new(),
             debug: false,
             dml_counters: HashMap::new(),
+            dml_used_ids: HashMap::new(),
         }
     }
 }
@@ -70,12 +77,23 @@ impl GenerationContext {
 pub struct StatementContext<'a> {
     pub summaries: &'a HashMap<String, PackageSummary>,
     pub dml_counter: HashMap<String, usize>,
+    /// Mapper statement ids already used in this package (issue #128).
+    pub dml_used_ids: HashSet<String>,
     pub sm_enum_name: Option<String>,
     pub sm_labels: HashSet<String>,
     pub debug: bool,
     pub current_stmt_idx: usize,
     pub stmt_lines: Vec<u32>,
     pub unresolved_calls: Vec<UnresolvedCall>,
+    /// Issue #124 P1-3 (review #129): ogsql-parser misparses `coll(i) := v` as
+    /// `ProcedureCall(coll, [i])` followed by `Sql(":= v")`. The procedure-call
+    /// handler stashes the element write here; the Sql handler pairs it into
+    /// `coll.set(i-1, v)`. Tuple: (base java expr, index java expr, elem java type).
+    pub pending_coll_elem_assign: Option<(String, String, Option<String>)>,
+    /// Monotonic counter for `_collIdxN` locals bound from non-trivial
+    /// collection index expressions (review #129 R4/§7-2) — decoupled from
+    /// line numbers so copied/rewritten logic lines cannot collide.
+    pub coll_idx_counter: usize,
 }
 
 impl<'a> StatementContext<'a> {
@@ -83,12 +101,15 @@ impl<'a> StatementContext<'a> {
         Self {
             summaries,
             dml_counter: HashMap::new(),
+            dml_used_ids: HashSet::new(),
             sm_enum_name: None,
             sm_labels: HashSet::new(),
             debug: false,
             current_stmt_idx: 0,
             stmt_lines: Vec::new(),
             unresolved_calls: Vec::new(),
+            pending_coll_elem_assign: None,
+            coll_idx_counter: 0,
         }
     }
 }

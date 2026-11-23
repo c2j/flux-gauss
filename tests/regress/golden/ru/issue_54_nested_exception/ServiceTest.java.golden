@@ -32,6 +32,7 @@ class Issue54NestedExcServiceTest {
         when(issue54NestedExcMapper.selectTIssue54Data()).thenReturn("1");
         when(issue54NestedExcMapper.selectTIssue54Data_1()).thenReturn("1");
         when(issue54NestedExcMapper.selectTIssue54Data_2()).thenReturn("1");
+        when(issue54NestedExcMapper.selectTIssue54Data_3()).thenReturn("1");
         service.procNestedBlockInHandler(pResultRef);
     }
 
@@ -42,6 +43,7 @@ class Issue54NestedExcServiceTest {
         when(issue54NestedExcMapper.selectTIssue54Data()).thenReturn("1");
         when(issue54NestedExcMapper.selectTIssue54Data_1()).thenReturn("1");
         when(issue54NestedExcMapper.selectTIssue54Data_2()).thenReturn("1");
+        when(issue54NestedExcMapper.selectTIssue54Data_3()).thenReturn("1");
         service.procThreeLevelNested(pResultRef);
     }
 }

@@ -34,7 +34,7 @@ public class ComplexClearingPkgService {
     private static final Long gLastTradeId = 0L;
     private static final Integer gLoopCounter = 0;
     private static Boolean gMutatingTableGuard = false;
-    private static final Object gPrivateCache = null;
+    private static final java.util.List<java.util.List<java.math.BigDecimal>> gPrivateCache = new java.util.ArrayList<>();
     private static final Integer gSessionCounter = 0;
     private static Integer gTriggerDepth = 0;
     private static final Object _return = null;
@@ -46,7 +46,7 @@ public class ComplexClearingPkgService {
     public static class TradeRec {
         public Object base;
         public java.math.BigDecimal amount;
-        public Object status;
+        public String status;
     }
 
     // Source: complex_clearing_pkg.私有函数_居然支持$特殊字符# (FUNCTION) — {FIXTURES_ROOT}/complex_clearing_pkg.sql:90-91
@@ -199,7 +199,7 @@ public class ComplexClearingPkgService {
 
     // Source: complex_clearing_pkg.get_suspicious_trades (FUNCTION) — {FIXTURES_ROOT}/complex_clearing_pkg.sql:465-477
     public Object getSuspiciousTrades(java.math.BigDecimal pThreshold) {
-        java.util.List<Object> vCur = null;
+        java.util.List<Object> vCur = new java.util.ArrayList<>();
         /* OPEN vCur FOR SELECT t.*, a.account_name,
                    (SELECT COUNT(*) FROM trade_record t2 WHERE t2.account_id = t.account_id AND t2.trade_date > t.trade_date - INTERVAL '30 days') as recent_count
             FROM trade_record t

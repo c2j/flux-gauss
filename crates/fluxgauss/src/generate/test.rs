@@ -164,20 +164,10 @@ fn build_success_test(
             }
             let inner_type = p.java_type.clone();
             let ref_var = format!("{}Ref", snake_to_camel(&p.name));
-            let ar_init = if inner_type.contains("Long") || inner_type == "long" {
-                "1L"
-            } else if inner_type.contains("Integer") || inner_type == "int" {
-                "0"
-            } else if inner_type.contains("BigDecimal") {
-                "java.math.BigDecimal.ZERO"
-            } else {
-                "null"
-            };
-            param_values
-                .push(format!("AtomicReference<{}> {} = new AtomicReference<>({});", inner_type, ref_var, ar_init));
+            param_values.push(crate::generate::service::atomic_ref_decl(&inner_type, &ref_var));
             param_args.push(ref_var);
         } else {
-            let val = domain_test_value(proc, pkg, &p.java_type, &p.name);
+            let val = domain_test_value(proc, pkg, &p.java_type, &p.name, &p.sql_type);
             param_values.push(format!("{} {} = {};", p.java_type, snake_to_camel(&p.name), val));
             param_args.push(snake_to_camel(&p.name));
         }
@@ -623,6 +613,7 @@ fn domain_test_value(
     pkg: &PackageInfo,
     java_type: &str,
     param_name: &str,
+    sql_type: &str,
 ) -> String {
     let jn = crate::naming::snake_to_camel(param_name);
     // 1. Validation literal sampling: `Arrays.asList("A","B").contains(<param>)`
@@ -658,12 +649,35 @@ fn domain_test_value(
             return "\"2024-01\"".to_string();
         }
     }
+    // Review #129 B3: record-typed params (Map<String,Object>) must get a
+    // populated fixture — an empty map makes every field read null and the
+    // delivery-side postprocess string anchor no longer matches.
+    if java_type.contains("Map<") {
+        if let Some(ct) = crate::extract::find_custom_type(&proc.custom_types, sql_type) {
+            if ct.is_record && !ct.fields.is_empty() {
+                return crate::generate::service::populated_record_fixture(&ct.fields);
+            }
+        }
+        // %ROWTYPE params: fields resolved from the DDL cache during analyze.
+        if let Some(fields) = proc.param_rowtype_fields.get(&param_name.to_lowercase()) {
+            if !fields.is_empty() {
+                let mut pairs: Vec<(String, String)> = fields.iter().map(|(f, t)| (f.clone(), t.clone())).collect();
+                pairs.sort();
+                return crate::generate::service::populated_record_fixture(&pairs);
+            }
+        }
+    }
     default_test_value(java_type, param_name)
 }
 
 fn default_test_value(java_type: &str, param_name: &str) -> String {
     let tl = java_type.to_lowercase();
     let nl = param_name.to_lowercase();
+    // Issue #124: collection params must be checked before scalar `contains`
+    // tests — "java.util.list<double>" contains "double" and would yield "1.0d".
+    if tl.contains("list<") {
+        return "new java.util.ArrayList<>()".to_string();
+    }
     if tl.contains("long") {
         if nl.contains("id") {
             return "1L".to_string();
@@ -695,7 +709,7 @@ fn default_test_value(java_type: &str, param_name: &str) -> String {
         return "java.sql.Date.valueOf(\"2024-01-01\")".to_string();
     }
     if tl.contains("map") {
-        return "new java.util.HashMap<>()".to_string();
+        return "new java.util.HashMap<String, Object>()".to_string();
     }
     if tl == "object" {
         if nl.contains("spectrum") {
@@ -760,6 +774,10 @@ fn is_count_method(method_id: &str, sql_text: &str) -> bool {
 
 fn scalar_mock_value(java_type: &str) -> String {
     let tl = java_type.to_lowercase();
+    // Issue #124: same collection-before-scalar ordering as default_test_value.
+    if tl.contains("list<") {
+        return "new java.util.ArrayList<>()".to_string();
+    }
     if tl.contains("long") {
         return "999L".to_string();
     }
@@ -1139,5 +1157,30 @@ mod tests {
             "must not use boxed (Integer) any() for a primitive int mapper param (causes unboxing NPE): {}",
             joined
         );
+    }
+
+    #[test]
+    fn test_domain_test_value_populates_rowtype_param_fixture() {
+        // Review #129 B3: %ROWTYPE params must not get an empty map fixture —
+        // populate fields resolved from the DDL cache during analyze.
+        let mut proc = make_proc("handle_change");
+        let mut fields = std::collections::HashMap::new();
+        fields.insert("status".to_string(), "String".to_string());
+        fields.insert("amount".to_string(), "java.math.BigDecimal".to_string());
+        proc.param_rowtype_fields.insert("p_old_rec".to_string(), fields);
+        let pkg = make_pkg("pkg_x", vec![]);
+        let val = domain_test_value(&proc, &pkg, "Map<String, Object>", "p_old_rec", "trade_record%ROWTYPE");
+        assert!(val.contains("put(\"status\""), "fixture must seed status field: {}", val);
+        assert!(val.contains("put(\"amount\""), "fixture must seed amount field: {}", val);
+        // snake_case keys are also emitted for engines that read raw column names.
+        assert!(val.contains("status"), "{}", val);
+    }
+
+    #[test]
+    fn test_domain_test_value_rowtype_without_fields_falls_back() {
+        let proc = make_proc("handle_change");
+        let pkg = make_pkg("pkg_x", vec![]);
+        let val = domain_test_value(&proc, &pkg, "Map<String, Object>", "p_old_rec", "trade_record%ROWTYPE");
+        assert_eq!(val, "new java.util.HashMap<String, Object>()");
     }
 }

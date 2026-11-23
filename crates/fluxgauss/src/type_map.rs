@@ -81,9 +81,15 @@ pub static SQL_TO_JDBC_TYPE: &[(&str, &str)] = &[
     ("exception", "VARCHAR"),
 ];
 
-/// Look up Java type from SQL type name (case-insensitive)
+/// Look up Java type from SQL type name (case-insensitive).
+///
+/// Review #129 P0: normalize BEFORE the exact-match table lookup — raw
+/// declarations carry precision parens and Oracle aliases
+/// (`VARCHAR2(4000)`, `NUMERIC(18,2)`), which previously fell through to
+/// `None` → `Object` and produced `List<Object>` where callers expected
+/// `List<String>` (delivery-corpus compile break).
 pub fn sql_type_to_java(sql_type: &str) -> Option<&'static str> {
-    let normalized = sql_type.to_lowercase();
+    let normalized = crate::extract::normalize_sql_type(sql_type);
     let base = normalized.trim();
 
     if base.ends_with("[]") {
@@ -189,6 +195,19 @@ mod tests {
     fn test_sql_type_to_java_unknown() {
         assert_eq!(sql_type_to_java("unknown_type"), None);
         assert_eq!(sql_type_to_java(""), None);
+    }
+
+    #[test]
+    fn test_sql_type_to_java_normalizes_precision_and_aliases() {
+        // Review #129 P0: raw declarations carry precision parens / Oracle
+        // aliases — the lookup must normalize first or `TABLE OF
+        // VARCHAR2(4000)` degrades to List<Object> and breaks generated
+        // signatures (delivery-corpus compile failure).
+        assert_eq!(sql_type_to_java("VARCHAR2(4000)"), Some("String"));
+        assert_eq!(sql_type_to_java("varchar2(100)"), Some("String"));
+        assert_eq!(sql_type_to_java("NUMERIC(18,2)"), Some("java.math.BigDecimal"));
+        assert_eq!(sql_type_to_java("number(10,2)"), Some("Long"));
+        assert_eq!(sql_type_to_java("INTEGER"), Some("Integer"));
     }
 
     #[test]

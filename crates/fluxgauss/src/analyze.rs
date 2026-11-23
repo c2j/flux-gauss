@@ -3,6 +3,139 @@ use crate::types::{ConversionError, PackageInfo, ProcedureInfo, UnresolvedCall};
 use ogsql_parser::ast::plpgsql::PlStatement;
 use std::collections::HashMap;
 
+/// Issue #124: re-resolve parameter / package-variable Java types whose SQL
+/// type names a package custom type (record → Map, collection → List<elem>).
+/// `convert_params` ran during extraction before `custom_types` was fully
+/// populated, so these arrive as `Object`.
+fn resolve_custom_typed_symbols(proc: &mut ProcedureInfo) {
+    if proc.custom_types.is_empty() {
+        return;
+    }
+    for p in &mut proc.parameters {
+        if p.java_type != "Object" {
+            continue;
+        }
+        if let Some(ct) = crate::extract::find_custom_type(&proc.custom_types, &p.sql_type) {
+            p.java_type = crate::extract::custom_type_java_type(ct);
+        }
+    }
+    for vi in proc.package_vars.values_mut() {
+        if vi.java_type != "Object" {
+            continue;
+        }
+        if let Some(ct) = crate::extract::find_custom_type(&proc.custom_types, &vi.sql_type) {
+            vi.java_type = crate::extract::custom_type_java_type(ct);
+        }
+    }
+}
+
+/// Review #129 B3: resolve a record field's raw SQL type text to a Java
+/// type. `<table>.<col>%TYPE` anchors resolve through the DDL schema cache
+/// first, then fall back to column-name inference; anything else goes
+/// through the normalizing type lookup. Returns `None` when nothing
+/// resolves (caller keeps the extraction-time value).
+fn record_field_java_type(
+    sql_type: &str,
+    ddl_schema: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+) -> Option<String> {
+    let lower = sql_type.to_lowercase();
+    if lower.contains("%rowtype") {
+        return Some("Map<String, Object>".into());
+    }
+    if lower.contains("%type") {
+        // "[schema.]table.column%TYPE" — anchor is everything before '%'.
+        let anchor = sql_type.split('%').next().unwrap_or("").trim();
+        let (tbl_part, col) = anchor.rsplit_once('.')?;
+        let tbl_lower = tbl_part.rsplit('.').next().unwrap_or(tbl_part).to_lowercase();
+        let col_lower = col.to_lowercase();
+        if let Some(cols) = ddl_schema.get(&tbl_lower) {
+            if let Some(raw) = cols.get(&col_lower) {
+                let normalized = crate::extract::normalize_sql_type(raw);
+                if let Some(j) = crate::type_map::sql_type_to_java(&normalized) {
+                    return Some(j.to_string());
+                }
+            }
+        }
+        // DDL not in sources (delivery configs may omit the table) — fall
+        // back to column-name inference rather than leaving Object, so
+        // generated fixtures get typed seeds instead of 145× null.
+        let mut inferred = crate::type_map::infer_sql_type_from_column_name(col);
+        // Review #129 §3: `*_date` columns are overwhelmingly Oracle DATE,
+        // not TIMESTAMP — a Timestamp seed stringifies to
+        // "yyyy-MM-dd HH:mm:ss.S" which LocalDate.parse rejects. Narrow
+        // override ONLY on this record-field fallback path; the shared
+        // infer_sql_type_from_column_name feeds local-var declarations
+        // whose timestamp branch has a self-consistent initializer, so
+        // changing it globally breaks compilation (verified rc=1).
+        if inferred == "timestamp" {
+            let col_l = col.to_lowercase();
+            if col_l == "date" || col_l.ends_with("_date") {
+                inferred = "date";
+            }
+        }
+        return crate::type_map::sql_type_to_java(inferred).map(|s| s.to_string()).or_else(|| Some("String".into()));
+    }
+    crate::type_map::sql_type_to_java(sql_type).map(|s| s.to_string())
+}
+
+/// Review #129 B3: single source of truth for record field Java types.
+/// Extraction collapses `<table>.<col>%TYPE` to `Object` because the DDL
+/// schema cache does not exist yet; resolve it here — BEFORE the per-proc
+/// `custom_types` clone — so DTO declarations, unit fixtures and
+/// integration fixtures all consume the same resolved types.
+pub fn resolve_custom_record_field_types(
+    custom_types: &mut HashMap<String, crate::types::CustomTypeInfo>,
+    ddl_schema: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+) -> Vec<(String, String, String)> {
+    // Review #129 §4.4: returns (type_name, field_name, sql_type) for every
+    // `%TYPE` anchor that could not be resolved at all (e.g. variable-anchored
+    // `x%TYPE` with no `table.column` shape) — the caller reports these into
+    // unresolved_calls instead of letting them silently stay Object/null.
+    let mut unresolved = Vec::new();
+    for (tname, ct) in custom_types.iter_mut() {
+        if !ct.is_record {
+            continue;
+        }
+        let sql_by_field: HashMap<&str, &str> =
+            ct.field_sql_types.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+        for (fname, jt) in ct.fields.iter_mut() {
+            let Some(sql) = sql_by_field.get(fname.as_str()).copied() else { continue };
+            match record_field_java_type(sql, ddl_schema) {
+                Some(resolved) => *jt = resolved,
+                None => {
+                    if sql.to_lowercase().contains("%type") {
+                        unresolved.push((tname.clone(), fname.clone(), sql.to_string()));
+                    }
+                }
+            }
+        }
+    }
+    unresolved
+}
+
+/// Resolve a `%ROWTYPE` table reference to { field_lower → Java type } using
+/// the DDL schema cache. Shared by local-var declarations and %ROWTYPE params.
+fn rowtype_fields_for_table(
+    table: &str,
+    ddl_schema: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+) -> HashMap<String, String> {
+    let table_lower = table.split('.').next_back().unwrap_or(table).to_lowercase();
+    ddl_schema
+        .get(&table_lower)
+        .map(|cols| {
+            cols.iter()
+                .map(|(col, raw_sql_type)| {
+                    let sql_type = crate::extract::normalize_sql_type(raw_sql_type);
+                    let java = crate::type_map::sql_type_to_java(&sql_type)
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "String".into());
+                    (col.to_lowercase(), java)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub fn analyze_procedure(
     proc: &mut ProcedureInfo,
     summaries: &std::collections::HashMap<String, crate::types::PackageSummary>,
@@ -10,6 +143,23 @@ pub fn analyze_procedure(
     ddl_schema: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
     debug: bool,
 ) -> Result<(), ConversionError> {
+    resolve_custom_typed_symbols(proc);
+    // Review #129 B3: %ROWTYPE params lower to Map<String,Object>; resolve
+    // their field types from the DDL cache so generated unit/integration
+    // fixtures can populate the record-shaped map instead of emitting {}.
+    let rowtype_params: Vec<(String, String)> = proc
+        .parameters
+        .iter()
+        .filter(|p| p.sql_type.to_lowercase().contains("%rowtype"))
+        .map(|p| (p.name.clone(), p.sql_type.clone()))
+        .collect();
+    for (pname, sql_type) in rowtype_params {
+        let table = sql_type.split('%').next().unwrap_or("").trim();
+        let fields = rowtype_fields_for_table(table, ddl_schema);
+        if !fields.is_empty() {
+            proc.param_rowtype_fields.insert(pname.to_lowercase(), fields);
+        }
+    }
     let body = proc.body.take();
     let mut result = Ok(());
     if let Some(ref body_inner) = body {
@@ -95,6 +245,10 @@ pub fn analyze_procedure(
             ctx.dml_counters.insert(pkg_key.clone(), std::collections::HashMap::new());
         }
         stmt_ctx.dml_counter = ctx.dml_counters.get(&pkg_key).cloned().unwrap_or_default();
+        if !ctx.dml_used_ids.contains_key(&pkg_key) {
+            ctx.dml_used_ids.insert(pkg_key.clone(), std::collections::HashSet::new());
+        }
+        stmt_ctx.dml_used_ids = ctx.dml_used_ids.get(&pkg_key).cloned().unwrap_or_default();
         stmt_ctx.debug = debug;
         if debug {
             stmt_ctx.stmt_lines = crate::debug::find_body_stmt_lines(proc, ctx);
@@ -107,7 +261,6 @@ pub fn analyze_procedure(
                 break;
             }
         }
-        ctx.dml_counters.insert(pkg_key, stmt_ctx.dml_counter.clone());
         // After normal processing, if GOTO pattern detected, rewrite the procedure body
         if proc.goto_analysis.as_ref().is_some_and(|a| a.pattern.is_some()) {
             let analysis = proc.goto_analysis.take().unwrap();
@@ -116,7 +269,7 @@ pub fn analyze_procedure(
             proc.select_counter = 0;
             proc.for_loop_counter = 0;
             let rewrite_result =
-                crate::statements::goto::rewrite_with_pattern(&body_inner.body, &analysis, proc, summaries);
+                crate::statements::goto::rewrite_with_pattern(&body_inner.body, &analysis, proc, &mut stmt_ctx);
             proc.goto_analysis = Some(analysis);
             if let Err(e) = rewrite_result {
                 proc.java_logic_lines.push("// TODO: GOTO pattern requires manual implementation".into());
@@ -164,6 +317,8 @@ pub fn analyze_procedure(
                 proc.java_logic_lines.push("}".into());
             }
         }
+        ctx.dml_counters.insert(pkg_key.clone(), stmt_ctx.dml_counter.clone());
+        ctx.dml_used_ids.insert(pkg_key, stmt_ctx.dml_used_ids.clone());
         ctx.unresolved_calls.append(&mut stmt_ctx.unresolved_calls);
     }
     // Apply any bare-local-var promotions queued by emit_cross_pkg_call (see
@@ -191,21 +346,7 @@ pub fn process_declaration(
                     proc.imports.insert("import java.util.Map;".into());
                     // Resolve field types from the table's DDL so field access
                     // (v_wm.wm_ts_value) can emit typed extraction.
-                    let table_lower = table.split('.').next_back().unwrap_or(table).to_lowercase();
-                    let field_types: HashMap<String, String> = ddl_schema
-                        .get(&table_lower)
-                        .map(|cols| {
-                            cols.iter()
-                                .map(|(col, raw_sql_type)| {
-                                    let sql_type = crate::extract::normalize_sql_type(raw_sql_type);
-                                    let java = crate::type_map::sql_type_to_java(&sql_type)
-                                        .map(|s| s.to_string())
-                                        .unwrap_or_else(|| "String".into());
-                                    (col.to_lowercase(), java)
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
+                    let field_types = rowtype_fields_for_table(table, ddl_schema);
                     proc.rowtype_field_types.insert(var.name.to_lowercase(), field_types);
                     "Map<String, Object>".into()
                 }
@@ -233,29 +374,41 @@ pub fn process_declaration(
                 }
                 _ => {
                     let sql_type_raw = crate::extract::format_pl_data_type(&var.data_type);
-                    let sql_type_lower = sql_type_raw.to_lowercase();
-                    // Detect array-like types (e.g., pkg_param_common.arrytype, VARCHAR2_ARRAY)
-                    if sql_type_lower.contains("arrytype")
-                        || sql_type_lower.contains("array_type")
-                        || sql_type_lower.ends_with("_array")
-                    {
-                        proc.imports.insert("import java.util.List;".into());
-                        proc.imports.insert("import java.util.Collections;".into());
-                        proc.has_array_vars = true;
-                        "List<String>".into()
-                    } else {
-                        let sql_type = crate::extract::normalize_sql_type(&sql_type_raw);
-                        let sql_type_lower = sql_type.to_lowercase();
-                        if let Some(ct) =
-                            proc.custom_types.get(&sql_type_lower).or_else(|| proc.custom_types.get(&sql_type))
-                        {
-                            if ct.is_record {
+                    let sql_type = crate::extract::normalize_sql_type(&sql_type_raw);
+                    let sql_type_lower = sql_type.to_lowercase();
+                    // Review #129 S1: resolve declared custom types BEFORE the
+                    // array-name heuristic — `TYPE t_item_array IS TABLE OF
+                    // r_order_item` must not be flattened to List<String> by
+                    // its "_array" suffix.
+                    let ct = crate::extract::find_custom_type(&proc.custom_types, &sql_type)
+                        .or_else(|| crate::extract::find_custom_type(&proc.custom_types, &sql_type_lower));
+                    if let Some(ct) = ct {
+                        if ct.is_record {
+                            proc.imports.insert("import java.util.Map;".into());
+                            "Map<String, Object>".into()
+                        } else if let Some(ref elem) = ct.elem_java_type {
+                            // Issue #124: typed collections lower to
+                            // List<Elem> (record elem → List<Map<...>>).
+                            proc.imports.insert("import java.util.List;".into());
+                            if elem.contains("Map") {
                                 proc.imports.insert("import java.util.Map;".into());
-                                "Map<String, Object>".into()
-                            } else {
-                                proc.imports.insert("import java.util.List;".into());
-                                "java.util.List<Object>".into()
                             }
+                            format!("java.util.List<{}>", elem)
+                        } else {
+                            proc.imports.insert("import java.util.List;".into());
+                            "java.util.List<Object>".into()
+                        }
+                    } else {
+                        // Detect array-like types (e.g., pkg_param_common.arrytype, VARCHAR2_ARRAY)
+                        let raw_lower = sql_type_raw.to_lowercase();
+                        if raw_lower.contains("arrytype")
+                            || raw_lower.contains("array_type")
+                            || raw_lower.ends_with("_array")
+                        {
+                            proc.imports.insert("import java.util.List;".into());
+                            proc.imports.insert("import java.util.Collections;".into());
+                            proc.has_array_vars = true;
+                            "List<String>".into()
                         } else {
                             crate::type_map::sql_type_to_java(&sql_type)
                                 .map(|s| s.to_string())
@@ -457,6 +610,65 @@ mod tests {
     fn test_scan_context_new() {
         let ctx = ScanContext::new();
         assert!(ctx.type_overrides.is_empty());
+    }
+
+    #[test]
+    fn test_record_field_percent_type_resolves_via_ddl_and_inference() {
+        // Review #129 B3: `<table>.<col>%TYPE` record fields must resolve to
+        // concrete Java types — via DDL when present, column-name inference
+        // otherwise — instead of staying Object (which produced all-null
+        // fixtures and DateTimeParseException downstream).
+        let mut custom_types = HashMap::new();
+        custom_types.insert(
+            "deposit_receipt".to_string(),
+            crate::types::CustomTypeInfo {
+                fields: vec![
+                    ("maturity_date".to_string(), "Object".to_string()),
+                    ("amount".to_string(), "Object".to_string()),
+                    ("fund_code".to_string(), "Object".to_string()),
+                ],
+                field_sql_types: vec![
+                    ("maturity_date".to_string(), "dat_trd_deposit.maturity_date%TYPE".to_string()),
+                    ("amount".to_string(), "dat_trd_deposit.amount%TYPE".to_string()),
+                    ("fund_code".to_string(), "dat_trd_deposit.fund_code%TYPE".to_string()),
+                ],
+                is_record: true,
+                elem_java_type: None,
+            },
+        );
+        // DDL present for one column only.
+        let mut ddl = HashMap::new();
+        let mut cols = HashMap::new();
+        cols.insert("amount".to_string(), "NUMERIC(18,2)".to_string());
+        ddl.insert("dat_trd_deposit".to_string(), cols);
+
+        resolve_custom_record_field_types(&mut custom_types, &ddl);
+        let ct = &custom_types["deposit_receipt"];
+        let jt = |n: &str| ct.fields.iter().find(|(f, _)| f == n).map(|(_, t)| t.clone()).unwrap();
+        assert_eq!(jt("amount"), "java.math.BigDecimal");
+        // maturity_date: no DDL column → inference; `*_date` overrides the
+        // timestamp guess to `date` (review #129 §3 — Timestamp seeds break
+        // LocalDate.parse consumers).
+        assert_eq!(jt("maturity_date"), "java.sql.Date");
+        // fund_code: inference → varchar → String.
+        assert_eq!(jt("fund_code"), "String");
+    }
+
+    #[test]
+    fn test_record_field_plain_types_still_resolve() {
+        // Non-%TYPE fields keep their extraction-time resolution.
+        let mut custom_types = HashMap::new();
+        custom_types.insert(
+            "t".to_string(),
+            crate::types::CustomTypeInfo {
+                fields: vec![("a".to_string(), "String".to_string())],
+                field_sql_types: vec![("a".to_string(), "VARCHAR2(50)".to_string())],
+                is_record: true,
+                elem_java_type: None,
+            },
+        );
+        resolve_custom_record_field_types(&mut custom_types, &HashMap::new());
+        assert_eq!(custom_types["t"].fields[0].1, "String");
     }
 
     #[test]

@@ -1,0 +1,14 @@
+package com.example.demo.mapper;
+
+import java.util.List;
+import java.util.Map;
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface CollTypesMapper {
+
+    // {FIXTURES_ROOT}/issue_124_collections.sql:14 — pkg_coll_types.prc_collection_demo
+    List<Map<String, Object>> selectEmp(@Param("pMode") String pMode);
+    // {FIXTURES_ROOT}/issue_124_collections.sql:14 — pkg_coll_types.prc_collection_demo
+    int updateCfgTable(@Param("pMode") String pMode, @Param("vCnt") Long vCnt);
+}

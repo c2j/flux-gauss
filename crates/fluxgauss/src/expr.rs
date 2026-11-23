@@ -377,7 +377,7 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
             return format!("new java.sql.Date(({}).getTime())", trimmed);
         }
         if (t.contains("java.sql.Date") || t == "Date")
-            && trimmed.contains("java.time.LocalDate")
+            && (trimmed.contains("java.time.LocalDate") || trimmed.contains(".toLocalDate()"))
             && !trimmed.starts_with("java.sql.Date.valueOf(")
         {
             return format!("java.sql.Date.valueOf({})", trimmed);
@@ -648,6 +648,21 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
                 && !trimmed.starts_with("new ")
                 && !produces_double(trimmed)
                 && !produces_primitive_int(trimmed) =>
+        {
+            trimmed.to_string()
+        }
+        // Nullable boxed-Long producers must NOT be routed through
+        // Number.longValue() — that unboxes null into an NPE where Oracle
+        // semantics assign NULL. Keep the Long expression as-is. Covers
+        // coll.NEXT/PRIOR/FIRST/LAST (`cond ? Long.valueOf(..) : null`) and
+        // bounds-guarded element reads (`cond ? list.get(..) : null`); the
+        // `List<?>` carve-out keeps the (Number) wrap that untyped captures
+        // need to compile.
+        Some(t)
+            if t == "Long"
+                && trimmed.contains(" : null)")
+                && (trimmed.contains("Long.valueOf(")
+                    || (trimmed.contains(".get(") && !trimmed.contains("List<?>"))) =>
         {
             trimmed.to_string()
         }
@@ -977,17 +992,31 @@ fn expr_to_java_impl(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> St
             }
         }
         Expr::FieldAccess { object, field } => {
+            let mut object_java = expr_to_java(object, proc);
+            // Review #129 §4.3: `coll(i).field` reads must be gated on the
+            // collection's element type — scalar elements (List<Long> etc.)
+            // have no fields and `.getOrDefault` on them is a javac error;
+            // Object/? elements need an explicit Map cast to compile.
+            match coll_field_access_elem(object, proc) {
+                Some(CollElem::Scalar) => {
+                    return "/* TOBEFIX: coll(i).field — collection element type is not a record map */ null".into();
+                }
+                Some(CollElem::Unknown) => {
+                    object_java = format!("((java.util.Map<String, Object>) ({}))", object_java);
+                }
+                _ => {}
+            }
             let camel = snake_to_camel(field);
             if camel != field.to_lowercase() {
                 format!(
                     "{}.getOrDefault(\"{}\", {}.get(\"{}\"))",
-                    expr_to_java(object, proc),
+                    object_java,
                     camel,
-                    expr_to_java(object, proc),
+                    object_java,
                     field.to_lowercase()
                 )
             } else {
-                format!("{}.get(\"{}\")", expr_to_java(object, proc), camel)
+                format!("{}.get(\"{}\")", object_java, camel)
             }
         }
         Expr::CursorAttribute { cursor, attribute } => {
@@ -1074,6 +1103,51 @@ fn literal_to_java(lit: &ogsql_parser::ast::Literal) -> String {
     }
 }
 
+/// Element-kind classification for `coll(i).field` reads (review #129 §4.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CollElem {
+    /// Element type contains Map — `.get/.getOrDefault` compile directly.
+    Map,
+    /// Element type is Object/?/unresolved — needs an explicit Map cast.
+    Unknown,
+    /// Concrete scalar element (Long, String, …) — field access is invalid.
+    Scalar,
+}
+
+/// If `object` is a single-argument collection element access `coll(i)` on a
+/// `List<Elem>`-typed variable/param/package-var, classify `Elem`. Returns
+/// `None` for non-collection objects (records, plain vars, nested exprs).
+fn coll_field_access_elem(object: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> Option<CollElem> {
+    use ogsql_parser::ast::Expr;
+    let Expr::FunctionCall { name, args, .. } = object else { return None };
+    if args.len() != 1 {
+        return None;
+    }
+    let base = name.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(".");
+    let base_lower = base.to_lowercase();
+    let jt = proc
+        .local_vars
+        .get(&base_lower)
+        .map(|s| s.as_str())
+        .or_else(|| proc.parameters.iter().find(|p| p.name.eq_ignore_ascii_case(&base)).map(|p| p.java_type.as_str()))
+        .or_else(|| proc.package_vars.get(&base_lower).map(|v| v.java_type.as_str()))
+        .or_else(|| proc.out_local_vars.get(&base_lower).map(|s| s.as_str()))?;
+    let t = jt.trim();
+    let start = t.find('<')?;
+    let end = t.rfind('>')?;
+    if !t[..start].to_lowercase().contains("list") || end <= start {
+        return None;
+    }
+    let elem = t[start + 1..end].trim();
+    Some(if elem.contains("Map") {
+        CollElem::Map
+    } else if elem == "Object" || elem == "?" || elem.is_empty() {
+        CollElem::Unknown
+    } else {
+        CollElem::Scalar
+    })
+}
+
 fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
     let lower = name.to_lowercase();
     match lower.as_str() {
@@ -1114,10 +1188,6 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
                 let var_name = snake_to_camel(parts[0]);
                 let field = parts[1].to_lowercase();
                 let snake_base = parts[0];
-                if field == "count" {
-                    return format!("((java.util.List<?>) {}).size()", var_name);
-                }
-                let field_camel = snake_to_camel(parts[1]);
                 let is_out = proc.parameters.iter().any(|p| p.name == parts[0] && p.is_out());
                 let base_type = proc
                     .local_vars
@@ -1129,7 +1199,22 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
                             .find(|p| p.name.eq_ignore_ascii_case(snake_base))
                             .map(|p| p.java_type.as_str())
                     })
+                    .or_else(|| proc.package_vars.get(&snake_base.to_lowercase()).map(|v| v.java_type.as_str()))
                     .unwrap_or("");
+                if field == "count" {
+                    return format!("((java.util.List<?>) {}).size()", var_name);
+                }
+                // Issue #124: collection pseudo-attributes FIRST/LAST return
+                // the boundary index (1-based); NULL on empty collections.
+                if base_type.contains("List") && (field == "first" || field == "last") {
+                    let lb = if is_out { format!("{}.get()", var_name) } else { var_name.clone() };
+                    return if field == "first" {
+                        format!("(({}).isEmpty() ? null : java.lang.Long.valueOf(1))", lb)
+                    } else {
+                        format!("(({}).isEmpty() ? null : java.lang.Long.valueOf(({}).size()))", lb, lb)
+                    };
+                }
+                let field_camel = snake_to_camel(parts[1]);
                 let map_base = if is_out {
                     format!("{}.get()", var_name)
                 } else if base_type.contains("Map") {
@@ -1209,7 +1294,12 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
 
 pub(crate) fn is_bigdecimal_var(expr_str: &str, proc: &ProcedureInfo) -> bool {
     let name = expr_str.trim();
-    let base = name.split(['.', '(']).next().unwrap_or(name);
+    let mut base = name.split(['.', '(']).next().unwrap_or(name);
+    // Parenthesised receivers like `(vAmt).negate()` yield an empty base —
+    // strip the paren and re-split so the var lookup still fires.
+    if base.is_empty() {
+        base = name.trim_start_matches('(').split(['.', ')', '(']).next().unwrap_or(name);
+    }
     // Direct lookup (snake_case key)
     if let Some(ty) = proc.local_vars.get(&base.to_lowercase()) {
         return ty.contains("BigDecimal");
@@ -1524,6 +1614,49 @@ pub(crate) fn typed_rowtype_field(raw_get: String, base_var: &str, field: &str, 
         format!("({} == null ? null : new java.math.BigDecimal(String.valueOf({})))", raw_get, raw_get)
     } else {
         raw_get
+    }
+}
+
+fn is_temporal_java_expr(t: &str, proc: &ProcedureInfo) -> bool {
+    looks_like_timestamp_expr(t, proc)
+        || is_timestamp_or_date_var(t, proc)
+        || t.contains("((java.sql.Timestamp)")
+        || t.contains("java.sql.Timestamp.valueOf(")
+        || t.contains("java.sql.Date.valueOf(")
+        || t.contains(".toLocalDateTime()")
+}
+
+fn temporal_to_local_date(t: &str) -> String {
+    format!("new java.sql.Date(({}).getTime()).toLocalDate()", t)
+}
+
+/// Render `arg` as a `java.time.LocalDate` expression.
+///
+/// Timestamp/Date-typed arguments must NOT round-trip through
+/// `Timestamp.toString()` + `LocalDate.parse`: `toString()` yields
+/// `yyyy-MM-dd HH:mm:ss.SSS`, which matches no date-only
+/// `DateTimeFormatter` pattern and threw DateTimeParseException on every
+/// call (issue #128). Temporal args convert via epoch millis instead.
+fn local_date_arg(arg: &str, proc: &ProcedureInfo) -> String {
+    let t = arg.trim();
+    if is_temporal_java_expr(t, proc) {
+        temporal_to_local_date(t)
+    } else {
+        format!("java.time.LocalDate.parse(String.valueOf({}))", t)
+    }
+}
+
+/// `local_date_arg` variant that keeps the `DateTimeFormatter` pattern for
+/// string arguments (TO_DATE with an explicit format).
+fn local_date_arg_fmt(arg: &str, fmt_pattern: &str, proc: &ProcedureInfo) -> String {
+    let t = arg.trim();
+    if is_temporal_java_expr(t, proc) {
+        temporal_to_local_date(t)
+    } else {
+        format!(
+            "java.time.LocalDate.parse(String.valueOf({}), java.time.format.DateTimeFormatter.ofPattern(\"{}\"))",
+            t, fmt_pattern
+        )
     }
 }
 
@@ -2019,7 +2152,11 @@ fn binary_op_to_java(
                     "<=" => " <= 0",
                     _ => " != 0",
                 };
-                format!("{}.compareTo({}){}", l, r, cmp_method)
+                // Review #129 P0-1: operands ending in `.toLocalDate()` yield
+                // java.time.LocalDate, which is not a java.util.Date — wrap
+                // as Timestamp so compareTo compiles for both Date and
+                // Timestamp receivers.
+                format!("{}.compareTo({}){}", localdate_operand_to_ts(&l), localdate_operand_to_ts(&r), cmp_method)
             } else {
                 let has_get_l = needs_get_unwrap(&l);
                 let has_get_r = needs_get_unwrap(&r);
@@ -2169,9 +2306,108 @@ fn unary_op_to_java(op: &str, operand: &ogsql_parser::ast::Expr, proc: &Procedur
         return "0".to_string();
     }
     match op {
+        // P1-4 (review #129): BigDecimal has no Java unary minus — use negate().
+        "-" if is_bigdecimal_var(&inner, proc) || inner.contains("BigDecimal") => {
+            format!("({}).negate()", inner)
+        }
         "-" => format!("(-{})", inner),
         "NOT" => format!("!{}", inner),
         _ => format!("{}{}", op, inner),
+    }
+}
+
+/// True when `s`'s outermost value is `java.time.LocalDate`: the first
+/// top-level `.toLocalDate()` is followed only by LocalDate-returning
+/// method calls (`plus*`/`minus*`/`with*`). Substring vetoes are unsafe —
+/// `new java.sql.Date(...).toLocalDate().plusMonths(x)` still yields
+/// LocalDate even though it contains `java.sql.Date.valueOf(`, while
+/// `String.valueOf(x.toLocalDate())` or `x.toLocalDate().toString()` do
+/// not (review #129 §3-A).
+fn expr_yields_localdate(s: &str) -> bool {
+    let Some(pos) = s.find(".toLocalDate()") else {
+        return false;
+    };
+    let mut rest = s[pos + ".toLocalDate()".len()..].trim_start();
+    while !rest.is_empty() {
+        if !rest.starts_with('.') {
+            return false;
+        }
+        rest = &rest[1..];
+        let name_len = rest.find(|c: char| !(c.is_alphanumeric() || c == '_')).unwrap_or(rest.len());
+        let name = &rest[..name_len];
+        if !(name.starts_with("plus") || name.starts_with("minus") || name.starts_with("with")) {
+            return false;
+        }
+        rest = rest[name_len..].trim_start();
+        if !rest.starts_with('(') {
+            return false;
+        }
+        let mut depth = 0usize;
+        let mut close = None;
+        for (i, c) in rest.char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        match close {
+            Some(i) => rest = rest[i + 1..].trim_start(),
+            None => return false,
+        }
+    }
+    true
+}
+
+/// Wrap an expression that yields `java.time.LocalDate` (temporal lowering
+/// ends in `.toLocalDate()`) into a `java.sql.Timestamp` so it can be passed
+/// to `java.util.Date`/`Timestamp.compareTo` and `SimpleDateFormat.format`.
+/// No-op for expressions already producing a Date/Timestamp.
+fn localdate_operand_to_ts(s: &str) -> String {
+    let t = s.trim();
+    if expr_yields_localdate(t)
+        && !t.starts_with("new java.sql.Timestamp")
+        && !t.starts_with("new java.sql.Date.valueOf")
+    {
+        format!("new java.sql.Timestamp(java.sql.Date.valueOf({}).getTime())", t)
+    } else {
+        s.to_string()
+    }
+}
+
+/// PL/SQL collection indices are 1-based and typically `Long`/`Integer`
+/// boxed or `long` arithmetic — a bare `(int)(expr)` cast fails javac on
+/// boxed types (`Long`↛`int` in one cast). `(int)(long)(expr)` is legal for
+/// every integral shape: primitives widen/narrow, boxed types unbox first.
+pub(crate) fn coll_idx_java(idx: &str) -> String {
+    format!("(int)(long)({})", idx)
+}
+
+/// Issue #124: lower PL/SQL collection pseudo-methods used in expression
+/// position (`coll.EXISTS(i)`, `coll.NEXT(i)`, ...) to List operations.
+/// Returns the Java expression; indices stay 1-based per PL/SQL semantics.
+fn collection_expr_method(method: &str, obj: &str, jargs: &[String], proc: &ProcedureInfo) -> String {
+    let var = snake_to_camel(obj);
+    let deref = proc.parameters.iter().any(|p| p.name.eq_ignore_ascii_case(obj) && p.is_out())
+        || proc.out_local_vars.contains_key(&obj.to_lowercase());
+    let base = if deref { format!("{}.get()", var) } else { var };
+    let idx = jargs.first().map(|s| s.as_str()).unwrap_or("1");
+    match method {
+        "EXISTS" => format!("(({}) >= 1 && ({}) <= ({}).size())", idx, idx, base),
+        // Box both ternary arms as Long (review #129 P2): mixing a primitive
+        // numeric with `null` produces uncompilable or unboxing-surprise code.
+        "NEXT" => format!("((({}) + 1) <= ({}).size() ? java.lang.Long.valueOf(({}) + 1) : null)", idx, base, idx),
+        "PRIOR" => format!("((({}) - 1) >= 1 ? java.lang.Long.valueOf(({}) - 1) : null)", idx, idx),
+        "COUNT" => format!("({}).size()", base),
+        "FIRST" => format!("(({}).isEmpty() ? null : java.lang.Long.valueOf(1))", base),
+        "LAST" => format!("(({}).isEmpty() ? null : java.lang.Long.valueOf(({}).size()))", base, base),
+        _ => format!("/* TOBEFIX: coll.{} */ null", method.to_lowercase()),
     }
 }
 
@@ -2180,27 +2416,61 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         let name_parts: Vec<&str> = name.split('.').collect();
         if name_parts.len() == 1 && args.len() == 1 {
             let snake_name = name_parts[0];
-            let list_type = proc.local_vars.get(&snake_name.to_lowercase()).map(|t| t.as_str()).or_else(|| {
-                proc.parameters.iter().find(|p| p.name.eq_ignore_ascii_case(snake_name)).map(|p| p.java_type.as_str())
-            });
-            let is_list = match list_type {
-                Some(t) if t.starts_with("List<") || t.contains("List") => true,
-                Some("Object") => {
+            // Issue #124: resolve through local vars, params, package vars and
+            // OUT-promoted vars so typed collections lower to List.get(i-1).
+            let list_type = resolve_var_java_type(snake_name, proc);
+            let type_str = list_type.as_deref().unwrap_or("");
+            let is_list = type_str.contains("List")
+                || (type_str == "Object" && {
                     let n = snake_name.to_lowercase();
                     n.contains("array")
                         || n.contains("list")
                         || n.contains("spectrum")
                         || n.ends_with("_arr")
                         || n.ends_with("arr")
-                }
-                _ => false,
-            };
+                });
             if is_list {
                 let var_java = snake_to_camel(snake_name);
                 let idx = expr_to_java(&args[0], proc);
+                // Untyped/Object vars lower through a `List<?>` cast whose
+                // element type is unknowable — keep the bare `.get` so
+                // downstream `(String)`/`(Number)` cast rules still match the
+                // `.get(` shape (review #129 R2).
+                if type_str.is_empty() || type_str == "Object" {
+                    return format!("((java.util.List<?>) {}).get({} - 1)", var_java, coll_idx_java(&idx));
+                }
                 let base =
-                    if list_type == Some("Object") { format!("((java.util.List<?>) {})", var_java) } else { var_java };
-                return format!("{}.get((int)({}) - 1)", base, idx);
+                    if is_out_param(snake_name, proc) || proc.out_local_vars.contains_key(&snake_name.to_lowercase()) {
+                        format!("{}.get()", var_java)
+                    } else {
+                        var_java
+                    };
+                // Bounds-guarded read (review #129): Oracle raises
+                // INDEX_OUT_OF_BOUNDS on missing elements, but generated
+                // callers/tests treat collection reads as nullable — emit
+                // `null` instead of crashing on `List.get`. Only applied to
+                // typed lists so the ternary yields the concrete element type.
+                return format!(
+                    "(({}) >= 1 && ({}) <= ({}).size() ? {}.get({} - 1) : null)",
+                    idx,
+                    idx,
+                    base,
+                    base,
+                    coll_idx_java(&idx)
+                );
+            }
+        }
+        // Issue #124: collection pseudo-methods in expression position —
+        // coll.EXISTS(i) / NEXT(i) / PRIOR(i) / COUNT / FIRST / LAST.
+        if name_parts.len() == 2 {
+            let meth = name_parts[1].to_uppercase();
+            if matches!(meth.as_str(), "EXISTS" | "NEXT" | "PRIOR" | "COUNT" | "FIRST" | "LAST") {
+                if let Some(t) = resolve_var_java_type(name_parts[0], proc) {
+                    if t.contains("List") {
+                        let margs: Vec<String> = args.iter().map(|a| expr_to_java(a, proc)).collect();
+                        return collection_expr_method(&meth, name_parts[0], &margs, proc);
+                    }
+                }
             }
         }
     }
@@ -2312,7 +2582,31 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         "LEAST" if !jargs.is_empty() => {
             jargs.iter().skip(1).fold(jargs[0].clone(), |acc, arg| format!("Math.min({}, {})", acc, arg))
         }
-        "REPLACE" if jargs.len() >= 3 => format!("{}.replace({}, {})", jargs[0], jargs[1], jargs[2]),
+        "REPLACE" if jargs.len() >= 3 => {
+            let s = jargs[0].trim();
+            let a1 = jargs[1].trim();
+            let a2 = jargs[2].trim();
+            // Review #129 S2r: nullable reads come in two shapes — List.get
+            // element reads AND Map.getOrDefault record-field reads (the
+            // latter dominates the delivery corpus). Guard both.
+            let is_nullable_read = |a: &str| a.contains(".get(") || a.contains("getOrDefault(");
+            let has_get = is_nullable_read(a1) || is_nullable_read(a2);
+            if has_get {
+                // Review #129 S2: PL/SQL string functions return NULL when any
+                // arg is NULL — `String.valueOf(null)` would silently replace
+                // the literal "null" text. Emit an explicit NULL short-circuit
+                // and only String.valueOf the untyped `.get` args
+                // (capture-of-? is not a CharSequence).
+                let r1 = if is_nullable_read(a1) { format!("String.valueOf({})", a1) } else { a1.to_string() };
+                let r2 = if is_nullable_read(a2) { format!("String.valueOf({})", a2) } else { a2.to_string() };
+                format!(
+                    "(({}) == null || ({}) == null || ({}) == null ? null : ({}).replace({}, {}))",
+                    s, a1, a2, s, r1, r2
+                )
+            } else {
+                format!("{}.replace({}, {})", s, a1, a2)
+            }
+        }
         "SUBSTRING" | "SUBSTR" => {
             let wrap_s = |s: &str| -> String {
                 if s.starts_with('"') || s.starts_with('\'') {
@@ -2360,8 +2654,17 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                     for (sql_pat, java_pat) in &date_pats {
                         java_fmt = java_fmt.replace(sql_pat, java_pat);
                     }
-                    if is_timestamp_or_date_var(arg, proc) || arg.contains("Timestamp") || arg.contains("currentTimeMillis") {
-                        format!("new java.text.SimpleDateFormat(\"{}\").format({})", java_fmt, arg)
+                    // Review #129 P0-1: `.toLocalDate()` operands are
+                    // java.time.LocalDate — SimpleDateFormat.format(Object)
+                    // accepts them at compile time but throws at runtime;
+                    // route through Timestamp instead.
+                    let fmt_arg = localdate_operand_to_ts(arg);
+                    if is_timestamp_or_date_var(arg, proc)
+                        || arg.contains("Timestamp")
+                        || arg.contains("currentTimeMillis")
+                        || fmt_arg != arg
+                    {
+                        format!("new java.text.SimpleDateFormat(\"{}\").format({})", java_fmt, fmt_arg)
                     } else {
                         format!("new java.text.SimpleDateFormat(\"{}\").format(new java.util.Date(java.sql.Timestamp.valueOf(String.valueOf({})).getTime()))", java_fmt, arg)
                     }
@@ -2386,9 +2689,12 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         "NEXTVAL" => "null".into(),
         "CURRVAL" if !jargs.is_empty() => format!("this.currval({})", jargs.join(", ")),
         "CURRVAL" => "null".into(),
-        "ADD_MONTHS" if jargs.len() >= 2 => format!("java.time.LocalDate.parse(String.valueOf({})).plusMonths(Long.parseLong(String.valueOf({})))", jargs[0], jargs[1]),
-        "LAST_DAY" => format!("java.time.LocalDate.parse(String.valueOf({})).withDayOfMonth(java.time.LocalDate.parse(String.valueOf({})).lengthOfMonth())", jargs.first().map(|s| s.as_str()).unwrap_or("null"), jargs.first().map(|s| s.as_str()).unwrap_or("null")),
-        "NEXT_DAY" if !jargs.is_empty() => format!("java.time.LocalDate.parse(String.valueOf({})).plusWeeks(1)", jargs[0]),
+        "ADD_MONTHS" if jargs.len() >= 2 => format!("{}.plusMonths(Long.parseLong(String.valueOf({})))", local_date_arg(&jargs[0], proc), jargs[1]),
+        "LAST_DAY" => {
+            let d = local_date_arg(jargs.first().map(|s| s.as_str()).unwrap_or("null"), proc);
+            format!("{}.withDayOfMonth({}.lengthOfMonth())", d, d)
+        }
+        "NEXT_DAY" if !jargs.is_empty() => format!("{}.plusWeeks(1)", local_date_arg(&jargs[0], proc)),
         "NEXT_DAY" => "null".into(),
         "EXTRACT" => "/* EXTRACT */ 0".into(),
         "AGE" if jargs.len() >= 2 => format!("java.time.Period.between(new java.sql.Date(((java.sql.Timestamp){}).getTime()).toLocalDate(), new java.sql.Date(((java.sql.Timestamp){}).getTime()).toLocalDate())", jargs[1], jargs[0]),
@@ -2477,10 +2783,11 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         "TO_HEX" if !jargs.is_empty() => format!("Long.toHexString({}).toUpperCase()", jargs[0]),
         "TO_DATE" if jargs.len() >= 2 => {
             let fmt_raw = jargs[1].trim_matches('"').trim_matches('\'').to_lowercase();
-            if fmt_raw == "yyyy-mm-dd" {
+            let date_expr = if fmt_raw == "yyyy-mm-dd" {
                 // #96: month/day may be single-digit ("2026-5-01") from manual
                 // string concat — accept lenient single-digit forms too.
-                format!("java.sql.Date.valueOf(java.time.LocalDate.parse(String.valueOf({}), java.time.format.DateTimeFormatter.ofPattern(\"[yyyy-MM-dd][yyyyMMdd][yyyy-M-d]\")))", jargs[0])
+                // #128: temporal args bypass String.valueOf→parse entirely.
+                local_date_arg_fmt(&jargs[0], "[yyyy-MM-dd][yyyyMMdd][yyyy-M-d]", proc)
             } else {
                 let java_fmt = fmt_raw
                     .replace("mm", "MM").replace("mon", "MMM").replace("month", "MMMM")
@@ -2488,8 +2795,9 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                     .replace("hh24", "HH").replace("hh12", "hh").replace("hh", "HH")
                     .replace("mi", "mm")
                     .replace("ff3", "SSS").replace("ms", "SSS");
-                format!("java.sql.Date.valueOf(java.time.LocalDate.parse(String.valueOf({}), java.time.format.DateTimeFormatter.ofPattern(\"[{}][yyyy-MM-dd]\")))", jargs[0], java_fmt)
-            }
+                local_date_arg_fmt(&jargs[0], &format!("[{}][yyyy-MM-dd]", java_fmt), proc)
+            };
+            format!("java.sql.Date.valueOf({})", date_expr)
         }
         "TO_DATE" => format!("java.sql.Date.valueOf(String.valueOf({}))", jargs.first().map(|s| s.as_str()).unwrap_or("null")),
         "MD5" => {
@@ -2599,6 +2907,7 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         _ => {
             let name_parts: Vec<&str> = name.split('.').collect();
             let mut ambig_candidates: Vec<String> = Vec::new();
+            let mut ambig_note: Option<Vec<String>> = None;
             let (method, is_self_call, cross_pkg_svc, target_params): (
                 String,
                 bool,
@@ -2626,7 +2935,7 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                     // generated nor injected — uncompilable Java. Only emit the call when a
                     // registry entry matches the package hint; otherwise fall through to the
                     // TOBEFIX unresolved marker (same as the unqualified path).
-                    let pkg_matches: Vec<&GlobalFnEntry> = proc
+                    let mut pkg_matches: Vec<&GlobalFnEntry> = proc
                         .all_proc_params
                         .get(&method_name)
                         .map(|candidates| {
@@ -2643,6 +2952,19 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                                 .collect()
                         })
                         .unwrap_or_default();
+                    // Same determinism requirement as the unqualified path
+                    // (review #129 P0-2): HashMap iteration order must not
+                    // leak into generated code.
+                    pkg_matches.sort_by(|a, b| {
+                        (&a.package, &a.svc_var)
+                            .cmp(&(&b.package, &b.svc_var))
+                            .then_with(|| {
+                                let pa = a.params.iter().map(|p| p.java_type.as_str()).collect::<Vec<_>>().join(",");
+                                let pb = b.params.iter().map(|p| p.java_type.as_str()).collect::<Vec<_>>().join(",");
+                                pa.cmp(&pb)
+                            })
+                            .then_with(|| a.return_type.cmp(&b.return_type))
+                    });
                     if pkg_matches.is_empty() {
                         (String::new(), false, String::new(), None)
                     } else {
@@ -2668,19 +2990,58 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                     (method_name, true, String::new(), None)
                 } else if let Some(candidates) = proc.all_proc_params.get(&method_name) {
                     let proc_pkg_lower = proc.package.to_lowercase();
-                    let cross: Vec<&GlobalFnEntry> = candidates
+                    // P0-2 (review #129): candidate order comes from HashMap
+                    // iteration in pipeline.rs and is non-deterministic across
+                    // processes — sort by (package, svc_var, signature) so the
+                    // identical-signature pick and the TOBEFIX candidate list
+                    // are reproducible.
+                    let mut cross: Vec<&GlobalFnEntry> = candidates
                         .iter()
                         .filter(|e| e.package.to_lowercase() != proc_pkg_lower)
                         // 已知限制：跨包解析使用严格 arity 相等（不支持默认参数省略实参）；
                         // 同包重载（is_self_call 分支）支持 len>=jargs.len() 的宽松匹配
                         .filter(|e| e.params.len() == jargs.len())
                         .collect();
+                    cross.sort_by(|a, b| {
+                        (&a.package, &a.svc_var)
+                            .cmp(&(&b.package, &b.svc_var))
+                            .then_with(|| {
+                                let pa = a.params.iter().map(|p| p.java_type.as_str()).collect::<Vec<_>>().join(",");
+                                let pb = b.params.iter().map(|p| p.java_type.as_str()).collect::<Vec<_>>().join(",");
+                                pa.cmp(&pb)
+                            })
+                            .then_with(|| a.return_type.cmp(&b.return_type))
+                    });
                     match cross.len() {
                         1 => (method_name, false, cross[0].svc_var.clone(), Some(cross[0].params.clone())),
                         0 => (String::new(), false, String::new(), None),
                         _ => {
-                            ambig_candidates = cross.iter().map(|e| e.svc_var.clone()).collect();
-                            (String::new(), false, String::new(), None)
+                            // Issue #127: multiple cross-package candidates.
+                            // When every candidate has an identical signature
+                            // (param java types + return type), the call is
+                            // compilable and semantically equivalent (e.g. a
+                            // schema-level wrapper delegating to the package
+                            // impl) — pick the first and annotate the choice.
+                            // Differing signatures stay TOBEFIX, but the
+                            // marker now carries each candidate's signature.
+                            let sig_of = |e: &GlobalFnEntry| -> String {
+                                let params = e
+                                    .params
+                                    .iter()
+                                    .map(|p| p.java_type.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(",");
+                                format!("({})=>{}", params, e.return_type.as_deref().unwrap_or("?"))
+                            };
+                            let first_sig = sig_of(cross[0]);
+                            if cross.iter().all(|e| sig_of(e) == first_sig) {
+                                ambig_note = Some(cross.iter().map(|e| e.svc_var.clone()).collect());
+                                (method_name, false, cross[0].svc_var.clone(), Some(cross[0].params.clone()))
+                            } else {
+                                ambig_candidates =
+                                    cross.iter().map(|e| format!("{}{}", e.svc_var, sig_of(e))).collect();
+                                (String::new(), false, String::new(), None)
+                            }
                         }
                     }
                 } else {
@@ -2728,7 +3089,20 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                 return format!("this.{}({})", method, coerced_args.join(", "));
             }
             if !cross_pkg_svc.is_empty() && !method.is_empty() {
-                return emit_cross_pkg_call(&cross_pkg_svc, &method, jargs, target_params.as_deref(), proc);
+                let call = emit_cross_pkg_call(&cross_pkg_svc, &method, jargs, target_params.as_deref(), proc);
+                if let Some(alts) = &ambig_note {
+                    let others: Vec<&str> =
+                        alts.iter().map(|s| s.as_str()).filter(|s| *s != cross_pkg_svc).collect();
+                    if !others.is_empty() {
+                        return format!(
+                            "/* ambiguous: chose {} over [{}] */ {}",
+                            cross_pkg_svc,
+                            others.join(", "),
+                            call
+                        );
+                    }
+                }
+                return call;
             }
             let func_short = name_parts.last().unwrap_or(&name);
             let pkg_hint = if name_parts.len() >= 2 { name_parts[0] } else { "?" };
@@ -3760,24 +4134,29 @@ mod tests {
 
     #[test]
     fn test_cross_pkg_ambiguity_falls_back_to_tobefix_with_candidates() {
-        // Task 4/6: two packages defining the same method with the same arity is
-        // genuinely ambiguous — the converter must NOT pick one silently
-        // (first-wins). It falls back to a TOBEFIX marker that lists candidates.
+        // Task 4/6 + #127: two packages defining the same method with the same
+        // arity but DIFFERENT signatures is genuinely ambiguous — the
+        // converter must NOT pick one silently. It falls back to a TOBEFIX
+        // marker that lists each candidate's signature. (Identical signatures
+        // now resolve to the first candidate — see
+        // test_cross_pkg_identical_signatures_pick_first_with_note.)
         let mut proc = empty_proc();
-        let entry = |svc: &str, pkg: &str| GlobalFnEntry {
+        let entry = |svc: &str, pkg: &str, jt: &str| GlobalFnEntry {
             svc_var: svc.into(),
             package: pkg.into(),
             params: vec![crate::types::Parameter {
                 name: "x".into(),
-                java_type: "String".into(),
+                java_type: jt.into(),
                 sql_type: "varchar2".into(),
                 mode: None,
                 default_value: None,
             }],
             return_type: None,
         };
-        proc.all_proc_params
-            .insert("getVal".into(), vec![entry("pkgAService", "pkg_a"), entry("pkgBService", "pkg_b")]);
+        proc.all_proc_params.insert(
+            "getVal".into(),
+            vec![entry("pkgAService", "pkg_a", "String"), entry("pkgBService", "pkg_b", "Long")],
+        );
         let expr = ogsql_parser::ast::Expr::FunctionCall {
             name: vec!["get_val".into()],
             args: vec![ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String("s".into()))],
@@ -3793,7 +4172,8 @@ mod tests {
         };
         let out = expr_to_java(&expr, &proc);
         assert!(out.contains("TOBEFIX"), "ambiguous call must not resolve silently: {}", out);
-        assert!(out.contains("candidates=[pkgAService, pkgBService]"), "candidates must be listed: {}", out);
+        assert!(out.contains("pkgAService"), "candidate A must be listed: {}", out);
+        assert!(out.contains("pkgBService"), "candidate B must be listed: {}", out);
     }
 
     #[test]
@@ -3952,5 +4332,315 @@ mod tests {
             right: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["v_flag".into()])),
         };
         assert_eq!(expr_to_java(&expr, &proc), "java.util.Objects.equals(3L, vFlag)");
+    }
+
+    // ── Issue #124: PL/SQL collection lowering ──
+
+    fn fc_expr(name: &[&str], args: Vec<ogsql_parser::ast::Expr>) -> ogsql_parser::ast::Expr {
+        ogsql_parser::ast::Expr::FunctionCall {
+            name: name.iter().map(|s| ogsql_parser::ast::Ident::new(*s)).collect(),
+            args,
+            distinct: false,
+            over: None,
+            filter: None,
+            within_group: Vec::new(),
+            separator: None,
+            default: None,
+            conversion_format: None,
+            agg_from: None,
+            builtin: None,
+        }
+    }
+
+    fn col_expr(names: &[&str]) -> ogsql_parser::ast::Expr {
+        ogsql_parser::ast::Expr::ColumnRef(names.iter().map(|s| ogsql_parser::ast::Ident::new(*s)).collect())
+    }
+
+    fn int_lit(n: i64) -> ogsql_parser::ast::Expr {
+        ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Integer(n))
+    }
+
+    #[test]
+    fn test_collection_element_access_uses_one_based_get() {
+        // `v_coll(3)` on a `List<Long>` var → bounds-guarded 1-based get.
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_coll".into(), "java.util.List<Long>".into());
+        let out = expr_to_java(&fc_expr(&["v_coll"], vec![int_lit(3)]), &proc);
+        assert_eq!(out, "((3) >= 1 && (3) <= (vColl).size() ? vColl.get((int)(long)(3) - 1) : null)");
+    }
+
+    #[test]
+    fn test_collection_element_access_via_package_var() {
+        // Package-level collection vars resolve through package_vars too.
+        let mut proc = empty_proc();
+        proc.package_vars.insert(
+            "g_coll".into(),
+            crate::types::VarInfo {
+                name: "g_coll".into(),
+                java_type: "java.util.List<String>".into(),
+                sql_type: "num_table".into(),
+                default_value: None,
+                is_constant: false,
+            },
+        );
+        let out = expr_to_java(&fc_expr(&["g_coll"], vec![int_lit(1)]), &proc);
+        assert_eq!(out, "((1) >= 1 && (1) <= (gColl).size() ? gColl.get((int)(long)(1) - 1) : null)");
+    }
+
+    #[test]
+    fn test_collection_exists_next_prior_expr() {
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_coll".into(), "java.util.List<Long>".into());
+        proc.local_vars.insert("v_i".into(), "Long".into());
+        let out = expr_to_java(&fc_expr(&["v_coll", "exists"], vec![col_expr(&["v_i"])]), &proc);
+        assert!(out.contains(".size()") && out.contains(">= 1"), "EXISTS must check bounds: {}", out);
+        let out = expr_to_java(&fc_expr(&["v_coll", "next"], vec![col_expr(&["v_i"])]), &proc);
+        assert!(out.contains("+ 1") && out.contains(".size()"), "NEXT(i) → i+1 or null: {}", out);
+        let out = expr_to_java(&fc_expr(&["v_coll", "prior"], vec![col_expr(&["v_i"])]), &proc);
+        assert!(out.contains("- 1"), "PRIOR(i) → i-1 or null: {}", out);
+    }
+
+    #[test]
+    fn test_collection_first_last_count_attrs() {
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_coll".into(), "java.util.List<Long>".into());
+        let out = expr_to_java(&col_expr(&["v_coll", "first"]), &proc);
+        assert!(out.contains("isEmpty()") && out.contains("Long.valueOf(1)"), "FIRST: {}", out);
+        let out = expr_to_java(&col_expr(&["v_coll", "last"]), &proc);
+        assert!(out.contains("isEmpty()") && out.contains(".size()"), "LAST: {}", out);
+        let out = expr_to_java(&col_expr(&["v_coll", "count"]), &proc);
+        assert!(out.contains(".size()"), "COUNT: {}", out);
+    }
+
+    #[test]
+    fn test_collection_methods_do_not_fire_on_non_list_vars() {
+        // `v_map.DELETE`-style names on a record (Map) var must keep the
+        // record field-access path, not the collection-method path.
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_rec".into(), "Map<String, Object>".into());
+        let out = expr_to_java(&col_expr(&["v_rec", "first"]), &proc);
+        assert!(!out.contains("isEmpty()"), "record field access must not become collection FIRST: {}", out);
+    }
+
+    #[test]
+    fn test_unary_minus_bigdecimal_uses_negate() {
+        // Review #129 P1-4: `-v_amt` on a BigDecimal must emit .negate(),
+        // not Java unary minus (which BigDecimal does not support).
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_amt".into(), "java.math.BigDecimal".into());
+        let expr = ogsql_parser::ast::Expr::UnaryOp {
+            op: "-".into(),
+            expr: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["v_amt".into()])),
+        };
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains(".negate()"), "BigDecimal unary minus must use negate(): {}", out);
+        assert!(!out.starts_with("(-"), "no Java unary minus on BigDecimal: {}", out);
+    }
+
+    #[test]
+    fn test_coerce_localdate_expr_to_sql_date() {
+        // Review #129 P0-1: temporal lowering ends in `.toLocalDate()` (a
+        // LocalDate) — assigning to java.sql.Date must wrap in Date.valueOf.
+        let proc = empty_proc();
+        let expr = "new java.sql.Date((new java.sql.Timestamp(System.currentTimeMillis())).getTime()).toLocalDate().plusMonths(Long.parseLong(String.valueOf(1)))";
+        let out = coerce_for_type(expr, Some("java.sql.Date"), &proc);
+        assert!(out.starts_with("java.sql.Date.valueOf("), "LocalDate expr must be wrapped: {}", out);
+        assert!(out.ends_with(')'), "wrapped expr must close: {}", out);
+    }
+
+    #[test]
+    fn test_expr_yields_localdate_structural() {
+        // Review #129 §3-A: substring vetoes misfire — an expr containing
+        // `java.sql.Date.valueOf(` can still yield LocalDate, and a bare
+        // `.toLocalDate()` can be nested inside String.valueOf(...).
+        assert!(expr_yields_localdate(
+            "new java.sql.Date((vD).getTime()).toLocalDate().plusMonths(Long.parseLong(String.valueOf(1)))"
+        ));
+        assert!(expr_yields_localdate(
+            "new java.sql.Date((vD).getTime()).toLocalDate().withDayOfMonth(new java.sql.Date((vD).getTime()).toLocalDate().lengthOfMonth())"
+        ));
+        assert!(expr_yields_localdate("x.toLocalDate()"));
+        assert!(!expr_yields_localdate("String.valueOf(x.toLocalDate())"));
+        assert!(!expr_yields_localdate("x.toLocalDate().toString()"));
+        assert!(!expr_yields_localdate("new java.sql.Timestamp(System.currentTimeMillis())"));
+        assert!(!expr_yields_localdate("vD"));
+    }
+
+    #[test]
+    fn test_localdate_operand_to_ts_wraps_only_localdate() {
+        let localdate = "new java.sql.Date((vD).getTime()).toLocalDate().plusMonths(1L)";
+        let wrapped = localdate_operand_to_ts(localdate);
+        assert!(wrapped.starts_with("new java.sql.Timestamp(java.sql.Date.valueOf("), "got: {}", wrapped);
+        // Already-Date exprs and non-localdate exprs pass through.
+        assert_eq!(localdate_operand_to_ts("vD"), "vD");
+        assert_eq!(
+            localdate_operand_to_ts("new java.sql.Timestamp(System.currentTimeMillis())"),
+            "new java.sql.Timestamp(System.currentTimeMillis())"
+        );
+        assert_eq!(localdate_operand_to_ts("String.valueOf(x.toLocalDate())"), "String.valueOf(x.toLocalDate())");
+    }
+
+    #[test]
+    fn test_field_access_on_scalar_collection_elem_degrades() {
+        // Review #129 §4.3: `v_tab(1).child_flag` on `List<Long>` must NOT
+        // emit `.getOrDefault` on a Long (javac: cannot find symbol) —
+        // degrade to a TOBEFIX null instead.
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_tab".into(), "java.util.List<Long>".into());
+        let expr = ogsql_parser::ast::Expr::FieldAccess {
+            object: Box::new(fc_expr(&["v_tab"], vec![int_lit(1)])),
+            field: "child_flag".into(),
+        };
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains("TOBEFIX"), "scalar elem field read must degrade: {}", out);
+        assert!(!out.contains("getOrDefault"), "must not emit Map read on Long: {}", out);
+    }
+
+    #[test]
+    fn test_field_access_on_map_collection_elem_emits_map_read() {
+        // `v_rectab(1).item_id` on `List<Map<String,Object>>` keeps the
+        // getOrDefault lowering (element IS a record map).
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_rectab".into(), "java.util.List<Map<String, Object>>".into());
+        let expr = ogsql_parser::ast::Expr::FieldAccess {
+            object: Box::new(fc_expr(&["v_rectab"], vec![int_lit(1)])),
+            field: "item_id".into(),
+        };
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains("getOrDefault(\"itemId\""), "map elem field read: {}", out);
+        assert!(!out.contains("TOBEFIX"), "{}", out);
+    }
+
+    #[test]
+    fn test_field_access_on_object_collection_elem_casts() {
+        // `List<Object>`/`List<?>` elements need an explicit Map cast or
+        // `.getOrDefault` does not compile on Object.
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_any".into(), "java.util.List<Object>".into());
+        let expr = ogsql_parser::ast::Expr::FieldAccess {
+            object: Box::new(fc_expr(&["v_any"], vec![int_lit(1)])),
+            field: "item_id".into(),
+        };
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains("(java.util.Map<String, Object>)"), "object elem needs cast: {}", out);
+    }
+
+    #[test]
+    fn test_replace_with_get_args_null_short_circuits() {
+        // Review #129 S2: `REPLACE(s, coll(i), r)` must NULL-short-circuit
+        // (PL/SQL semantics) instead of `String.valueOf(null)` → "null".
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_content".into(), "String".into());
+        proc.local_vars.insert("v_old_char_list".into(), "Object".into());
+        proc.local_vars.insert("v_i".into(), "Long".into());
+        let coll_read = fc_expr(&["v_old_char_list"], vec![col_expr(&["v_i"])]);
+        let expr = fc_expr(
+            &["replace"],
+            vec![
+                col_expr(&["v_content"]),
+                coll_read,
+                ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String("X".into())),
+            ],
+        );
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains("== null ? null :"), "REPLACE must NULL-guard: {}", out);
+        assert!(
+            out.contains("String.valueOf(((java.util.List<?>) vOldCharList).get("),
+            "get arg must be String.valueOf'd: {}",
+            out
+        );
+        assert!(!out.contains("replace(String.valueOf(null)"), "must not stringify null: {}", out);
+    }
+
+    // ── Issue #127: cross-package disambiguation ──
+
+    #[test]
+    fn test_cross_pkg_identical_signatures_pick_first_with_note() {
+        // #127: BIGFUND.fnc_com_getday (schema-level) and
+        // PKG_UTIL_RATE.fnc_com_getday (package-level) share an identical
+        // signature — the call is compilable either way, so pick the first
+        // candidate and annotate the ambiguity instead of TOBEFIX null.
+        let mut proc = empty_proc();
+        let entry = |svc: &str, pkg: &str| GlobalFnEntry {
+            svc_var: svc.into(),
+            package: pkg.into(),
+            params: vec![crate::types::Parameter {
+                name: "p_d".into(),
+                java_type: "java.sql.Date".into(),
+                sql_type: "date".into(),
+                mode: None,
+                default_value: None,
+            }],
+            return_type: Some("Long".into()),
+        };
+        proc.all_proc_params.insert(
+            "fncComGetday".into(),
+            vec![entry("bigfundService", "bigfund"), entry("pkgUtilRateService", "pkg_util_rate")],
+        );
+        proc.local_vars.insert("v_d".into(), "java.sql.Date".into());
+        let expr = fc_expr(&["fnc_com_getday"], vec![col_expr(&["v_d"])]);
+        let out = expr_to_java(&expr, &proc);
+        assert!(
+            out.contains("bigfundService.fncComGetday("),
+            "identical signatures resolve to first candidate: {}",
+            out
+        );
+        assert!(out.contains("ambiguous"), "choice must be annotated: {}", out);
+        assert!(!out.contains("TOBEFIX"), "identical signatures must not degrade: {}", out);
+    }
+
+    #[test]
+    fn test_cross_pkg_differing_signatures_stay_tobefix_with_sigs() {
+        // Differing signatures remain ambiguous: TOBEFIX marker must list
+        // each candidate's signature, not just the service name.
+        let mut proc = empty_proc();
+        let entry = |svc: &str, pkg: &str, jt: &str| GlobalFnEntry {
+            svc_var: svc.into(),
+            package: pkg.into(),
+            params: vec![crate::types::Parameter {
+                name: "x".into(),
+                java_type: jt.into(),
+                sql_type: "varchar2".into(),
+                mode: None,
+                default_value: None,
+            }],
+            return_type: None,
+        };
+        proc.all_proc_params.insert(
+            "getVal".into(),
+            vec![entry("pkgAService", "pkg_a", "String"), entry("pkgBService", "pkg_b", "Long")],
+        );
+        let expr = fc_expr(&["get_val"], vec![col_expr(&["v_x"])]);
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains("TOBEFIX"), "differing signatures must stay unresolved: {}", out);
+        assert!(out.contains("pkgAService"), "candidate A listed: {}", out);
+        assert!(out.contains("pkgBService"), "candidate B listed: {}", out);
+        assert!(out.contains("String"), "signature detail included: {}", out);
+    }
+
+    // ── Issue #128-3: temporal lowering must not round-trip through String ──
+
+    #[test]
+    fn test_add_months_on_timestamp_never_string_parses() {
+        // ADD_MONTHS(SYSDATE, 1): SYSDATE lowers to java.sql.Timestamp;
+        // LocalDate.parse(String.valueOf(ts)) throws at runtime.
+        let proc = empty_proc();
+        let expr = fc_expr(&["add_months"], vec![fc_expr(&["sysdate"], vec![]), int_lit(1)]);
+        let out = expr_to_java(&expr, &proc);
+        assert!(
+            !out.contains("LocalDate.parse(String.valueOf"),
+            "temporal arg must not go through String.valueOf→parse: {}",
+            out
+        );
+        assert!(out.contains("getTime()"), "expected Timestamp→Date via getTime(): {}", out);
+    }
+
+    #[test]
+    fn test_last_day_on_timestamp_never_string_parses() {
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_ts".into(), "java.sql.Timestamp".into());
+        let expr = fc_expr(&["last_day"], vec![col_expr(&["v_ts"])]);
+        let out = expr_to_java(&expr, &proc);
+        assert!(!out.contains("LocalDate.parse(String.valueOf"), "Timestamp local must not string-parse: {}", out);
     }
 }

@@ -213,16 +213,36 @@ pub fn extract_from_parse_output(
             }
             Statement::CreateType(ct) => {
                 let type_name = object_name_to_string(&ct.name);
-                if let TypeKind::Composite { attributes } = &ct.type_kind {
-                    let fields: Vec<(String, String)> = attributes
-                        .iter()
-                        .map(|attr| {
+                match &ct.type_kind {
+                    TypeKind::Composite { attributes } => {
+                        let mut fields: Vec<(String, String)> = Vec::new();
+                        let mut field_sql_types: Vec<(String, String)> = Vec::new();
+                        for attr in attributes {
                             let sql_t = format_sql_data_type(&attr.data_type);
                             let jt = sql_type_to_java(&sql_t).map(|s| s.to_string()).unwrap_or_else(|| "Object".into());
-                            (attr.name.clone(), jt)
-                        })
-                        .collect();
-                    custom_types.insert(type_name.clone(), CustomTypeInfo { fields, is_record: true });
+                            fields.push((attr.name.clone(), jt));
+                            field_sql_types.push((attr.name.clone(), sql_t));
+                        }
+                        custom_types.insert(
+                            type_name.clone(),
+                            CustomTypeInfo { fields, field_sql_types, is_record: true, elem_java_type: None },
+                        );
+                    }
+                    // `CREATE TYPE t AS TABLE OF elem` / object collection types
+                    // (issue #124): model as List<elem>.
+                    TypeKind::Table { element_type } => {
+                        let elem_java = custom_type_elem_java_from_name(element_type, &custom_types);
+                        custom_types.insert(
+                            type_name.clone(),
+                            CustomTypeInfo {
+                                fields: Vec::new(),
+                                field_sql_types: Vec::new(),
+                                is_record: false,
+                                elem_java_type: Some(elem_java),
+                            },
+                        );
+                    }
+                    _ => {}
                 }
             }
             Statement::Grant(_) => {
@@ -388,34 +408,43 @@ fn extract_package_item(
             use ogsql_parser::ast::plpgsql::PlTypeDecl;
             match type_decl {
                 PlTypeDecl::Record { name, fields } => {
-                    let java_fields: Vec<(String, String)> = fields
-                        .iter()
-                        .map(|f| {
-                            let sql_t = format_pl_data_type(&f.data_type);
-                            let jt = sql_type_to_java(&sql_t).map(|s| s.to_string()).unwrap_or_else(|| "Object".into());
-                            (f.name.clone(), jt)
-                        })
-                        .collect();
-                    custom_types.insert(name.clone(), CustomTypeInfo { fields: java_fields, is_record: true });
-                }
-                PlTypeDecl::TableOf { name, elem_type, .. } => {
-                    let sql_t = format_pl_data_type(elem_type);
-                    let jt = sql_type_to_java(&sql_t).map(|s| s.to_string()).unwrap_or_else(|| "Object".into());
+                    let mut java_fields: Vec<(String, String)> = Vec::new();
+                    let mut field_sql_types: Vec<(String, String)> = Vec::new();
+                    for f in fields {
+                        let sql_t = format_pl_data_type(&f.data_type);
+                        let jt = sql_type_to_java(&sql_t).map(|s| s.to_string()).unwrap_or_else(|| "Object".into());
+                        java_fields.push((f.name.clone(), jt));
+                        field_sql_types.push((f.name.clone(), sql_t));
+                    }
                     custom_types.insert(
                         name.clone(),
-                        CustomTypeInfo { fields: vec![("element".into(), jt)], is_record: false },
+                        CustomTypeInfo { fields: java_fields, field_sql_types, is_record: true, elem_java_type: None },
                     );
                 }
-                PlTypeDecl::VarrayOf { name, elem_type, .. } => {
-                    let sql_t = format_pl_data_type(elem_type);
-                    let jt = sql_type_to_java(&sql_t).map(|s| s.to_string()).unwrap_or_else(|| "Object".into());
+                PlTypeDecl::TableOf { name, elem_type, .. } | PlTypeDecl::VarrayOf { name, elem_type, .. } => {
+                    // Issue #124: keep the element Java type so collection
+                    // variables lower to List<Elem> instead of List<Object>.
+                    let elem_java = custom_type_elem_java(elem_type, custom_types);
                     custom_types.insert(
                         name.clone(),
-                        CustomTypeInfo { fields: vec![("element".into(), jt)], is_record: false },
+                        CustomTypeInfo {
+                            fields: Vec::new(),
+                            field_sql_types: Vec::new(),
+                            is_record: false,
+                            elem_java_type: Some(elem_java),
+                        },
                     );
                 }
                 PlTypeDecl::RefCursor { name } => {
-                    custom_types.insert(name.clone(), CustomTypeInfo { fields: Vec::new(), is_record: false });
+                    custom_types.insert(
+                        name.clone(),
+                        CustomTypeInfo {
+                            fields: Vec::new(),
+                            field_sql_types: Vec::new(),
+                            is_record: false,
+                            elem_java_type: None,
+                        },
+                    );
                 }
             }
         }
@@ -484,6 +513,67 @@ fn parse_sql_literal_to_java(val: &str) -> Option<String> {
         return Some("false".into());
     }
     None
+}
+
+/// Look up a custom type by name, tolerating schema-qualified references
+/// (`pkg.type`) and case differences (issue #124).
+pub(crate) fn find_custom_type<'a>(
+    custom_types: &'a HashMap<String, CustomTypeInfo>,
+    name: &str,
+) -> Option<&'a CustomTypeInfo> {
+    let lower = name.to_lowercase();
+    custom_types.get(name).or_else(|| custom_types.get(&lower)).or_else(|| {
+        let bare = lower.rsplit('.').next().unwrap_or(&lower);
+        // Deterministic pick (review #129 P0-2): HashMap iteration order must
+        // not leak into generated code when several keys share the bare name.
+        let mut hits: Vec<&String> = custom_types.keys().filter(|k| k.to_lowercase() == bare).collect();
+        hits.sort();
+        hits.first().and_then(|k| custom_types.get(*k))
+    })
+}
+
+/// Java type a custom type lowers to: records → Map, collections → List<elem>.
+pub(crate) fn custom_type_java_type(ct: &CustomTypeInfo) -> String {
+    if ct.is_record {
+        "Map<String, Object>".into()
+    } else if let Some(ref elem) = ct.elem_java_type {
+        format!("java.util.List<{}>", elem)
+    } else {
+        "Object".into()
+    }
+}
+
+/// Resolve a `PlDataType` (collection element / var decl type) to a Java type,
+/// consulting already-registered custom types before falling back to scalars.
+fn custom_type_elem_java(
+    dt: &ogsql_parser::ast::plpgsql::PlDataType,
+    custom_types: &HashMap<String, CustomTypeInfo>,
+) -> String {
+    use ogsql_parser::ast::plpgsql::PlDataType;
+    let sql = format_pl_data_type(dt);
+    let lower = sql.to_lowercase();
+    if lower.contains("%rowtype") {
+        return "Map<String, Object>".into();
+    }
+    if let PlDataType::TypeName(name) = dt {
+        if let Some(ct) = find_custom_type(custom_types, name) {
+            return custom_type_java_type(ct);
+        }
+        return sql_type_to_java(name).map(|s| s.to_string()).unwrap_or_else(|| "Object".into());
+    }
+    if lower.contains("%type") {
+        return "String".into();
+    }
+    sql_type_to_java(&sql).map(|s| s.to_string()).unwrap_or_else(|| "Object".into())
+}
+
+/// `TypeKind::Table.element_type` is a plain string — same resolution as
+/// `custom_type_elem_java` but for the SQL-type-name form.
+fn custom_type_elem_java_from_name(name: &str, custom_types: &HashMap<String, CustomTypeInfo>) -> String {
+    if let Some(ct) = find_custom_type(custom_types, name) {
+        return custom_type_java_type(ct);
+    }
+    sql_type_to_java(name).map(|s| s.to_string()).unwrap_or_else(|| "Object".into())
 }
 
 pub fn format_pl_data_type(dt: &ogsql_parser::ast::plpgsql::PlDataType) -> String {

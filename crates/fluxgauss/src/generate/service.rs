@@ -72,13 +72,19 @@ pub fn write_service_class(
     });
     let has_map_in_body = all_body.contains("Map<String") || has_list_return;
     let has_cursor_results = pkg.procedures.iter().any(|p| !p.open_cursors.is_empty());
-    if all_body.contains("List<") || has_list_return || has_cursor_results {
+    // Package-level vars are emitted as field initializers (`= new HashMap<>()`,
+    // `= new ArrayList<>()`) which never appear in java_logic_lines — scan their
+    // declared types too or the imports are missing (issue #124 exposed this:
+    // a record-typed package var now resolves to Map<String, Object>).
+    let has_pkg_map_var = pkg.package_vars.values().any(|v| v.java_type.contains("Map<"));
+    let has_pkg_list_var = pkg.package_vars.values().any(|v| v.java_type.contains("List<"));
+    if all_body.contains("List<") || has_list_return || has_cursor_results || has_pkg_list_var {
         all_imports.insert("import java.util.List;".to_string());
     }
-    if has_map_in_body || has_cursor_results {
+    if has_map_in_body || has_cursor_results || has_pkg_map_var {
         all_imports.insert("import java.util.Map;".to_string());
     }
-    if all_body.contains("HashMap<") || all_body.contains("new HashMap") {
+    if all_body.contains("HashMap<") || all_body.contains("new HashMap") || has_pkg_map_var {
         all_imports.insert("import java.util.HashMap;".to_string());
     }
     if all_body.contains("BigDecimal") {
@@ -355,6 +361,11 @@ pub(crate) fn boxed_to_primitive(t: &str) -> &str {
 
 fn default_for_type(t: &str) -> &'static str {
     let tl = t.to_lowercase();
+    // Issue #124: check collection types BEFORE scalar `contains` checks —
+    // "java.util.list<long>" contains "long" and would wrongly yield "0L".
+    if tl.contains("list<") {
+        return "new java.util.ArrayList<>()";
+    }
     if tl.contains("long") {
         return "0L";
     }
@@ -378,19 +389,106 @@ fn default_for_type(t: &str) -> &'static str {
     }
     if tl.starts_with("atomicreference") {
         let inner = tl.trim_start_matches("atomicreference<").trim_end_matches('>');
-        return if inner.contains("long") || inner.contains("Long") {
-            "new AtomicReference<>(1L)"
-        } else if inner.contains("int") || inner.contains("Integer") {
-            "new AtomicReference<>(0)"
-        } else if inner.contains("BigDecimal") {
-            "new AtomicReference<>(java.math.BigDecimal.ZERO)"
-        } else if inner.contains("String") {
-            "new AtomicReference<>(\"\")"
-        } else {
-            "new AtomicReference<>(null)"
+        // Single-source seed classification lives in `ar_seed_literal`
+        // (review #129 §3-B); map the literal back to the full initializer.
+        return match ar_seed_literal(inner) {
+            "new java.util.ArrayList<>()" => "new AtomicReference<>(new java.util.ArrayList<>())",
+            "new java.util.HashMap<>()" => "new AtomicReference<>(new java.util.HashMap<>())",
+            "1L" => "new AtomicReference<>(1L)",
+            "0" => "new AtomicReference<>(0)",
+            "java.math.BigDecimal.ZERO" => "new AtomicReference<>(java.math.BigDecimal.ZERO)",
+            _ => "new AtomicReference<>(null)",
         };
     }
     "null"
+}
+
+/// Single source for `AtomicReference` seed selection (review #129 §3-B).
+/// Accepts either the bare inner java type or a full `AtomicReference<...>`
+/// type. Compound inners (`List`/`Map`) are checked before scalar substring
+/// matches — `List<Long>` contains "long" but must seed an empty list.
+pub(crate) fn ar_seed_literal(java_type: &str) -> &'static str {
+    let mut t = java_type.trim();
+    if let Some(inner) = t
+        .strip_prefix("AtomicReference<")
+        .or_else(|| t.strip_prefix("atomicreference<"))
+        .and_then(|s| s.strip_suffix('>'))
+    {
+        t = inner.trim();
+    }
+    let il = t.to_lowercase();
+    if il.contains("list<") || il.contains("java.util.list") {
+        "new java.util.ArrayList<>()"
+    } else if il.starts_with("map<") || il.contains("map<string") {
+        "new java.util.HashMap<>()"
+    } else if il.contains("long") {
+        "1L"
+    } else if il == "int" || il == "integer" || il.contains("java.lang.integer") {
+        "0"
+    } else if il.contains("bigdecimal") {
+        "java.math.BigDecimal.ZERO"
+    } else {
+        // Review #129 B2/B4: String seeds must stay `null` — `""` flips
+        // `IS NULL` branches and feeds "" into mapper slots typed Long/etc.
+        // (baseline behavior: unassigned String OUT/local = NULL).
+        "null"
+    }
+}
+
+/// Emit `AtomicReference<T> name = new AtomicReference<>(seed);` using the
+/// shared seed classifier — used by service/test/itest generators.
+pub(crate) fn atomic_ref_decl(java_type: &str, var_name: &str) -> String {
+    format!("AtomicReference<{}> {} = new AtomicReference<>({});", java_type, var_name, ar_seed_literal(java_type))
+}
+
+/// Review #129 B3: record-typed (Map) test/itest fixtures must be populated —
+/// an empty HashMap makes every `getOrDefault(...)` fall through to `null`
+/// and breaks generated assertions. Emits a double-brace HashMap literal
+/// with both camelCase and snake_case keys (record reads use
+/// `getOrDefault("camel", get("snake"))`).
+pub(crate) fn populated_record_fixture(fields: &[(String, String)]) -> String {
+    let mut body = String::new();
+    for (fname, ftype) in fields {
+        let camel = crate::naming::snake_to_camel(fname);
+        let v = record_field_seed(ftype);
+        body.push_str(&format!("put(\"{}\", {}); ", camel, v));
+        // Emit the raw (snake_case) key too when it differs — field reads
+        // fall back across both spellings.
+        if fname != &camel {
+            body.push_str(&format!("put(\"{}\", {}); ", fname, v));
+        }
+    }
+    // Double-brace init: outer {} = anonymous class body, inner {} = instance
+    // initializer block. Single braces would be a compile error (bare
+    // statements are not class members).
+    format!("new java.util.HashMap<String, Object>() {{{{ {} }}}}", body)
+}
+
+fn record_field_seed(java_type: &str) -> &'static str {
+    let tl = java_type.to_lowercase();
+    if tl.contains("long") {
+        "1L"
+    } else if tl.contains("biginteger") {
+        // Review #129 S6: check before the `int` substring — "biginteger"
+        // contains "int" and would otherwise seed `1`.
+        "java.math.BigInteger.ONE"
+    } else if tl.contains("int") || tl.contains("integer") {
+        "1"
+    } else if tl.contains("bigdecimal") {
+        "java.math.BigDecimal.ONE"
+    } else if tl.contains("double") || tl.contains("float") {
+        "1.0d"
+    } else if tl.contains("boolean") {
+        "true"
+    } else if tl.contains("timestamp") {
+        "java.sql.Timestamp.valueOf(\"2024-01-01 00:00:00\")"
+    } else if tl.contains("date") {
+        "java.sql.Date.valueOf(\"2024-01-01\")"
+    } else if tl.contains("string") {
+        "\"test\""
+    } else {
+        "null"
+    }
 }
 
 /// JLS unreachable-statement guard: statements after an unconditional
@@ -712,19 +810,7 @@ fn build_service_method(
                 }
                 // Check if this local var was promoted to AtomicReference for OUT param usage
                 if let Some(inner_type) = proc.out_local_vars.get(&var_name.to_lowercase()) {
-                    let ar_init = if inner_type.contains("Long") || inner_type == "long" {
-                        "1L"
-                    } else if inner_type.contains("Integer") || inner_type == "int" {
-                        "1"
-                    } else if inner_type.contains("BigDecimal") {
-                        "java.math.BigDecimal.ZERO"
-                    } else {
-                        "null"
-                    };
-                    body_lines.push(format!(
-                        "AtomicReference<{}> {} = new AtomicReference<>({});",
-                        inner_type, var_java, ar_init
-                    ));
+                    body_lines.push(crate::generate::service::atomic_ref_decl(inner_type, &var_java));
                 } else {
                     let default_val = proc
                         .local_var_defaults
@@ -1221,6 +1307,34 @@ mod tests {
     }
 
     #[test]
+    fn test_ar_seed_literal_compound_and_scalar() {
+        // Review #129 §3-B/R3: compound inners must be checked before scalar
+        // substring matches — `List<Long>` contains "long" but seeds 1L,
+        // which fails AtomicReference<> type inference.
+        assert_eq!(ar_seed_literal("java.util.List<Long>"), "new java.util.ArrayList<>()");
+        assert_eq!(ar_seed_literal("AtomicReference<java.util.List<Long>>"), "new java.util.ArrayList<>()");
+        assert_eq!(ar_seed_literal("Map<String, Object>"), "new java.util.HashMap<>()");
+        assert_eq!(ar_seed_literal("Long"), "1L");
+        assert_eq!(ar_seed_literal("java.lang.Integer"), "0");
+        assert_eq!(ar_seed_literal("java.math.BigDecimal"), "java.math.BigDecimal.ZERO");
+        // Review #129 B2/B4: String must seed null, not "" — "" breaks IS NULL
+        // branches and String-typed mapper params bound to numeric slots.
+        assert_eq!(ar_seed_literal("String"), "null");
+        assert_eq!(ar_seed_literal("java.lang.String"), "null");
+        assert_eq!(ar_seed_literal("java.sql.Date"), "null");
+        // BigInteger must not hit the "int" substring arm.
+        assert_eq!(ar_seed_literal("java.math.BigInteger"), "null");
+    }
+
+    #[test]
+    fn test_atomic_ref_decl_uses_shared_seed() {
+        assert_eq!(
+            atomic_ref_decl("java.util.List<Long>", "vTab"),
+            "AtomicReference<java.util.List<Long>> vTab = new AtomicReference<>(new java.util.ArrayList<>());"
+        );
+    }
+
+    #[test]
     fn test_range_loop_counter_used_outside_is_declared() {
         // fastaas ImportExcelService: a WHILE loop drives `i` (i := 1; i := i + 1)
         // before a numeric `for (int i = ...)` loop. The range-loop suppression
@@ -1369,5 +1483,15 @@ mod tests {
             std::fs::read_to_string(dir.path().join("src/main/java/com/example/demo/service/OrderService.java"))
                 .unwrap();
         assert!(content.contains("String __SQLSTATE__ = \"\";"));
+    }
+
+    #[test]
+    fn test_record_field_seed_biginteger_not_int_substring() {
+        // Review #129 S6: "biginteger" contains "int" — the biginteger
+        // branch must run before the int check or the seed degrades to `1`.
+        assert_eq!(record_field_seed("java.math.BigInteger"), "java.math.BigInteger.ONE");
+        assert_eq!(record_field_seed("BigInteger"), "java.math.BigInteger.ONE");
+        assert_eq!(record_field_seed("Integer"), "1");
+        assert_eq!(record_field_seed("int"), "1");
     }
 }

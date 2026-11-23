@@ -649,8 +649,38 @@ fn phase2_analyze(
     let mut packages = parsed.packages;
     ctx.debug = debug;
 
-    let proc_summaries: std::collections::HashMap<String, PackageSummary> =
+    // P1-1 (review #129): summaries and sibling overload tables are snapshots
+    // taken at extraction time, before custom-type resolution runs inside
+    // analyze_procedure. Params typed as a custom record/collection still carry
+    // `Object` here, so callers would coerce OUT args / emit AtomicReference
+    // against the stale type. Re-resolve them against each package's
+    // custom_types up front.
+    let pkg_types_by_name: HashMap<String, HashMap<String, crate::types::CustomTypeInfo>> =
+        packages.iter().map(|p| (p.package_name.to_lowercase(), p.custom_types.clone())).collect();
+    let resolve_params = |params: &mut [crate::types::Parameter], pkg_name: &str| {
+        let ct_map = pkg_types_by_name.get(&pkg_name.to_lowercase());
+        if let Some(ct_map) = ct_map {
+            for p in params.iter_mut() {
+                if p.java_type == "Object" {
+                    if let Some(ct) = crate::extract::find_custom_type(ct_map, &p.sql_type) {
+                        p.java_type = crate::extract::custom_type_java_type(ct);
+                    }
+                }
+            }
+        }
+    };
+    let mut proc_summaries: std::collections::HashMap<String, PackageSummary> =
         parsed.summaries.iter().map(|s| (s.name.clone(), s.clone())).collect();
+    for summary in proc_summaries.values_mut() {
+        for proc_in_summary in &mut summary.procedures {
+            let pkg_name = if !proc_in_summary.package.is_empty() {
+                proc_in_summary.package.clone()
+            } else {
+                summary.name.clone()
+            };
+            resolve_params(&mut proc_in_summary.parameters, &pkg_name);
+        }
+    }
 
     let ddl_schema = crate::generate::itest::parse_table_ddl(sql_files);
 
@@ -685,9 +715,40 @@ fn phase2_analyze(
     let mut idx = 0;
 
     for pkg in &mut packages {
+        // Review #129 B3: resolve record field %TYPE anchors against the DDL
+        // schema cache before custom_types is cloned into each procedure —
+        // keeps DTO declarations and test fixtures on one resolved truth.
+        let unresolved_anchors = crate::analyze::resolve_custom_record_field_types(&mut pkg.custom_types, &ddl_schema);
+        for (tname, fname, sql) in unresolved_anchors {
+            // Review #129 §4.4: unresolvable %TYPE anchors (e.g. variable
+            // anchors `x%TYPE`) must surface in the report, not stay silent.
+            ctx.unresolved_calls.push(crate::types::UnresolvedCall {
+                caller: pkg.package_name.clone(),
+                callee: format!("{}.{}", tname, fname),
+                caller_file: pkg.source_file.clone(),
+                args: sql,
+                hint: "%TYPE anchor unresolved — no DDL in sources and no column-name match; field stays Object".into(),
+            });
+        }
         let pkg_custom_types = pkg.custom_types.clone();
-        let pkg_vars = pkg.package_vars.clone();
+        // Issue #124: package-level vars whose type is a custom collection /
+        // record were extracted as `Object`; resolve them once here so both
+        // per-procedure analysis and service generation see the real type.
+        let mut pkg_vars = pkg.package_vars.clone();
+        for vi in pkg_vars.values_mut() {
+            if vi.java_type == "Object" {
+                if let Some(ct) = crate::extract::find_custom_type(&pkg_custom_types, &vi.sql_type) {
+                    vi.java_type = crate::extract::custom_type_java_type(ct);
+                }
+            }
+        }
+        pkg.package_vars = pkg_vars.clone();
 
+        // Same P1-1 fix for the sibling-overload table (same-package calls
+        // resolve arg coercion / OUT promotion against these param types).
+        for p in &mut pkg.procedures {
+            resolve_params(&mut p.parameters, &pkg.package_name);
+        }
         let mut sibling_params: HashMap<String, Vec<Vec<_>>> = HashMap::new();
         for p in &pkg.procedures {
             let method_name = crate::naming::java_method_name(&p.proc_name);
@@ -817,13 +878,20 @@ fn phase3_generate(
             continue;
         }
 
-        if let Err(e) = crate::generate::mapper::write_mapper_xml(output_dir, pkg, &base_package, encoding) {
-            errors.push(ConversionError::Io {
-                path: pkg.package_name.clone(),
-                message: format!("write_mapper_xml: {}", e),
-            });
-            continue;
-        }
+        let mapper_stmts = match crate::generate::mapper::write_mapper_xml(output_dir, pkg, &base_package, encoding) {
+            Ok((_, stmts)) => stmts,
+            Err(e) => {
+                errors.push(ConversionError::Io {
+                    path: pkg.package_name.clone(),
+                    message: format!("write_mapper_xml: {}", e),
+                });
+                continue;
+            }
+        };
+
+        // Issue #128: surface @Param/placeholder mismatches at generation
+        // time instead of as runtime BindingExceptions.
+        analyzed.warnings.extend(crate::generate::mapper::mapper_param_mismatches(pkg, &mapper_stmts));
 
         if let Err(e) =
             crate::generate::test::write_service_test(output_dir, pkg, &base_package, &service_injections, encoding)

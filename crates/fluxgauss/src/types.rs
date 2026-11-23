@@ -147,7 +147,23 @@ pub struct CursorInfo {
 #[derive(Debug, Clone)]
 pub struct CustomTypeInfo {
     pub fields: Vec<(String, String)>,
+    /// Review #129 B3: raw SQL type text per record field, parallel to
+    /// `fields` (same order). `fields` only stores the resolved Java type,
+    /// which loses the `<table>.<col>%TYPE` anchor needed to resolve column
+    /// types later once the DDL schema cache is available (extraction runs
+    /// before `parse_table_ddl`). Empty for non-record types.
+    pub field_sql_types: Vec<(String, String)>,
     pub is_record: bool,
+    /// Java element type for collection types (`TYPE t IS TABLE OF x`,
+    /// `VARRAY`, `INDEX BY`). `None` for records / ref cursors / object
+    /// types. Issue #124.
+    pub elem_java_type: Option<String>,
+}
+
+impl CustomTypeInfo {
+    pub fn is_collection(&self) -> bool {
+        self.elem_java_type.is_some() && !self.is_record
+    }
 }
 
 // ── Scheduler Task ──
@@ -206,6 +222,11 @@ pub struct ProcedureInfo {
     /// Populated from the table's DDL so field access (v_wm.wm_ts_value) can
     /// emit typed extraction instead of raw Object Map.get.
     pub rowtype_field_types: HashMap<String, HashMap<String, String>>,
+    /// %ROWTYPE / record-typed PARAMETERS: param_lower → { field_lower →
+    /// Java type }. Kept separate from `rowtype_field_types` so dynamic-SQL
+    /// extra-param resolution (which scans locals) is not perturbed; used by
+    /// generated test fixtures to populate record-shaped param maps.
+    pub param_rowtype_fields: HashMap<String, HashMap<String, String>>,
     pub table_refs: HashSet<String>,
     pub var_assignments: HashMap<String, String>,
     pub dynamic_sql_templates: HashMap<String, (String, Vec<(String, bool)>)>,
@@ -286,6 +307,7 @@ impl ProcedureInfo {
             local_vars: HashMap::new(),
             local_var_defaults: HashMap::new(),
             rowtype_field_types: HashMap::new(),
+            param_rowtype_fields: HashMap::new(),
             table_refs: HashSet::new(),
             var_assignments: HashMap::new(),
             dynamic_sql_templates: HashMap::new(),
@@ -644,10 +666,13 @@ mod tests {
     fn test_custom_type_info() {
         let ct = CustomTypeInfo {
             fields: vec![("id".into(), "Long".into()), ("name".into(), "String".into())],
+            field_sql_types: Vec::new(),
             is_record: false,
+            elem_java_type: None,
         };
         assert_eq!(ct.fields.len(), 2);
         assert!(!ct.is_record);
+        assert!(!ct.is_collection());
     }
 
     #[test]

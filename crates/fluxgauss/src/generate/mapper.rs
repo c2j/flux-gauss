@@ -37,6 +37,72 @@ static RETURNING_INTO_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLoc
 static DOLLAR_PARAM_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 static PG_CAST_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 
+/// Issue #128: every `#{name}`/`${name}` placeholder in a mapper statement
+/// must have a matching `@Param("name")` on the interface method — MyBatis
+/// binds case-sensitively, so a mismatch surfaces only as a runtime
+/// BindingException. Returns human-readable warnings; generation continues
+/// and the warnings land in the conversion report.
+///
+/// `stmts` must be the (method_id, statement_xml) pairs actually emitted by
+/// `write_mapper_xml` — reusing them avoids rebuilding every statement a
+/// second time (review #129 perf note).
+pub fn mapper_param_mismatches(pkg: &PackageInfo, stmts: &[(String, String)]) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let placeholder_re = regex::Regex::new(r"[#\$]\{\s*([A-Za-z_]\w*)").unwrap();
+    let param_re = regex::Regex::new(r#"@Param\("([^"]+)"\)"#).unwrap();
+    let item_re = regex::Regex::new(r#"\bitem="([A-Za-z_]\w*)""#).unwrap();
+    let class_name = format!("{}Mapper", package_to_classname(&pkg.package_name));
+    let stmt_by_id: std::collections::HashMap<&str, &str> =
+        stmts.iter().map(|(id, xml)| (id.as_str(), xml.as_str())).collect();
+
+    for proc in &pkg.procedures {
+        for dml in &proc.dml_statements {
+            // Review #129: a dml skipped by write_mapper_xml's id dedup (or an
+            // id collision) must still be validated — build the statement on
+            // demand rather than silently continuing.
+            let stmt_storage;
+            let stmt = match stmt_by_id.get(dml.method_id.as_str()) {
+                Some(&s) => s,
+                None => {
+                    stmt_storage = crate::generate::mapper::build_mapper_statement(proc, dml, &pkg.package_vars);
+                    stmt_storage.as_str()
+                }
+            };
+            // Mirror write_mapper_interface: OUT params referenced by the SQL
+            // are promoted into extra_params before the signature is built.
+            let mut dml_mut = dml.clone();
+            promote_out_params_to_mapper(
+                &proc.parameters,
+                &dml.sql_text,
+                &mut dml_mut.extra_params,
+                &proc.out_local_vars,
+            );
+            let mut imports = BTreeSet::new();
+            let sig = build_mapper_method(proc, &dml_mut, &mut imports, &pkg.package_vars);
+            let expected: std::collections::HashSet<String> =
+                param_re.captures_iter(&sig).map(|c| c[1].to_string()).collect();
+
+            let foreach_items: std::collections::HashSet<String> =
+                item_re.captures_iter(stmt).map(|c| c[1].to_string()).collect();
+
+            let mut missing: Vec<String> = placeholder_re
+                .captures_iter(stmt)
+                .map(|c| c[1].to_string())
+                .filter(|n| !expected.contains(n) && !foreach_items.contains(n) && !n.starts_with("arg") && n != "list")
+                .collect();
+            missing.sort();
+            missing.dedup();
+            for m in missing {
+                warnings.push(format!(
+                    "{}.{}: placeholder #{{{}}} has no matching @Param (issue #128)",
+                    class_name, dml.method_id, m
+                ));
+            }
+        }
+    }
+    warnings
+}
+
 pub fn write_mapper_interface(
     base_path: &Path,
     pkg: &PackageInfo,
@@ -513,17 +579,21 @@ pub(crate) fn extract_package_var_refs(
 
 // ── Mapper XML ──
 
+/// Returns `(class_name, emitted_statements)` where `emitted_statements` is
+/// the deduplicated `(method_id, statement_xml)` list actually written to the
+/// XML — callers (e.g. `mapper_param_mismatches`) reuse it instead of
+/// rebuilding every statement (review #129 perf note).
 pub fn write_mapper_xml(
     base_path: &Path,
     pkg: &PackageInfo,
     base_package: &str,
     encoding: &'static Encoding,
-) -> std::io::Result<String> {
+) -> std::io::Result<(String, Vec<(String, String)>)> {
     let mapper_dir = base_path.join("src/main/resources/mapper");
     let class_name = format!("{}Mapper", package_to_classname(&pkg.package_name));
     let namespace = format!("{}.mapper.{}", base_package, class_name);
 
-    let mut statements = Vec::new();
+    let mut statements: Vec<(String, String)> = Vec::new();
     let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     for proc in &pkg.procedures {
         for dml in &proc.dml_statements {
@@ -532,10 +602,11 @@ pub fn write_mapper_xml(
                 continue;
             }
             let stmt_xml = build_mapper_statement(proc, dml, &pkg.package_vars);
-            statements.push(stmt_xml);
+            statements.push((dml.method_id.clone(), stmt_xml));
             seen_ids.insert(id_attr);
         }
     }
+    let emitted = statements.clone();
 
     let mut w = CodeWriter::new();
     w.line(&format!("<?xml version=\"1.0\" encoding=\"{}\"?>", encoding.name().to_uppercase()));
@@ -545,7 +616,7 @@ pub fn write_mapper_xml(
     w.blank();
 
     w.push_indent();
-    for (i, stmt) in statements.iter().enumerate() {
+    for (i, (_, stmt)) in statements.iter().enumerate() {
         if i > 0 {
             w.blank();
         }
@@ -568,7 +639,7 @@ pub fn write_mapper_xml(
     std::fs::create_dir_all(&mapper_dir)?;
     let file_path = mapper_dir.join(format!("{}.xml", class_name));
     w.write_to_file(&file_path, encoding)?;
-    Ok(class_name)
+    Ok((class_name, emitted))
 }
 
 fn build_mapper_statement(
@@ -589,6 +660,7 @@ fn build_mapper_statement(
     }
 
     sql = convert_params_to_mybatis(&sql, &proc.parameters, &proc.local_vars, package_vars);
+    sql = normalize_placeholder_param_case(&sql, proc, dml, package_vars);
 
     // Dynamic SQL stubs have #{param} in comments that MyBatis still tries to bind.
     // Strip all #{...} from DYNAMIC SQL comment stubs so MyBatis ignores them.
@@ -1478,6 +1550,49 @@ fn strip_generics(java_type: &str) -> &str {
     }
 }
 
+/// Issue #128: MyBatis binds `#{name}` case-sensitively against `@Param`.
+/// `convert_params_to_mybatis` emits `snake_to_camel` names, but placeholders
+/// can also originate from literal SQL text or dotted-field rewrites with a
+/// different casing. Rewrite the leading name of every `#{...}`/`${...}` to
+/// the canonical `@Param` spelling when it matches case-insensitively.
+fn normalize_placeholder_param_case(
+    sql: &str,
+    proc: &crate::types::ProcedureInfo,
+    dml: &crate::types::DmlStatement,
+    package_vars: &std::collections::HashMap<String, crate::types::VarInfo>,
+) -> String {
+    let mut known: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for p in &proc.parameters {
+        known.insert(snake_to_camel(&p.name));
+    }
+    for k in proc.local_vars.keys() {
+        known.insert(snake_to_camel(k));
+    }
+    for k in package_vars.keys() {
+        known.insert(snake_to_camel(k));
+    }
+    for (k, _) in &dml.extra_params {
+        known.insert(k.clone());
+    }
+    if known.is_empty() {
+        return sql.to_string();
+    }
+    let placeholder_name_re = regex::Regex::new(r"([#\$])\{\s*([A-Za-z_]\w*)").unwrap();
+    placeholder_name_re
+        .replace_all(sql, |caps: &regex::Captures| {
+            let name = &caps[2];
+            // Deterministic pick when several known names differ only by
+            // case (review #129 P0-2): HashSet iteration order is random.
+            let mut hits: Vec<&String> = known.iter().filter(|k| k.eq_ignore_ascii_case(name)).collect();
+            hits.sort();
+            match hits.first() {
+                Some(canon) => format!("{}{{{}", &caps[1], canon),
+                None => caps[0].to_string(),
+            }
+        })
+        .to_string()
+}
+
 fn convert_params_to_mybatis(
     sql: &str,
     params: &[Parameter],
@@ -2132,6 +2247,72 @@ mod tests {
         assert!(
             !fixed_case.contains("rental AS return_date") && !fixed_case.contains("film AS rental_duration"),
             "CASE qualified columns became AS aliases: {fixed_case}"
+        );
+    }
+
+    // ── Issue #128 (review #129 P2): placeholder normalisation + mismatch check ──
+
+    #[test]
+    fn test_normalize_placeholder_param_case_rewrites_to_canonical() {
+        let proc = make_proc(
+            "p",
+            vec![Parameter {
+                name: "p_i_sub_partner".into(),
+                java_type: "Long".into(),
+                sql_type: "number".into(),
+                mode: Some(ParamMode::In),
+                default_value: None,
+            }],
+            vec![],
+        );
+        let dml = make_dml(DmlType::Select, "selectX", "select * from t where a = :pISubpartner");
+        // SQL text arrives with `#{name}` placeholders already; simulate the
+        // case-mismatched spelling the normaliser exists to fix.
+        let sql = "select * from t where a = #{pISubpartner} and b = #{p_i_sub_partner}";
+        let out = normalize_placeholder_param_case(sql, &proc, &dml, &HashMap::new());
+        assert!(out.contains("#{pISubPartner}"), "placeholder must use canonical @Param spelling: {}", out);
+        assert!(!out.contains("pISubpartner"), "stale spelling must be gone: {}", out);
+    }
+
+    #[test]
+    fn test_normalize_placeholder_param_case_leaves_unknown_names() {
+        let proc = make_proc("p", vec![], vec![]);
+        let dml = make_dml(DmlType::Select, "selectX", "select 1");
+        let out = normalize_placeholder_param_case("select #{unknown_col} from t", &proc, &dml, &HashMap::new());
+        assert!(out.contains("#{unknown_col}"), "unknown names must pass through: {}", out);
+    }
+
+    #[test]
+    fn test_mapper_param_mismatches_reports_orphan_placeholder() {
+        // A placeholder with no matching @Param must surface as a warning that
+        // names the real mapper class (no doubled `MapperMapper` suffix).
+        let dml = make_dml(DmlType::Update, "updateT", "UPDATE t SET a = #{ghost_param} WHERE id = #{pId}");
+        let proc = make_proc(
+            "p",
+            vec![Parameter {
+                name: "p_id".into(),
+                java_type: "Long".into(),
+                sql_type: "number".into(),
+                mode: Some(ParamMode::In),
+                default_value: None,
+            }],
+            vec![dml],
+        );
+        let pkg = make_pkg("pkg_mismatch", vec![proc]);
+        // Reuse the emitted-statement contract: build the XML once and feed
+        // the same (method_id, xml) pairs the pipeline would pass in.
+        let dir = tempfile::tempdir().unwrap();
+        let (_, stmts) = write_mapper_xml(dir.path(), &pkg, "com.example.demo", encoding_rs::UTF_8).unwrap();
+        let warnings = mapper_param_mismatches(&pkg, &stmts);
+        assert!(
+            warnings.iter().any(|w| w.contains("ghost_param") || w.contains("ghostParam")),
+            "orphan placeholder must be reported: {:?}",
+            warnings
+        );
+        assert!(
+            warnings.iter().all(|w| !w.contains("MapperMapper")),
+            "warning must not double the Mapper suffix: {:?}",
+            warnings
         );
     }
 }

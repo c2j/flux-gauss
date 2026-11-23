@@ -85,7 +85,25 @@ pub fn write_itest_class(
         let mut param_values: Vec<String> = Vec::new();
         let mut param_args: Vec<String> = Vec::new();
         for p in in_params {
-            let mut val = default_test_value(&p.java_type, &snake_to_camel(&p.name));
+            // Review #129 B3: record-typed params get a populated fixture.
+            let mut val = if p.java_type.contains("Map<") {
+                match crate::extract::find_custom_type(&proc.custom_types, &p.sql_type) {
+                    Some(ct) if ct.is_record && !ct.fields.is_empty() => {
+                        crate::generate::service::populated_record_fixture(&ct.fields)
+                    }
+                    _ => match proc.param_rowtype_fields.get(&p.name.to_lowercase()) {
+                        Some(fields) if !fields.is_empty() => {
+                            let mut pairs: Vec<(String, String)> =
+                                fields.iter().map(|(f, t)| (f.clone(), t.clone())).collect();
+                            pairs.sort();
+                            crate::generate::service::populated_record_fixture(&pairs)
+                        }
+                        _ => default_test_value(&p.java_type, &snake_to_camel(&p.name)),
+                    },
+                }
+            } else {
+                default_test_value(&p.java_type, &snake_to_camel(&p.name))
+            };
             if p.java_type == "String"
                 && (numeric_string_params.contains(&p.name.to_lowercase())
                     || numeric_string_params.contains(&snake_to_camel(&p.name).to_lowercase()))
@@ -110,19 +128,8 @@ pub fn write_itest_class(
             if p.is_refcursor() {
                 continue;
             }
-            let holder = format!("AtomicReference<{}>", p.java_type);
-            let init_val = if p.java_type.contains("Long") || p.java_type == "long" {
-                "1L"
-            } else if p.java_type.contains("Integer") || p.java_type == "int" {
-                "1"
-            } else if p.java_type.contains("BigDecimal") {
-                "java.math.BigDecimal.ZERO"
-            } else if p.java_type == "String" {
-                "\"\""
-            } else {
-                "null"
-            };
-            out_decls.push(format!("{} {} = new AtomicReference<>({});", holder, snake_to_camel(&p.name), init_val));
+            let decl = crate::generate::service::atomic_ref_decl(&p.java_type, &snake_to_camel(&p.name));
+            out_decls.push(decl);
             out_args.push(snake_to_camel(&p.name));
         }
 
@@ -1523,6 +1530,11 @@ fn itest_dollar_param_value(param_name: &str, sql_fragment: &str) -> String {
 fn default_test_value(java_type: &str, param_name: &str) -> String {
     let tl = java_type.to_lowercase();
     let nl = param_name.to_lowercase();
+    // Issue #124: collection params before scalar `contains` checks —
+    // "java.util.list<double>" contains "double" and would yield "1.0d".
+    if tl.contains("list<") {
+        return "new java.util.ArrayList<>()".to_string();
+    }
     if tl.contains("long") {
         if nl.contains("id") {
             return "1L".to_string();
@@ -1554,7 +1566,7 @@ fn default_test_value(java_type: &str, param_name: &str) -> String {
         return "java.sql.Date.valueOf(\"2024-01-01\")".to_string();
     }
     if tl.contains("map") {
-        return "new java.util.HashMap<>()".to_string();
+        return "new java.util.HashMap<String, Object>()".to_string();
     }
     if tl == "object" {
         if nl.contains("spectrum") {
@@ -1934,7 +1946,9 @@ mod tests {
             dir.path().join("src/test/java/com/example/demo/itest/DataServiceIntegrationTest.java"),
         )
         .unwrap();
-        assert!(content.contains("AtomicReference<String> pResult = new AtomicReference<>(\"\");"));
+        // Review #129 B2/B4: String OUT params seed `null`, not `""` — an
+        // empty string breaks MyBatis BIGINT binding and IS NULL semantics.
+        assert!(content.contains("AtomicReference<String> pResult = new AtomicReference<>(null);"));
         assert!(content.contains("dataService.getData(pId, pResult);"));
     }
 

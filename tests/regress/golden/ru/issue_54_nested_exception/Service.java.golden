@@ -53,13 +53,13 @@ public class Issue54NestedExcService {
         try {
             vVal = "start";
             try {
-                vTmp = String.valueOf(issue54NestedExcMapper.selectTIssue54Data_1());
+                vTmp = String.valueOf(issue54NestedExcMapper.selectTIssue54Data_2());
                 vVal = String.valueOf(vTmp);
             } catch (Exception __e1) {
                 __SQLERRM__ = __e1.getMessage();
                 __SQLCODE__ = -1;
                 try {
-                    vTmp = String.valueOf(issue54NestedExcMapper.selectTIssue54Data_2());
+                    vTmp = String.valueOf(issue54NestedExcMapper.selectTIssue54Data_3());
                     vVal = String.valueOf(vTmp);
                 } catch (Exception __e2) {
                     __SQLERRM__ = __e2.getMessage();
