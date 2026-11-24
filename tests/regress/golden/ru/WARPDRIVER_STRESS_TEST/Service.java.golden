@@ -126,13 +126,13 @@ public class WarpdriverStressTestService {
                             vIdx = vIdx + 1;
                             ((java.util.Map<String, Object>) vItemTab.get((int)(long)(vIdx) - 1)).put("itemId", vRec.getOrDefault("orderId", vRec.get("order_id")));
                             ((java.util.Map<String, Object>) vItemTab.get((int)(long)(vIdx) - 1)).put("productCode", String.valueOf("PROD_").concat(String.valueOf((((Number) java.util.Objects.requireNonNullElse(vRec.getOrDefault("orderId", vRec.get("order_id")), 0)).doubleValue() % 100))));
-                            ((java.util.Map<String, Object>) vItemTab.get((int)(long)(vIdx) - 1)).put("quantity", java.util.Optional.ofNullable((Number) vRec.getOrDefault("totalAmount", vRec.get("total_amount"))).map(Number::longValue).orElse(0L) / 100);
+                            ((java.util.Map<String, Object>) vItemTab.get((int)(long)(vIdx) - 1)).put("quantity", java.util.Optional.ofNullable((Number) (vRec.getOrDefault("totalAmount", vRec.get("total_amount")))).map(Number::longValue).orElse(0L) / 100);
                             ((java.util.Map<String, Object>) vItemTab.get((int)(long)(vIdx) - 1)).put("unitPrice", 100);
                             ((java.util.Map<String, Object>) vItemTab.get((int)(long)(vIdx) - 1)).put("metadata", this.jsonbBuildObject(String.valueOf("order_id"), vRec.getOrDefault("orderId", vRec.get("order_id")), String.valueOf("mode"), pMode, String.valueOf("seq"), gSessionCounter));
                             vSum = vSum.add(java.math.BigDecimal.valueOf(((Number) vRec.getOrDefault("totalAmount", vRec.get("total_amount"))).doubleValue()));
-                            if (java.util.Optional.ofNullable((Number) vRec.getOrDefault("totalAmount", vRec.get("total_amount"))).map(Number::longValue).orElse(0L) > 1000000) {
+                            if (java.util.Optional.ofNullable((Number) (vRec.getOrDefault("totalAmount", vRec.get("total_amount")))).map(Number::longValue).orElse(0L) > 1000000) {
                                 this.spDynamicSchedulerDispatch(String.valueOf(vRec.getOrDefault("orderId", vRec.get("order_id"))), "JOB_BIG_ORDER_");
-                            } else if (java.util.Optional.ofNullable((Number) vRec.getOrDefault("totalAmount", vRec.get("total_amount"))).map(Number::longValue).orElse(0L) < 0) {
+                            } else if (java.util.Optional.ofNullable((Number) (vRec.getOrDefault("totalAmount", vRec.get("total_amount")))).map(Number::longValue).orElse(0L) < 0) {
                                 currentState = SpMainOrchestratorState.ErrorHandler;
                                 // UNREACHABLE: break;
                             }
@@ -303,7 +303,7 @@ public class WarpdriverStressTestService {
                     riskRec = _riskRec;
                     try {
                         { Object _val = warpdriverStressTestMapper.selectCustomerRisk_1(pBatchId, mainRec, riskRec); if (_val != null) vScore = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }
-                        if (vScore > java.util.Optional.ofNullable((Number) riskRec.get("threshold")).map(Number::longValue).orElse(0L)) {
+                        if (vScore > java.util.Optional.ofNullable((Number) (riskRec.get("threshold"))).map(Number::longValue).orElse(0L)) {
                             vInvalid = vInvalid + 1;
                             warpdriverStressTestMapper.updateBulkOrders_5(pBatchId, mainRec, riskRec);
                             continue;
@@ -316,7 +316,7 @@ public class WarpdriverStressTestService {
                 for (Map<String, Object> _stockRec : java.util.Collections.<Map<String, Object>>emptyList()) {
                     stockRec = _stockRec;
                     { Object _val = warpdriverStressTestMapper.selectInventory_1(pBatchId, stockRec); if (_val != null) vStock = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }
-                    if (vStock < java.util.Optional.ofNullable((Number) stockRec.getOrDefault("requiredQty", stockRec.get("required_qty"))).map(Number::longValue).orElse(0L)) {
+                    if (vStock < java.util.Optional.ofNullable((Number) (stockRec.getOrDefault("requiredQty", stockRec.get("required_qty")))).map(Number::longValue).orElse(0L)) {
                         vInvalid = vInvalid + 1;
                         warpdriverStressTestMapper.updateBulkOrders_6(pBatchId, mainRec, stockRec);
                         continue;

@@ -359,6 +359,31 @@ pub(crate) fn boxed_to_primitive(t: &str) -> &str {
     }
 }
 
+/// Java type an IN parameter is declared with in the generated service
+/// signature. `default null` parameters and parameters referenced by
+/// `IS [NOT] NULL` keep the boxed type — the latter act as "argument not
+/// passed" sentinels, which a primitive `long`/`int` cannot represent
+/// (a primitive `0` is indistinguishable from an omitted argument).
+pub(crate) fn in_param_signature_type<'a>(
+    p: &'a crate::types::Parameter,
+    proc: &crate::types::ProcedureInfo,
+) -> &'a str {
+    let is_null_default = p.default_value.as_ref().is_some_and(|dv| dv.to_lowercase() == "null");
+    if is_null_default || param_used_in_is_null(proc, &p.name) {
+        &p.java_type
+    } else {
+        boxed_to_primitive(&p.java_type)
+    }
+}
+
+/// True when `proc`'s body tests `param_name` with `IS [NOT] NULL`. Scans the
+/// raw SQL text; a false positive (e.g. a same-named column) only keeps the
+/// parameter boxed, which is always safe.
+pub(crate) fn param_used_in_is_null(proc: &crate::types::ProcedureInfo, param_name: &str) -> bool {
+    let pat = format!(r"(?i)\b{}\s+IS\s+(?:NOT\s+)?NULL\b", regex::escape(param_name));
+    regex::Regex::new(&pat).is_ok_and(|re| re.is_match(&proc.sql_text))
+}
+
 fn default_for_type(t: &str) -> &'static str {
     let tl = t.to_lowercase();
     // Issue #124: check collection types BEFORE scalar `contains` checks —
@@ -466,7 +491,11 @@ pub(crate) fn populated_record_fixture(fields: &[(String, String)]) -> String {
 
 fn record_field_seed(java_type: &str) -> &'static str {
     let tl = java_type.to_lowercase();
-    if tl.contains("long") {
+    // List must precede scalar substring checks — "java.util.List<Long>"
+    // contains "long" but seeds an empty list, not 1L.
+    if tl.contains("list<") || tl.contains("java.util.list") {
+        "new java.util.ArrayList<>()"
+    } else if tl.contains("long") {
         "1L"
     } else if tl.contains("biginteger") {
         // Review #129 S6: check before the `int` substring — "biginteger"
@@ -717,9 +746,7 @@ fn build_service_method(
             params.push(format!("AtomicReference<{}> {}", p.java_type, snake_to_camel(&p.name)));
             out_params.push(p);
         } else {
-            let is_null_default = p.default_value.as_ref().is_some_and(|dv| dv.to_lowercase() == "null");
-            let param_type = if is_null_default { &p.java_type } else { boxed_to_primitive(&p.java_type) };
-            params.push(format!("{} {}", param_type, snake_to_camel(&p.name)));
+            params.push(format!("{} {}", in_param_signature_type(p, proc), snake_to_camel(&p.name)));
         }
     }
 
@@ -2158,6 +2185,32 @@ mod tests {
         assert!(seq_cannot_fall_through(&lines(&["while ((true)) {", "    x = next();", "}"])));
         assert!(seq_cannot_fall_through(&lines(&["for (;;) {", "    x = next();", "}"])));
         assert!(seq_cannot_fall_through(&lines(&["for (int i = 0; ; i++) {", "    x = next();", "}"])));
+    }
+
+    #[test]
+    fn test_is_null_sentinel_param_keeps_boxed_signature() {
+        // Review P3-I: `p_amount IS NULL` is the PL "argument not passed"
+        // sentinel — the IN param must stay boxed (`Long`), not primitive.
+        let mut proc = make_proc("null_sentinel");
+        let p = Parameter {
+            name: "p_amount".into(),
+            java_type: "Long".into(),
+            sql_type: "number".into(),
+            mode: Some(ParamMode::In),
+            default_value: None,
+        };
+        proc.sql_text = "IF p_amount IS NULL THEN RETURN; END IF;".into();
+        assert_eq!(in_param_signature_type(&p, &proc), "Long");
+        proc.sql_text = "IF p_amount IS NOT NULL THEN x := 1; END IF;".into();
+        assert_eq!(in_param_signature_type(&p, &proc), "Long");
+        // No IS NULL usage → primitive narrowing still applies.
+        proc.sql_text = "x := p_amount + 1;".into();
+        assert_eq!(in_param_signature_type(&p, &proc), "long");
+        // `default null` keeps boxed regardless of body usage.
+        let mut p2 = p.clone();
+        p2.default_value = Some("null".into());
+        proc.sql_text = "x := p_amount + 1;".into();
+        assert_eq!(in_param_signature_type(&p2, &proc), "Long");
     }
 
     #[test]

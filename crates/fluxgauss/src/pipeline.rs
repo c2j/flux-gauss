@@ -291,6 +291,28 @@ pub fn run_pipeline(
 ) -> PipelineResult {
     let _base_package = config.base_package_or_default();
     let mut ctx = AnalysisContext::new();
+    if let Some(shims) = &config.composite_type_shims {
+        for shim in shims {
+            let name = shim.sql_type.trim().to_lowercase();
+            if name.is_empty() {
+                continue;
+            }
+            let mut fields = std::collections::HashMap::new();
+            if let Some(declared) = &shim.fields {
+                for (fname, ftype) in declared {
+                    let ft = ftype.trim();
+                    if ft.is_empty() {
+                        continue;
+                    }
+                    // Values are SQL types (`text[]`); java-looking types
+                    // (`java.util.List<String>`) pass through unchanged.
+                    let jt = shim_field_java_type(ft);
+                    fields.insert(fname.trim().to_lowercase(), jt);
+                }
+            }
+            ctx.composite_type_shims.insert(name, fields);
+        }
+    }
 
     // Snapshot pre-run package set for stale-output cleanup (#120)
     let old_pkg_names = incremental.manifest_packages();
@@ -368,6 +390,27 @@ pub fn run_pipeline(
         filter_dropped_packages,
         filter_unmatched,
     }
+}
+
+/// Resolve a declared shim field SQL type to its Java type. `T[]` maps to
+/// `java.util.List<E>` with the ELEMENT type resolved (review P2-H:
+/// `sql_type_to_java` collapses every `T[]` to `List<String>`, which breaks
+/// `integer[]` shims — `.add(<Long>)` would not compile against `List<String>`).
+fn shim_field_java_type(ft: &str) -> String {
+    let ft = ft.trim();
+    if ft.contains('<') || ft.contains('.') {
+        return ft.to_string();
+    }
+    if let Some(elem) = ft.strip_suffix("[]") {
+        let elem_java = crate::type_map::sql_type_to_java(elem)
+            .or_else(|| crate::type_map::sql_type_to_java(&crate::extract::normalize_sql_type(elem)))
+            .unwrap_or("Object");
+        return format!("java.util.List<{}>", elem_java);
+    }
+    crate::type_map::sql_type_to_java(ft)
+        .or_else(|| crate::type_map::sql_type_to_java(&crate::extract::normalize_sql_type(ft)))
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "Object".into())
 }
 
 /// Delete the four generated artifacts of packages present in the previous
@@ -687,6 +730,19 @@ fn phase2_analyze(
     let all_pkg_names: Vec<String> = proc_summaries.keys().cloned().collect();
 
     // Build a global map: java_method_name → all candidate GlobalFnEntry across all procedures.
+    // `full_proc_lookup` resolves each summary back to its ProcedureInfo so the
+    // entry can carry the callee's actual IN-param signature types (IS NULL
+    // sentinel params stay boxed — review P3-I on PR #133).
+    let full_proc_lookup: HashMap<(String, String), &crate::types::ProcedureInfo> = packages
+        .iter()
+        .flat_map(|pk| {
+            pk.procedures.iter().map(move |pr| {
+                let pkg_key =
+                    if pr.package.is_empty() { pk.package_name.to_lowercase() } else { pr.package.to_lowercase() };
+                ((pkg_key, pr.proc_name.to_lowercase()), pr)
+            })
+        })
+        .collect();
     let mut global_proc_map: HashMap<String, Vec<crate::types::GlobalFnEntry>> = HashMap::new();
     for summary in proc_summaries.values() {
         for proc_in_summary in &summary.procedures {
@@ -702,11 +758,26 @@ fn phase2_analyze(
                 Some(f) => f.to_ascii_lowercase().to_string() + c.as_str(),
                 None => String::new(),
             };
+            let full_proc =
+                full_proc_lookup.get(&(svc_pkg.to_lowercase(), proc_in_summary.proc_name.to_lowercase())).copied();
+            let param_sig_types: Vec<String> = proc_in_summary
+                .parameters
+                .iter()
+                .map(|p| {
+                    if p.is_out() {
+                        return p.java_type.clone();
+                    }
+                    full_proc
+                        .map(|fp| crate::generate::service::in_param_signature_type(p, fp).to_string())
+                        .unwrap_or_else(|| crate::generate::service::boxed_to_primitive(&p.java_type).to_string())
+                })
+                .collect();
             global_proc_map.entry(method_name).or_default().push(crate::types::GlobalFnEntry {
                 svc_var: format!("{}Service", svc_var),
                 package: svc_pkg,
                 params: proc_in_summary.parameters.clone(),
                 return_type: proc_in_summary.return_type.clone(),
+                param_sig_types,
             });
         }
     }
@@ -1005,5 +1076,16 @@ mod tests {
         for p in &paths {
             assert!(!p.exists(), "stale artifact must be removed: {}", p.display());
         }
+    }
+
+    #[test]
+    fn shim_field_java_type_resolves_array_element() {
+        // Review P2-H: `integer[]` must become List<Integer>, not the
+        // element-erasing List<String> that sql_type_to_java produces.
+        assert_eq!(shim_field_java_type("integer[]"), "java.util.List<Integer>");
+        assert_eq!(shim_field_java_type("text[]"), "java.util.List<String>");
+        assert_eq!(shim_field_java_type("numeric[]"), "java.util.List<java.math.BigDecimal>");
+        assert_eq!(shim_field_java_type("varchar2"), "String");
+        assert_eq!(shim_field_java_type("java.util.List<Long>"), "java.util.List<Long>");
     }
 }

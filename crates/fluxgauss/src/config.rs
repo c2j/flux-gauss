@@ -18,7 +18,32 @@ pub struct AppConfig {
     pub dependency_graph: Option<DependencyGraphConfig>,
     pub java_packages: Option<Vec<JavaPackageMapping>>,
     pub integration_test: Option<IntegrationTestConfig>,
+    /// Declared composite/record types whose `Map<String,Object>`
+    /// representation uses parallel `java.util.List` fields (delivery shim
+    /// types such as `map_object`). Matching variables/parameters get typed
+    /// List field reads, array-append assignment lowering, and 1-based
+    /// subscript/indexOf semantics.
+    pub composite_type_shims: Option<Vec<CompositeTypeShim>>,
     pub encoding: Option<String>,
+}
+
+/// One entry of `composite_type_shims`: a declared SQL composite/record type
+/// name plus its Java-side representation contract.
+#[derive(Debug, Default, Deserialize)]
+pub struct CompositeTypeShim {
+    /// Declared SQL type name, matched case-insensitively against either the
+    /// full declared type or its last dot-separated segment (so `map_object`
+    /// matches `bigfund.map_object`).
+    pub sql_type: String,
+    /// Representation kind. Only `parallel_lists` is implemented: array-typed
+    /// record fields lower to parallel `java.util.List` slots inside the
+    /// `Map<String,Object>` and `field || elem` assignments append.
+    pub representation: Option<String>,
+    /// Record field declarations: `field_name → SQL type` (e.g. `k: text[]`).
+    /// Required for shim types created inside `DO $$ EXECUTE` dynamic strings,
+    /// which the parser cannot see. When the type IS visible to extraction,
+    /// extracted field types take precedence.
+    pub fields: Option<std::collections::HashMap<String, String>>,
 }
 
 impl AppConfig {

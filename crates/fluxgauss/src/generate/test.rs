@@ -164,6 +164,22 @@ fn build_success_test(
             }
             let inner_type = p.java_type.clone();
             let ref_var = format!("{}Ref", snake_to_camel(&p.name));
+            // composite_type_shims: an OUT param of a shim record type must be
+            // seeded with a populated map (parallel lists) — a null ref NPEs
+            // on the first field write inside the procedure.
+            if let Some(fields) = proc.param_rowtype_fields.get(&p.name.to_lowercase()) {
+                if !fields.is_empty() {
+                    let mut pairs: Vec<(String, String)> = fields.iter().map(|(f, t)| (f.clone(), t.clone())).collect();
+                    pairs.sort();
+                    param_values.push(format!(
+                        "AtomicReference<Object> {} = new AtomicReference<>({});",
+                        ref_var,
+                        crate::generate::service::populated_record_fixture(&pairs)
+                    ));
+                    param_args.push(ref_var);
+                    continue;
+                }
+            }
             param_values.push(crate::generate::service::atomic_ref_decl(&inner_type, &ref_var));
             param_args.push(ref_var);
         } else {
@@ -445,24 +461,21 @@ fn mock_cross_service_calls(pkg: &PackageInfo, sorted_injections: &[(&String, &S
                 let matchers: Vec<String> = entry
                     .params
                     .iter()
-                    .map(|p| {
+                    .enumerate()
+                    .map(|(i, p)| {
                         if p.is_out() {
-                            any_matcher_expr(&format!("AtomicReference<{}>", p.java_type))
-                        } else {
-                            // Mirror `service.rs::build_service_method`'s IN-param typing rule
-                            // exactly: any boxed-numeric/boolean param without an explicit
-                            // `default null` is declared primitive in the *actual* callee
-                            // method signature, so the matcher must use `anyInt()`/`anyLong()`
-                            // (not `(Integer) any()`) or Mockito's null unboxes and NPEs.
-                            let is_null_default =
-                                p.default_value.as_ref().is_some_and(|dv| dv.to_lowercase() == "null");
-                            let t = if is_null_default {
-                                p.java_type.as_str()
-                            } else {
-                                crate::generate::service::boxed_to_primitive(&p.java_type)
-                            };
-                            any_matcher_expr(t)
+                            return any_matcher_expr(&format!("AtomicReference<{}>", p.java_type));
                         }
+                        // Use the callee's resolved signature type recorded in
+                        // GlobalFnEntry.param_sig_types (boxed for `default null` /
+                        // `IS [NOT] NULL` sentinel params); fall back to the primitive
+                        // rule when the entry carries no resolved types.
+                        let t = entry
+                            .param_sig_types
+                            .get(i)
+                            .map(String::as_str)
+                            .unwrap_or_else(|| crate::generate::service::boxed_to_primitive(&p.java_type));
+                        any_matcher_expr(t)
                     })
                     .collect();
                 stubs.push((
@@ -652,7 +665,9 @@ fn domain_test_value(
     // Review #129 B3: record-typed params (Map<String,Object>) must get a
     // populated fixture — an empty map makes every field read null and the
     // delivery-side postprocess string anchor no longer matches.
-    if java_type.contains("Map<") {
+    // composite_type_shims params keep java_type "Object" but still carry
+    // record field types — the param_rowtype_fields hit below covers them.
+    if java_type.contains("Map<") || proc.param_rowtype_fields.contains_key(&param_name.to_lowercase()) {
         if let Some(ct) = crate::extract::find_custom_type(&proc.custom_types, sql_type) {
             if ct.is_record && !ct.fields.is_empty() {
                 return crate::generate::service::populated_record_fixture(&ct.fields);
