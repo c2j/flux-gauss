@@ -164,6 +164,22 @@ fn build_success_test(
             }
             let inner_type = p.java_type.clone();
             let ref_var = format!("{}Ref", snake_to_camel(&p.name));
+            // composite_type_shims: an OUT param of a shim record type must be
+            // seeded with a populated map (parallel lists) — a null ref NPEs
+            // on the first field write inside the procedure.
+            if let Some(fields) = proc.param_rowtype_fields.get(&p.name.to_lowercase()) {
+                if !fields.is_empty() {
+                    let mut pairs: Vec<(String, String)> = fields.iter().map(|(f, t)| (f.clone(), t.clone())).collect();
+                    pairs.sort();
+                    param_values.push(format!(
+                        "AtomicReference<Object> {} = new AtomicReference<>({});",
+                        ref_var,
+                        crate::generate::service::populated_record_fixture(&pairs)
+                    ));
+                    param_args.push(ref_var);
+                    continue;
+                }
+            }
             param_values.push(crate::generate::service::atomic_ref_decl(&inner_type, &ref_var));
             param_args.push(ref_var);
         } else {
@@ -652,7 +668,9 @@ fn domain_test_value(
     // Review #129 B3: record-typed params (Map<String,Object>) must get a
     // populated fixture — an empty map makes every field read null and the
     // delivery-side postprocess string anchor no longer matches.
-    if java_type.contains("Map<") {
+    // composite_type_shims params keep java_type "Object" but still carry
+    // record field types — the param_rowtype_fields hit below covers them.
+    if java_type.contains("Map<") || proc.param_rowtype_fields.contains_key(&param_name.to_lowercase()) {
         if let Some(ct) = crate::extract::find_custom_type(&proc.custom_types, sql_type) {
             if ct.is_record && !ct.fields.is_empty() {
                 return crate::generate::service::populated_record_fixture(&ct.fields);

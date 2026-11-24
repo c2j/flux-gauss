@@ -136,6 +136,30 @@ fn rowtype_fields_for_table(
         .unwrap_or_default()
 }
 
+/// Field-type map (`field_lower → java type`) for a shim-configured composite
+/// type. Extracted record fields win when the type is visible to the parser;
+/// otherwise the `fields` declared in `composite_type_shims` are used (shim
+/// types created via `DO $$ EXECUTE 'CREATE TYPE …'` are invisible to
+/// extraction). Returns `None` when the type is not shim-configured.
+fn composite_shim_fields(
+    proc: &ProcedureInfo,
+    sql_type: &str,
+    ctx: Option<&AnalysisContext>,
+) -> Option<std::collections::HashMap<String, String>> {
+    let ctx = ctx?;
+    if !ctx.is_composite_shim(sql_type) {
+        return None;
+    }
+    if let Some(ct) = crate::extract::find_custom_type(&proc.custom_types, sql_type)
+        .or_else(|| crate::extract::find_custom_type(&proc.custom_types, &sql_type.to_lowercase()))
+    {
+        if ct.is_record && !ct.fields.is_empty() {
+            return Some(ct.fields.iter().map(|(n, t)| (n.to_lowercase(), t.clone())).collect());
+        }
+    }
+    ctx.composite_shim_field_types(sql_type).cloned()
+}
+
 pub fn analyze_procedure(
     proc: &mut ProcedureInfo,
     summaries: &std::collections::HashMap<String, crate::types::PackageSummary>,
@@ -157,6 +181,20 @@ pub fn analyze_procedure(
         let table = sql_type.split('%').next().unwrap_or("").trim();
         let fields = rowtype_fields_for_table(table, ddl_schema);
         if !fields.is_empty() {
+            proc.param_rowtype_fields.insert(pname.to_lowercase(), fields);
+        }
+    }
+    // composite_type_shims config: params declared with a shim composite type
+    // (e.g. map_object) get record field types so `p_map.k` lowers to a typed
+    // List access instead of a raw Object map get.
+    let shim_params: Vec<(String, String)> = proc
+        .parameters
+        .iter()
+        .filter(|p| ctx.is_composite_shim(&p.sql_type))
+        .map(|p| (p.name.clone(), p.sql_type.clone()))
+        .collect();
+    for (pname, sql_type) in shim_params {
+        if let Some(fields) = composite_shim_fields(proc, &sql_type, Some(&*ctx)) {
             proc.param_rowtype_fields.insert(pname.to_lowercase(), fields);
         }
     }
@@ -385,6 +423,12 @@ pub fn process_declaration(
                     if let Some(ct) = ct {
                         if ct.is_record {
                             proc.imports.insert("import java.util.Map;".into());
+                            // composite_type_shims: record fields of a
+                            // configured shim type (e.g. map_object k/v
+                            // text[]) lower to typed parallel Lists.
+                            if let Some(fields) = composite_shim_fields(proc, &sql_type, ctx.as_deref()) {
+                                proc.rowtype_field_types.insert(var.name.to_lowercase(), fields);
+                            }
                             "Map<String, Object>".into()
                         } else if let Some(ref elem) = ct.elem_java_type {
                             // Issue #124: typed collections lower to
@@ -399,6 +443,15 @@ pub fn process_declaration(
                             "java.util.List<Object>".into()
                         }
                     } else {
+                        // composite_type_shims: the declared type is invisible
+                        // to extraction (e.g. created via DO-block EXECUTE) —
+                        // field types come from the yaml declaration so
+                        // `v.k`/`v.k := v.k || e` lower to typed List ops.
+                        // Match on the RAW type name: `sql_type` may already
+                        // be normalized to the generic "record".
+                        if let Some(fields) = composite_shim_fields(proc, &sql_type_raw, ctx.as_deref()) {
+                            proc.rowtype_field_types.insert(var.name.to_lowercase(), fields);
+                        }
                         // Detect array-like types (e.g., pkg_param_common.arrytype, VARCHAR2_ARRAY)
                         let raw_lower = sql_type_raw.to_lowercase();
                         if raw_lower.contains("arrytype")

@@ -121,6 +121,13 @@ pub fn assignment_to_java(
             let base_camel = snake_to_camel(base);
             let field_camel = snake_to_camel(field);
 
+            // composite_type_shims: array-typed record fields are parallel
+            // java.util.List slots — `f := f || e` appends, `'{}'` re-seats
+            // an empty list, anything else is a typed put.
+            if let Some(list_ty) = record_field_java_type(proc, base, field).filter(|t| t.contains("List<")) {
+                return composite_list_assign(base, field, &list_ty, value, proc);
+            }
+
             if is_out_param(base, proc) {
                 let val = expr_to_java(value, proc);
                 return format!("{}.get().put(\"{}\", {});", base_camel, field_camel, val);
@@ -630,7 +637,13 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
         {
             format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed))
         }
-        Some(t) if (t == "Integer" || t == "int") && trimmed.contains(".get(") => {
+        // java.util.Optional producers (ARRAY_POSITION/ARRAY_LENGTH) already
+        // yield boxed Integer-or-null — ((Number)..).intValue() would NPE.
+        Some(t)
+            if (t == "Integer" || t == "int")
+                && trimmed.contains(".get(")
+                && !trimmed.starts_with("java.util.Optional") =>
+        {
             format!("((Number) {}).intValue()", trimmed)
         }
         Some(t)
@@ -756,7 +769,10 @@ fn coerce_arg_to_type(arg: &str, target_type: &str, proc: &ProcedureInfo) -> Str
 
     let target_is_int = target_type == "int" || target_type == "Integer";
 
-    if target_is_int && trimmed.contains(".get(") {
+    // java.util.Optional producers (ARRAY_POSITION/ARRAY_LENGTH) already
+    // yield a boxed Integer-or-null — wrapping in ((Number)..).intValue()
+    // would NPE on the SQL NULL case.
+    if target_is_int && trimmed.contains(".get(") && !trimmed.starts_with("java.util.Optional") {
         return format!("((Number) {}).intValue()", trimmed);
     }
 
@@ -1026,10 +1042,16 @@ fn expr_to_java_impl(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> St
                 let hi = upper.as_ref().map(|e| expr_to_java(e, proc)).unwrap_or_else(|| "obj.size()".into());
                 format!("{}.subList(({}) - 1, {})", expr_to_java(object, proc), lo, hi)
             } else {
-                // Single index: obj[i] → obj.get(i)
+                // Single index: obj[i] → obj.get(i). Record/composite shim
+                // list fields are PL/pgSQL 1-based arrays → get(i - 1).
                 let idx =
                     lower.as_ref().or(upper.as_ref()).map(|e| expr_to_java(e, proc)).unwrap_or_else(|| "0".into());
-                format!("{}.get({})", expr_to_java(object, proc), idx)
+                let obj_java = expr_to_java(object, proc);
+                if record_list_field_access(object, proc) {
+                    format!("{}.get((int) (({}) - 1))", obj_java, idx)
+                } else {
+                    format!("{}.get({})", obj_java, idx)
+                }
             }
         }
         Expr::FieldAccess { object, field } => {
@@ -1048,7 +1070,7 @@ fn expr_to_java_impl(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> St
                 _ => {}
             }
             let camel = snake_to_camel(field);
-            if camel != field.to_lowercase() {
+            let raw = if camel != field.to_lowercase() {
                 format!(
                     "{}.getOrDefault(\"{}\", {}.get(\"{}\"))",
                     object_java,
@@ -1058,7 +1080,20 @@ fn expr_to_java_impl(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> St
                 )
             } else {
                 format!("{}.get(\"{}\")", object_java, camel)
+            };
+            // composite_type_shims: array-typed record fields hold a
+            // java.util.List inside the map — cast so indexOf/subscript/
+            // size compile against the typed list.
+            let base_var = match object.as_ref() {
+                Expr::PlVariable(n) | Expr::ColumnRef(n) => Some(n.join(".")),
+                _ => None,
+            };
+            if let Some(list_ty) =
+                base_var.as_deref().and_then(|b| record_field_java_type(proc, b, field)).filter(|t| t.contains("List<"))
+            {
+                return format!("(({}) {})", list_ty, raw);
             }
+            raw
         }
         Expr::CursorAttribute { cursor, attribute } => {
             let cursor_name_raw = match cursor.as_ref() {
@@ -1634,15 +1669,151 @@ fn call_expr_return_type(expr_str: &str, proc: &ProcedureInfo) -> Option<String>
     }
 }
 
+/// Java type of `base_var.field` for record-typed variables/parameters
+/// (%ROWTYPE locals, record params, composite_type_shims fields). Checks
+/// locals first, then OUT/IN parameters.
+pub(crate) fn record_field_java_type(proc: &ProcedureInfo, base_var: &str, field: &str) -> Option<String> {
+    let bl = base_var.to_lowercase();
+    proc.rowtype_field_types
+        .get(&bl)
+        .or_else(|| proc.param_rowtype_fields.get(&bl))
+        .and_then(|ft| ft.get(&field.to_lowercase()).cloned())
+}
+
+/// True when `expr` is a `base.field` reference whose record field type is a
+/// `java.util.List` (composite_type_shims parallel-list field).
+fn record_list_field_access(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> bool {
+    let (base, field) = match expr {
+        ogsql_parser::ast::Expr::FieldAccess { object, field } => {
+            let base = match object.as_ref() {
+                ogsql_parser::ast::Expr::PlVariable(n) | ogsql_parser::ast::Expr::ColumnRef(n) => n.join("."),
+                _ => return false,
+            };
+            (base, field.clone())
+        }
+        ogsql_parser::ast::Expr::PlVariable(n) | ogsql_parser::ast::Expr::ColumnRef(n) => {
+            let joined = n.join(".");
+            match joined.rsplit_once('.') {
+                Some((b, f)) => (b.to_string(), f.to_string()),
+                None => return false,
+            }
+        }
+        _ => return false,
+    };
+    record_field_java_type(proc, &base, &field).map(|t| t.contains("List<")).unwrap_or(false)
+}
+
+/// `base.field` reference check used by the parallel-list append lowering.
+fn expr_is_field_ref(expr: &ogsql_parser::ast::Expr, base: &str, field: &str) -> bool {
+    record_list_field_ref(expr).map(|(b, f)| b.eq_ignore_ascii_case(base) && f.eq_ignore_ascii_case(field))
+        == Some(true)
+}
+
+fn record_list_field_ref(expr: &ogsql_parser::ast::Expr) -> Option<(String, String)> {
+    match expr {
+        ogsql_parser::ast::Expr::FieldAccess { object, field } => {
+            let base = match object.as_ref() {
+                ogsql_parser::ast::Expr::PlVariable(n) | ogsql_parser::ast::Expr::ColumnRef(n) => n.join("."),
+                _ => return None,
+            };
+            Some((base, field.clone()))
+        }
+        ogsql_parser::ast::Expr::PlVariable(n) | ogsql_parser::ast::Expr::ColumnRef(n) => {
+            let joined = n.join(".");
+            joined.rsplit_once('.').map(|(b, f)| (b.to_string(), f.to_string()))
+        }
+        _ => None,
+    }
+}
+
+/// Flatten a left-associative `a || b || c` concat chain into operands.
+fn flatten_concat<'a>(expr: &'a ogsql_parser::ast::Expr, out: &mut Vec<&'a ogsql_parser::ast::Expr>) {
+    if let ogsql_parser::ast::Expr::BinaryOp { left, op, right } = expr {
+        if op == "||" {
+            flatten_concat(left, out);
+            flatten_concat(right, out);
+            return;
+        }
+    }
+    out.push(expr);
+}
+
+/// Map-typed Java expression for a record/composite variable or OUT param
+/// (`m` → `m`, OUT `m` → `(Map) m.get()`, Object-typed → cast).
+fn composite_map_expr(base: &str, proc: &ProcedureInfo) -> String {
+    let camel = snake_to_camel(base);
+    if is_out_param(base, proc) {
+        return format!("((java.util.Map<String, Object>) {}.get())", camel);
+    }
+    let base_type = proc.local_vars.get(&base.to_lowercase()).map(|s| s.as_str()).unwrap_or("");
+    if base_type == "Object" || base_type.is_empty() {
+        format!("((java.util.Map<String, Object>) {})", camel)
+    } else {
+        camel
+    }
+}
+
+/// Assignment to a `java.util.List` record field of a composite_type_shims
+/// type. `'{}'` (empty array literal, possibly cast) re-seats an empty list;
+/// `field || e1 || e2 …` appends each element to the parallel list (SQL array
+/// `||` is append); anything else falls back to a typed `put`.
+fn composite_list_assign(
+    base: &str,
+    field: &str,
+    list_ty: &str,
+    value: &ogsql_parser::ast::Expr,
+    proc: &ProcedureInfo,
+) -> String {
+    let map_expr = composite_map_expr(base, proc);
+    let field_key = snake_to_camel(field);
+    let val_java = expr_to_java(value, proc);
+    if val_java.contains("\"{}\"") {
+        return format!("{}.put(\"{}\", new {}());", map_expr, field_key, list_arraylist_type(list_ty));
+    }
+    let mut ops: Vec<&ogsql_parser::ast::Expr> = Vec::new();
+    flatten_concat(value, &mut ops);
+    if ops.len() >= 2 && expr_is_field_ref(ops[0], base, field) {
+        let arr_ty = list_arraylist_type(list_ty);
+        let adds: Vec<String> = ops[1..]
+            .iter()
+            .map(|op| {
+                let elem = expr_to_java(op, proc);
+                format!(
+                    "(({}) {}.computeIfAbsent(\"{}\", _k -> new {}())).add({});",
+                    list_ty, map_expr, field_key, arr_ty, elem
+                )
+            })
+            .collect();
+        return adds.join(" ");
+    }
+    format!("{}.put(\"{}\", {});", map_expr, field_key, val_java)
+}
+
+/// `java.util.List<X>` → `java.util.ArrayList<X>` initializer type.
+fn list_arraylist_type(list_ty: &str) -> String {
+    if let Some(inner) = list_ty
+        .strip_prefix("java.util.List<")
+        .or_else(|| list_ty.strip_prefix("List<"))
+        .and_then(|s| s.strip_suffix('>'))
+    {
+        format!("java.util.ArrayList<{}>", inner)
+    } else {
+        "java.util.ArrayList<Object>".into()
+    }
+}
+
 pub(crate) fn typed_rowtype_field(raw_get: String, base_var: &str, field: &str, proc: &ProcedureInfo) -> String {
-    let field_types = match proc.rowtype_field_types.get(&base_var.to_lowercase()) {
-        Some(ft) => ft,
+    let field_type = match record_field_java_type(proc, base_var, field) {
+        Some(t) => t,
         None => return raw_get,
     };
-    let field_type = match field_types.get(&field.to_lowercase()) {
-        Some(t) => t.as_str(),
-        None => return raw_get,
-    };
+    let field_type = field_type.as_str();
+    if field_type.contains("List<") {
+        // composite_type_shims parallel-list field: the map slot holds a
+        // java.util.List — cast the raw Object get so callers get a typed
+        // List (indexOf/subscript/size compile).
+        return format!("(({}) {})", field_type, raw_get);
+    }
     if field_type.contains("Timestamp") {
         // Cast of null is null — no NPE, and the arithmetic timestamp-branch
         // recognizes the ((java.sql.Timestamp) ...) prefix.
@@ -2534,6 +2705,17 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             } else {
                 arg0.to_string()
             };
+            // Optional producers (ARRAY_LENGTH etc.) yield Integer — box a
+            // numeric else-branch too or the ternary unboxes to int and
+            // downstream ((Number)..) coercions fail to compile.
+            let else_val = if jargs[0].trim().starts_with("java.util.Optional")
+                && else_val.chars().all(|c| c.is_ascii_digit())
+                && !else_val.is_empty()
+            {
+                format!("java.lang.Integer.valueOf({})", else_val)
+            } else {
+                else_val
+            };
             format!("({} != null ? {} : {})", arg0, true_val, else_val)
         }
         "UPPER" => format!("String.valueOf({}).toUpperCase()", jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")),
@@ -2718,7 +2900,19 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             }
         }
         "NULLIF" if jargs.len() >= 2 => format!("(java.util.Objects.equals({}, {}) ? 1 : {})", jargs[0], jargs[1], jargs[0]),
-        "ARRAY_LENGTH" | "ARRAY_UPPER" => format!("({}).size()", jargs.first().map(|s| s.as_str()).unwrap_or("null")),
+        // array_length/array_upper → boxed Integer-or-NULL (SQL semantics:
+        // NULL array → NULL). Optional keeps the arg single-evaluated and
+        // null-safe; downstream COALESCE/ternary need a boxed operand.
+        "ARRAY_LENGTH" | "ARRAY_UPPER" => format!(
+            "java.util.Optional.ofNullable({}).map(__l -> __l instanceof java.util.Collection ? ((java.util.Collection<?>) __l).size() : null).orElse(null)",
+            jargs.first().map(|s| s.as_str()).unwrap_or("null")
+        ),
+        // array_position(arr, elem) → 1-based index or NULL. Optional keeps
+        // both args single-evaluated and propagates NULL for missing keys.
+        "ARRAY_POSITION" if jargs.len() >= 2 => format!(
+            "java.util.Optional.ofNullable({}).map(__l -> __l instanceof java.util.List ? ((java.util.List<?>) __l).indexOf({}) : -1).filter(__i -> __i >= 0).map(__i -> __i + 1).orElse(null)",
+            jargs[0], jargs[1]
+        ),
         "ARRAY_APPEND" if jargs.len() >= 2 => format!("_appendList({}, {})", jargs[0], jargs[1]),
         "ARRAY_APPEND" => jargs.first().map(|s| s.as_str()).unwrap_or("null").to_string(),
         "ARRAY_TO_STRING" if jargs.len() >= 2 => {
@@ -4714,5 +4908,117 @@ mod tests {
         let expr = fc_expr(&["last_day"], vec![col_expr(&["v_ts"])]);
         let out = expr_to_java(&expr, &proc);
         assert!(!out.contains("LocalDate.parse(String.valueOf"), "Timestamp local must not string-parse: {}", out);
+    }
+
+    // ── composite_type_shims: parallel-list record fields ──
+
+    fn shim_fields() -> std::collections::HashMap<String, String> {
+        let mut f = std::collections::HashMap::new();
+        f.insert("k".to_string(), "java.util.List<String>".to_string());
+        f.insert("v".to_string(), "java.util.List<String>".to_string());
+        f
+    }
+
+    fn shim_proc() -> ProcedureInfo {
+        let mut proc = empty_proc();
+        // m: IN OUT map_object param (AtomicReference-backed)
+        proc.parameters.push(crate::types::Parameter {
+            name: "m".into(),
+            java_type: "Object".into(),
+            sql_type: "bigfund.map_object".into(),
+            mode: Some(crate::types::ParamMode::InOut),
+            default_value: None,
+        });
+        proc.param_rowtype_fields.insert("m".into(), shim_fields());
+        // pm: IN map_object param (plain Map)
+        proc.parameters.push(crate::types::Parameter {
+            name: "pm".into(),
+            java_type: "Map<String, Object>".into(),
+            sql_type: "map_object".into(),
+            mode: Some(crate::types::ParamMode::In),
+            default_value: None,
+        });
+        proc.param_rowtype_fields.insert("pm".into(), shim_fields());
+        // scalar params/locals referenced by the shim bodies
+        proc.parameters.push(crate::types::Parameter {
+            name: "k".into(),
+            java_type: "String".into(),
+            sql_type: "varchar2".into(),
+            mode: Some(crate::types::ParamMode::In),
+            default_value: None,
+        });
+        proc.local_vars.insert("i".into(), "Integer".into());
+        // r: local map_object var
+        proc.local_vars.insert("r".into(), "Map<String, Object>".into());
+        proc.rowtype_field_types.insert("r".into(), shim_fields());
+        proc
+    }
+
+    fn plvar(parts: &[&str]) -> ogsql_parser::ast::Expr {
+        ogsql_parser::ast::Expr::PlVariable(parts.iter().map(|s| ogsql_parser::ast::Ident::new(*s)).collect())
+    }
+
+    #[test]
+    fn test_shim_field_concat_assign_appends_to_parallel_list() {
+        // ad_item: `m.k := m.k || k` → ((List) map.computeIfAbsent("k",...)).add(k)
+        let proc = shim_proc();
+        let target = plvar(&["m", "k"]);
+        let value = ogsql_parser::ast::Expr::BinaryOp {
+            left: Box::new(plvar(&["m", "k"])),
+            op: "||".into(),
+            right: Box::new(plvar(&["k"])),
+        };
+        let out = assignment_to_java(&target, &value, &proc);
+        assert!(
+            out.contains("computeIfAbsent(\"k\", _k -> new java.util.ArrayList<String>())).add(k)"),
+            "concat-assign must append to the parallel list, got: {}",
+            out
+        );
+        assert!(!out.contains("StrUtil.concat"), "must not string-concat a list field: {}", out);
+    }
+
+    #[test]
+    fn test_shim_field_empty_array_assign_reseats_list() {
+        // `r.k := '{}'::text[]` → r.put("k", new ArrayList<String>())
+        let proc = shim_proc();
+        let target = plvar(&["r", "k"]);
+        let value = ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String("{}".into()));
+        let out = assignment_to_java(&target, &value, &proc);
+        assert_eq!(out, "r.put(\"k\", new java.util.ArrayList<String>());");
+    }
+
+    #[test]
+    fn test_shim_field_read_casts_to_typed_list() {
+        // `pm.k` read → ((java.util.List<String>) pm.getOrDefault/get(...))
+        let proc = shim_proc();
+        let out = expr_to_java(&plvar(&["pm", "k"]), &proc);
+        assert!(
+            out.starts_with("((java.util.List<String>)"),
+            "list field read must be cast to the typed list, got: {}",
+            out
+        );
+    }
+
+    #[test]
+    fn test_shim_subscript_is_one_based() {
+        // `pm.v[i]` → typed list .get((int)((i) - 1))
+        let proc = shim_proc();
+        let sub = ogsql_parser::ast::Expr::Subscript {
+            object: Box::new(plvar(&["pm", "v"])),
+            lower: Some(Box::new(plvar(&["i"]))),
+            upper: None,
+            is_slice: false,
+        };
+        let out = expr_to_java(&sub, &proc);
+        assert!(out.contains(".get((int) ((i) - 1))"), "1-based subscript expected, got: {}", out);
+    }
+
+    #[test]
+    fn test_array_position_lowers_to_null_safe_indexof() {
+        let proc = shim_proc();
+        let call = fc_expr(&["array_position"], vec![plvar(&["pm", "k"]), plvar(&["k"])]);
+        let out = expr_to_java(&call, &proc);
+        assert!(out.contains("indexOf"), "array_position must lower to indexOf, got: {}", out);
+        assert!(out.contains("orElse(null)"), "missing key must yield NULL, got: {}", out);
     }
 }

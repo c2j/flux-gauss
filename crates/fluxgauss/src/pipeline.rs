@@ -291,6 +291,38 @@ pub fn run_pipeline(
 ) -> PipelineResult {
     let _base_package = config.base_package_or_default();
     let mut ctx = AnalysisContext::new();
+    if let Some(shims) = &config.composite_type_shims {
+        for shim in shims {
+            let name = shim.sql_type.trim().to_lowercase();
+            if name.is_empty() {
+                continue;
+            }
+            let mut fields = std::collections::HashMap::new();
+            if let Some(declared) = &shim.fields {
+                for (fname, ftype) in declared {
+                    let ft = ftype.trim();
+                    if ft.is_empty() {
+                        continue;
+                    }
+                    // Values are SQL types (`text[]`); java-looking types
+                    // (`java.util.List<String>`) pass through unchanged.
+                    let jt = if ft.contains('<') || ft.contains('.') {
+                        ft.to_string()
+                    } else {
+                        crate::type_map::sql_type_to_java(ft)
+                            .map(|s| s.to_string())
+                            .or_else(|| {
+                                crate::type_map::sql_type_to_java(&crate::extract::normalize_sql_type(ft))
+                                    .map(|s| s.to_string())
+                            })
+                            .unwrap_or_else(|| "Object".into())
+                    };
+                    fields.insert(fname.trim().to_lowercase(), jt);
+                }
+            }
+            ctx.composite_type_shims.insert(name, fields);
+        }
+    }
 
     // Snapshot pre-run package set for stale-output cleanup (#120)
     let old_pkg_names = incremental.manifest_packages();

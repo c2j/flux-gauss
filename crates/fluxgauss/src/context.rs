@@ -37,6 +37,35 @@ pub struct AnalysisContext {
     /// render the same method_id) — this set is the package-wide uniqueness
     /// guard for `dml_method_name` (issue #128).
     pub dml_used_ids: HashMap<String, HashSet<String>>,
+    /// `composite_type_shims` config: declared SQL type name (lowercased) →
+    /// `field_lower → java type`. Shim composite types are typically created
+    /// inside `DO $$ EXECUTE 'CREATE TYPE …'` dynamic strings, invisible to
+    /// the parser — their record field types therefore come from the yaml
+    /// declaration, not `custom_types`.
+    pub composite_type_shims: HashMap<String, HashMap<String, String>>,
+}
+
+impl AnalysisContext {
+    /// True when `declared_type` (e.g. `bigfund.map_object`) matches a
+    /// configured `composite_type_shims` entry. Matches the full name or its
+    /// last dot-separated segment, case-insensitively.
+    pub fn is_composite_shim(&self, declared_type: &str) -> bool {
+        self.composite_shim_field_types(declared_type).is_some()
+    }
+
+    /// Declared field-type map for a shim type: `field_lower → java type`.
+    /// Returns `None` when the type is not shim-configured.
+    pub fn composite_shim_field_types(&self, declared_type: &str) -> Option<&HashMap<String, String>> {
+        if self.composite_type_shims.is_empty() {
+            return None;
+        }
+        let lower = declared_type.trim().to_lowercase();
+        if let Some(f) = self.composite_type_shims.get(&lower) {
+            return Some(f);
+        }
+        let bare = lower.rsplit('.').next().unwrap_or(&lower);
+        self.composite_type_shims.get(bare)
+    }
 }
 
 impl AnalysisContext {
@@ -53,6 +82,7 @@ impl AnalysisContext {
             debug: false,
             dml_counters: HashMap::new(),
             dml_used_ids: HashMap::new(),
+            composite_type_shims: HashMap::new(),
         }
     }
 }

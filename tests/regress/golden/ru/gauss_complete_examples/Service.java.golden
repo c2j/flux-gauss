@@ -37,7 +37,7 @@ public class CursorAdvancedService {
         int pResultIdx = 0;
         Object p_result = null;
         vStatusArray = java.util.Arrays.asList(String.valueOf(pStatusList).split(java.util.regex.Pattern.quote(String.valueOf(","))));
-        vStatusCount = (vStatusArray).size();
+        vStatusCount = java.util.Optional.ofNullable(vStatusArray).map(__l -> __l instanceof java.util.Collection ? ((java.util.Collection<?>) __l).size() : null).orElse(null);
         for (int i = 1; i <= vStatusCount; i++) {
             vInClause = String.valueOf(String.valueOf(vInClause).concat(String.valueOf(":"))).concat(String.valueOf(i));
         }

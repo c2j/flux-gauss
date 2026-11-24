@@ -466,7 +466,11 @@ pub(crate) fn populated_record_fixture(fields: &[(String, String)]) -> String {
 
 fn record_field_seed(java_type: &str) -> &'static str {
     let tl = java_type.to_lowercase();
-    if tl.contains("long") {
+    // List must precede scalar substring checks — "java.util.List<Long>"
+    // contains "long" but seeds an empty list, not 1L.
+    if tl.contains("list<") || tl.contains("java.util.list") {
+        "new java.util.ArrayList<>()"
+    } else if tl.contains("long") {
         "1L"
     } else if tl.contains("biginteger") {
         // Review #129 S6: check before the `int` substring — "biginteger"
