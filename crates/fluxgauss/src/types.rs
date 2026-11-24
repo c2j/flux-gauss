@@ -79,6 +79,12 @@ pub struct GlobalFnEntry {
     /// *result* is BigDecimal even when the call site itself has no textual
     /// BigDecimal markers (see root cause B3, issue #107 follow-up).
     pub return_type: Option<String>,
+    /// Resolved IN-param signature types parallel to `params` — the type the
+    /// callee's service method actually declares (boxed for `default null` /
+    /// `IS [NOT] NULL` sentinel params, primitive otherwise). Empty when the
+    /// defining procedure could not be resolved; callers fall back to
+    /// `boxed_to_primitive`.
+    pub param_sig_types: Vec<String>,
 }
 
 // ── DML ──

@@ -70,6 +70,11 @@ impl CodeWriter {
 /// generated Java file gets the fix (previously a delivery-side postprocess
 /// byte patch). TOBEFIX comments inside the parens are preserved.
 fn sanitize_java_line(text: &str) -> String {
+    // Only rewrite code — `//` comment lines (e.g. CALL dumps embedding
+    // String.valueOf(null)) must stay byte-identical.
+    if text.trim_start().starts_with("//") {
+        return text.to_string();
+    }
     if !(text.contains("String.valueOf(") && text.contains("null")) {
         return text.to_string();
     }

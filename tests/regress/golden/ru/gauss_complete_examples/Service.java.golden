@@ -37,7 +37,7 @@ public class CursorAdvancedService {
         int pResultIdx = 0;
         Object p_result = null;
         vStatusArray = java.util.Arrays.asList(String.valueOf(pStatusList).split(java.util.regex.Pattern.quote(String.valueOf(","))));
-        vStatusCount = java.util.Optional.ofNullable(vStatusArray).map(__l -> __l instanceof java.util.Collection ? ((java.util.Collection<?>) __l).size() : null).orElse(null);
+        vStatusCount = java.util.Optional.ofNullable(vStatusArray).map(__l -> __l instanceof java.util.Collection ? ((java.util.Collection<?>) __l).size() : null).map(Number::intValue).orElse(null);
         for (int i = 1; i <= vStatusCount; i++) {
             vInClause = String.valueOf(String.valueOf(vInClause).concat(String.valueOf(":"))).concat(String.valueOf(i));
         }
@@ -204,7 +204,7 @@ public class CursorLifecycleService {
         while (true) {
             if (++_loopGuard1 > 1000) { break; }
             // CALL map_object.ad_item(pMap.get(), /* TOBEFIX: unresolved name Date(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ null, /* TOBEFIX: unresolved name func_get_frame_date(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ null)
-            // CALL map_object.ad_item(pMap.get(), /* TOBEFIX: unresolved name Date-1(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ null, String.valueOf(/* TOBEFIX: unresolved name func_get_frame_date(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ (Object) null)).concat(String.valueOf("-sss")))
+            // CALL map_object.ad_item(pMap.get(), /* TOBEFIX: unresolved name Date-1(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ null, String.valueOf(/* TOBEFIX: unresolved name func_get_frame_date(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ null).concat(String.valueOf("-sss")))
             vLevel = /* TOBEFIX: unresolved name func_get_frame_date(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ null;
             vLevel = String.valueOf(/* TOBEFIX: unresolved name func_get_frame_date(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ (Object) null)).concat(String.valueOf("-sss"));
             found = false; // FETCH pCursor — cursor not materialized

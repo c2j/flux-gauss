@@ -461,24 +461,21 @@ fn mock_cross_service_calls(pkg: &PackageInfo, sorted_injections: &[(&String, &S
                 let matchers: Vec<String> = entry
                     .params
                     .iter()
-                    .map(|p| {
+                    .enumerate()
+                    .map(|(i, p)| {
                         if p.is_out() {
-                            any_matcher_expr(&format!("AtomicReference<{}>", p.java_type))
-                        } else {
-                            // Mirror `service.rs::build_service_method`'s IN-param typing rule
-                            // exactly: any boxed-numeric/boolean param without an explicit
-                            // `default null` is declared primitive in the *actual* callee
-                            // method signature, so the matcher must use `anyInt()`/`anyLong()`
-                            // (not `(Integer) any()`) or Mockito's null unboxes and NPEs.
-                            let is_null_default =
-                                p.default_value.as_ref().is_some_and(|dv| dv.to_lowercase() == "null");
-                            let t = if is_null_default {
-                                p.java_type.as_str()
-                            } else {
-                                crate::generate::service::boxed_to_primitive(&p.java_type)
-                            };
-                            any_matcher_expr(t)
+                            return any_matcher_expr(&format!("AtomicReference<{}>", p.java_type));
                         }
+                        // Use the callee's resolved signature type recorded in
+                        // GlobalFnEntry.param_sig_types (boxed for `default null` /
+                        // `IS [NOT] NULL` sentinel params); fall back to the primitive
+                        // rule when the entry carries no resolved types.
+                        let t = entry
+                            .param_sig_types
+                            .get(i)
+                            .map(String::as_str)
+                            .unwrap_or_else(|| crate::generate::service::boxed_to_primitive(&p.java_type));
+                        any_matcher_expr(t)
                     })
                     .collect();
                 stubs.push((

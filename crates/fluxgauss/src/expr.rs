@@ -388,15 +388,17 @@ fn is_primitive_emitted_param(inner: &str, proc: &ProcedureInfo) -> bool {
         return false;
     }
     proc.parameters.iter().any(|p| {
-        if p.is_out() || p.default_value.as_ref().is_some_and(|dv| dv.eq_ignore_ascii_case("null")) {
+        if p.is_out() {
             return false;
         }
         let java_name = crate::naming::snake_to_camel(&p.name);
         if java_name != base && !p.name.eq_ignore_ascii_case(base) {
             return false;
         }
+        // Share the service emitter's signature decision: `default null` and
+        // `IS [NOT] NULL` sentinel params stay boxed, so `== null` is legal.
         matches!(
-            crate::generate::service::boxed_to_primitive(&p.java_type),
+            crate::generate::service::in_param_signature_type(p, proc),
             "long" | "int" | "boolean" | "double" | "float" | "short" | "byte"
         )
     })
@@ -630,6 +632,16 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
         }
         Some(t)
             if t.contains("BigDecimal")
+                && trimmed.starts_with("java.util.Optional")
+                && trimmed.ends_with(".orElse(null)") =>
+        {
+            // Optional<Integer>-or-null → BigDecimal-or-null; preserves SQL
+            // NULL instead of NPE-ing on ((Number) optional).longValue().
+            optional_unwrap(trimmed, "__n -> java.math.BigDecimal.valueOf(__n.longValue())", "null")
+                .unwrap_or_else(|| trimmed.to_string())
+        }
+        Some(t)
+            if t.contains("BigDecimal")
                 && trimmed.contains(".get(")
                 && !trimmed.starts_with("new java.math.BigDecimal") =>
         {
@@ -748,6 +760,7 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
                     || trimmed.contains(" + ")
                     || trimmed.contains(" - ")
                     || trimmed.contains(" / "))
+                && !trimmed.starts_with("java.util.Optional")
                 && !trimmed.starts_with("new ")
                 && !produces_double(trimmed)
                 && !produces_primitive_int(trimmed) =>
@@ -769,7 +782,22 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
         {
             trimmed.to_string()
         }
+        Some(t)
+            if (t == "Integer" || t == "int")
+                && trimmed.starts_with("java.util.Optional")
+                && trimmed.ends_with(".orElse(null)") =>
+        {
+            // Optional<Integer>-or-null → Integer-or-null / 0 for primitives.
+            let default = if t == "int" { "0" } else { "null" };
+            optional_unwrap(trimmed, "Number::intValue", default).unwrap_or_else(|| trimmed.to_string())
+        }
         Some(t) if (t == "Long" || t == "long") => {
+            // Optional<Integer>-or-null: `((Number) opt).longValue()` NPEs on
+            // SQL NULL — unwrap to Long-or-null (boxed) / 0L (primitive).
+            if trimmed.starts_with("java.util.Optional") && trimmed.ends_with(".orElse(null)") {
+                let default = if t == "long" { "0L" } else { "null" };
+                return optional_unwrap(trimmed, "Number::longValue", default).unwrap_or_else(|| trimmed.to_string());
+            }
             if looks_like_timestamp_expr(trimmed, proc) {
                 format!("{}.getTime()", trimmed)
             } else if looks_like_string_expr(trimmed) {
@@ -799,6 +827,24 @@ fn coerce_arg_to_type(arg: &str, target_type: &str, proc: &ProcedureInfo) -> Str
     {
         // OUT param / promoted local — pass .get() value, then coerce further
         return coerce_arg_to_type(&format!("{}.get()", trimmed), target_type, proc);
+    }
+
+    // Optional<Integer>-or-null producers (array_position/array_length):
+    // unwrap per target type — casting the Optional to Number or parsing
+    // "Optional[...]"/"null" as a number is a compile error or runtime bug.
+    if trimmed.starts_with("java.util.Optional") && trimmed.ends_with(".orElse(null)") {
+        if target_is_bigdecimal {
+            return optional_unwrap(trimmed, "__n -> java.math.BigDecimal.valueOf(__n.longValue())", "null")
+                .unwrap_or_else(|| trimmed.to_string());
+        }
+        if target_is_long {
+            let default = if target_type == "long" { "0L" } else { "null" };
+            return optional_unwrap(trimmed, "Number::longValue", default).unwrap_or_else(|| trimmed.to_string());
+        }
+        if target_type == "int" || target_type == "Integer" {
+            let default = if target_type == "int" { "0" } else { "null" };
+            return optional_unwrap(trimmed, "Number::intValue", default).unwrap_or_else(|| trimmed.to_string());
+        }
     }
 
     if target_is_bigdecimal {
@@ -1808,10 +1854,21 @@ fn composite_map_expr(base: &str, proc: &ProcedureInfo) -> String {
     }
 }
 
+/// True for the SQL empty-array literal `'{}'`, including a `::type[]` cast.
+fn is_empty_array_literal(expr: &ogsql_parser::ast::Expr) -> bool {
+    use ogsql_parser::ast::{Expr, Literal};
+    match expr {
+        Expr::Literal(Literal::String(s)) => s.trim() == "{}",
+        Expr::TypeCast { expr, .. } => is_empty_array_literal(expr),
+        _ => false,
+    }
+}
+
 /// Assignment to a `java.util.List` record field of a composite_type_shims
 /// type. `'{}'` (empty array literal, possibly cast) re-seats an empty list;
 /// `field || e1 || e2 …` appends each element to the parallel list (SQL array
-/// `||` is append); anything else falls back to a typed `put`.
+/// `||` is append — appending `'{}'` adds zero elements, a no-op); anything
+/// else falls back to a typed `put`.
 fn composite_list_assign(
     base: &str,
     field: &str,
@@ -1821,16 +1878,16 @@ fn composite_list_assign(
 ) -> String {
     let map_expr = composite_map_expr(base, proc);
     let field_key = snake_to_camel(field);
-    let val_java = expr_to_java(value, proc);
-    if val_java.contains("\"{}\"") {
-        return format!("{}.put(\"{}\", new {}());", map_expr, field_key, list_arraylist_type(list_ty));
-    }
     let mut ops: Vec<&ogsql_parser::ast::Expr> = Vec::new();
     flatten_concat(value, &mut ops);
+    if ops.len() == 1 && is_empty_array_literal(ops[0]) {
+        return format!("{}.put(\"{}\", new {}());", map_expr, field_key, list_arraylist_type(list_ty));
+    }
     if ops.len() >= 2 && expr_is_field_ref(ops[0], base, field) {
         let arr_ty = list_arraylist_type(list_ty);
         let adds: Vec<String> = ops[1..]
             .iter()
+            .filter(|op| !is_empty_array_literal(op))
             .map(|op| {
                 let elem = expr_to_java(op, proc);
                 format!(
@@ -1839,8 +1896,12 @@ fn composite_list_assign(
                 )
             })
             .collect();
+        if adds.is_empty() {
+            return "// no-op: append of empty array literal".to_string();
+        }
         return adds.join(" ");
     }
+    let val_java = expr_to_java(value, proc);
     format!("{}.put(\"{}\", {});", map_expr, field_key, val_java)
 }
 
@@ -1990,6 +2051,30 @@ fn safe_long_value(expr: &str) -> String {
     // Parenthesize the operand: `(Number) a + 1` parses as `((Number) a) + 1`
     // (Number + int is a compile error); the cast must cover the whole expr.
     format!("java.util.Optional.ofNullable((Number) ({})).map(Number::longValue).orElse(0L)", expr)
+}
+
+/// Unwrap an `Optional...orElse(null)` operand produced by array_position /
+/// array_length into `Optional.map(<fn>).orElse(<default>)`. `map_fn` is a
+/// method reference/lambda body applied to the boxed element; `default` is
+/// the Java literal for the empty case (`null` preserves SQL NULL, `0L`
+/// matches the arithmetic convention).
+fn optional_unwrap(expr: &str, map_fn: &str, default: &str) -> Option<String> {
+    let t = expr.trim();
+    const SUFFIX: &str = ".orElse(null)";
+    if t.starts_with("java.util.Optional") && t.ends_with(SUFFIX) {
+        Some(format!("{}.map({}).orElse({})", &t[..t.len() - SUFFIX.len()], map_fn, default))
+    } else {
+        None
+    }
+}
+
+/// An operand that already lowers to `java.util.Optional...orElse(null)`
+/// (array_position / array_length) cannot be cast to Number or concatenated
+/// into arithmetic — unwrap it to a primitive long with the same NULL->0
+/// convention as `safe_long_value`. SQL NULL in arithmetic is an error; the
+/// generated code cannot raise it, so the delivery-aligned default is 0.
+fn optional_numeric_operand(expr: &str) -> Option<String> {
+    optional_unwrap(expr, "Number::longValue", "0L")
 }
 
 /// Extract (value_java, unit) from an interval expression (literal or concat).
@@ -2427,6 +2512,20 @@ fn binary_op_to_java(
                 // Timestamp receivers.
                 format!("{}.compareTo({}){}", localdate_operand_to_ts(&l), localdate_operand_to_ts(&r), cmp_method)
             } else {
+                // Optional-producing operands (array_position/array_length)
+                // unwrap to long regardless of `.get(` presence —
+                // safe_long_value would cast the Optional itself to Number.
+                if let (Some(lo), Some(ro)) = (optional_numeric_operand(&l), optional_numeric_operand(&r)) {
+                    return format!("{} {} {}", lo, op, ro);
+                }
+                if let Some(lo) = optional_numeric_operand(&l) {
+                    let ro = if needs_get_unwrap(&r) { safe_long_value(&r) } else { r.clone() };
+                    return format!("{} {} {}", lo, op, ro);
+                }
+                if let Some(ro) = optional_numeric_operand(&r) {
+                    let lo = if needs_get_unwrap(&l) { safe_long_value(&l) } else { l.clone() };
+                    return format!("{} {} {}", lo, op, ro);
+                }
                 let has_get_l = needs_get_unwrap(&l);
                 let has_get_r = needs_get_unwrap(&r);
                 let (l_out, r_out) = if has_get_l || has_get_r {
@@ -2532,15 +2631,26 @@ fn binary_op_to_java(
                     r.clone()
                 };
                 (lo, ro)
-            } else if is_arith && (has_get_l || has_get_r) {
-                let lo = if has_get_l {
+            } else if is_arith
+                && (has_get_l
+                    || has_get_r
+                    || optional_numeric_operand(&l).is_some()
+                    || optional_numeric_operand(&r).is_some())
+            {
+                // Optional-producing operands unwrap to long first —
+                // safe_long_value would cast the Optional itself to Number.
+                let lo = if let Some(u) = optional_numeric_operand(&l) {
+                    u
+                } else if has_get_l {
                     safe_long_value(&l)
                 } else if l.trim().starts_with("(Number)") {
                     format!("({}).longValue()", l)
                 } else {
                     l.clone()
                 };
-                let ro = if has_get_r {
+                let ro = if let Some(u) = optional_numeric_operand(&r) {
+                    u
+                } else if has_get_r {
                     safe_long_value(&r)
                 } else if r.trim().starts_with("(Number)") {
                     format!("({}).longValue()", r)
@@ -4363,6 +4473,7 @@ mod tests {
                 package: "issue_79_unqualified_fn_callee".into(),
                 params: vec![],
                 return_type: None,
+                param_sig_types: Vec::new(),
             }],
         );
         assert_eq!(
@@ -4475,6 +4586,7 @@ mod tests {
                 default_value: None,
             }],
             return_type: None,
+            param_sig_types: Vec::new(),
         };
         proc.all_proc_params.insert(
             "getVal".into(),
@@ -4537,6 +4649,7 @@ mod tests {
                 package: "pkg_common_tool".into(),
                 params: vec![],
                 return_type: None,
+                param_sig_types: Vec::new(),
             }],
         );
         let expr = ogsql_parser::ast::Expr::FunctionCall {
@@ -4895,6 +5008,7 @@ mod tests {
                 default_value: None,
             }],
             return_type: Some("Long".into()),
+            param_sig_types: Vec::new(),
         };
         proc.all_proc_params.insert(
             "fncComGetday".into(),
@@ -4928,6 +5042,7 @@ mod tests {
                 default_value: None,
             }],
             return_type: None,
+            param_sig_types: Vec::new(),
         };
         proc.all_proc_params.insert(
             "getVal".into(),
@@ -5045,6 +5160,50 @@ mod tests {
     }
 
     #[test]
+    fn test_shim_field_concat_empty_array_operand_is_noop() {
+        // Review P2-G: `m.k := m.k || '{}'` appends zero elements — must NOT
+        // reseat the list (the old rendered-string check on "\"{}\"" wiped it).
+        let proc = shim_proc();
+        let target = plvar(&["m", "k"]);
+        let mk_concat = |right: ogsql_parser::ast::Expr| ogsql_parser::ast::Expr::BinaryOp {
+            left: Box::new(plvar(&["m", "k"])),
+            op: "||".into(),
+            right: Box::new(right),
+        };
+        // Plain '{}' literal.
+        let out = assignment_to_java(
+            &target,
+            &mk_concat(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String("{}".into()))),
+            &proc,
+        );
+        assert!(out.contains("no-op"), "append of '{{}}' must be a no-op, got: {}", out);
+        assert!(!out.contains("new java.util.ArrayList"), "must not reseat the list: {}", out);
+        // Cast variant `'{}'::text[]`.
+        let cast = ogsql_parser::ast::Expr::TypeCast {
+            expr: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String("{}".into()))),
+            type_name: ogsql_parser::ast::DataType::Text,
+            default: None,
+            format: None,
+        };
+        let out2 = assignment_to_java(&target, &mk_concat(cast), &proc);
+        assert!(out2.contains("no-op"), "cast '{{}}' append must be a no-op, got: {}", out2);
+    }
+
+    #[test]
+    fn test_shim_field_nonempty_concat_still_appends() {
+        // Guard against over-filtering: `m.k || k` still appends.
+        let proc = shim_proc();
+        let target = plvar(&["m", "k"]);
+        let value = ogsql_parser::ast::Expr::BinaryOp {
+            left: Box::new(plvar(&["m", "k"])),
+            op: "||".into(),
+            right: Box::new(plvar(&["k"])),
+        };
+        let out = assignment_to_java(&target, &value, &proc);
+        assert!(out.contains(".add(k)"), "non-empty concat must append, got: {}", out);
+    }
+
+    #[test]
     fn test_shim_field_read_casts_to_typed_list() {
         // `pm.k` read → ((java.util.List<String>) pm.getOrDefault/get(...))
         let proc = shim_proc();
@@ -5099,6 +5258,27 @@ mod tests {
     }
 
     #[test]
+    fn test_is_null_on_is_null_sentinel_param_keeps_comparison() {
+        // Review P3-I: `p_amount IS NULL` is the PL "argument not passed"
+        // sentinel — the param stays boxed in the signature, so the check
+        // must NOT be folded to `false`.
+        let mut proc = empty_proc();
+        proc.sql_text = "IF p_amount IS NULL THEN RETURN; END IF;".into();
+        proc.parameters.push(crate::types::Parameter {
+            name: "p_amount".into(),
+            java_type: "Long".into(),
+            sql_type: "number".into(),
+            mode: Some(crate::types::ParamMode::In),
+            default_value: None,
+        });
+        let expr = ogsql_parser::ast::Expr::IsNull {
+            expr: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["p_amount".into()])),
+            negated: false,
+        };
+        assert_eq!(expr_to_java(&expr, &proc), "pAmount == null");
+    }
+
+    #[test]
     fn test_is_null_on_boxed_local_still_emits_comparison() {
         // Local vars stay boxed (`Long`), so `== null` remains valid Java.
         let mut proc = empty_proc();
@@ -5129,6 +5309,71 @@ mod tests {
         };
         let out = assignment_to_java(&target, &value, &proc);
         assert!(out.contains(".set((-1L))"), "expected long literal in .set(), got: {}", out);
+    }
+
+    #[test]
+    fn test_optional_operand_unwraps_in_arithmetic() {
+        // Review P1-F: array_position/array_length yield Optional...orElse(null)
+        // — arithmetic must unwrap to long, not cast the Optional to Number.
+        let proc = shim_proc();
+        let call = fc_expr(&["array_position"], vec![plvar(&["pm", "k"]), plvar(&["k"])]);
+        let expr = ogsql_parser::ast::Expr::BinaryOp {
+            left: Box::new(call),
+            op: "+".into(),
+            right: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Integer(1))),
+        };
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains(".map(Number::longValue).orElse(0L) + 1"), "got: {}", out);
+        assert!(!out.contains("(Number) (java.util.Optional"), "Optional must not be Number-cast: {}", out);
+
+        let call2 = fc_expr(
+            &["array_length"],
+            vec![plvar(&["pm", "k"]), ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Integer(1))],
+        );
+        let expr2 = ogsql_parser::ast::Expr::BinaryOp {
+            left: Box::new(call2),
+            op: "*".into(),
+            right: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Integer(2))),
+        };
+        let out2 = expr_to_java(&expr2, &proc);
+        assert!(out2.contains(".map(Number::longValue).orElse(0L) * 2"), "got: {}", out2);
+
+        // Comparison operand unwraps the same way.
+        let call3 = fc_expr(&["array_position"], vec![plvar(&["pm", "k"]), plvar(&["k"])]);
+        let expr3 = ogsql_parser::ast::Expr::BinaryOp {
+            left: Box::new(call3),
+            op: ">".into(),
+            right: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Integer(0))),
+        };
+        let out3 = expr_to_java(&expr3, &proc);
+        assert!(out3.contains(".map(Number::longValue).orElse(0L) > 0"), "got: {}", out3);
+    }
+
+    #[test]
+    fn test_optional_coercion_preserves_null_for_boxed_targets() {
+        // `v := array_position(...)` into Long/BigDecimal must keep SQL NULL —
+        // orElse(null) on the mapped Optional, not orElse(0L).
+        let opt = "java.util.Optional.ofNullable(x).map(__i -> __i + 1).orElse(null)";
+        let long_out = coerce_for_type(opt, Some("Long"), &empty_proc());
+        assert!(long_out.ends_with(".map(Number::longValue).orElse(null)"), "got: {}", long_out);
+        let bd_out = coerce_for_type(opt, Some("java.math.BigDecimal"), &empty_proc());
+        assert!(
+            bd_out.contains("BigDecimal.valueOf(__n.longValue())") && bd_out.ends_with("orElse(null)"),
+            "got: {}",
+            bd_out
+        );
+        // Primitive long target defaults NULL to 0L (cannot be null).
+        let prim = coerce_for_type(opt, Some("long"), &empty_proc());
+        assert!(prim.ends_with(".map(Number::longValue).orElse(0L)"), "got: {}", prim);
+        // Integer targets unwrap via intValue; the " + " inside the Optional's
+        // own map lambda must not trigger the arithmetic passthrough arm.
+        let int_out = coerce_for_type(opt, Some("Integer"), &empty_proc());
+        assert!(int_out.ends_with(".map(Number::intValue).orElse(null)"), "got: {}", int_out);
+        let int_prim = coerce_for_type(opt, Some("int"), &empty_proc());
+        assert!(int_prim.ends_with(".map(Number::intValue).orElse(0)"), "got: {}", int_prim);
+        // Function-arg coercion to Long behaves identically.
+        let arg_out = coerce_arg_to_type(opt, "Long", &empty_proc());
+        assert!(arg_out.ends_with(".map(Number::longValue).orElse(null)"), "got: {}", arg_out);
     }
 
     #[test]
