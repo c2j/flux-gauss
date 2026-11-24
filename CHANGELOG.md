@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.6.28] - 2026-11-24
+
+### Added
+- `composite_type_shims` config: declare shim record types (`sql_type` / `representation` / `fields`) so map_object-style composites lower to typed parallel `List` fields — constructor seeding, `f || x` append, `'{}'` reset (AST-detected, incl. `::cast`), 1-based subscripts, `array_position`/`array_length` Optional semantics; shim `T[]` fields resolve element-wise (`integer[]` → `List<Integer>`); generated tests seed populated map fixtures for shim OUT params
+
+### Fixed
+- Control-flow defect cluster moved up from delivery postprocess (#132): precise fallthrough analysis (structured brace matching, if-chain/try-catch/loop-exit), dead code commented as a unit (no orphan catch/brace), illegal `&& (null)` boolean operands degrade to `false`, nested range-for reuses outer counter (save/restore)
+- Review fixes (#132/#133): fallthrough scan boundary (last line eligible), literal-true loop detection (no substring match; enhanced `for (x : xs)` is finite), Optional-producing operands (`array_position`/`array_length`) unwrap in arithmetic/comparison/coercion (`Number::longValue`/`intValue`, NULL preserved for boxed targets), `'{}'` concat operand is a no-op not a reset, shim array element types preserved, `IS [NOT] NULL` sentinel params keep boxed signatures (`in_param_signature_type` shared by service signature, IsNull folding, test matchers)
+- Literal/cast cluster: `String.valueOf((Object) null)` at emission (`//` lines excluded), `AtomicReference<Long>.set()` int literals get `L` suffix, `(Number)` cast operand parenthesized
+
 ## [0.6.27] - 2026-08-27
 
 ### Fixed
