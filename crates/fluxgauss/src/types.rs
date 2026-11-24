@@ -272,6 +272,16 @@ pub struct ProcedureInfo {
     /// `i`, so real declarations must be reused in the loop header.
     pub range_loop_counters: HashSet<String>,
 
+    /// Range-FOR counter names (`local_vars` keys) whose loop body is
+    /// currently being processed — i.e. counters of ENCLOSING loops. A nested
+    /// `for (int i = ...)` reusing an enclosing counter's java name is a
+    /// javac shadowing error, so the inner loop must reuse+restore instead.
+    pub active_range_fors: Vec<String>,
+
+    /// Monotonic suffix for save/restore temporaries emitted around nested
+    /// same-name range FOR loops.
+    pub range_for_save_counter: u32,
+
     pub source_file: String,
     pub source_path: String,
     pub source_start_line: u32,
@@ -330,6 +340,8 @@ impl ProcedureInfo {
             plain_loop_counter: 0,
             catch_counter: 0,
             range_loop_counters: HashSet::new(),
+            active_range_fors: Vec::new(),
+            range_for_save_counter: 0,
             source_file: String::new(),
             source_path: String::new(),
             source_start_line: 0,

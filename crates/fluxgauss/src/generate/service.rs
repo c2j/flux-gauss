@@ -799,7 +799,10 @@ fn build_service_method(
                 // present the loop header must reuse it rather than re-declare.
                 let is_range_loop_iter = proc.java_logic_lines.iter().enumerate().any(|(idx, l)| {
                     let t = l.trim_start();
-                    if !(t.starts_with("for (int ") && l.contains(&format!("int {} = ", var_java))) {
+                    // Dead-code stripping comments the header out, but the
+                    // counter still must not get a method-level declaration.
+                    let is_for_header = t.starts_with("for (int ") || t.starts_with("// UNREACHABLE: for (int ");
+                    if !(is_for_header && l.contains(&format!("int {} = ", var_java))) {
                         return false;
                     }
                     let bare_assign = format!("{} = ", var_java);
@@ -1013,12 +1016,16 @@ fn build_service_method(
                 .find(|l| !l.trim_start().starts_with("// UNREACHABLE:"))
                 .map(|l| l.trim().to_string())
                 .unwrap_or_default();
-            let needs_fallback = if last_line.starts_with("return ") || last_line.starts_with("return;") {
+            let code: Vec<&str> =
+                body_lines.iter().map(|l| l.trim()).filter(|l| !l.is_empty() && !l.starts_with("//")).collect();
+            let needs_fallback = if last_line.starts_with("return ")
+                || last_line.starts_with("return;")
+                || last_line.starts_with("throw ")
+                || last_line == "throw;"
+            {
                 false
-            } else if last_line == "}" {
-                !is_if_else_all_return(&body_lines)
             } else {
-                true
+                !seq_cannot_fall_through(&code)
             };
             if needs_fallback {
                 let fallback = if ret_type.contains("List") {
@@ -1239,46 +1246,387 @@ pub fn collect_service_injections(pkg: &PackageInfo) -> std::collections::HashMa
     services
 }
 
-fn is_if_else_all_return(lines: &[String]) -> bool {
-    let lines_trimmed: Vec<&str> = lines.iter().map(|l| l.trim()).collect();
-    let n = lines_trimmed.len();
-    if n < 3 {
-        return false;
+/// The `{`/`}` characters of `t` that sit outside string/char literals and
+/// `//` / `/* */` comments (generated code embeds all of these).
+pub(crate) fn structural_braces(t: &str) -> Vec<char> {
+    let mut out = Vec::new();
+    let mut in_str = false;
+    let mut in_chr = false;
+    let mut in_block = false;
+    let mut esc = false;
+    let mut chars = t.chars().peekable();
+    while let Some(c) = chars.next() {
+        if esc {
+            esc = false;
+            continue;
+        }
+        if c == '\\' && (in_str || in_chr) {
+            esc = true;
+            continue;
+        }
+        if in_str {
+            if c == '"' {
+                in_str = false;
+            }
+            continue;
+        }
+        if in_chr {
+            if c == '\'' {
+                in_chr = false;
+            }
+            continue;
+        }
+        if in_block {
+            if c == '*' && chars.peek() == Some(&'/') {
+                chars.next();
+                in_block = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => in_str = true,
+            '\'' => in_chr = true,
+            '/' if chars.peek() == Some(&'/') => break,
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                in_block = true;
+            }
+            '{' | '}' => out.push(c),
+            _ => {}
+        }
     }
-    if lines_trimmed[n - 1] != "}" {
-        return false;
+    out
+}
+
+/// Net `{`/`}` delta of a line.
+fn brace_delta(t: &str) -> (i32, i32) {
+    let mut opens = 0i32;
+    let mut closes = 0i32;
+    for c in structural_braces(t) {
+        match c {
+            '{' => opens += 1,
+            '}' => closes += 1,
+            _ => {}
+        }
     }
+    (opens, closes)
+}
 
-    let mut depth: i32 = 0;
-    let mut found_return_in_branch = false;
-    let mut all_return = true;
-
-    for i in (0..n).rev() {
-        let line = lines_trimmed[i];
-        for ch in line.chars() {
-            match ch {
-                '}' => depth += 1,
-                '{' => depth -= 1,
+/// Index of the line where the brace depth opened at `open_idx` returns to
+/// zero, scanning char-by-char so `} else {`-style lines close the previous
+/// branch at their leading `}`. Returns None when unbalanced.
+fn block_close_index(ls: &[&str], open_idx: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut opened = false;
+    for (j, t) in ls.iter().enumerate().skip(open_idx) {
+        for c in structural_braces(t) {
+            match c {
+                '{' => {
+                    opened = true;
+                    depth += 1;
+                }
+                '}' => {
+                    // A `}` before this construct's own `{` (e.g. the leading
+                    // `}` of `} else {` / `} catch {`) closes the PREVIOUS
+                    // branch — not ours.
+                    if !opened {
+                        continue;
+                    }
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(j);
+                    }
+                }
                 _ => {}
             }
         }
-        if depth == 0 && (line.starts_with("if ") || line.starts_with("if(")) {
-            return all_return && found_return_in_branch;
+    }
+    None
+}
+
+/// Does the if / else-if / ... / else chain in `ls` (which must start at the
+/// `if` line) end in a bare `else` whose every branch cannot fall through?
+/// Branch bodies are analysed recursively via `seq_cannot_fall_through`.
+fn if_chain_cannot_fall_through(ls: &[&str]) -> bool {
+    let mut pos = 0usize;
+    let mut saw_final_else = false;
+    let mut all_terminal = true;
+    loop {
+        let head = ls[pos];
+        let head_code = head.split("//").next().unwrap_or(head);
+        let is_else_head = head_code.starts_with("} else") || head_code.starts_with("else");
+        if is_else_head && !head_code.contains("if") {
+            saw_final_else = true;
         }
-        if depth == 0 && line.starts_with("}") && !line.contains("else") {
-            break;
+        // The branch's opening brace: same line for `if (c) {` / `} else {`,
+        // possibly the next line for a bare `else`.
+        let mut open = pos;
+        while open < ls.len() && !structural_braces(ls[open]).contains(&'{') {
+            open += 1;
         }
-        if line.starts_with("return ") || line == "return;" || line.starts_with("return;") {
-            found_return_in_branch = true;
+        if open >= ls.len() {
+            return false;
         }
-        if line.starts_with("}") && line.contains("else") && !line.contains("if") {
-            if !found_return_in_branch {
-                all_return = false;
+        let Some(close) = block_close_index(ls, open) else {
+            return false;
+        };
+        // Braces opening and closing on the same line (`if (c) { .. }`)
+        // carry no analyzable branch body — bail out conservatively.
+        if close <= open {
+            return false;
+        }
+        // Branch body = lines strictly between the braces. Edge lines that
+        // carry `} else {` are the NEXT head, not part of this body.
+        let body = &ls[open + 1..close];
+        if !seq_cannot_fall_through(body) {
+            all_terminal = false;
+        }
+        // Continue the chain when the close line carries `else`, or the next
+        // non-empty line starts a new `else`/`} else` branch.
+        let close_code = ls[close].split("//").next().unwrap_or(ls[close]);
+        if close_code.contains("else") {
+            pos = close;
+            continue;
+        }
+        let mut nxt = close + 1;
+        while nxt < ls.len() && ls[nxt].trim().is_empty() {
+            nxt += 1;
+        }
+        if nxt < ls.len() && (ls[nxt].starts_with("else") || ls[nxt].starts_with("} else")) {
+            pos = nxt;
+            continue;
+        }
+        break;
+    }
+    saw_final_else && all_terminal
+}
+
+/// Does the loop body in `ls` (lines after the loop head) contain a `break`
+/// that exits THIS loop? Nested for/while/do/switch spans are skipped —
+/// their breaks target the inner construct. Labeled breaks only count for
+/// the loop's own label.
+fn loop_body_has_exit(ls: &[&str], label: Option<&str>) -> bool {
+    let mut i = 0usize;
+    while i < ls.len() {
+        let t = ls[i].trim();
+        if t.is_empty() || t.starts_with("//") {
+            i += 1;
+            continue;
+        }
+        let core = unlabel(t);
+        let opens_nested = (core.starts_with("for ")
+            || core.starts_with("for(")
+            || core.starts_with("while ")
+            || core.starts_with("while(")
+            || core.starts_with("do ")
+            || core.starts_with("do{")
+            || core.starts_with("switch ")
+            || core.starts_with("switch("))
+            && structural_braces(ls[i]).contains(&'{');
+        if opens_nested {
+            match block_close_index(ls, i) {
+                Some(c) => {
+                    i = c + 1;
+                    continue;
+                }
+                None => return false,
             }
-            found_return_in_branch = false;
         }
+        if t.starts_with("break") {
+            let bare = t.trim_end_matches(';').trim();
+            if bare == "break" {
+                return true;
+            }
+            if let Some(l) = label {
+                if bare == format!("break {}", l) {
+                    return true;
+                }
+            }
+        }
+        i += 1;
     }
     false
+}
+
+/// Optional `name:` loop label on a `label: while (...)` head line.
+fn loop_label(head: &str) -> Option<String> {
+    let (maybe, _) = head.split_once(':')?;
+    let name = maybe.trim();
+    if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        Some(name.to_string())
+    } else {
+        None
+    }
+}
+
+/// `head` with an optional `name:` loop label stripped.
+fn unlabel(head: &str) -> &str {
+    if loop_label(head).is_some() {
+        head.split_once(':').map(|(_, r)| r.trim_start()).unwrap_or(head)
+    } else {
+        head
+    }
+}
+
+/// Can the last top-level statement of `ls` (trimmed, comment-free) fail to
+/// complete normally? A statement sequence falls through iff its last
+/// statement can complete; earlier statements are assumed able to reach it.
+fn stmt_cannot_complete(ls: &[&str]) -> bool {
+    // Terminal single-line statements (a trailing `//` comment may follow).
+    if let Some(&last) = ls.last() {
+        let code_part = last.split("//").next().unwrap_or(last).trim_end();
+        if code_part == "return;"
+            || code_part.starts_with("return ")
+            || code_part == "throw;"
+            || code_part.starts_with("throw ")
+        {
+            return true;
+        }
+    }
+    // Find where the last top-level statement starts: scan backward until
+    // the brace depth returns to zero after entering a block, or a `;`
+    // boundary at depth zero marks the previous simple statement's end.
+    let mut depth = 0i32;
+    let mut seen_block = false;
+    let mut start = ls.len().saturating_sub(1);
+    for i in (0..ls.len()).rev() {
+        let (o, c) = brace_delta(ls[i]);
+        depth += c - o;
+        if depth > 0 {
+            seen_block = true;
+        }
+        if seen_block && depth <= 0 {
+            start = i;
+            break;
+        }
+        if !seen_block && depth == 0 && i + 1 < ls.len() && ls[i].ends_with(';') {
+            start = i + 1;
+            break;
+        }
+    }
+    let stmt = &ls[start.min(ls.len().saturating_sub(1))..];
+    if stmt.is_empty() {
+        return false;
+    }
+    let first = stmt[0];
+    if first.starts_with("if ") || first.starts_with("if(") {
+        return if_chain_cannot_fall_through(stmt);
+    }
+    if first == "try" || first.starts_with("try ") || first.starts_with("try{") {
+        // try/catch/finally cannot complete iff the try body AND every catch
+        // body cannot complete (a completing finally does not rescue a
+        // pending return/throw).
+        return try_stmt_cannot_complete(stmt);
+    }
+    let core = unlabel(first);
+    if core.starts_with("while ") || core.starts_with("while(") || core.starts_with("for (") || core.starts_with("for(")
+    {
+        let infinite = core.contains("true") || core.contains(";;");
+        if !infinite {
+            return false;
+        }
+        // Body = lines after the head's opening brace.
+        let Some(open) = stmt.iter().position(|l| structural_braces(l).contains(&'{')) else {
+            return false;
+        };
+        let Some(close) = block_close_index(stmt, open) else {
+            return false;
+        };
+        if close <= open {
+            return false; // single-line loop — cannot prove non-termination
+        }
+        return !loop_body_has_exit(&stmt[open + 1..close], loop_label(first).as_deref());
+    }
+    if core.starts_with("do ") || core.starts_with("do{") {
+        // do { ... } while (true);
+        let Some(open) = stmt.iter().position(|l| structural_braces(l).contains(&'{')) else {
+            return false;
+        };
+        let Some(close) = block_close_index(stmt, open) else {
+            return false;
+        };
+        if close <= open {
+            return false;
+        }
+        let tail = stmt.last().copied().unwrap_or("");
+        if !tail.contains("true") {
+            return false;
+        }
+        return !loop_body_has_exit(&stmt[open + 1..close], loop_label(first).as_deref());
+    }
+    false
+}
+
+/// try { A } catch (E e) { B } [catch ...] [finally { F }] — cannot complete
+/// iff try-body and every catch body cannot complete.
+fn try_stmt_cannot_complete(stmt: &[&str]) -> bool {
+    // Locate the try block.
+    let Some(open) = stmt.iter().position(|l| structural_braces(l).contains(&'{')) else {
+        return false;
+    };
+    let Some(close) = block_close_index(stmt, open) else {
+        return false;
+    };
+    if close <= open {
+        return false; // single-line `try { .. }` — no analyzable body
+    }
+    if !seq_cannot_fall_through(&stmt[open + 1..close]) {
+        return false; // try body can complete -> whole stmt can
+    }
+    // Walk catch/finally continuations.
+    let mut pos = close;
+    let mut saw_catch = false;
+    loop {
+        if pos >= stmt.len() {
+            break;
+        }
+        let line_code = stmt[pos].split("//").next().unwrap_or(stmt[pos]);
+        let is_catch = line_code.contains("catch") || line_code.contains("finally");
+        if !is_catch {
+            break;
+        }
+        saw_catch = true;
+        // This line closes the previous block at its leading `}` and opens
+        // the next at its `{` (or the `{` is on a following line).
+        let mut open2 = pos;
+        while open2 < stmt.len() && !structural_braces(stmt[open2]).contains(&'{') {
+            open2 += 1;
+        }
+        if open2 >= stmt.len() {
+            return false;
+        }
+        let Some(close2) = block_close_index(stmt, open2) else {
+            return false;
+        };
+        if close2 <= open2 {
+            // Single-line `} catch (E e) { return ..; }`: terminal iff the
+            // line itself returns or throws.
+            let code = stmt[open2].split("//").next().unwrap_or(stmt[open2]);
+            if !(code.contains("return") || code.contains("throw")) {
+                return false;
+            }
+            pos = open2 + 1; // whole `} catch { .. }` consumed on one line
+            continue;
+        }
+        if line_code.contains("finally") {
+            // finally body: if IT cannot complete the stmt cannot either;
+            // if it can, outcome = try/catch outcome (already terminal).
+            break;
+        }
+        if !seq_cannot_fall_through(&stmt[open2 + 1..close2]) {
+            return false; // a catch can complete -> stmt can
+        }
+        pos = close2;
+    }
+    saw_catch
+}
+
+/// True when control cannot reach the end of the (comment-free, trimmed)
+/// statement sequence `ls`: its last top-level statement cannot complete
+/// normally.
+fn seq_cannot_fall_through(ls: &[&str]) -> bool {
+    let trimmed: Vec<&str> = ls.iter().map(|l| l.trim()).collect();
+    stmt_cannot_complete(&trimmed)
 }
 
 #[cfg(test)]
@@ -1493,5 +1841,158 @@ mod tests {
         assert_eq!(record_field_seed("BigInteger"), "java.math.BigInteger.ONE");
         assert_eq!(record_field_seed("Integer"), "1");
         assert_eq!(record_field_seed("int"), "1");
+    }
+
+    fn lines<'a>(v: &[&'a str]) -> Vec<&'a str> {
+        v.to_vec()
+    }
+
+    #[test]
+    fn test_seq_fallthrough_terminal_return() {
+        // A trailing `return`/`throw` cannot fall through.
+        assert!(seq_cannot_fall_through(&lines(&["x = 1;", "return x;"])));
+        assert!(seq_cannot_fall_through(&lines(&["return; // done"])));
+        assert!(seq_cannot_fall_through(&lines(&["throw new RuntimeException();"])));
+        // Plain statements and if-without-else CAN fall through.
+        assert!(!seq_cannot_fall_through(&lines(&["x = 1;"])));
+        assert!(!seq_cannot_fall_through(&lines(&[])));
+        assert!(!seq_cannot_fall_through(&lines(&["if (c) {", "    return 1;", "}",])));
+    }
+
+    #[test]
+    fn test_seq_fallthrough_if_else_chain() {
+        // Exhaustive if/else-if/else where every branch returns: no fallback.
+        assert!(seq_cannot_fall_through(&lines(&[
+            "if (a == 1) {",
+            "    return 1;",
+            "} else if (a == 2) {",
+            "    return 2;",
+            "} else {",
+            "    return 3;",
+            "}",
+        ])));
+        // Same chain without the final else CAN fall through.
+        assert!(!seq_cannot_fall_through(&lines(&["if (a == 1) {", "    return 1;", "} else {", "    x = 2;", "}",])));
+        // Nested if inside a branch still counts via recursion.
+        assert!(seq_cannot_fall_through(&lines(&[
+            "if (a) {",
+            "    if (b) {",
+            "        return 1;",
+            "    } else {",
+            "        return 2;",
+            "    }",
+            "} else {",
+            "    return 3;",
+            "}",
+        ])));
+    }
+
+    #[test]
+    fn test_seq_fallthrough_loops() {
+        // `while (true)` with no reachable break cannot complete.
+        assert!(seq_cannot_fall_through(&lines(&[
+            "while (true) {",
+            "    x = next();",
+            "    if (x == null) {",
+            "        return null;",
+            "    }",
+            "}",
+        ])));
+        // A break (even inside an if) makes it completable.
+        assert!(!seq_cannot_fall_through(&lines(&[
+            "while (true) {",
+            "    if (++guard > 1000) {",
+            "        break;",
+            "    }",
+            "}",
+        ])));
+        // Bounded loops and labeled infinite loops.
+        assert!(!seq_cannot_fall_through(&lines(&["while (i < n) {", "    i++;", "}"])));
+        assert!(seq_cannot_fall_through(&lines(&[
+            "outer: while (true) {",
+            "    while (inner) {",
+            "        break; // exits inner only",
+            "    }",
+            "}",
+        ])));
+        // break inside a nested loop must not count for the outer one.
+        assert!(!seq_cannot_fall_through(&lines(&[
+            "outer: while (true) {",
+            "    for (int i = 0; i < 3; i++) {",
+            "        break;",
+            "    }",
+            "    if (done) {",
+            "        break outer;",
+            "    }",
+            "}",
+        ])));
+    }
+
+    #[test]
+    fn test_seq_fallthrough_try_catch() {
+        // try+catch both terminal -> cannot complete.
+        assert!(seq_cannot_fall_through(&lines(&[
+            "try {",
+            "    return mapper.select(x);",
+            "} catch (Exception e) {",
+            "    return null;",
+            "}",
+        ])));
+        // A completable catch -> can fall through.
+        assert!(!seq_cannot_fall_through(&lines(&[
+            "try {",
+            "    return mapper.select(x);",
+            "} catch (Exception e) {",
+            "    log.warn(\"x\");",
+            "}",
+        ])));
+        // try body completable -> whole stmt completable even if catch returns.
+        assert!(!seq_cannot_fall_through(&lines(&[
+            "try {",
+            "    x = mapper.select(y);",
+            "} catch (Exception e) {",
+            "    return null;",
+            "}",
+        ])));
+    }
+
+    #[test]
+    fn test_fallthrough_return_suppression() {
+        // fnc_com_getday shape: bare `if` wrapping returns, no else — the
+        // method CAN reach its end, so a `return null;` fallback is required.
+        let mut proc = make_proc("fnc_com_getday");
+        proc.is_function = true;
+        proc.return_type = Some("date".to_string());
+        proc.java_logic_lines =
+            vec!["if (vFlag == 1L) {".into(), "    return java.sql.Date.valueOf(\"2024-01-01\");".into(), "}".into()];
+        let mut pkg = make_pkg("pkg_test", vec![proc]);
+        let dir = tempfile::tempdir().unwrap();
+        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8, false)
+            .unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join("src/main/java/com/example/demo/service/TestService.java"))
+                .unwrap();
+        assert!(content.contains("return null;"), "fallthrough path needs a fallback:\n{}", content);
+    }
+
+    #[test]
+    fn test_dead_fallthrough_return_suppressed() {
+        // Exhaustive if/else with returns in every branch — appending
+        // `return null;` would be an unreachable statement (javac error).
+        let mut proc = make_proc("pick_value");
+        proc.is_function = true;
+        proc.return_type = Some("int".to_string());
+        proc.java_logic_lines =
+            vec!["if (x == 1) {".into(), "    return 1;".into(), "} else {".into(), "    return 0;".into(), "}".into()];
+        let mut pkg = make_pkg("pkg_test", vec![proc]);
+        let dir = tempfile::tempdir().unwrap();
+        write_service_class(dir.path(), &mut pkg, "com.example.demo", &Default::default(), encoding_rs::UTF_8, false)
+            .unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join("src/main/java/com/example/demo/service/TestService.java"))
+                .unwrap();
+        // The else branch returns 0 once; a dead `return 0;` fallback would
+        // make it two (and be an unreachable statement for javac).
+        assert_eq!(content.matches("return 0;").count(), 1, "dead fallback must be suppressed:\n{}", content);
     }
 }

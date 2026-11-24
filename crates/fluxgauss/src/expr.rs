@@ -13,6 +13,47 @@ pub(crate) fn is_nullish_java_expr(expr: &str) -> bool {
     t.ends_with("null") && t.contains("/*") && !t.starts_with('"')
 }
 
+/// Strip one layer of wrapping parentheses when they enclose the whole
+/// expression (`(null)` -> `null`), ignoring parens inside literals is not
+/// attempted — callers pass generated code where this is rare.
+fn strip_outer_parens(t: &str) -> &str {
+    let t = t.trim();
+    if !t.starts_with('(') || !t.ends_with(')') {
+        return t;
+    }
+    let mut depth = 0i32;
+    for (i, c) in t.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 && i + 1 != t.len() {
+                    return t;
+                }
+            }
+            _ => {}
+        }
+    }
+    if depth == 0 {
+        &t[1..t.len() - 1]
+    } else {
+        t
+    }
+}
+
+/// SQL NULL is not a Java boolean primitive — `x && NULL` / `x || NULL`
+/// cannot compile. In boolean context SQL NULL is falsy, so the operand
+/// degrades to `false` (delivery postprocess patched `&& (null)` -> `&&
+/// false` for the same reason). The other operand is still evaluated, so
+/// side effects are preserved.
+fn boolean_operand_java(expr: &str) -> String {
+    if is_nullish_java_expr(strip_outer_parens(expr)) {
+        "false".to_string()
+    } else {
+        expr.to_string()
+    }
+}
+
 fn as_double_expr(expr: &str) -> String {
     let t = expr.trim();
     if is_nullish_java_expr(t) {
@@ -2077,8 +2118,8 @@ fn binary_op_to_java(
                 format!("!java.util.Objects.equals({}, {})", l, r)
             }
         }
-        "AND" => format!("({} && {})", l, r),
-        "OR" => format!("({} || {})", l, r),
+        "AND" => format!("({} && {})", boolean_operand_java(&l), boolean_operand_java(&r)),
+        "OR" => format!("({} || {})", boolean_operand_java(&l), boolean_operand_java(&r)),
         "IS" => format!("{} == {}", l, r),
         "IS NOT" => format!("{} != {}", l, r),
         ">" | "<" | ">=" | "<=" => {
@@ -3688,6 +3729,37 @@ mod tests {
     fn test_literal_null() {
         let proc = empty_proc();
         assert_eq!(expr_to_java(&ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Null), &proc), "null");
+    }
+
+    #[test]
+    fn test_and_or_null_operand_degrades_to_false() {
+        // `x && NULL` / `x || NULL` cannot compile (SQL NULL is not a Java
+        // boolean). In boolean context NULL is falsy -> `false` operand; the
+        // delivery postprocess patched `&& (null)` -> `&& false` the same way.
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_flag".into(), "boolean".into());
+        let flag =
+            || Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["v_flag".into()])) as Box<ogsql_parser::ast::Expr>;
+        let nul = || Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Null));
+        let and = ogsql_parser::ast::Expr::BinaryOp { left: flag(), op: "AND".into(), right: nul() };
+        assert_eq!(expr_to_java(&and, &proc), "(vFlag && false)");
+        let or = ogsql_parser::ast::Expr::BinaryOp { left: flag(), op: "OR".into(), right: nul() };
+        assert_eq!(expr_to_java(&or, &proc), "(vFlag || false)");
+        // Parenthesized NULL (the delivery-observed `(null)` shape) too.
+        let paren_null = || {
+            Box::new(ogsql_parser::ast::Expr::Parenthesized(Box::new(ogsql_parser::ast::Expr::Literal(
+                ogsql_parser::ast::Literal::Null,
+            )))) as Box<ogsql_parser::ast::Expr>
+        };
+        let and_p = ogsql_parser::ast::Expr::BinaryOp { left: flag(), op: "AND".into(), right: paren_null() };
+        assert_eq!(expr_to_java(&and_p, &proc), "(vFlag && false)");
+        // Non-null operands pass through unchanged.
+        let and_ok = ogsql_parser::ast::Expr::BinaryOp {
+            left: flag(),
+            op: "AND".into(),
+            right: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Boolean(true))),
+        };
+        assert_eq!(expr_to_java(&and_ok, &proc), "(vFlag && true)");
     }
 
     #[test]

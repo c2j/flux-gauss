@@ -200,12 +200,58 @@ fn preprocess_cursor_sql(sql: &str, using_args: &[ogsql_parser::ast::Expr], proc
     result
 }
 
+/// Would the first `}` of a new structural line match a `{` that sits in
+/// already-commented (dead) code? Scans backwards over structural braces —
+/// processed in reverse order per line so `} else {` contributes its `{`
+/// (the else-branch opener) before its `}` (the if-branch closer).
+fn closing_brace_matches_dead_code(lines: &[String]) -> bool {
+    let mut pending = 1i32; // one unmatched `}` supplied by the new line
+    for line in lines.iter().rev() {
+        let trimmed = line.trim_start();
+        // `// UNREACHABLE:`-prefixed lines still carry live structure — their
+        // braces must participate in matching. Plain `//` comments do not.
+        let code = if let Some(rest) = trimmed.strip_prefix("// UNREACHABLE:") {
+            rest.trim_start()
+        } else if trimmed.starts_with("//") {
+            continue;
+        } else {
+            trimmed
+        };
+        let mut braces = crate::generate::service::structural_braces(code);
+        braces.reverse();
+        for c in braces {
+            match c {
+                '}' => pending += 1,
+                '{' => {
+                    pending -= 1;
+                    if pending == 0 {
+                        return trimmed.starts_with("//");
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
 fn push_logic_line(proc: &mut ProcedureInfo, line: String) {
     let _trimmed_line = line.trim_start();
     if is_control_structure_line(&line) {
-        // Closing braces must always be emitted; unreachable check only for openers
-        if !_trimmed_line.starts_with('}') && is_unreachable_after_terminal(&proc.java_logic_lines) {
-            proc.java_logic_lines.push(format!("// UNREACHABLE: {}", line));
+        // Closing braces must stay paired with their opener: a `}`-led line
+        // is only suppressed when its matching `{` was itself commented out
+        // (otherwise `} catch`/`}` would be orphaned — javac error).
+        if is_unreachable_after_terminal(&proc.java_logic_lines) {
+            let dead = if _trimmed_line.starts_with('}') {
+                closing_brace_matches_dead_code(&proc.java_logic_lines)
+            } else {
+                true
+            };
+            if dead {
+                proc.java_logic_lines.push(format!("// UNREACHABLE: {}", line));
+            } else {
+                proc.java_logic_lines.push(line);
+            }
         } else {
             proc.java_logic_lines.push(line);
         }
@@ -2816,6 +2862,11 @@ pub fn process_statement(
         }
         PlStatement::For(for_stmt) => {
             let var = crate::naming::snake_to_camel(&for_stmt.node.variable);
+            // Range-FOR counter of an enclosing loop still in scope: a nested
+            // `for (int i = ...)` would be a javac shadowing error, so the
+            // inner loop reuses the outer java var guarded by save/restore.
+            let mut range_restore: Option<String> = None;
+            let mut active_range_push: Option<String> = None;
             match &for_stmt.node.kind {
                 ogsql_parser::ast::plpgsql::PlForKind::Range { low, high, step, reverse } => {
                     let lo = crate::expr::expr_to_java(low, proc);
@@ -2836,8 +2887,21 @@ pub fn process_statement(
                         proc.local_vars.contains_key(&var_lower) && !proc.range_loop_counters.contains(&var_lower);
                     if !proc.local_vars.contains_key(&var_lower) {
                         proc.local_vars.insert(var_lower.clone(), "int".into());
-                        proc.range_loop_counters.insert(var_lower);
+                        proc.range_loop_counters.insert(var_lower.clone());
                     }
+                    // Nested same-name counter: the enclosing loop's `int i`
+                    // is still in scope — reuse it (no `int`) and bracket the
+                    // inner loop with save/restore so the outer counter keeps
+                    // its value (PL/pgSQL loop vars are block-scoped shadows).
+                    let collides_with_enclosing = proc.active_range_fors.contains(&var_lower);
+                    if collides_with_enclosing && !pre_declared {
+                        proc.range_for_save_counter += 1;
+                        let save_var = format!("__forSave{}_{}", iter_var, proc.range_for_save_counter);
+                        push_logic_line(proc, format!("int {} = {};", save_var, iter_var));
+                        range_restore = Some(format!("{} = {};", iter_var, save_var));
+                    }
+                    active_range_push = Some(var_lower);
+                    let reuse_header = pre_declared || collides_with_enclosing;
                     let step_code = match step {
                         Some(s) => {
                             let s_val = crate::expr::expr_to_java(s, proc);
@@ -2845,8 +2909,8 @@ pub fn process_statement(
                         }
                         None => format!("{}++", iter_var),
                     };
-                    let header = if pre_declared {
-                        // Reuse the method-level declaration; no `int` in the init.
+                    let header = if reuse_header {
+                        // Reuse the enclosing/method-level declaration; no `int` in the init.
                         if *reverse {
                             format!("for ({} = {}; {} >= {}; {}--) {{", iter_var, hi_safe, iter_var, lo_safe, iter_var)
                         } else {
@@ -2967,10 +3031,19 @@ pub fn process_statement(
                     }
                 }
             }
+            if let Some(v) = &active_range_push {
+                proc.active_range_fors.push(v.clone());
+            }
             for s in &for_stmt.node.body {
                 process_statement(s, proc, ctx)?;
             }
             push_logic_line(proc, "}".into());
+            if let Some(restore) = range_restore {
+                push_logic_line(proc, restore);
+            }
+            if active_range_push.is_some() {
+                proc.active_range_fors.pop();
+            }
             Ok(())
         }
         PlStatement::ForEach(foreach_stmt) => {
@@ -3698,6 +3771,36 @@ mod tests {
     }
 
     #[test]
+    fn test_nested_range_for_same_counter_reuses_with_restore() {
+        // Delivery checkDiff: an inner `FOR i` inside an outer `FOR i` must
+        // not emit a second `for (int i = ...)` — javac rejects the shadow.
+        // The inner loop reuses the outer counter bracketed by save/restore.
+        use ogsql_parser::ast::plpgsql::{PlForKind, PlForStmt, PlStatement};
+        use ogsql_parser::ast::{Expr, Literal, Spanned};
+        let range = |body: Vec<PlStatement>| {
+            PlStatement::For(Spanned::without_span(PlForStmt {
+                label: None,
+                variable: "i".into(),
+                kind: PlForKind::Range {
+                    low: Expr::Literal(Literal::Integer(1)),
+                    high: Expr::Literal(Literal::Integer(3)),
+                    step: None,
+                    reverse: false,
+                },
+                body,
+                end_label: None,
+            }))
+        };
+        let mut proc = empty_proc();
+        let mut ctx = empty_stmt_ctx();
+        process_statement(&range(vec![range(vec![])]), &mut proc, &mut ctx).unwrap();
+        let text = proc.java_logic_lines.join("\n");
+        assert_eq!(text.matches("for (int i = ").count(), 1, "only the outer loop may declare int i:\n{}", text);
+        assert!(text.contains("for (i = 1; i <= 3; i++)"), "inner loop reuses outer counter:\n{}", text);
+        assert!(text.contains("__forSave"), "save/restore temporaries expected:\n{}", text);
+    }
+
+    #[test]
     fn test_process_null() {
         let mut proc = empty_proc();
         let mut ctx = empty_stmt_ctx();
@@ -3722,6 +3825,67 @@ mod tests {
         let stmt = ogsql_parser::ast::plpgsql::PlStatement::Commit { and_chain: false };
         process_statement(&stmt, &mut proc, &mut ctx).unwrap();
         assert_eq!(proc.java_logic_lines[0], "// COMMIT;");
+    }
+
+    #[test]
+    fn test_dead_try_catch_commented_as_unit() {
+        // A `try {` pushed into unreachable code is commented out; its
+        // `} catch`/`}` must be commented too — a live `} catch` without a
+        // `try` is a javac error (delivery postprocess had to repair this).
+        let mut proc = empty_proc();
+        proc.java_logic_lines.push("return 1;".to_string());
+        push_logic_line(&mut proc, "try {".to_string());
+        push_logic_line(&mut proc, "x = 1;".to_string());
+        push_logic_line(&mut proc, "} catch (Exception __e1) {".to_string());
+        push_logic_line(&mut proc, "y = 2;".to_string());
+        push_logic_line(&mut proc, "}".to_string());
+        assert_eq!(proc.java_logic_lines[0], "return 1;");
+        assert!(
+            proc.java_logic_lines[1..].iter().all(|l| l.trim_start().starts_with("//")),
+            "dead try/catch must be commented as a unit:\n{}",
+            proc.java_logic_lines.join("\n")
+        );
+    }
+
+    #[test]
+    fn test_live_try_keeps_catch_reachable() {
+        // `try { return; <dead> } catch { <live> }`: the catch handler is a
+        // reachable path — its `} catch` line matches the LIVE `try {` and
+        // must stay live, as must the catch body.
+        let mut proc = empty_proc();
+        push_logic_line(&mut proc, "try {".to_string());
+        push_logic_line(&mut proc, "return x;".to_string());
+        push_logic_line(&mut proc, "dead_call();".to_string());
+        push_logic_line(&mut proc, "} catch (Exception __e1) {".to_string());
+        push_logic_line(&mut proc, "handle();".to_string());
+        push_logic_line(&mut proc, "}".to_string());
+        let lines = &proc.java_logic_lines;
+        assert_eq!(lines[0], "try {");
+        assert!(lines[1].starts_with("return"));
+        assert!(lines[2].starts_with("// UNREACHABLE:"), "dead line commented:\n{}", lines.join("\n"));
+        assert_eq!(lines[3], "} catch (Exception __e1) {", "catch of a live try stays live");
+        assert_eq!(lines[5], "}", "try/catch close stays paired with the live try");
+        // NOTE: the catch *body* reachability is governed by the pre-existing
+        // is_unreachable_after_terminal analysis (a top-level `return` inside
+        // try marks following lines unreachable) — unchanged by this fix.
+    }
+
+    #[test]
+    fn test_dead_if_else_commented_as_unit() {
+        // Same pairing for if/else inside dead code.
+        let mut proc = empty_proc();
+        proc.java_logic_lines.push("return 1;".to_string());
+        push_logic_line(&mut proc, "if (c) {".to_string());
+        push_logic_line(&mut proc, "x = 1;".to_string());
+        push_logic_line(&mut proc, "} else {".to_string());
+        push_logic_line(&mut proc, "y = 2;".to_string());
+        push_logic_line(&mut proc, "}".to_string());
+        assert_eq!(proc.java_logic_lines[0], "return 1;");
+        assert!(
+            proc.java_logic_lines[1..].iter().all(|l| l.trim_start().starts_with("//")),
+            "dead if/else must be commented as a unit:\n{}",
+            proc.java_logic_lines.join("\n")
+        );
     }
 
     #[test]

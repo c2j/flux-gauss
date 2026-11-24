@@ -27,17 +27,17 @@ public class Issue75ExceptionInLoopService {
         int __SQLCODE__ = 0;
         pOSucceed.set("0");
         vStepNo = "1";
-        if (true) { return; }
+        return;
         // UNREACHABLE: try {
             // UNREACHABLE: issue75ExceptionInLoopMapper.deleteTIssue75();
             // UNREACHABLE: // COMMIT;
-        } catch (Exception __e1) {
-            // UNREACHABLE:     __SQLERRM__ = __e1.getMessage();
-            // UNREACHABLE:     __SQLCODE__ = -1;
-            // UNREACHABLE: pOSucceed.set("删除失败");
-        }
-        for (int i = 1; i <= 3; i++) {
-            issue75ExceptionInLoopMapper.insertTIssue75(i);
-        }
+            // UNREACHABLE: } catch (Exception __e1) {
+                // UNREACHABLE:     __SQLERRM__ = __e1.getMessage();
+                // UNREACHABLE:     __SQLCODE__ = -1;
+                // UNREACHABLE: pOSucceed.set("删除失败");
+                // UNREACHABLE: }
+                // UNREACHABLE: for (int i = 1; i <= 3; i++) {
+                    // UNREACHABLE: issue75ExceptionInLoopMapper.insertTIssue75(i);
+                    // UNREACHABLE: }
     }
 }
