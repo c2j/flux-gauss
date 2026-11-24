@@ -1459,6 +1459,118 @@ fn loop_label(head: &str) -> Option<String> {
     }
 }
 
+/// Index of the `)` matching the `(` at `open_idx`, ignoring parens inside
+/// string/char literals and comments. None when unbalanced.
+fn matching_paren_end(s: &str, open_idx: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut in_chr = false;
+    let mut in_block = false;
+    let mut esc = false;
+    let mut chars = s.char_indices().skip_while(|(i, _)| *i < open_idx).peekable();
+    while let Some((i, c)) = chars.next() {
+        if esc {
+            esc = false;
+            continue;
+        }
+        if c == '\\' && (in_str || in_chr) {
+            esc = true;
+            continue;
+        }
+        if in_str {
+            if c == '"' {
+                in_str = false;
+            }
+            continue;
+        }
+        if in_chr {
+            if c == '\'' {
+                in_chr = false;
+            }
+            continue;
+        }
+        if in_block {
+            if c == '*' && chars.peek().map(|(_, c)| *c) == Some('/') {
+                chars.next();
+                in_block = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => in_str = true,
+            '\'' => in_chr = true,
+            '/' if chars.peek().map(|(_, c)| *c) == Some('/') => break,
+            '/' if chars.peek().map(|(_, c)| *c) == Some('*') => {
+                chars.next();
+                in_block = true;
+            }
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Text inside the first balanced `(...)` group of `s`.
+fn first_paren_clause(s: &str) -> Option<String> {
+    let open = s.find('(')?;
+    let close = matching_paren_end(s, open)?;
+    Some(s[open + 1..close].to_string())
+}
+
+/// True when `cond` is the literal `true`, ignoring wrapping parens and
+/// whitespace — `while (vIstrue)` / `while (hasTrueValue())` must NOT match.
+fn is_true_literal(cond: &str) -> bool {
+    let mut t = cond.split("//").next().unwrap_or(cond).trim();
+    loop {
+        if t.len() >= 2 && t.starts_with('(') && t.ends_with(')') {
+            // Only strip when the outer parens enclose the whole text.
+            let wraps = matching_paren_end(t, 0).is_some_and(|e| e == t.len() - 1);
+            if !wraps {
+                break;
+            }
+            t = t[1..t.len() - 1].trim();
+        } else {
+            break;
+        }
+    }
+    t == "true"
+}
+
+/// Does a `while (...)` / `for (...)` loop head have a literal-true (or, for
+/// `for`, absent) condition — i.e. the loop can only exit via break/return?
+fn loop_head_is_infinite(core: &str) -> bool {
+    let s = core.trim().trim_end_matches('{').trim();
+    if let Some(rest) = s.strip_prefix("while") {
+        let rest = rest.trim_start();
+        if !rest.starts_with('(') {
+            return false;
+        }
+        return first_paren_clause(rest).is_some_and(|c| is_true_literal(&c));
+    }
+    if let Some(rest) = s.strip_prefix("for") {
+        let rest = rest.trim_start();
+        if !rest.starts_with('(') {
+            return false;
+        }
+        let Some(clause) = first_paren_clause(rest) else {
+            return false;
+        };
+        // for (init; cond; step): missing cond clause is JLS-true.
+        let mut parts = clause.split(';');
+        let _init = parts.next();
+        let cond = parts.next().unwrap_or("").trim();
+        return cond.is_empty() || is_true_literal(cond);
+    }
+    false
+}
+
 /// `head` with an optional `name:` loop label stripped.
 fn unlabel(head: &str) -> &str {
     if loop_label(head).is_some() {
@@ -1499,9 +1611,15 @@ fn stmt_cannot_complete(ls: &[&str]) -> bool {
             start = i;
             break;
         }
-        if !seen_block && depth == 0 && i + 1 < ls.len() && ls[i].ends_with(';') {
-            start = i + 1;
-            break;
+        if !seen_block && depth == 0 {
+            // `;` boundary at top level marks the end of the previous simple
+            // statement — the last statement starts on the NEXT line. When
+            // the `;` line IS the last line, the statement includes it.
+            let code = ls[i].split("//").next().unwrap_or(ls[i]).trim_end();
+            if code.ends_with(';') {
+                start = if i + 1 < ls.len() { i + 1 } else { i };
+                break;
+            }
         }
     }
     let stmt = &ls[start.min(ls.len().saturating_sub(1))..];
@@ -1521,8 +1639,7 @@ fn stmt_cannot_complete(ls: &[&str]) -> bool {
     let core = unlabel(first);
     if core.starts_with("while ") || core.starts_with("while(") || core.starts_with("for (") || core.starts_with("for(")
     {
-        let infinite = core.contains("true") || core.contains(";;");
-        if !infinite {
+        if !loop_head_is_infinite(core) {
             return false;
         }
         // Body = lines after the head's opening brace.
@@ -1549,7 +1666,10 @@ fn stmt_cannot_complete(ls: &[&str]) -> bool {
             return false;
         }
         let tail = stmt.last().copied().unwrap_or("");
-        if !tail.contains("true") {
+        // `} while (cond);` — only a literal-true condition is infinite;
+        // substring "true" would misfire on identifiers like `vIstrue`.
+        let do_cond = tail.find("while").and_then(|w| first_paren_clause(&tail[w..]));
+        if !do_cond.is_some_and(|c| is_true_literal(&c)) {
             return false;
         }
         return !loop_body_has_exit(&stmt[open + 1..close], loop_label(first).as_deref());
@@ -1994,5 +2114,43 @@ mod tests {
         // The else branch returns 0 once; a dead `return 0;` fallback would
         // make it two (and be an unreachable statement for javac).
         assert_eq!(content.matches("return 0;").count(), 1, "dead fallback must be suppressed:\n{}", content);
+    }
+
+    #[test]
+    fn test_seq_fallthrough_live_stmt_after_if_chain() {
+        // Review P1-A: an if/else chain that cannot fall through FOLLOWED by
+        // a live statement must be judged on the LAST statement — the chain
+        // alone must not suppress the fallback return.
+        assert!(!seq_cannot_fall_through(&lines(&[
+            "if (a == 1) {",
+            "    return 1;",
+            "} else {",
+            "    return 2;",
+            "}",
+            "mapper.doStuff(x);",
+        ])));
+        // Same chain as the actual last statement still cannot fall through.
+        assert!(seq_cannot_fall_through(&lines(&[
+            "mapper.doStuff(x);",
+            "if (a == 1) {",
+            "    return 1;",
+            "} else {",
+            "    return 2;",
+            "}",
+        ])));
+    }
+
+    #[test]
+    fn test_seq_fallthrough_loop_condition_literal_true_only() {
+        // Review P1-B: identifiers containing "true" are not literal-true
+        // conditions — these loops CAN complete, so a fallback is required.
+        assert!(!seq_cannot_fall_through(&lines(&["while (vIstrue) {", "    x = x - 1;", "}"])));
+        assert!(!seq_cannot_fall_through(&lines(&["while (hasTrueValue()) {", "    x = x - 1;", "}"])));
+        assert!(!seq_cannot_fall_through(&lines(&["do {", "    x = x - 1;", "} while (vDone);"])));
+        // Literal-true conditions (incl. parenthesized / empty for-cond)
+        // still count as non-terminating.
+        assert!(seq_cannot_fall_through(&lines(&["while ((true)) {", "    x = next();", "}"])));
+        assert!(seq_cannot_fall_through(&lines(&["for (;;) {", "    x = next();", "}"])));
+        assert!(seq_cannot_fall_through(&lines(&["for (int i = 0; ; i++) {", "    x = next();", "}"])));
     }
 }
