@@ -1589,6 +1589,12 @@ fn loop_head_is_infinite(core: &str) -> bool {
         let Some(clause) = first_paren_clause(rest) else {
             return false;
         };
+        // Enhanced for (`for (T v : list)`) has no ';' clauses — it iterates
+        // a finite collection and always can complete. Only the C-style
+        // `for (init; cond; step)` form can be non-terminating.
+        if !clause.contains(';') {
+            return false;
+        }
         // for (init; cond; step): missing cond clause is JLS-true.
         let mut parts = clause.split(';');
         let _init = parts.next();
@@ -2205,5 +2211,27 @@ mod tests {
         p2.default_value = Some("null".into());
         proc.sql_text = "x := p_amount + 1;".into();
         assert_eq!(in_param_signature_type(&p2, &proc), "Long");
+    }
+
+    #[test]
+    fn test_seq_fallthrough_enhanced_for_is_finite() {
+        // CI regression (PR #132): `for (T v : list)` has no ';' clauses —
+        // the "missing cond = JLS-true" C-style rule must not fire, or a
+        // for-each whose body returns is misjudged as non-terminating and
+        // the fallback return is suppressed (javac missing-return).
+        assert!(!seq_cannot_fall_through(&lines(&[
+            "for (Map<String, Object> vRec : vRecList) {",
+            "    // TODO: stub",
+            "}",
+        ])));
+        // for-each body that always returns still completes on empty input.
+        assert!(!seq_cannot_fall_through(&lines(&[
+            "mapper.fetch();",
+            "for (Map<String, Object> vRec : vRecList) {",
+            "    return null;",
+            "}",
+        ])));
+        // C-style for with empty cond remains infinite.
+        assert!(seq_cannot_fall_through(&lines(&["for (int i = 0; ; i++) {", "    x = next();", "}"])));
     }
 }
