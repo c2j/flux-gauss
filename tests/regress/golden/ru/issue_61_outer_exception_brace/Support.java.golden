@@ -50,13 +50,74 @@ public final class StrUtil {
      * (DB-verified: 'a' || NULL = 'a'), so the result is NULL only when
      * BOTH sides are NULL. Routing through a helper keeps each operand
      * single-evaluated (an inline ternary would evaluate it twice).
+     * Numbers render with DB numeric-to-text rules: 0.5 -> ".5",
+     * -0.5 -> "-.5", scale preserved (1.50 -> "1.50").
      */
     public static String concat(Object a, Object b) {
-        String sa = str(a);
-        String sb = str(b);
-        if (sa == null) return sb;
-        if (sb == null) return sa;
-        return sa + sb;
+        if (a == null && b == null) return null;
+        return cat(a) + cat(b);
+    }
+
+    /**
+     * CONCAT(...) — DB-verified (openGauss 7.0.0-RC3 hz): NULL args act as
+     * empty ('a',NULL,'b' → 'ab'), but ALL-NULL yields NULL
+     * (concat(NULL,NULL) IS NULL → true), matching `||` both-null rule.
+     */
+    public static String concatAll(Object... args) {
+        StringBuilder sb = new StringBuilder();
+        boolean any = false;
+        if (args != null) {
+            for (Object a : args) {
+                if (a != null) any = true;
+                sb.append(cat(a));
+            }
+        }
+        return any ? sb.toString() : null;
+    }
+
+    /**
+     * CONCAT_WS(sep, a, b, ...) — DB-verified: NULL args are SKIPPED (no
+     * separator emitted for them); a NULL separator yields NULL.
+     */
+    public static String concatWs(Object sep, Object... args) {
+        String s = str(sep);
+        if (s == null) return null;
+        StringBuilder sb = new StringBuilder();
+        boolean first = true;
+        if (args != null) {
+            for (Object a : args) {
+                if (a == null) continue;
+                if (!first) sb.append(s);
+                sb.append(cat(a));
+                first = false;
+            }
+        }
+        return sb.toString();
+    }
+
+    /** `||`/CONCAT operand → text; NULL → "". Numbers use DB formatting. */
+    private static String cat(Object o) {
+        if (o == null) return "";
+        if (o instanceof Number n) return numText(n);
+        String s = str(o);
+        return s == null ? "" : s;
+    }
+
+    /** DB numeric→text: strip the leading zero of |x|<1, keep scale. */
+    private static String numText(Number n) {
+        String s;
+        if (n instanceof java.math.BigDecimal bd) {
+            s = bd.toPlainString();
+        } else if (n instanceof Double || n instanceof Float) {
+            double d = n.doubleValue();
+            if (Double.isNaN(d) || Double.isInfinite(d)) return String.valueOf(n);
+            s = java.math.BigDecimal.valueOf(d).toPlainString();
+        } else {
+            return n.toString();
+        }
+        if (s.startsWith("0.")) return s.substring(1);
+        if (s.startsWith("-0.")) return "-" + s.substring(2);
+        return s;
     }
 
     /** LENGTHB — UTF-8 byte length; null → null. */

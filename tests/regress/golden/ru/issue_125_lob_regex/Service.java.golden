@@ -56,7 +56,7 @@ public class LobStrService {
         pOut.set(fluxgauss.plsql.StrUtil.byteSubstr(pSrc, (-4)));
     }
 
-    // Source: pkg_lob_str.prc_regex_demo (PROCEDURE) — {FIXTURES_ROOT}/issue_125_lob_regex.sql:48-63
+    // Source: pkg_lob_str.prc_regex_demo (PROCEDURE) — {FIXTURES_ROOT}/issue_125_lob_regex.sql:48-65
     public void prcRegexDemo(String pSrc, AtomicReference<String> pOut) {
         Boolean vFlag = false;
         Long vN = 0L;
@@ -69,5 +69,16 @@ public class LobStrService {
         pOut.set(fluxgauss.plsql.Regexp.replace(pSrc, "[aeiou]", "*", 2));
         pOut.set(fluxgauss.plsql.Regexp.replace(pSrc, "[aeiou]", "*", 2, 1));
         pOut.set(fluxgauss.plsql.Regexp.replace(pSrc, "[aeiou]", null));
+        pOut.set(fluxgauss.plsql.Regexp.replace(pSrc, null, "X", 1, null));
+    }
+
+    // Source: pkg_lob_str.prc_concat_demo (PROCEDURE) — {FIXTURES_ROOT}/issue_125_lob_regex.sql:70-78
+    public void prcConcatDemo(String pSrc, AtomicReference<String> pOut) {
+        Long vNum = 0L;
+        String vTxt = null;
+        vNum = Long.parseLong(String.valueOf(fluxgauss.plsql.StrUtil.concat("12", "34")));
+        vTxt = fluxgauss.plsql.StrUtil.concatAll(pSrc, null, "x");
+        vTxt = fluxgauss.plsql.StrUtil.concatWs("-", pSrc, null, "y");
+        pOut.set(fluxgauss.plsql.StrUtil.concat(vTxt, vNum));
     }
 }

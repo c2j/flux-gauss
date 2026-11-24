@@ -279,12 +279,37 @@ pub(crate) fn resolve_var_java_type(expr: &str, proc: &ProcedureInfo) -> Option<
     None
 }
 
-/// True when the expression is a single unqualified variable reference, i.e. the
-/// only shape for which `resolve_var_java_type` describes the EXPRESSION rather
-/// than merely its receiver.
+/// True when the expression's outermost producer is a fluxgauss.plsql
+/// String-returning helper (StrUtil/Regexp). Narrower than
+/// `looks_like_string_expr`: used where wrapping a *numeric-looking*
+/// `String.valueOf(x).indexOf(..)+1` expression would be pure churn.
+fn looks_like_plsql_string_helper(expr: &str) -> bool {
+    let t = strip_wrapping_parens(expr);
+    const PREFIXES: &[&str] = &[
+        "fluxgauss.plsql.StrUtil.concat(",
+        "fluxgauss.plsql.StrUtil.concatWs(",
+        "fluxgauss.plsql.StrUtil.concatAll(",
+        "fluxgauss.plsql.StrUtil.toText(",
+        "fluxgauss.plsql.StrUtil.byteSubstr(",
+        "fluxgauss.plsql.StrUtil.lobSubstr(",
+        "fluxgauss.plsql.StrUtil.asciiStr(",
+        "fluxgauss.plsql.StrUtil.unistr(",
+        "fluxgauss.plsql.Regexp.substr(",
+        "fluxgauss.plsql.Regexp.replace(",
+    ];
+    PREFIXES.iter().any(|p| t.starts_with(p))
+}
+
 fn looks_like_string_expr(expr: &str) -> bool {
-    let t = expr.trim();
-    t.starts_with('"') || t.starts_with("String.valueOf(")
+    let t = strip_wrapping_parens(expr);
+    t.starts_with('"')
+        || t.starts_with("String.valueOf(")
+        // Issue #125 review R4 (3.3″/P0): `||` lowers to StrUtil.concat and
+        // the LOB/regex helpers return String — without these a String
+        // result fed into a Long/Integer slot degrades to
+        // `((Number) String).longValue()` / `(String).longValue()`, which
+        // does not compile.
+        || looks_like_plsql_string_helper(t)
 }
 
 fn looks_like_timestamp_expr(expr: &str, proc: &ProcedureInfo) -> bool {
@@ -306,6 +331,9 @@ fn looks_like_numeric_expr(expr: &str) -> bool {
         || t.contains("Integer.parseInt")
 }
 
+/// True when the expression is a single unqualified variable reference, i.e. the
+/// only shape for which `resolve_var_java_type` describes the EXPRESSION rather
+/// than merely its receiver.
 fn is_bare_identifier(expr: &str) -> bool {
     let t = expr.trim();
     !t.is_empty()
@@ -542,6 +570,7 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
         Some(t)
             if t.contains("BigDecimal")
                 && trimmed.contains(".get(")
+                && !looks_like_string_expr(trimmed)
                 && !trimmed.starts_with("new java.math.BigDecimal") =>
         {
             // If arithmetic operators are present beyond .get(), the result is already a primitive
@@ -558,11 +587,18 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
         Some(t) if t.contains("BigDecimal") && trimmed.contains("this.") && !trimmed.starts_with('(') => {
             format!("((java.math.BigDecimal) {})", trimmed)
         }
+        // Issue #125 R4: String-returning helpers (StrUtil.concat etc.) must
+        // not be routed through BigDecimal.valueOf — that takes long/double
+        // and javac rejects a String argument.
+        Some(t) if t.contains("BigDecimal") && looks_like_string_expr(trimmed) => {
+            format!("new java.math.BigDecimal(String.valueOf({}))", trimmed)
+        }
         Some(t)
             if t.contains("BigDecimal")
                 && trimmed.contains('.')
                 && !trimmed.starts_with('"')
                 && !is_nullish_java_expr(trimmed)
+                && !looks_like_string_expr(trimmed)
                 && !trimmed.contains("this.")
                 && !trimmed.contains(".multiply(")
                 && !trimmed.contains(".add(")
@@ -579,6 +615,7 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
         Some(t)
             if t.contains("BigDecimal")
                 && !trimmed.contains("BigDecimal")
+                && !looks_like_string_expr(trimmed)
                 && !trimmed.contains("String.valueOf(")
                 && !trimmed.starts_with('"')
                 && !trimmed.contains("this.")
@@ -597,12 +634,13 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
         {
             format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed))
         }
-        Some(t) if (t == "Integer" || t == "int") && trimmed.contains(".get(") => {
+        Some(t) if (t == "Integer" || t == "int") && trimmed.contains(".get(") && !looks_like_string_expr(trimmed) => {
             format!("((Number) {}).intValue()", trimmed)
         }
         Some(t)
             if (t == "Long" || t == "long")
                 && trimmed.contains(".get(")
+                && !looks_like_string_expr(trimmed)
                 && !trimmed.contains(" * ")
                 && !trimmed.contains(" + ")
                 && !trimmed.contains(" - ")
@@ -645,7 +683,9 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
         Some(t) if (t == "Long" || t == "long") && trimmed.contains(".indexOf(") && !trimmed.contains("(long)") => {
             format!("(long)({})", trimmed)
         }
-        Some(t) if (t == "Long" || t == "long") && trimmed.contains("BigDecimal") => {
+        Some(t)
+            if (t == "Long" || t == "long") && trimmed.contains("BigDecimal") && !looks_like_string_expr(trimmed) =>
+        {
             format!("({}).longValue()", trimmed)
         }
         Some(t)
@@ -655,6 +695,7 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
                     || trimmed.contains(" - ")
                     || trimmed.contains(" / "))
                 && !trimmed.starts_with("new ")
+                && !looks_like_string_expr(trimmed)
                 && !produces_double(trimmed)
                 && !produces_primitive_int(trimmed) =>
         {
@@ -702,6 +743,9 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
             } else {
                 format!("((Number)({})).longValue()", trimmed)
             }
+        }
+        Some(t) if (t == "Integer" || t == "int") && looks_like_plsql_string_helper(trimmed) => {
+            format!("Integer.valueOf(String.valueOf({}))", trimmed)
         }
         // Issue #125 review R3 (3.5'): same nullable-helper exemption as the
         // sibling String arms — without it `(LOB_GET_LENGTH(x))::INTEGER`
@@ -775,6 +819,8 @@ pub(crate) fn is_nullable_plsql_string_call(expr: &str) -> bool {
     let e = strip_wrapping_parens(expr);
     e.starts_with("fluxgauss.plsql.StrUtil.toText(")
         || e.starts_with("fluxgauss.plsql.StrUtil.concat(")
+        || e.starts_with("fluxgauss.plsql.StrUtil.concatWs(")
+        || e.starts_with("fluxgauss.plsql.StrUtil.concatAll(")
         || e.starts_with("fluxgauss.plsql.StrUtil.byteSubstr(")
         || e.starts_with("fluxgauss.plsql.StrUtil.lobSubstr(")
         || e.starts_with("fluxgauss.plsql.StrUtil.asciiStr(")
@@ -3109,10 +3155,16 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         }
         "REPEAT" if jargs.len() >= 2 => format!("{}.repeat({})", jargs[0], jargs[1]),
         "REVERSE" => format!("new StringBuilder({}).reverse().toString()", jargs.first().map(|s| s.as_str()).unwrap_or("null")),
-        "CONCAT" | "CONCAT_WS" if !jargs.is_empty() => {
-            let inner = jargs.join(").concat(String.valueOf(");
-            let needs_close = inner.matches('(').count() as isize - inner.matches(')').count() as isize;
-            format!("String.valueOf({}{})", inner, ")".repeat(needs_close.max(0) as usize))
+        // Issue #125 review R4 (3.7″): CONCAT treats NULL args as empty;
+        // CONCAT_WS skips NULL args (no separator for them) and yields
+        // NULL only when the separator itself is NULL. The old shared arm
+        // emitted String.valueOf(...).concat(...) — NULL became "null" and
+        // CONCAT_WS never skipped NULLs nor used arg0 as separator.
+        "CONCAT" if !jargs.is_empty() => {
+            format!("fluxgauss.plsql.StrUtil.concatAll({})", jargs.join(", "))
+        }
+        "CONCAT_WS" if !jargs.is_empty() => {
+            format!("fluxgauss.plsql.StrUtil.concatWs({})", jargs.join(", "))
         }
         "FORMAT" => format!("String.format({})", jargs.join(", ")),
         "PG_TABLE_IS_VISIBLE" | "HAS_SCHEMA_PRIVILEGE" | "HAS_TABLE_PRIVILEGE" => "true".into(),
@@ -3129,7 +3181,19 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             if arg == "\"\"" || arg == "''" {
                 "java.math.BigDecimal.ZERO".to_string()
             } else {
-                format!("new java.math.BigDecimal({})", arg)
+                // Issue #125 review R4 (P0): to_number() on an already-
+                // BigDecimal value is identity — `new BigDecimal(BigDecimal)`
+                // does not compile (InOutManagementService corpus site).
+                let bare = strip_wrapping_parens(arg);
+                if bare.starts_with("new java.math.BigDecimal")
+                    || bare.starts_with("java.math.BigDecimal.valueOf")
+                    || bare.starts_with("(java.math.BigDecimal)")
+                    || is_bigdecimal_var(bare, proc)
+                {
+                    arg.to_string()
+                } else {
+                    format!("new java.math.BigDecimal({})", arg)
+                }
             }
         },
         "INSTR" if jargs.len() >= 3 => {

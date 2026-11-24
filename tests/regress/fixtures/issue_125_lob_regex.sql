@@ -60,6 +60,21 @@ CREATE OR REPLACE PACKAGE BODY pkg_lob_str AS
     p_out := REGEXP_REPLACE(p_src, '[aeiou]', '*', 2, 1);
     -- NULL replacement → delete matches (DB-verified)
     p_out := REGEXP_REPLACE(p_src, '[aeiou]', NULL);
+    -- R4: explicit NULL occurrence beats NULL pattern → NULL (DB-verified)
+    p_out := REGEXP_REPLACE(p_src, NULL, 'X', 1, NULL);
+  END;
+
+  -- Issue #125 R4: `||` feeding a numeric slot must lower to a typed
+  -- parse (P0: String concat result is not a Number), and CONCAT /
+  -- CONCAT_WS get their own NULL rules (DB-verified on openGauss 7.0).
+  PROCEDURE prc_concat_demo(p_src IN VARCHAR2, p_out OUT VARCHAR2) IS
+    v_num   NUMBER;
+    v_txt   VARCHAR2(100);
+  BEGIN
+    v_num := '12' || '34';
+    v_txt := CONCAT(p_src, NULL, 'x');
+    v_txt := CONCAT_WS('-', p_src, NULL, 'y');
+    p_out := v_txt || v_num;
   END;
 END pkg_lob_str;
 /

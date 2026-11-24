@@ -18,24 +18,38 @@ public final class Regexp {
         return o == null ? null : String.valueOf(o);
     }
 
-    private static long num(Object o, long dflt) {
-        if (o == null) return dflt;
-        if (o instanceof Number n) return n.longValue();
+    /**
+     * Strict integer for position/occurrence/return_option args.
+     * DB-verified (openGauss 7.0.0-RC3): non-integer input → ERROR
+     * "invalid input syntax for integer", so we throw
+     * IllegalArgumentException rather than silently defaulting; a
+     * non-integral Number (e.g. 1.5) is likewise rejected.
+     */
+    private static long strictNum(Object o, String what) {
+        if (o instanceof Number n) {
+            if (n.doubleValue() != n.longValue()) {
+                throw new IllegalArgumentException("invalid " + what + ": " + o);
+            }
+            return n.longValue();
+        }
+        String s = str(o);
         try {
-            return Long.parseLong(String.valueOf(o).trim());
+            return Long.parseLong(s == null ? "" : s.trim());
         } catch (RuntimeException e) {
-            return dflt;
+            throw new IllegalArgumentException("invalid " + what + ": " + s);
         }
     }
 
     /**
-     * openGauss O-mode match_parameter letters, DB-verified on
-     * openGauss 7.0.0-RC3: valid = i (caseless), c (caseless-off),
-     * m (multiline), n (dotall), x (ignore-whitespace); q and s are
-     * accepted as no-ops; '' accepted. Everything else — including
-     * uppercase 'I' and 'g'/'a' — is rejected by the DB, so we throw
-     * IllegalArgumentException rather than silently ignore. NOTE: the
-     * DB is case-SENSITIVE here, so no toLowerCase.
+     * Match parameters for regexp_substr/instr/count/replace — the DB
+     * forwards them to the PG ARE engine, so the accepted set is the ARE
+     * flag letters {b,c,e,i,m,n,p,q,s,t,w,x} plus '' (all DB-verified on
+     * openGauss 7.0.0-RC3). Mappable: i→caseless, s→dotall (. matches
+     * newline), x→expanded; c/m/n are already Java defaults
+     * (case-sensitive / newline-sensitive). b/e/p/q/t/w have no
+     * java.util.regex equivalent and are accepted as approximated
+     * no-ops. Anything else → IllegalArgumentException (the DB ERRORs).
+     * Case-SENSITIVE: uppercase 'I' is rejected, matching the DB.
      */
     private static int flags(Object params) {
         int f = 0;
@@ -44,11 +58,10 @@ public final class Regexp {
         for (char c : p.toCharArray()) {
             switch (c) {
                 case 'i': f |= Pattern.CASE_INSENSITIVE; break;
-                case 'c': break; // explicit case-sensitive: default already
-                case 'm': f |= Pattern.MULTILINE; break;
-                case 'n': f |= Pattern.DOTALL; break;
+                case 's': f |= Pattern.DOTALL; break;
                 case 'x': f |= Pattern.COMMENTS; break;
-                case 'q': case 's': break; // DB accepts as no-ops
+                case 'b': case 'c': case 'e': case 'm':
+                case 'n': case 'p': case 'q': case 't': case 'w': break;
                 default:
                     throw new IllegalArgumentException("invalid regexp option: " + c);
             }
@@ -56,13 +69,39 @@ public final class Regexp {
         return f;
     }
 
-    private static int regionStart(Object pos, int len) {
-        long p = num(pos, 1);
-        if (p < 1) return -1;
-        return (int) Math.min(p - 1, len);
+    /**
+     * regexp_like match_parameter — DB-verified: this PL/pgSQL wrapper
+     * accepts ONLY {i,c,m} (i=caseless, c=caseless-off, m=multiline);
+     * any other letter logs INFO "illegal argument" and the function
+     * returns FALSE (not an error); '' raises ERROR. NULL → no flags.
+     * Returns -1 for the INFO→false case.
+     */
+    private static int likeFlags(Object params) {
+        String p = str(params);
+        if (p == null) return 0;
+        if (p.isEmpty()) {
+            throw new IllegalArgumentException("regexp_like: empty match_parameter");
+        }
+        int f = 0;
+        for (char c : p.toCharArray()) {
+            switch (c) {
+                case 'i': f |= Pattern.CASE_INSENSITIVE; break;
+                case 'c': break;
+                case 'm': f |= Pattern.MULTILINE; break;
+                default: return -1;
+            }
+        }
+        return f;
     }
 
-    /** REGEXP_LIKE(source, pattern[, match_parameter]) — partial match; null → false. */
+    /** 1-based position already validated ≥1; clamps into [0,len]. */
+    private static int regionStart(long pos, int len) {
+        return (int) Math.min(pos - 1, len);
+    }
+
+    /** REGEXP_LIKE(source, pattern[, match_parameter]) — partial match.
+     *  NULL args → DB NULL; primitive boolean cannot represent
+     *  three-valued logic, so false is returned (tracked deviation). */
     public static boolean like(Object s, Object p) {
         return like(s, p, null);
     }
@@ -71,20 +110,24 @@ public final class Regexp {
         String src = str(s);
         String pat = str(p);
         if (src == null || pat == null) return false;
+        int fl = likeFlags(params);
+        if (fl < 0) return false;
         try {
-            return Pattern.compile(pat, flags(params)).matcher(src).find();
+            return Pattern.compile(pat, fl).matcher(src).find();
         } catch (PatternSyntaxException e) {
             return false;
         }
     }
 
-    /** REGEXP_SUBSTR — nth match text from position; null if absent. */
+    /** REGEXP_SUBSTR — nth match text from position; null if absent.
+     *  DB-verified NULL rules: explicit NULL position/occurrence → NULL
+     *  (absent args are defaulted by the overloads, so they differ). */
     public static String substr(Object s, Object p) {
-        return substr(s, p, null, null, null);
+        return substr(s, p, 1L, 1L, null);
     }
 
     public static String substr(Object s, Object p, Object pos) {
-        return substr(s, p, pos, null, null);
+        return substr(s, p, pos, 1L, null);
     }
 
     public static String substr(Object s, Object p, Object pos, Object occ) {
@@ -95,13 +138,20 @@ public final class Regexp {
         String src = str(s);
         String pat = str(p);
         if (src == null || pat == null) return null;
-        int start = regionStart(pos, src.length());
-        if (start < 0) return null;
+        if (pos == null || occ == null) return null;
+        long ps = strictNum(pos, "position");
+        long os = strictNum(occ, "occurrence");
+        if (ps < 1) {
+            throw new IllegalArgumentException("argument '" + ps + "' is out of range");
+        }
+        if (os < 1) {
+            throw new IllegalArgumentException("argument '" + os + "' is out of range");
+        }
+        int start = regionStart(ps, src.length());
         try {
             Matcher m = Pattern.compile(pat, flags(params)).matcher(src);
             m.region(start, src.length());
-            long nth = Math.max(1, num(occ, 1));
-            for (long k = 0; k < nth; k++) {
+            for (long k = 0; k < os; k++) {
                 if (!m.find()) return null;
             }
             return m.group();
@@ -110,17 +160,18 @@ public final class Regexp {
         }
     }
 
-    /** REGEXP_INSTR — 1-based position of nth match (return_option=1 → after match); 0 if absent. */
+    /** REGEXP_INSTR — 1-based position of nth match (return_option≠0 → after match); 0 if absent.
+     *  DB-verified NULL rules: explicit NULL position/occurrence/return_option → NULL. */
     public static Long instr(Object s, Object p) {
-        return instr(s, p, null, null, null, null);
+        return instr(s, p, 1L, 1L, 0L, null);
     }
 
     public static Long instr(Object s, Object p, Object pos) {
-        return instr(s, p, pos, null, null, null);
+        return instr(s, p, pos, 1L, 0L, null);
     }
 
     public static Long instr(Object s, Object p, Object pos, Object occ) {
-        return instr(s, p, pos, occ, null, null);
+        return instr(s, p, pos, occ, 0L, null);
     }
 
     public static Long instr(Object s, Object p, Object pos, Object occ, Object retOpt) {
@@ -131,16 +182,21 @@ public final class Regexp {
         String src = str(s);
         String pat = str(p);
         if (src == null || pat == null) return null;
-        int start = regionStart(pos, src.length());
-        if (start < 0) return null;
+        if (pos == null || occ == null || retOpt == null) return null;
+        long ps = strictNum(pos, "position");
+        long os = strictNum(occ, "occurrence");
+        long ro = strictNum(retOpt, "return_option");
+        if (ps < 1 || os < 1 || ro < 0) {
+            throw new IllegalArgumentException("argument out of range");
+        }
+        int start = regionStart(ps, src.length());
         try {
             Matcher m = Pattern.compile(pat, flags(params)).matcher(src);
             m.region(start, src.length());
-            long nth = Math.max(1, num(occ, 1));
-            for (long k = 0; k < nth; k++) {
+            for (long k = 0; k < os; k++) {
                 if (!m.find()) return 0L;
             }
-            int at = num(retOpt, 0) != 0 ? m.end() : m.start();
+            int at = ro != 0 ? m.end() : m.start();
             return (long) (at + 1);
         } catch (PatternSyntaxException | IndexOutOfBoundsException e) {
             return 0L;
@@ -149,11 +205,12 @@ public final class Regexp {
 
     /**
      * REGEXP_COUNT(string, pattern[, position[, flags]]) — openGauss/O-mode
-     * signature: the 4th arg is match flags, NOT an occurrence (DB-verified:
-     * regexp_count('Aba','a',1,'i') = 2).
+     * signature: the 4th arg is ARE match flags, NOT an occurrence
+     * (DB-verified: regexp_count('Aba','a',1,'i') = 2). Explicit NULL
+     * position → NULL; NULL flags → no flags.
      */
     public static Long count(Object s, Object p) {
-        return count(s, p, null, null);
+        return count(s, p, 1L, null);
     }
 
     public static Long count(Object s, Object p, Object pos) {
@@ -164,8 +221,12 @@ public final class Regexp {
         String src = str(s);
         String pat = str(p);
         if (src == null || pat == null) return null;
-        int start = regionStart(pos, src.length());
-        if (start < 0) return null;
+        if (pos == null) return null;
+        long ps = strictNum(pos, "position");
+        if (ps < 1) {
+            throw new IllegalArgumentException("argument '" + ps + "' is out of range");
+        }
+        int start = regionStart(ps, src.length());
         try {
             Matcher m = Pattern.compile(pat, flags(params)).matcher(src);
             m.region(start, src.length());
@@ -180,19 +241,24 @@ public final class Regexp {
     }
 
     /**
-     * REGEXP_REPLACE — openGauss O-mode argument semantics (DB-verified):
-     * absent position (3-arg) → replace FIRST match only; position given
-     * (4/5/6-arg) with absent occurrence → replace ALL from position;
-     * explicit occurrence=0 → all, N>0 → Nth only; NULL pattern → source
-     * unchanged; NULL replacement → delete matches; NULL src/occurrence
-     * → NULL. Oracle \N backrefs.
+     * REGEXP_REPLACE — openGauss O-mode argument semantics (all rows
+     * DB-verified on openGauss 7.0.0-RC3):
+     *   3-arg            → replace FIRST match only;
+     *   4-arg (pos)      → replace ALL from position; position=NULL falls
+     *                      back to default (unlike 5/6-arg!);
+     *   occ=0            → all matches from position; occ=N>0 → Nth only;
+     *   NULL src/occ     → NULL; NULL pos (5/6-arg) → NULL;
+     *   NULL pattern     → source unchanged (but loses to NULL occ/pos);
+     *   NULL replacement → delete matches;
+     *   invalid position/occurrence → IllegalArgumentException (DB ERROR).
+     * Oracle \N backrefs.
      */
     public static String replace(Object s, Object p, Object r) {
-        return replace(s, p, r, null, 1L, null);
+        return replace(s, p, r, 1L, 1L, null);
     }
 
     public static String replace(Object s, Object p, Object r, Object pos) {
-        return replace(s, p, r, pos, 0L, null);
+        return replace(s, p, r, pos == null ? 1L : pos, 0L, null);
     }
 
     public static String replace(Object s, Object p, Object r, Object pos, Object occ) {
@@ -201,21 +267,27 @@ public final class Regexp {
 
     public static String replace(Object s, Object p, Object r, Object pos, Object occ, Object params) {
         String src = str(s);
-        String pat = str(p);
-        String repl = str(r);
         if (src == null) return null;
-        if (pat == null) return src;
-        // occ==null here means an explicit SQL NULL (overloads above supply
-        // numeric defaults) → DB returns NULL.
+        // occ==null → explicit SQL NULL occurrence → NULL. Checked BEFORE
+        // pattern: DB returns NULL even when the pattern is also NULL.
         if (occ == null) return null;
-        int start = regionStart(pos, src.length());
-        if (start < 0) return src;
+        // pos==null → NULL for the 5/6-arg forms (the 4-arg overload
+        // substitutes 1L before reaching here).
+        if (pos == null) return null;
+        String pat = str(p);
+        if (pat == null) return src;
+        long ps = strictNum(pos, "position");
+        long os = strictNum(occ, "occurrence");
+        if (ps < 1 || os < 0) {
+            throw new IllegalArgumentException("argument out of range");
+        }
+        int start = regionStart(ps, src.length());
+        String repl = str(r);
         try {
             Matcher m = Pattern.compile(pat, flags(params)).matcher(src);
             m.region(start, src.length());
             // occurrence: 0 → ALL matches in region; N>0 → Nth only.
-            long nth = num(occ, 1);
-            if (nth <= 0) {
+            if (os == 0) {
                 StringBuilder sb = new StringBuilder(src.length());
                 int last = 0; // keep the prefix before `start` — matches begin at `start`
                 while (m.find()) {
@@ -229,7 +301,7 @@ public final class Regexp {
             long seen = 0;
             while (m.find()) {
                 seen++;
-                if (seen == nth) {
+                if (seen == os) {
                     return src.substring(0, m.start())
                         + (repl == null ? "" : expand(repl, m))
                         + src.substring(m.end());
@@ -325,13 +397,74 @@ public final class StrUtil {
      * (DB-verified: 'a' || NULL = 'a'), so the result is NULL only when
      * BOTH sides are NULL. Routing through a helper keeps each operand
      * single-evaluated (an inline ternary would evaluate it twice).
+     * Numbers render with DB numeric-to-text rules: 0.5 -> ".5",
+     * -0.5 -> "-.5", scale preserved (1.50 -> "1.50").
      */
     public static String concat(Object a, Object b) {
-        String sa = str(a);
-        String sb = str(b);
-        if (sa == null) return sb;
-        if (sb == null) return sa;
-        return sa + sb;
+        if (a == null && b == null) return null;
+        return cat(a) + cat(b);
+    }
+
+    /**
+     * CONCAT(...) — DB-verified (openGauss 7.0.0-RC3 hz): NULL args act as
+     * empty ('a',NULL,'b' → 'ab'), but ALL-NULL yields NULL
+     * (concat(NULL,NULL) IS NULL → true), matching `||` both-null rule.
+     */
+    public static String concatAll(Object... args) {
+        StringBuilder sb = new StringBuilder();
+        boolean any = false;
+        if (args != null) {
+            for (Object a : args) {
+                if (a != null) any = true;
+                sb.append(cat(a));
+            }
+        }
+        return any ? sb.toString() : null;
+    }
+
+    /**
+     * CONCAT_WS(sep, a, b, ...) — DB-verified: NULL args are SKIPPED (no
+     * separator emitted for them); a NULL separator yields NULL.
+     */
+    public static String concatWs(Object sep, Object... args) {
+        String s = str(sep);
+        if (s == null) return null;
+        StringBuilder sb = new StringBuilder();
+        boolean first = true;
+        if (args != null) {
+            for (Object a : args) {
+                if (a == null) continue;
+                if (!first) sb.append(s);
+                sb.append(cat(a));
+                first = false;
+            }
+        }
+        return sb.toString();
+    }
+
+    /** `||`/CONCAT operand → text; NULL → "". Numbers use DB formatting. */
+    private static String cat(Object o) {
+        if (o == null) return "";
+        if (o instanceof Number n) return numText(n);
+        String s = str(o);
+        return s == null ? "" : s;
+    }
+
+    /** DB numeric→text: strip the leading zero of |x|<1, keep scale. */
+    private static String numText(Number n) {
+        String s;
+        if (n instanceof java.math.BigDecimal bd) {
+            s = bd.toPlainString();
+        } else if (n instanceof Double || n instanceof Float) {
+            double d = n.doubleValue();
+            if (Double.isNaN(d) || Double.isInfinite(d)) return String.valueOf(n);
+            s = java.math.BigDecimal.valueOf(d).toPlainString();
+        } else {
+            return n.toString();
+        }
+        if (s.startsWith("0.")) return s.substring(1);
+        if (s.startsWith("-0.")) return "-" + s.substring(2);
+        return s;
     }
 
     /** LENGTHB — UTF-8 byte length; null → null. */
