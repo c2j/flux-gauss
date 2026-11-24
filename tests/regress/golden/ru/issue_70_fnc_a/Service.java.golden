@@ -20,6 +20,6 @@ public class BigfundService {
 
     // Source: BIGFUND.FNC_A (FUNCTION) — {FIXTURES_ROOT}/issue_70_fnc_a.sql:1-6
     public String fncA(String pIX) {
-        return String.valueOf(pIX).concat(String.valueOf("_A"));
+        return fluxgauss.plsql.StrUtil.concat(pIX, "_A");
     }
 }

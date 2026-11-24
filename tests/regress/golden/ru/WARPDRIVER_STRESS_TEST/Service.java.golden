@@ -90,7 +90,7 @@ public class WarpdriverStressTestService {
             while (running && _smGuard++ < 10000) {
                 gSessionCounter = gSessionCounter + 1;
                 pLogId.set(this.nextval("seq_log_master"));
-                this.spAutonomousAudit("ORCH_START", String.valueOf(String.valueOf(String.valueOf("Mode=").concat(String.valueOf(pMode))).concat(String.valueOf("|Date="))).concat(String.valueOf(pBizDate)));
+                this.spAutonomousAudit("ORCH_START", fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat("Mode=", pMode), "|Date="), pBizDate));
                 if (java.util.Objects.equals(pMode, "FAST")) {
                     vCurOrdersResult = warpdriverStressTestMapper.selectSpMainOrchestrator_2(pBizDate, pMode, vDate, gBatchSize);
                     if (vCurOrdersResult == null) vCurOrdersResult = new java.util.ArrayList<>();
@@ -113,7 +113,7 @@ public class WarpdriverStressTestService {
                         // UNREACHABLE: break;
                     }
                     if (java.util.Objects.equals(vRec.get("status"), "PENDING")) {
-                        vSavepoint1 = String.valueOf("sp_").concat(String.valueOf(vRec.getOrDefault("orderId", vRec.get("order_id"))));
+                        vSavepoint1 = fluxgauss.plsql.StrUtil.concat("sp_", vRec.getOrDefault("orderId", vRec.get("order_id")));
                         // SQL: SAVEPOINT ${vSavepoint1}
                         try {
                             vCleaned = ((Number) this.fnRecursiveTreeCleanup(Long.parseLong(String.valueOf(vRec.getOrDefault("orderId", vRec.get("order_id")))), 0)).intValue();
@@ -125,7 +125,7 @@ public class WarpdriverStressTestService {
                             }
                             vIdx = vIdx + 1;
                             ((java.util.Map<String, Object>) vItemTab.get((int)(long)(vIdx) - 1)).put("itemId", vRec.getOrDefault("orderId", vRec.get("order_id")));
-                            ((java.util.Map<String, Object>) vItemTab.get((int)(long)(vIdx) - 1)).put("productCode", String.valueOf("PROD_").concat(String.valueOf((((Number) java.util.Objects.requireNonNullElse(vRec.getOrDefault("orderId", vRec.get("order_id")), 0)).doubleValue() % 100))));
+                            ((java.util.Map<String, Object>) vItemTab.get((int)(long)(vIdx) - 1)).put("productCode", fluxgauss.plsql.StrUtil.concat("PROD_", (((Number) java.util.Objects.requireNonNullElse(vRec.getOrDefault("orderId", vRec.get("order_id")), 0)).doubleValue() % 100)));
                             ((java.util.Map<String, Object>) vItemTab.get((int)(long)(vIdx) - 1)).put("quantity", java.util.Optional.ofNullable((Number) vRec.getOrDefault("totalAmount", vRec.get("total_amount"))).map(Number::longValue).orElse(0L) / 100);
                             ((java.util.Map<String, Object>) vItemTab.get((int)(long)(vIdx) - 1)).put("unitPrice", 100);
                             ((java.util.Map<String, Object>) vItemTab.get((int)(long)(vIdx) - 1)).put("metadata", this.jsonbBuildObject(String.valueOf("order_id"), vRec.getOrDefault("orderId", vRec.get("order_id")), String.valueOf("mode"), pMode, String.valueOf("seq"), gSessionCounter));
@@ -151,7 +151,7 @@ public class WarpdriverStressTestService {
                     }
                     if (java.util.Objects.equals((gSessionCounter % 100), 0)) {
                         // COMMIT;
-                        this.spAutonomousAudit("ORCH_COMMIT", String.valueOf("Batch committed at counter=").concat(String.valueOf(gSessionCounter)));
+                        this.spAutonomousAudit("ORCH_COMMIT", fluxgauss.plsql.StrUtil.concat("Batch committed at counter=", gSessionCounter));
                     }
                     currentState = SpMainOrchestratorState.FetchLoop;
                     break;
@@ -173,7 +173,7 @@ public class WarpdriverStressTestService {
                     } else {
                         try { TransactionAspectSupport.currentTransactionStatus().setRollbackOnly(); } catch (Exception _tx) {}
                     }
-                    this.spAutonomousAudit("ORCH_END", String.valueOf(String.valueOf(String.valueOf("Total=").concat(String.valueOf(vSum))).concat(String.valueOf("|Items="))).concat(String.valueOf(vIdx)));
+                    this.spAutonomousAudit("ORCH_END", fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat("Total=", vSum), "|Items="), vIdx));
                     break;
                     default:
                     running = false;
@@ -203,7 +203,7 @@ public class WarpdriverStressTestService {
         int __ROWCOUNT__ = 0;
         try {
             try {
-                vLockKey = String.valueOf("LOCK_ORDER_").concat(String.valueOf(pOrderId));
+                vLockKey = fluxgauss.plsql.StrUtil.concat("LOCK_ORDER_", pOrderId);
                 vConnId = ((Number)(Thread.currentThread().getId())).longValue();
                 __ROWCOUNT__ = warpdriverStressTestMapper.insertDistributedLocks_1(pOrderId, vConnId, vLockKey);
                 { Object _val = warpdriverStressTestMapper.selectOrders_1(pOrderId); if (_val != null) vTempAmt = (java.math.BigDecimal) _val; }
@@ -231,7 +231,7 @@ public class WarpdriverStressTestService {
             __SQLERRM__ = __e1.getMessage();
             __SQLCODE__ = -1;
             __ROWCOUNT__ = warpdriverStressTestMapper.deleteDistributedLocks_2(pOrderId, vLockKey);
-            pResult.set(String.valueOf(String.valueOf("ERROR:").concat(String.valueOf(__SQLERRM__))));
+            pResult.set(fluxgauss.plsql.StrUtil.concat("ERROR:", __SQLERRM__));
             log.info("");
         }
     }
@@ -251,7 +251,7 @@ public class WarpdriverStressTestService {
             vDeleted = vDeleted + vRowcount;
             if (vRowcount > 0) {
                 // COMMIT;
-                this.spAutonomousAudit("PURGE_BATCH", String.valueOf(String.valueOf("Deleted ").concat(String.valueOf(vRowcount))).concat(String.valueOf(" rows")));
+                this.spAutonomousAudit("PURGE_BATCH", fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat("Deleted ", vRowcount), " rows"));
             }
         } while (java.util.Objects.equals(vRowcount, vBatch));
         pDeletedCnt.set(vDeleted);
@@ -263,19 +263,19 @@ public class WarpdriverStressTestService {
         java.sql.Date vDate = java.sql.Date.valueOf(java.time.LocalDate.parse(String.valueOf(pBizDate), java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd][yyyy-M-d]")));
         String vDetail = "";
         String vHeader = null;
-        vHeader = String.valueOf(String.valueOf(String.valueOf("=== 清算报告 (").concat(String.valueOf(pBizDate))).concat(String.valueOf(") ==="))).concat(String.valueOf(String.valueOf((char)(10))));
+        vHeader = fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat("=== 清算报告 (", pBizDate), ") ==="), String.valueOf((char)(10)));
         if (!(java.util.Objects.equals(String.valueOf(pReportType).toUpperCase(), "SUMMARY"))) {
             // for rec in query: (       SELECT region_code,              COUNT(*) AS cnt,              SUM(settle_amount) AS amt,              AVG(fee_rate) AS avg_fee       FROM settlement       WHERE settle_date = v_date       GROUP BY region_code       HAVING COUNT(*) > 10       ORDER BY amt DESC     )
             List<Map<String, Object>> recList = warpdriverStressTestMapper.selectSpGotoSkipLogic_1(pReportType, pBizDate, vDate);
             if (recList == null) recList = new ArrayList<>();
             for (Map<String, Object> rec : recList) {
-                vDetail = String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(vDetail).concat(String.valueOf(rec.getOrDefault("regionCode", rec.get("region_code"))))).concat(String.valueOf("|"))).concat(String.valueOf(rec.get("cnt")))).concat(String.valueOf("|"))).concat(String.valueOf(rec.get("amt")))).concat(String.valueOf("|"))).concat(String.valueOf(rec.getOrDefault("avgFee", rec.get("avg_fee"))))).concat(String.valueOf(String.valueOf((char)(10))));
+                vDetail = fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(vDetail, rec.getOrDefault("regionCode", rec.get("region_code"))), "|"), rec.get("cnt")), "|"), rec.get("amt")), "|"), rec.getOrDefault("avgFee", rec.get("avg_fee"))), String.valueOf((char)(10)));
             }
         }
         if (java.util.Objects.equals(String.valueOf(pReportType).toUpperCase(), "SUMMARY")) {
             vDetail = String.valueOf(warpdriverStressTestMapper.selectSettlement_1(pReportType, pBizDate, vDate));
         }
-        pContent.set(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(vHeader).concat(String.valueOf(vDetail))).concat(String.valueOf(String.valueOf((char)(10))))).concat(String.valueOf("Generated at:"))).concat(String.valueOf(new java.sql.Timestamp(System.currentTimeMillis())))));
+        pContent.set(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(vHeader, vDetail), String.valueOf((char)(10))), "Generated at:"), new java.sql.Timestamp(System.currentTimeMillis())));
     }
 
     // Source: PKG_WARPDRIVER_STRESS_TEST.sp_goto_deep_escape (PROCEDURE) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:442-512
@@ -514,7 +514,7 @@ public class WarpdriverStressTestService {
         for (vIdx = 0; vIdx <= this.jsonbArrayLength(vArr) - 1; vIdx++) {
             vItem = String.valueOf(this.jsonbGet(vArr, vIdx));
             vNewPrice = java.math.BigDecimal.valueOf(((Number) java.util.Objects.requireNonNullElse((this.jsonbGetText(vItem, "price")), 0L)).longValue()).multiply((java.math.BigDecimal.valueOf(1).subtract(pDiscount)));
-            vResult = String.valueOf(String.valueOf(vResult).concat(String.valueOf(this.jsonbBuildObject(String.valueOf("product_id"), this.jsonbGetText(vItem, "product_id"), String.valueOf("original_price"), java.math.BigDecimal.valueOf(((Number) java.util.Objects.requireNonNullElse((this.jsonbGetText(vItem, "price")), 0L)).longValue()), String.valueOf("discount_rate"), pDiscount, String.valueOf("final_price"), vNewPrice.setScale((int)(2), java.math.RoundingMode.HALF_UP), String.valueOf("processed_at"), new java.sql.Timestamp(System.currentTimeMillis())))));
+            vResult = fluxgauss.plsql.StrUtil.concat(vResult, this.jsonbBuildObject(String.valueOf("product_id"), this.jsonbGetText(vItem, "product_id"), String.valueOf("original_price"), java.math.BigDecimal.valueOf(((Number) java.util.Objects.requireNonNullElse((this.jsonbGetText(vItem, "price")), 0L)).longValue()), String.valueOf("discount_rate"), pDiscount, String.valueOf("final_price"), vNewPrice.setScale((int)(2), java.math.RoundingMode.HALF_UP), String.valueOf("processed_at"), new java.sql.Timestamp(System.currentTimeMillis())));
         }
         return String.valueOf(this.jsonbBuildObject(String.valueOf("items"), vResult, String.valueOf("total_count"), this.jsonbArrayLength(vArr), String.valueOf("summary_discount"), pDiscount));
     }
@@ -552,10 +552,10 @@ public class WarpdriverStressTestService {
         int __SQLCODE__ = 0;
         try {
             { Object _val = warpdriverStressTestMapper.selectAccounts(pAccountId, pAmount); if (_val != null) vBalance = (java.math.BigDecimal) _val; }
-            vSp1 = String.valueOf("sp_pre_").concat(String.valueOf(pAccountId));
+            vSp1 = fluxgauss.plsql.StrUtil.concat("sp_pre_", pAccountId);
             // SQL: SAVEPOINT ${vSp1}
             warpdriverStressTestMapper.updateAccounts_2(pAccountId, pAmount);
-            vSp2 = String.valueOf("sp_acct_").concat(String.valueOf(pAccountId));
+            vSp2 = fluxgauss.plsql.StrUtil.concat("sp_acct_", pAccountId);
             // SQL: SAVEPOINT ${vSp2}
             warpdriverStressTestMapper.insertAccountJournal(pAccountId, pAmount);
             if (pAmount.compareTo(vBalance) > 0) {
@@ -574,7 +574,7 @@ public class WarpdriverStressTestService {
                 __SQLCODE__ = -1;
                 warpdriverStressTestMapper.insertSpSavepointHell(pAccountId, pAmount);
                 // SQL: v_ins = "INSERT INTO"
-                vSp3 = String.valueOf(String.valueOf(String.valueOf(vIns).concat(String.valueOf(" notifications("))).concat(String.valueOf(pAccountId))).concat(String.valueOf(", notify_type, content)"));
+                vSp3 = fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(vIns, " notifications("), pAccountId), ", notify_type, content)");
                 // TODO: EXECUTE v_sp3 — could not resolve SQL string
             }
             // COMMIT;

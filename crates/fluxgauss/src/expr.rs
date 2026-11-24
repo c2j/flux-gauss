@@ -703,7 +703,10 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
                 format!("((Number)({})).longValue()", trimmed)
             }
         }
-        Some(t) if t == "String" && looks_like_numeric_expr(trimmed) => {
+        // Issue #125 review R3 (3.5'): same nullable-helper exemption as the
+        // sibling String arms — without it `(LOB_GET_LENGTH(x))::INTEGER`
+        // results get re-wrapped and SQL NULL materializes as "null".
+        Some(t) if t == "String" && looks_like_numeric_expr(trimmed) && !is_nullable_plsql_string_call(trimmed) => {
             format!("String.valueOf({})", trimmed)
         }
         _ => expr.to_string(),
@@ -768,7 +771,7 @@ const NUMERIC_PLSQL_HELPERS: &[&str] = &[
 
 /// String-returning plsql helpers — already `String`, so wrapping them in
 /// `String.valueOf` only serves to materialize SQL NULL as `"null"`.
-fn is_nullable_plsql_string_call(expr: &str) -> bool {
+pub(crate) fn is_nullable_plsql_string_call(expr: &str) -> bool {
     let e = strip_wrapping_parens(expr);
     e.starts_with("fluxgauss.plsql.StrUtil.toText(")
         || e.starts_with("fluxgauss.plsql.StrUtil.concat(")
@@ -2161,34 +2164,15 @@ fn binary_op_to_java(
 
     match op {
         "||" => {
-            // Issue #125 review R2: plsql helpers yield Java null for SQL
-            // NULL, but DB `||` treats NULL as the empty string
-            // ('a' || NULL = 'a'). StrUtil.concat evaluates each operand
-            // once and returns NULL only when BOTH sides are NULL.
-            if (l.contains("fluxgauss.plsql.") || r.contains("fluxgauss.plsql."))
-                && !l.contains("/* TOBEFIX")
-                && !r.contains("/* TOBEFIX")
-            {
-                return format!("fluxgauss.plsql.StrUtil.concat({}, {})", l, r);
-            }
-            // TOBEFIX-marked operands must keep their marker (and null value)
-            // so unresolved-name warnings stay visible; plain nullish operands
-            // concat as the empty string as before.
-            let l_sv = if l.contains("/* TOBEFIX") {
-                format!("String.valueOf({})", l)
-            } else if is_nullish_java_expr(&l) {
-                "\"\"".to_string()
-            } else {
-                format!("String.valueOf({})", l)
-            };
-            let r_sv = if r.contains("/* TOBEFIX") {
-                format!("String.valueOf({})", r)
-            } else if is_nullish_java_expr(&r) {
-                "\"\"".to_string()
-            } else {
-                format!("String.valueOf({})", r)
-            };
-            format!("{}.concat({})", l_sv, r_sv)
+            // Issue #125 review R3 (3.4'): DB `||` treats NULL as the empty
+            // string ('a' || NULL = 'a') and yields NULL only when BOTH
+            // sides are NULL. Route EVERY concat through StrUtil.concat —
+            // the previous String.valueOf path materialized SQL NULL as the
+            // literal "null" for any nullable operand (vars, .get() results,
+            // TOBEFIX nulls), and the helper-only trigger left both semantics
+            // coexisting in the same statement. concat() evaluates each
+            // operand once and keeps TOBEFIX markers visible in the args.
+            format!("fluxgauss.plsql.StrUtil.concat({}, {})", l, r)
         }
         "<@" | "@>" => format!("((Object) {}) != null", l),
         "->" => format!("this.jsonbGet({}, {})", l, r),

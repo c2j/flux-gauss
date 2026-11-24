@@ -1,0 +1,286 @@
+package fluxgauss.plsql;
+
+
+/**
+ * Oracle/GaussDB string & LOB scalar helpers lowered from PL/pgSQL builtins.
+ *
+ * Byte-semantic functions (SUBSTRB / INSTRB / LENGTHB) operate on UTF-8
+ * bytes, matching the openGauss/GaussDB database encoding; LOB_* /
+ * DBMS_LOB.* scalar reads use character semantics. All entry points
+ * propagate SQL NULL as Java null.
+ */
+public final class StrUtil {
+    private static final java.nio.charset.Charset DB = java.nio.charset.Charset.forName("UTF-8");
+    private StrUtil() {}
+
+    private static String str(Object o) {
+        if (o == null) return null;
+        if (o instanceof byte[] b) return new String(b, DB);
+        return String.valueOf(o);
+    }
+
+    private static byte[] bytes(Object o) {
+        String s = str(o);
+        return s == null ? null : s.getBytes(DB);
+    }
+
+    private static long num(Object o, long dflt) {
+        if (o == null) return dflt;
+        if (o instanceof Number n) return n.longValue();
+        try {
+            return Long.parseLong(String.valueOf(o).trim());
+        } catch (RuntimeException e) {
+            return dflt;
+        }
+    }
+
+    /** CLOB/BLOB → text; null propagates (Oracle NULL semantics). */
+    public static String toText(Object o) {
+        return str(o);
+    }
+
+    /** BLOB → raw bytes in the DB charset; byte[] passes through; null → null. */
+    public static byte[] toBytes(Object o) {
+        if (o instanceof byte[] b) return b;
+        return bytes(o);
+    }
+
+    /**
+     * Oracle/GaussDB `||`: a NULL operand acts as the empty string
+     * (DB-verified: 'a' || NULL = 'a'), so the result is NULL only when
+     * BOTH sides are NULL. Routing through a helper keeps each operand
+     * single-evaluated (an inline ternary would evaluate it twice).
+     */
+    public static String concat(Object a, Object b) {
+        String sa = str(a);
+        String sb = str(b);
+        if (sa == null) return sb;
+        if (sb == null) return sa;
+        return sa + sb;
+    }
+
+    /** LENGTHB — UTF-8 byte length; null → null. */
+    public static Long byteLength(Object o) {
+        byte[] b = bytes(o);
+        return b == null ? null : (long) b.length;
+    }
+
+    /** SUBSTRB(str, start[, len]) — byte window, 1-based / negative-from-end start. */
+    public static String byteSubstr(Object s, Object start) {
+        return byteSubstr(s, start, null);
+    }
+
+    public static String byteSubstr(Object s, Object start, Object len) {
+        byte[] b = bytes(s);
+        if (b == null) return null;
+        long st = num(start, 1);
+        int from;
+        if (st > 0) {
+            from = (int) Math.min(st - 1, Integer.MAX_VALUE);
+        } else if (st < 0) {
+            from = b.length + (int) st;
+        } else {
+            return null;
+        }
+        if (from < 0 || from >= b.length) return null;
+        int lo;
+        int hi;
+        if (len == null) {
+            lo = from;
+            hi = b.length;
+        } else {
+            long l = num(len, 0);
+            if (l >= 0) {
+                lo = from;
+                hi = (int) Math.min((long) b.length, from + Math.min(l, Integer.MAX_VALUE));
+            } else {
+                hi = from;
+                lo = (int) Math.max(0L, from + Math.max(l, Integer.MIN_VALUE + 1L));
+            }
+        }
+        if (hi <= lo) return "";
+        return decodeWindow(b, lo, hi);
+    }
+
+    /**
+     * Decode a byte window without emitting U+FFFD for split characters:
+     * shrink whichever edge the decoder chokes on and retry, matching the
+     * DB behaviour of backing SUBSTRB off to a character boundary.
+     */
+    private static String decodeWindow(byte[] b, int lo, int hi) {
+        int curLo = lo;
+        int curHi = hi;
+        for (int guard = 0; guard < 16 && curHi > curLo; guard++) {
+            java.nio.charset.CharsetDecoder dec = DB.newDecoder()
+                .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT);
+            java.nio.ByteBuffer in = java.nio.ByteBuffer.wrap(b, curLo, curHi - curLo);
+            java.nio.CharBuffer out = java.nio.CharBuffer.allocate(curHi - curLo + 1);
+            // decode(..)/flush(..) return CoderResult rather than throwing;
+            // an error result means the window splits a character.
+            java.nio.charset.CoderResult cr = dec.decode(in, out, true);
+            if (!cr.isError()) {
+                cr = dec.flush(out);
+            }
+            if (!cr.isError()) {
+                return out.flip().toString();
+            }
+            // Decoder stopped at the malformed boundary: wrap() offsets the
+            // buffer, so position()==curLo means a leading partial char
+            // (drop lo), anything further means a trailing one (drop hi).
+            // Bounded loop; clean windows decode first try.
+            if (in.position() <= curLo) {
+                curLo++;
+            } else {
+                curHi--;
+            }
+        }
+        return new String(b, lo, hi - lo, DB);
+    }
+
+    /** INSTRB(str, sub[, pos[, occ]]) — 1-based byte position of nth occurrence; 0 if absent. */
+    public static Long byteInstr(Object s, Object sub) {
+        return byteInstr(s, sub, null, null);
+    }
+
+    public static Long byteInstr(Object s, Object sub, Object pos) {
+        return byteInstr(s, sub, pos, null);
+    }
+
+    public static Long byteInstr(Object s, Object sub, Object pos, Object occ) {
+        byte[] b = bytes(s);
+        byte[] n = bytes(sub);
+        if (b == null || n == null) return null;
+        if (n.length == 0) return null; // DB: INSTRB(x, '') is NULL, not 0
+        long st = num(pos, 1);
+        int from;
+        if (st > 0) {
+            from = (int) Math.min(st - 1, Integer.MAX_VALUE);
+        } else if (st < 0) {
+            from = Math.max(0, b.length + (int) st);
+        } else {
+            return null;
+        }
+        if (from >= b.length) return 0L;
+        long nth = Math.max(1, num(occ, 1));
+        int idx = indexOf(b, n, from);
+        for (long k = 1; k < nth && idx >= 0; k++) {
+            idx = indexOf(b, n, idx + 1);
+        }
+        return idx < 0 ? 0L : (long) (idx + 1);
+    }
+
+    private static int indexOf(byte[] hay, byte[] needle, int from) {
+        outer:
+        for (int i = from; i + needle.length <= hay.length; i++) {
+            for (int j = 0; j < needle.length; j++) {
+                if (hay[i + j] != needle[j]) continue outer;
+            }
+            return i;
+        }
+        return -1;
+    }
+
+    /** LOB_GET_LENGTH / DBMS_LOB length — character count; null → null. */
+    public static Long lobLength(Object lob) {
+        String s = str(lob);
+        return s == null ? null : (long) s.length();
+    }
+
+    /** DBMS_LOB.SUBSTR / DBE_LOB.SUBSTR — (lob[, amount[, offset]]); 1-based char offset. */
+    public static String lobSubstr(Object lob) {
+        return lobSubstr(lob, null, null);
+    }
+
+    public static String lobSubstr(Object lob, Object amount) {
+        return lobSubstr(lob, amount, null);
+    }
+
+    public static String lobSubstr(Object lob, Object amount, Object offset) {
+        String s = str(lob);
+        if (s == null) return null;
+        long off = num(offset, 1);
+        if (off < 1) return null;
+        int start = (int) Math.min(off - 1, s.length());
+        if (start >= s.length()) return null;
+        long amt = Math.max(0, num(amount, s.length()));
+        int end = (int) Math.min((long) s.length(), start + Math.min(amt, Integer.MAX_VALUE));
+        return s.substring(start, end);
+    }
+
+    /** DBE_LOB.INSTR / PKG_UTIL.LOB_MATCH — (lob, pattern[, offset[, nth]]); 1-based position, 0 if absent. */
+    public static Long lobInstr(Object lob, Object pattern) {
+        return lobInstr(lob, pattern, null, null);
+    }
+
+    public static Long lobInstr(Object lob, Object pattern, Object offset) {
+        return lobInstr(lob, pattern, offset, null);
+    }
+
+    public static Long lobInstr(Object lob, Object pattern, Object offset, Object nth) {
+        String s = str(lob);
+        String p = str(pattern);
+        if (s == null || p == null) return null;
+        if (p.isEmpty()) return null; // DB: empty pattern position is NULL
+        long off = num(offset, 1);
+        if (off < 1) return 0L;
+        int from = (int) Math.min(off - 1, s.length());
+        long n = Math.max(1, num(nth, 1));
+        int idx = s.indexOf(p, from);
+        for (long k = 1; k < n && idx >= 0; k++) {
+            idx = s.indexOf(p, idx + 1);
+        }
+        return idx < 0 ? 0L : (long) (idx + 1);
+    }
+
+    /** ASCII — code point of first char; null/empty → null. */
+    public static Long ascii(Object o) {
+        String s = str(o);
+        return s == null || s.isEmpty() ? null : (long) s.codePointAt(0);
+    }
+
+    /** ASCIISTR — non-ASCII chars escaped as \XXXX. */
+    public static String asciiStr(Object o) {
+        String s = str(o);
+        if (s == null) return null;
+        StringBuilder sb = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c > 127) {
+                sb.append(String.format("\\%04X", (int) c));
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    /** UNISTR — decode \XXXX unicode escapes (BMP). */
+    public static String unistr(Object o) {
+        String s = str(o);
+        if (s == null) return null;
+        StringBuilder sb = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '\\' && i + 4 < s.length() && isHex4(s, i + 1)) {
+                sb.append((char) Integer.parseInt(s.substring(i + 1, i + 5), 16));
+                i += 4;
+            } else if (c == '\\' && i + 1 < s.length() && s.charAt(i + 1) == '\\') {
+                sb.append('\\');
+                i += 1;
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    private static boolean isHex4(String s, int off) {
+        for (int i = 0; i < 4; i++) {
+            char c = s.charAt(off + i);
+            boolean hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+            if (!hex) return false;
+        }
+        return true;
+    }
+}

@@ -26,7 +26,7 @@ public class Issue46FunctionsService {
         String vChr = null;
         vChar1 = (int)String.valueOf(pZqdm).substring(Math.min(String.valueOf(pZqdm).length(), Math.max(0, (5) - 1)), Math.min(String.valueOf(pZqdm).length(), Math.max(0, (5) - 1) + (1))).charAt(0);
         vChar2 = (int)String.valueOf(pZqdm).substring(Math.min(String.valueOf(pZqdm).length(), Math.max(0, (6) - 1)), Math.min(String.valueOf(pZqdm).length(), Math.max(0, (6) - 1) + (1))).charAt(0);
-        vChr = String.valueOf(String.valueOf((char)(vChar1 + 48))).concat(String.valueOf(String.valueOf(pZqdm).substring(Math.min(String.valueOf(pZqdm).length(), Math.max(0, (7) - 1)), Math.min(String.valueOf(pZqdm).length(), Math.max(0, (7) - 1) + (1)))));
+        vChr = fluxgauss.plsql.StrUtil.concat(String.valueOf((char)(vChar1 + 48)), String.valueOf(pZqdm).substring(Math.min(String.valueOf(pZqdm).length(), Math.max(0, (7) - 1)), Math.min(String.valueOf(pZqdm).length(), Math.max(0, (7) - 1) + (1))));
         pResult.set(String.valueOf(vChr));
     }
 

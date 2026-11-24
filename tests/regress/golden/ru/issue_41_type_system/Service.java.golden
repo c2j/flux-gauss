@@ -79,7 +79,7 @@ public class Issue41TypesService {
         } catch (Exception __e3) {
             __SQLERRM__ = __e3.getMessage();
             __SQLCODE__ = -1;
-            pStatus.set(String.valueOf(String.valueOf("Error: ").concat(String.valueOf(__SQLERRM__))));
+            pStatus.set(fluxgauss.plsql.StrUtil.concat("Error: ", __SQLERRM__));
             pNewBalance.set(vBalance);
         }
     }

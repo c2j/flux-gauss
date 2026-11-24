@@ -23,8 +23,8 @@ public class DynamicXmlService {
         Integer vCount = 0;
         String vSql = null;
         vSql = "SELECT id, name, amount, status, created_at FROM t_test_funcs";
-        vSql = String.valueOf(String.valueOf(vSql).concat(String.valueOf(" LIMIT "))).concat(String.valueOf(pLimit));
-        // CALL DBE_OUTPUT.PRINT_LINE(String.valueOf(String.valueOf("Generated SQL: ").concat(String.valueOf(pTableName))).concat(String.valueOf(vSql)))
+        vSql = fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(vSql, " LIMIT "), pLimit);
+        // CALL DBE_OUTPUT.PRINT_LINE(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat("Generated SQL: ", pTableName), vSql))
         dynamicXmlMapper.selectProcConditionalQuery(pTableName, pWhereClause, pOrderBy, pLimit);
         { Object _val = dynamicXmlMapper.selectAuditLog(pTableName, pWhereClause, pOrderBy, pLimit); if (_val != null) vCount = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }
     }
@@ -34,18 +34,18 @@ public class DynamicXmlService {
     public void procConditionalUpdate(String pTableName, int pId, String pStatus, Long pAmount, String pRemark) {
         String vSetClause = "";
         String vSql = null;
-        vSql = String.valueOf("UPDATE ").concat(String.valueOf(pTableName));
+        vSql = fluxgauss.plsql.StrUtil.concat("UPDATE ", pTableName);
         if (pStatus != null) {
-            vSetClause = String.valueOf(String.valueOf(String.valueOf(vSetClause).concat(String.valueOf("status = '"))).concat(String.valueOf(pStatus))).concat(String.valueOf("'"));
+            vSetClause = fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(vSetClause, "status = '"), pStatus), "'");
         }
         if (pAmount != null) {
-            vSetClause = String.valueOf(String.valueOf(vSetClause).concat(String.valueOf("amount = "))).concat(String.valueOf(pAmount));
+            vSetClause = fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(vSetClause, "amount = "), pAmount);
         }
         if (pRemark != null) {
-            vSetClause = String.valueOf(String.valueOf(String.valueOf(vSetClause).concat(String.valueOf("remark = '"))).concat(String.valueOf(pRemark))).concat(String.valueOf("'"));
+            vSetClause = fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(vSetClause, "remark = '"), pRemark), "'");
         }
         if ((vSetClause != null && !java.util.Objects.equals(vSetClause, ""))) {
-            vSql = String.valueOf(String.valueOf(String.valueOf(String.valueOf(vSql).concat(String.valueOf(" SET "))).concat(String.valueOf(vSetClause))).concat(String.valueOf(" WHERE id = "))).concat(String.valueOf(pId));
+            vSql = fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(vSql, " SET "), vSetClause), " WHERE id = "), pId);
             dynamicXmlMapper.updateProcConditionalUpdate(pTableName, pId, pStatus, pAmount, pRemark);
         }
     }
@@ -55,15 +55,15 @@ public class DynamicXmlService {
     public void procMixedLogic(String pTableName, String pMode) {
         String vSql = null;
         if (java.util.Objects.equals(pMode, "ARCHIVE")) {
-            vSql = String.valueOf(String.valueOf(String.valueOf("INSERT INTO ").concat(String.valueOf(pTableName))).concat(String.valueOf("_hist SELECT * FROM "))).concat(String.valueOf(pTableName));
+            vSql = fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat("INSERT INTO ", pTableName), "_hist SELECT * FROM "), pTableName);
             dynamicXmlMapper.insertProcMixedLogic(pTableName, pMode);
             dynamicXmlMapper.insertAuditLog(pTableName, pMode, vSql);
         } else if (java.util.Objects.equals(pMode, "CLEAN")) {
-            vSql = String.valueOf(String.valueOf("DELETE FROM ").concat(String.valueOf(pTableName))).concat(String.valueOf(" WHERE create_time < SYSDATE - 30"));
+            vSql = fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat("DELETE FROM ", pTableName), " WHERE create_time < SYSDATE - 30");
             dynamicXmlMapper.deleteProcMixedLogic(pTableName, pMode);
             dynamicXmlMapper.insertAuditLog_1(pTableName, pMode, vSql);
         } else {
-            // CALL DBE_OUTPUT.PRINT_LINE(String.valueOf("Unknown mode: ").concat(String.valueOf(pMode)))
+            // CALL DBE_OUTPUT.PRINT_LINE(fluxgauss.plsql.StrUtil.concat("Unknown mode: ", pMode))
         }
     }
 }

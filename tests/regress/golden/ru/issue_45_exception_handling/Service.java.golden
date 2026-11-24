@@ -56,11 +56,11 @@ public class Issue45ExceptionService {
         int __SQLCODE__ = 0;
         try {
             vId = String.valueOf(issue45ExceptionMapper.selectTIssue45Security_1(pSecurityCode));
-            pResult.set(String.valueOf(String.valueOf("OK: ").concat(String.valueOf(vId))));
+            pResult.set(fluxgauss.plsql.StrUtil.concat("OK: ", vId));
         } catch (Exception __e1) {
             __SQLERRM__ = __e1.getMessage();
             __SQLCODE__ = -1;
-            pResult.set(String.valueOf(String.valueOf("ERROR: ").concat(String.valueOf(__SQLERRM__))));
+            pResult.set(fluxgauss.plsql.StrUtil.concat("ERROR: ", __SQLERRM__));
         }
     }
 
@@ -72,15 +72,15 @@ public class Issue45ExceptionService {
         try {
             try {
                 vValue = String.valueOf(issue45ExceptionMapper.selectTIssue45Security_2(pCode));
-                pMsg.set(String.valueOf(String.valueOf("VALUE: ").concat(String.valueOf(vValue))));
+                pMsg.set(fluxgauss.plsql.StrUtil.concat("VALUE: ", vValue));
             } catch (BusinessException __e1) { // no_data_found
                 __SQLERRM__ = __e1.getMessage();
                 __SQLCODE__ = -1;
-                pMsg.set(String.valueOf(String.valueOf("NOT_FOUND: ").concat(String.valueOf(pCode))));
+                pMsg.set(fluxgauss.plsql.StrUtil.concat("NOT_FOUND: ", pCode));
             } catch (Exception __e2) {
                 __SQLERRM__ = __e2.getMessage();
                 __SQLCODE__ = -1;
-                pMsg.set(String.valueOf(String.valueOf("SYSTEM_ERROR: ").concat(String.valueOf(__SQLERRM__))));
+                pMsg.set(fluxgauss.plsql.StrUtil.concat("SYSTEM_ERROR: ", __SQLERRM__));
             }
         } catch (Exception __e3) {
             __SQLERRM__ = __e3.getMessage();

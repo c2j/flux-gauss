@@ -39,9 +39,9 @@ public class CursorAdvancedService {
         vStatusArray = java.util.Arrays.asList(String.valueOf(pStatusList).split(java.util.regex.Pattern.quote(String.valueOf(","))));
         vStatusCount = (vStatusArray).size();
         for (int i = 1; i <= vStatusCount; i++) {
-            vInClause = String.valueOf(String.valueOf(vInClause).concat(String.valueOf(":"))).concat(String.valueOf(i));
+            vInClause = fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(vInClause, ":"), i);
         }
-        vSql = String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf("SELECT\n                    t.id,\n                    t.name,\n                    t.status,\n                    t.amount,\n                    t.create_time,\n                    t.customer_id,\n                    c.customer_name,\n                    CASE WHEN t.amount > :").concat(String.valueOf((vStatusCount + 1)))).concat(String.valueOf(" THEN 'HIGH' ELSE 'NORMAL' END AS amount_level,\n                    EXTRACT(DAY FROM (CURRENT_TIMESTAMP - :"))).concat(String.valueOf((vStatusCount + 2)))).concat(String.valueOf(")) AS days_elapsed\n                  FROM "))).concat(String.valueOf(pTableName))).concat(String.valueOf(" t\n                  LEFT JOIN customers c ON t.customer_id = c.customer_id\n                  WHERE t.status IN ("))).concat(String.valueOf(vInClause))).concat(String.valueOf(")\n                    AND t.amount >= :"))).concat(String.valueOf((vStatusCount + 1)))).concat(String.valueOf("\n                    AND t.create_time >= :"))).concat(String.valueOf((vStatusCount + 2)))).concat(String.valueOf("\n                  ORDER BY t.amount DESC"));
+        vSql = fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat("SELECT\n                    t.id,\n                    t.name,\n                    t.status,\n                    t.amount,\n                    t.create_time,\n                    t.customer_id,\n                    c.customer_name,\n                    CASE WHEN t.amount > :", (vStatusCount + 1)), " THEN 'HIGH' ELSE 'NORMAL' END AS amount_level,\n                    EXTRACT(DAY FROM (CURRENT_TIMESTAMP - :"), (vStatusCount + 2)), ")) AS days_elapsed\n                  FROM "), pTableName), " t\n                  LEFT JOIN customers c ON t.customer_id = c.customer_id\n                  WHERE t.status IN ("), vInClause), ")\n                    AND t.amount >= :"), (vStatusCount + 1)), "\n                    AND t.create_time >= :"), (vStatusCount + 2)), "\n                  ORDER BY t.amount DESC");
         // case vStatusCount:
         if (vStatusCount.equals(1)) {
             pResultResult = cursorAdvancedMapper.selectProcCursorDynamicUsing(pTableName, pStatusList, pMinAmount, pStartDate, vSql, vStatusArray);
@@ -106,8 +106,8 @@ public class CursorAdvancedService {
         Object p_data_cursor = null;
         Object p_total_cursor = null;
         vOffset = (pPageNum - 1) * pPageSize;
-        vCountSql = String.valueOf(String.valueOf("SELECT COUNT(*) FROM (").concat(String.valueOf(pBaseSql))).concat(String.valueOf(") t"));
-        vPageSql = String.valueOf(String.valueOf("SELECT * FROM (").concat(String.valueOf(pBaseSql))).concat(String.valueOf(") t LIMIT :1 OFFSET :2"));
+        vCountSql = fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat("SELECT COUNT(*) FROM (", pBaseSql), ") t");
+        vPageSql = fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat("SELECT * FROM (", pBaseSql), ") t LIMIT :1 OFFSET :2");
         pDataCursorResult = cursorAdvancedMapper.selectProcPaginateWithUsing(pBaseSql, pPageSize, pPageNum, pBindValues, vOffset, vPageSql);
         if (pDataCursorResult == null) pDataCursorResult = new java.util.ArrayList<>();
         pDataCursorIdx = 0;
@@ -175,7 +175,7 @@ public class CursorLifecycleService {
         Integer vId = 0;
         String vName = null;
         java.math.BigDecimal vSalary = java.math.BigDecimal.ZERO;
-        String vTemp = String.valueOf("tmp_enhanced_").concat(String.valueOf(new java.text.SimpleDateFormat("yyyyMMddHHmSSSs").format(new java.sql.Timestamp(System.currentTimeMillis()))));
+        String vTemp = fluxgauss.plsql.StrUtil.concat("tmp_enhanced_", new java.text.SimpleDateFormat("yyyyMMddHHmSSSs").format(new java.sql.Timestamp(System.currentTimeMillis())));
         boolean found = false;
         // SQL: CREATE TEMP TABLE ${vTemp} (             employee_id INTEGER, employee_name VARCHAR2(100), salary NUMERIC(18,2),             department_id INTEGER, hire_date DATE,             years_of_service NUMERIC(5,2), salary_level VARCHAR2(20), bonus_eligible INTEGER         )
         int _loopGuard1 = 0;
@@ -204,9 +204,9 @@ public class CursorLifecycleService {
         while (true) {
             if (++_loopGuard1 > 1000) { break; }
             // CALL map_object.ad_item(pMap.get(), /* TOBEFIX: unresolved name Date(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ null, /* TOBEFIX: unresolved name func_get_frame_date(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ null)
-            // CALL map_object.ad_item(pMap.get(), /* TOBEFIX: unresolved name Date-1(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ null, String.valueOf(/* TOBEFIX: unresolved name func_get_frame_date(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ null).concat(String.valueOf("-sss")))
+            // CALL map_object.ad_item(pMap.get(), /* TOBEFIX: unresolved name Date-1(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ null, fluxgauss.plsql.StrUtil.concat(/* TOBEFIX: unresolved name func_get_frame_date(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ null, "-sss"))
             vLevel = /* TOBEFIX: unresolved name func_get_frame_date(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ null;
-            vLevel = String.valueOf(/* TOBEFIX: unresolved name func_get_frame_date(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ null).concat(String.valueOf("-sss"));
+            vLevel = fluxgauss.plsql.StrUtil.concat(/* TOBEFIX: unresolved name func_get_frame_date(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ null, "-sss");
             found = false; // FETCH pCursor — cursor not materialized
             if (!found) { break; }
             vCount = vCount + 1;
@@ -216,7 +216,7 @@ public class CursorLifecycleService {
             }
         }
         // CLOSE p_cursor;
-        pSummary.set(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf("Total: ").concat(String.valueOf(vCount))).concat(String.valueOf(", Senior: "))).concat(String.valueOf(vSeniorCount))).concat(String.valueOf(", Avg Salary: "))).concat(String.valueOf(vTotal.divide((java.math.BigDecimal.valueOf((java.util.Objects.equals(vCount, 0) ? 1 : vCount)).signum() != 0 ? java.math.BigDecimal.valueOf((java.util.Objects.equals(vCount, 0) ? 1 : vCount)) : java.math.BigDecimal.ONE), 10, java.math.RoundingMode.HALF_UP).setScale((int)(2), java.math.RoundingMode.HALF_UP)))));
+        pSummary.set(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat("Total: ", vCount), ", Senior: "), vSeniorCount), ", Avg Salary: "), vTotal.divide((java.math.BigDecimal.valueOf((java.util.Objects.equals(vCount, 0) ? 1 : vCount)).signum() != 0 ? java.math.BigDecimal.valueOf((java.util.Objects.equals(vCount, 0) ? 1 : vCount)) : java.math.BigDecimal.ONE), 10, java.math.RoundingMode.HALF_UP).setScale((int)(2), java.math.RoundingMode.HALF_UP)));
     }
 
     // Source: pkg_cursor_lifecycle.proc_full_pipeline (PROCEDURE) — {FIXTURES_ROOT}/gauss_complete_examples.sql:785-794
@@ -227,7 +227,7 @@ public class CursorLifecycleService {
         this.procGetRawCursor(pDeptId, vCursor1);
         this.procEnhanceCursor(vCursor1.get(), vCursor2);
         this.procConsumeCursor(vCursor2.get(), vResult, new AtomicReference<>(null));
-        // CALL DBE_OUTPUT.PRINT_LINE(String.valueOf("Pipeline result: ").concat(String.valueOf(vResult.get())))
+        // CALL DBE_OUTPUT.PRINT_LINE(fluxgauss.plsql.StrUtil.concat("Pipeline result: ", vResult.get()))
     }
 }
 
@@ -480,7 +480,7 @@ public class OpenCursorService {
         int __SQLCODE__ = 0;
         try {
             vStartTime = new java.sql.Timestamp(System.currentTimeMillis());
-            vSql = String.valueOf("SELECT id, name, amount, status, create_time FROM ").concat(String.valueOf(pTableName));
+            vSql = fluxgauss.plsql.StrUtil.concat("SELECT id, name, amount, status, create_time FROM ", pTableName);
             openCursorMapper.insertAuditLog(pTableName, pWhereClause, pOrderBy, vSql);
             vCursorResult = openCursorMapper.selectProcProcessDynamicQuery(pTableName, pWhereClause, pOrderBy);
             if (vCursorResult == null) vCursorResult = new java.util.ArrayList<>();

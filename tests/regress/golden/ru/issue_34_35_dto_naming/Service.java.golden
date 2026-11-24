@@ -39,7 +39,7 @@ public class Issue34OrderService {
         } catch (Exception __e1) {
             __SQLERRM__ = __e1.getMessage();
             __SQLCODE__ = -1;
-            pStatusMsg.set(String.valueOf(String.valueOf("Error: ").concat(String.valueOf(__SQLERRM__))));
+            pStatusMsg.set(fluxgauss.plsql.StrUtil.concat("Error: ", __SQLERRM__));
             try { TransactionAspectSupport.currentTransactionStatus().setRollbackOnly(); } catch (Exception _tx) {}
         }
     }

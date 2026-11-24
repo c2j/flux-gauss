@@ -29,22 +29,26 @@ public final class Regexp {
     }
 
     /**
-     * Oracle/GaussDB-O match_parameter letters: i=caseless, c=caseless-off,
-     * m=multiline, n=dotall, x=ignore-whitespace. Unknown letters throw —
-     * the DB rejects them too (e.g. 'g' is invalid for REGEXP_REPLACE in
-     * O-mode), so failing loudly beats silently ignoring.
+     * openGauss O-mode match_parameter letters, DB-verified on
+     * openGauss 7.0.0-RC3: valid = i (caseless), c (caseless-off),
+     * m (multiline), n (dotall), x (ignore-whitespace); q and s are
+     * accepted as no-ops; '' accepted. Everything else — including
+     * uppercase 'I' and 'g'/'a' — is rejected by the DB, so we throw
+     * IllegalArgumentException rather than silently ignore. NOTE: the
+     * DB is case-SENSITIVE here, so no toLowerCase.
      */
     private static int flags(Object params) {
         int f = 0;
         String p = str(params);
         if (p == null) return f;
-        for (char c : p.toLowerCase(java.util.Locale.ROOT).toCharArray()) {
+        for (char c : p.toCharArray()) {
             switch (c) {
                 case 'i': f |= Pattern.CASE_INSENSITIVE; break;
                 case 'c': break; // explicit case-sensitive: default already
                 case 'm': f |= Pattern.MULTILINE; break;
                 case 'n': f |= Pattern.DOTALL; break;
                 case 'x': f |= Pattern.COMMENTS; break;
+                case 'q': case 's': break; // DB accepts as no-ops
                 default:
                     throw new IllegalArgumentException("invalid regexp option: " + c);
             }
@@ -175,13 +179,20 @@ public final class Regexp {
         }
     }
 
-    /** REGEXP_REPLACE — absent occurrence replaces the first match only (O-mode), explicit 0 replaces all; Oracle \N backrefs. */
+    /**
+     * REGEXP_REPLACE — openGauss O-mode argument semantics (DB-verified):
+     * absent position (3-arg) → replace FIRST match only; position given
+     * (4/5/6-arg) with absent occurrence → replace ALL from position;
+     * explicit occurrence=0 → all, N>0 → Nth only; NULL pattern → source
+     * unchanged; NULL replacement → delete matches; NULL src/occurrence
+     * → NULL. Oracle \N backrefs.
+     */
     public static String replace(Object s, Object p, Object r) {
-        return replace(s, p, r, null, null, null);
+        return replace(s, p, r, null, 1L, null);
     }
 
     public static String replace(Object s, Object p, Object r, Object pos) {
-        return replace(s, p, r, pos, null, null);
+        return replace(s, p, r, pos, 0L, null);
     }
 
     public static String replace(Object s, Object p, Object r, Object pos, Object occ) {
@@ -192,21 +203,24 @@ public final class Regexp {
         String src = str(s);
         String pat = str(p);
         String repl = str(r);
-        if (src == null || pat == null || repl == null) return null;
+        if (src == null) return null;
+        if (pat == null) return src;
+        // occ==null here means an explicit SQL NULL (overloads above supply
+        // numeric defaults) → DB returns NULL.
+        if (occ == null) return null;
         int start = regionStart(pos, src.length());
         if (start < 0) return src;
         try {
             Matcher m = Pattern.compile(pat, flags(params)).matcher(src);
             m.region(start, src.length());
-            // openGauss O-mode occurrence: absent → replace only the FIRST
-            // match (DB-verified: regexp_replace('a1b2c3','[a-z]','X') =
-            // 'X1b2c3'); explicit 0 → replace ALL matches in the region.
+            // occurrence: 0 → ALL matches in region; N>0 → Nth only.
             long nth = num(occ, 1);
             if (nth <= 0) {
                 StringBuilder sb = new StringBuilder(src.length());
-                int last = start;
+                int last = 0; // keep the prefix before `start` — matches begin at `start`
                 while (m.find()) {
-                    sb.append(src, last, m.start()).append(expand(repl, m));
+                    sb.append(src, last, m.start())
+                      .append(repl == null ? "" : expand(repl, m));
                     last = m.end();
                 }
                 sb.append(src.substring(last));
@@ -216,7 +230,9 @@ public final class Regexp {
             while (m.find()) {
                 seen++;
                 if (seen == nth) {
-                    return src.substring(0, m.start()) + expand(repl, m) + src.substring(m.end());
+                    return src.substring(0, m.start())
+                        + (repl == null ? "" : expand(repl, m))
+                        + src.substring(m.end());
                 }
             }
             return src;

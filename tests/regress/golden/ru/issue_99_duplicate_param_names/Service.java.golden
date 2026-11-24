@@ -21,7 +21,7 @@ public class Issue99DuplicateParamNamesService {
     // Source: _group_concat (FUNCTION) — {FIXTURES_ROOT}/issue_99_duplicate_param_names.sql:1-8
     public String GroupConcat(Object text, Object text2) {
         String vResult = "";
-        vResult = "".concat("");
+        vResult = fluxgauss.plsql.StrUtil.concat(null, null);
         return String.valueOf(vResult);
     }
 }

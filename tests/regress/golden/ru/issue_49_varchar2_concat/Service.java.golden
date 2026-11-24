@@ -27,7 +27,7 @@ public class Issue49ConcatService {
         } else {
             vProId = "6034";
         }
-        vProId = String.valueOf(vProId).concat(String.valueOf("8208, 9, 354, 360, 370, 5821"));
+        vProId = fluxgauss.plsql.StrUtil.concat(vProId, "8208, 9, 354, 360, 370, 5821");
         pResult.set(String.valueOf(vProId));
     }
 

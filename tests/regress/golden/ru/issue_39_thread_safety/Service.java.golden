@@ -46,9 +46,9 @@ public class Issue39ConfigService {
         Integer vCount = 0;
         gBatchStatus = "RUNNING";
         if (gDebugMode) {
-            pStatus.set(String.valueOf(String.valueOf(String.valueOf(String.valueOf("DEBUG: batch ").concat(String.valueOf(pBatchName))).concat(String.valueOf(" running for user "))).concat(String.valueOf(gCurrentUser))));
+            pStatus.set(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat("DEBUG: batch ", pBatchName), " running for user "), gCurrentUser));
         } else {
-            pStatus.set(String.valueOf(String.valueOf(String.valueOf("Batch ").concat(String.valueOf(pBatchName))).concat(String.valueOf(" completed"))));
+            pStatus.set(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat("Batch ", pBatchName), " completed"));
         }
         gBatchStatus = "COMPLETED";
     }

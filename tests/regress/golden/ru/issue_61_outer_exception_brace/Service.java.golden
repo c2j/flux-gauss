@@ -60,9 +60,9 @@ public class Issue61ExcService {
             __SQLERRM__ = __e5.getMessage();
             __SQLCODE__ = -1;
             if (java.util.Objects.equals(pOSucceed.get(), "0")) {
-                pOSucceed.set(String.valueOf(String.valueOf(String.valueOf("取").concat(String.valueOf(pISecurityId))).concat(String.valueOf("中证行情价格子模块内部错误"))));
+                pOSucceed.set(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat("取", pISecurityId), "中证行情价格子模块内部错误"));
             } else if (java.util.Objects.equals(pOSucceed.get(), "1")) {
-                pOSucceed.set(String.valueOf(String.valueOf("WARN:").concat(String.valueOf(pISecurityId))));
+                pOSucceed.set(fluxgauss.plsql.StrUtil.concat("WARN:", pISecurityId));
             } else {
                 pOSucceed.set("OTHER_ERR");
             }

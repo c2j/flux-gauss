@@ -47,17 +47,17 @@ public class Issue44BugsService {
         String vSql = null;
         vSql = "SELECT COUNT(*) FROM t_issue44_orders WHERE 1=1";
         if (pMode == 1) {
-            vSql = String.valueOf(vSql).concat(String.valueOf(" AND status = 'ACTIVE'"));
+            vSql = fluxgauss.plsql.StrUtil.concat(vSql, " AND status = 'ACTIVE'");
         } else if (pMode == 2) {
-            vSql = String.valueOf(vSql).concat(String.valueOf(" AND status = 'PENDING'"));
+            vSql = fluxgauss.plsql.StrUtil.concat(vSql, " AND status = 'PENDING'");
         } else if (pMode == 3) {
-            vSql = String.valueOf(vSql).concat(String.valueOf(" AND amount > 1000"));
+            vSql = fluxgauss.plsql.StrUtil.concat(vSql, " AND amount > 1000");
         } else {
-            vSql = String.valueOf(vSql).concat(String.valueOf(" AND status = 'CLOSED'"));
+            vSql = fluxgauss.plsql.StrUtil.concat(vSql, " AND status = 'CLOSED'");
         }
         if (pFilter != null) {
             { Object _strResult = issue44BugsMapper.selectTIssue44Orders_2(pFilter, pMode); if (_strResult != null) { /* concatenated string assigned to Integer var */ } }
-            pResult.set(String.valueOf(String.valueOf("FILTERED: ").concat(String.valueOf(String.valueOf(vCount)))));
+            pResult.set(fluxgauss.plsql.StrUtil.concat("FILTERED: ", String.valueOf(vCount)));
         } else {
             pResult.set("ALL_MODE");
         }
@@ -69,12 +69,12 @@ public class Issue44BugsService {
         String vSql = null;
         vSql = "SELECT COALESCE(SUM(amount), 0) FROM t_issue44_orders WHERE 1=1";
         if (java.util.Objects.equals(pType, "SUMMARY")) {
-            vSql = String.valueOf(vSql).concat(String.valueOf(" GROUP BY status"));
+            vSql = fluxgauss.plsql.StrUtil.concat(vSql, " GROUP BY status");
         } else {
         }
         { Object _val = issue44BugsMapper.selectTIssue44Orders_3(pType, pSubType); if (_val != null) vAmount = (java.math.BigDecimal) _val; }
         if (vAmount.compareTo(java.math.BigDecimal.valueOf(0)) > 0) {
-            pResult.set(String.valueOf(String.valueOf("AMOUNT: ").concat(String.valueOf(String.valueOf(vAmount)))));
+            pResult.set(fluxgauss.plsql.StrUtil.concat("AMOUNT: ", String.valueOf(vAmount)));
         } else if (java.util.Objects.equals(pType, "SUMMARY")) {
             pResult.set("ZERO_SUMMARY");
         } else {
@@ -107,9 +107,9 @@ public class Issue44BugsService {
         if (pCode != null) {
             { Object _strResult = issue44BugsMapper.selectTIssue44Orders_5(pCode); if (_strResult != null) { /* concatenated string assigned to Integer var */ } }
             if (vCount > 10) {
-                pResult.set(String.valueOf(String.valueOf("MANY: ").concat(String.valueOf(String.valueOf(vCount)))));
+                pResult.set(fluxgauss.plsql.StrUtil.concat("MANY: ", String.valueOf(vCount)));
             } else {
-                pResult.set(String.valueOf(String.valueOf("FEW: ").concat(String.valueOf(String.valueOf(vCount)))));
+                pResult.set(fluxgauss.plsql.StrUtil.concat("FEW: ", String.valueOf(vCount)));
             }
         } else {
             pResult.set("NO_CODE");

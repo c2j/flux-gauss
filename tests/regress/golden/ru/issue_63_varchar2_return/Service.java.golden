@@ -39,14 +39,14 @@ public class Issue63RetService {
             vMarketPrice = "0";
             vBonusValue = "0";
         }
-        vMarketPrice = String.valueOf(vMarketPrice).concat(String.valueOf(vBonusValue));
+        vMarketPrice = fluxgauss.plsql.StrUtil.concat(vMarketPrice, vBonusValue);
         return String.valueOf(vMarketPrice);
     }
 
     // Source: pkg_issue63_ret.fnc_trd_get_unit_cash (FUNCTION) — {FIXTURES_ROOT}/issue_63_varchar2_return.sql:56-63
     public String fncTrdGetUnitCash(String pIDate) {
         String pOUnitCash = null;
-        pOUnitCash = String.valueOf("CASH_").concat(String.valueOf(pIDate));
+        pOUnitCash = fluxgauss.plsql.StrUtil.concat("CASH_", pIDate);
         return String.valueOf(pOUnitCash);
     }
 

@@ -55,6 +55,11 @@ CREATE OR REPLACE PACKAGE BODY pkg_lob_str AS
     v_n := REGEXP_COUNT(p_src, '[aeiou]');
     p_out := REGEXP_REPLACE(p_src, '([a-z]+)([0-9]*)', '\2-\1', 1, 1, 'i');
     p_out := REGEXP_REPLACE(p_src, '[aeiou]', '*');
+    -- position given, occurrence absent → DB replaces ALL from position
+    p_out := REGEXP_REPLACE(p_src, '[aeiou]', '*', 2);
+    p_out := REGEXP_REPLACE(p_src, '[aeiou]', '*', 2, 1);
+    -- NULL replacement → delete matches (DB-verified)
+    p_out := REGEXP_REPLACE(p_src, '[aeiou]', NULL);
   END;
 END pkg_lob_str;
 /

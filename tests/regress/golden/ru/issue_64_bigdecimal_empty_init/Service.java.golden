@@ -27,6 +27,6 @@ public class Issue64BdInitService {
         String vPriceType = "";
         vOpenfundMode = "M";
         vPriceType = "T";
-        pResult.set(String.valueOf(String.valueOf(String.valueOf(String.valueOf(vOpenfundMode).concat(String.valueOf(vOpenfundPriceFlag))).concat(String.valueOf(vPriceType))).concat(String.valueOf(vPgPrice))));
+        pResult.set(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(vOpenfundMode, vOpenfundPriceFlag), vPriceType), vPgPrice));
     }
 }

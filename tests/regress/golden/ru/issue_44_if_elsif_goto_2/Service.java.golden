@@ -36,7 +36,7 @@ public class Issue44NestedExcService {
                 try {
                     vConfig = String.valueOf(issue44NestedExcMapper.selectTIssue44Config_1());
                     if (java.util.Objects.equals(vFlag, "0")) {
-                        vConfig = String.valueOf(vConfig).concat(String.valueOf(",extra"));
+                        vConfig = fluxgauss.plsql.StrUtil.concat(vConfig, ",extra");
                         try {
                             vFlag2 = String.valueOf(issue44NestedExcMapper.selectTIssue44Config_2(vDate));
                         } catch (Exception __e1) {
@@ -57,7 +57,7 @@ public class Issue44NestedExcService {
         } catch (Exception __e3) {
             __SQLERRM__ = __e3.getMessage();
             __SQLCODE__ = -1;
-            vMsg = String.valueOf("outer_error:").concat(String.valueOf(__SQLERRM__));
+            vMsg = fluxgauss.plsql.StrUtil.concat("outer_error:", __SQLERRM__);
         }
     }
 }

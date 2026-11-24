@@ -37,25 +37,42 @@ pub fn write_support_classes(
     }
 
     let dir = output_dir.join("src/main/java/fluxgauss/plsql");
+    let test_dir = output_dir.join("src/test/java/fluxgauss/plsql");
     let mut written = Vec::new();
     let java_charset = java_charset_name(encoding);
-    for (marker, file_name, source) in [
-        ("fluxgauss.plsql.StrUtil", "StrUtil.java", strutil_java(java_charset)),
-        ("fluxgauss.plsql.Regexp", "Regexp.java", REGEXP_JAVA.to_string()),
-    ] {
+    // (marker, main file, main source, test file, test source)
+    let classes = [
+        (
+            "fluxgauss.plsql.StrUtil",
+            "StrUtil.java",
+            strutil_java(java_charset),
+            "StrUtilTest.java",
+            strutil_test_java(encoding),
+        ),
+        ("fluxgauss.plsql.Regexp", "Regexp.java", REGEXP_JAVA.to_string(), "RegexpTest.java", regexp_test_java()),
+    ];
+    for (marker, file_name, source, test_name, test_source) in classes {
         let path = dir.join(file_name);
+        let test_path = test_dir.join(test_name);
         if !text.contains(marker) {
             // Source set no longer references this helper — drop the stale
-            // file instead of leaving dead code in the generated project.
+            // files instead of leaving dead code in the generated project.
             let _ = std::fs::remove_file(&path);
+            let _ = std::fs::remove_file(&test_path);
             continue;
         }
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+        if let Some(parent) = test_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let (cow, _, _) = encoding.encode(&source);
         std::fs::write(&path, &cow)?;
+        let (tcow, _, _) = encoding.encode(&test_source);
+        std::fs::write(&test_path, &tcow)?;
         written.push(format!("src/main/java/fluxgauss/plsql/{}", file_name));
+        written.push(format!("src/test/java/fluxgauss/plsql/{}", test_name));
     }
     Ok(written)
 }
@@ -84,6 +101,119 @@ fn java_charset_name(encoding: &'static Encoding) -> &'static str {
         "x-mac-cyrillic" => "x-MacCyrillic",
         _ => "UTF-8",
     }
+}
+
+/// JUnit5 behavior tests for StrUtil, emitted next to the helper so every
+/// generated project that uses it gets value-level verification under
+/// `mvn test` (issue #125 review R3 3.7' — text goldens cannot catch
+/// semantic divergence). Assertions are DB-verified where noted; the
+/// charset-dependent byteLength expectation is computed from the same
+/// `encoding_rs` config the helper is generated with.
+fn strutil_test_java(encoding: &'static Encoding) -> String {
+    let (zh_bytes, _, _) = encoding.encode("中文");
+    format!(
+        r#"package fluxgauss.plsql;
+
+import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
+
+/** Auto-generated behavior checks for StrUtil (DB-verified semantics, issue #125). */
+class StrUtilTest {{
+
+    @Test
+    void concatTreatsNullAsEmptyString() {{
+        // DB-verified: 'a' || NULL = 'a'; NULL only when both sides NULL.
+        assertEquals("a", StrUtil.concat("a", null));
+        assertEquals("b", StrUtil.concat(null, "b"));
+        assertEquals("ab", StrUtil.concat("a", "b"));
+        assertNull(StrUtil.concat(null, null));
+    }}
+
+    @Test
+    void byteFunctionsAscii() {{
+        assertEquals(Long.valueOf(5L), StrUtil.byteLength("hello"));
+        assertEquals("ell", StrUtil.byteSubstr("hello", 2, 3));
+        assertEquals(Long.valueOf(3L), StrUtil.byteInstr("hello", "ll"));
+        assertNull(StrUtil.byteLength(null));
+        assertNull(StrUtil.byteSubstr(null, 1));
+    }}
+
+    @Test
+    void byteLengthFollowsConfiguredCharset() {{
+        // '中文' is {} bytes in the configured DB charset — LENGTHB must
+        // match server_encoding, not a hard-coded UTF-8.
+        assertEquals(Long.valueOf({}L), StrUtil.byteLength("中文"));
+    }}
+
+    @Test
+    void lobAndTextHelpers() {{
+        assertEquals("hello", StrUtil.toText("hello"));
+        assertNull(StrUtil.toText(null));
+        assertArrayEquals("ab".getBytes(java.nio.charset.Charset.forName("{}")), StrUtil.toBytes("ab"));
+        assertEquals("ell", StrUtil.lobSubstr("hello", 3, 2));
+        assertEquals(Long.valueOf(5L), StrUtil.lobLength("hello"));
+        assertNull(StrUtil.lobLength(null));
+    }}
+}}
+"#,
+        zh_bytes.len(),
+        zh_bytes.len(),
+        java_charset_name(encoding),
+    )
+}
+
+/// JUnit5 behavior tests for Regexp — every assertion mirrors a value
+/// verified against openGauss 7.0.0-RC3 (issue #125 review R3 §2/§3).
+fn regexp_test_java() -> String {
+    r#"package fluxgauss.plsql;
+
+import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
+
+/** Auto-generated behavior checks for Regexp (DB-verified semantics, issue #125). */
+class RegexpTest {
+
+    @Test
+    void replaceArgumentShapes() {
+        // src='a1b2c3', pat='[a-z]', repl='X' — all rows DB-verified.
+        assertEquals("X1b2c3", Regexp.replace("a1b2c3", "[a-z]", "X"));              // 3-arg: first only
+        assertEquals("X1b2c3", Regexp.replace("a1b2c3", "[a-z]", "X", 1, 1, null));   // (1,1)
+        assertEquals("X1X2X3", Regexp.replace("a1b2c3", "[a-z]", "X", 1, 0, null));   // (1,0): all
+        assertEquals("a1X2c3", Regexp.replace("a1b2c3", "[a-z]", "X", 2, 1, null));   // (2,1)
+        assertEquals("a1X2X3", Regexp.replace("a1b2c3", "[a-z]", "X", 2, 0, null));   // (2,0): prefix kept
+        assertEquals("a1b2c3", Regexp.replace("a1b2c3", "[a-z]", "X", 9, 1, null));   // out of range
+        assertEquals("XXX12XXX34", Regexp.replace("AbC12dEf34", "[a-z]", "X", 1, 0, "i"));
+        assertEquals("XbC12dEf34", Regexp.replace("AbC12dEf34", "[a-z]", "X", 1, 1, "i"));
+    }
+
+    @Test
+    void replaceNullArgumentRules() {
+        assertNull(Regexp.replace(null, "[a-z]", "X"));          // NULL src → NULL
+        assertEquals("a1b2c3", Regexp.replace("a1b2c3", null, "X")); // NULL pattern → src unchanged
+        assertEquals("ac", Regexp.replace("abc", "b", null));     // NULL replacement → delete match
+        assertNull(Regexp.replace("a1b2c3", "[a-z]", "X", 1, null)); // NULL occurrence → NULL
+    }
+
+    @Test
+    void matchParameterLetters() {
+        // DB-verified: i/c/m/n/x valid; q/s/'' accepted as no-ops;
+        // 'g', 'a', uppercase 'I' rejected.
+        assertTrue(Regexp.like("AbC", "[a-z]", "i"));
+        assertDoesNotThrow(() -> Regexp.like("abc", "b", "qs"));
+        assertThrows(IllegalArgumentException.class, () -> Regexp.like("abc", "b", "g"));
+        assertThrows(IllegalArgumentException.class, () -> Regexp.like("abc", "b", "I"));
+    }
+
+    @Test
+    void substrInstrCount() {
+        assertEquals("b", Regexp.substr("a1b2c3", "[a-z]+", 1, 2, null));
+        assertEquals(Long.valueOf(5L), Regexp.instr("a1b2c3", "[0-9]", 1, 2, 1, null));
+        assertEquals(Long.valueOf(1L), Regexp.count("Aba", "a"));
+        assertEquals(Long.valueOf(2L), Regexp.count("Aba", "a", 1, "i"));
+    }
+}
+"#
+    .to_string()
 }
 
 /// StrUtil source with the DB charset injected as a constant. Byte-window
@@ -421,22 +551,26 @@ public final class Regexp {
     }
 
     /**
-     * Oracle/GaussDB-O match_parameter letters: i=caseless, c=caseless-off,
-     * m=multiline, n=dotall, x=ignore-whitespace. Unknown letters throw —
-     * the DB rejects them too (e.g. 'g' is invalid for REGEXP_REPLACE in
-     * O-mode), so failing loudly beats silently ignoring.
+     * openGauss O-mode match_parameter letters, DB-verified on
+     * openGauss 7.0.0-RC3: valid = i (caseless), c (caseless-off),
+     * m (multiline), n (dotall), x (ignore-whitespace); q and s are
+     * accepted as no-ops; '' accepted. Everything else — including
+     * uppercase 'I' and 'g'/'a' — is rejected by the DB, so we throw
+     * IllegalArgumentException rather than silently ignore. NOTE: the
+     * DB is case-SENSITIVE here, so no toLowerCase.
      */
     private static int flags(Object params) {
         int f = 0;
         String p = str(params);
         if (p == null) return f;
-        for (char c : p.toLowerCase(java.util.Locale.ROOT).toCharArray()) {
+        for (char c : p.toCharArray()) {
             switch (c) {
                 case 'i': f |= Pattern.CASE_INSENSITIVE; break;
                 case 'c': break; // explicit case-sensitive: default already
                 case 'm': f |= Pattern.MULTILINE; break;
                 case 'n': f |= Pattern.DOTALL; break;
                 case 'x': f |= Pattern.COMMENTS; break;
+                case 'q': case 's': break; // DB accepts as no-ops
                 default:
                     throw new IllegalArgumentException("invalid regexp option: " + c);
             }
@@ -567,13 +701,20 @@ public final class Regexp {
         }
     }
 
-    /** REGEXP_REPLACE — absent occurrence replaces the first match only (O-mode), explicit 0 replaces all; Oracle \N backrefs. */
+    /**
+     * REGEXP_REPLACE — openGauss O-mode argument semantics (DB-verified):
+     * absent position (3-arg) → replace FIRST match only; position given
+     * (4/5/6-arg) with absent occurrence → replace ALL from position;
+     * explicit occurrence=0 → all, N>0 → Nth only; NULL pattern → source
+     * unchanged; NULL replacement → delete matches; NULL src/occurrence
+     * → NULL. Oracle \N backrefs.
+     */
     public static String replace(Object s, Object p, Object r) {
-        return replace(s, p, r, null, null, null);
+        return replace(s, p, r, null, 1L, null);
     }
 
     public static String replace(Object s, Object p, Object r, Object pos) {
-        return replace(s, p, r, pos, null, null);
+        return replace(s, p, r, pos, 0L, null);
     }
 
     public static String replace(Object s, Object p, Object r, Object pos, Object occ) {
@@ -584,21 +725,24 @@ public final class Regexp {
         String src = str(s);
         String pat = str(p);
         String repl = str(r);
-        if (src == null || pat == null || repl == null) return null;
+        if (src == null) return null;
+        if (pat == null) return src;
+        // occ==null here means an explicit SQL NULL (overloads above supply
+        // numeric defaults) → DB returns NULL.
+        if (occ == null) return null;
         int start = regionStart(pos, src.length());
         if (start < 0) return src;
         try {
             Matcher m = Pattern.compile(pat, flags(params)).matcher(src);
             m.region(start, src.length());
-            // openGauss O-mode occurrence: absent → replace only the FIRST
-            // match (DB-verified: regexp_replace('a1b2c3','[a-z]','X') =
-            // 'X1b2c3'); explicit 0 → replace ALL matches in the region.
+            // occurrence: 0 → ALL matches in region; N>0 → Nth only.
             long nth = num(occ, 1);
             if (nth <= 0) {
                 StringBuilder sb = new StringBuilder(src.length());
-                int last = start;
+                int last = 0; // keep the prefix before `start` — matches begin at `start`
                 while (m.find()) {
-                    sb.append(src, last, m.start()).append(expand(repl, m));
+                    sb.append(src, last, m.start())
+                      .append(repl == null ? "" : expand(repl, m));
                     last = m.end();
                 }
                 sb.append(src.substring(last));
@@ -608,7 +752,9 @@ public final class Regexp {
             while (m.find()) {
                 seen++;
                 if (seen == nth) {
-                    return src.substring(0, m.start()) + expand(repl, m) + src.substring(m.end());
+                    return src.substring(0, m.start())
+                        + (repl == null ? "" : expand(repl, m))
+                        + src.substring(m.end());
                 }
             }
             return src;

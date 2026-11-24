@@ -26,7 +26,7 @@ public class Issue47TypesService {
             if (pSubSeq == 1) {
                 vStepNo = "1.1";
             } else {
-                vStepNo = String.valueOf("1.").concat(String.valueOf(String.valueOf(pSubSeq)));
+                vStepNo = fluxgauss.plsql.StrUtil.concat("1.", String.valueOf(pSubSeq));
             }
         } else if (pSeq == 2) {
             if (pSubSeq == 5) {
@@ -36,10 +36,10 @@ public class Issue47TypesService {
             } else if (pSubSeq == 8) {
                 vStepNo = "2.8";
             } else {
-                vStepNo = String.valueOf("2.").concat(String.valueOf(String.valueOf(pSubSeq)));
+                vStepNo = fluxgauss.plsql.StrUtil.concat("2.", String.valueOf(pSubSeq));
             }
         } else {
-            vStepNo = String.valueOf(String.valueOf(pSeq)).concat(String.valueOf(".0"));
+            vStepNo = fluxgauss.plsql.StrUtil.concat(String.valueOf(pSeq), ".0");
         }
         pStepNo.set(String.valueOf(vStepNo));
     }
@@ -54,7 +54,7 @@ public class Issue47TypesService {
         } else {
             vProId = "9999";
         }
-        vProId = String.valueOf(vProId).concat(String.valueOf(",8208,9,354,360,370,6034,5821"));
+        vProId = fluxgauss.plsql.StrUtil.concat(vProId, ",8208,9,354,360,370,6034,5821");
         pProId.set(String.valueOf(vProId));
     }
 

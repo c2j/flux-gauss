@@ -103,12 +103,12 @@ public class ComplexClearingPkgService {
         { Object _val = complexClearingPkgMapper.selectTradeRecord(pTradeId, pDepth); if (_val != null) vParentId = (_val instanceof Number ? ((Number)_val).longValue() : Long.parseLong(String.valueOf(_val))); }
         if (vParentId != null) {
             vResult = String.valueOf(this.recursiveValidate(Long.parseLong(String.valueOf(vParentId)), pDepth + 1));
-            vChain = String.valueOf(String.valueOf(pTradeId).concat(String.valueOf("->"))).concat(String.valueOf(vResult));
+            vChain = fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(pTradeId, "->"), vResult);
         } else {
-            vChain = String.valueOf(pTradeId).concat(String.valueOf("(root)"));
+            vChain = fluxgauss.plsql.StrUtil.concat(pTradeId, "(root)");
         }
         if ((pDepth == 0 && vChain.length() > 50)) {
-            return String.valueOf("DEEP_CHAIN:").concat(String.valueOf(vChain));
+            return fluxgauss.plsql.StrUtil.concat("DEEP_CHAIN:", vChain);
         }
         return String.valueOf(vChain);
     }
@@ -120,7 +120,7 @@ public class ComplexClearingPkgService {
         java.math.BigDecimal vThreshold = java.math.BigDecimal.ZERO;
         java.math.BigDecimal vTradeSum = java.math.BigDecimal.ZERO;
         if (gMutatingTableGuard) {
-            this.logAuditAutonomous(String.valueOf("Mutating table guard hit for account ").concat(String.valueOf(pAccountId)), "WARN");
+            this.logAuditAutonomous(fluxgauss.plsql.StrUtil.concat("Mutating table guard hit for account ", pAccountId), "WARN");
             return true;
         }
         gMutatingTableGuard = true;
@@ -130,7 +130,7 @@ public class ComplexClearingPkgService {
         vThreshold = (pCheckMode == 1 ? cEpsilon : pCheckMode == 2 ? java.math.BigDecimal.valueOf(1.0) : java.math.BigDecimal.valueOf(999999999));
         if (vDiff.compareTo(vThreshold) > 0) {
             if (pCheckMode == 3) {
-                this.logAuditAutonomous(String.valueOf(String.valueOf(String.valueOf("Consistency mismatch: account=").concat(String.valueOf(pAccountId))).concat(String.valueOf(" diff="))).concat(String.valueOf(vDiff)), "WARN");
+                this.logAuditAutonomous(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat("Consistency mismatch: account=", pAccountId), " diff="), vDiff), "WARN");
                 return true;
             } else {
                 return false;
@@ -152,7 +152,7 @@ public class ComplexClearingPkgService {
         java.math.BigDecimal vDelta = java.math.BigDecimal.ZERO;
         Integer vRelatedCount = 0;
         if ((gTriggerDepth > 3 && pCascade)) {
-            this.logAuditAutonomous(String.valueOf("Account cascade suppressed at depth ").concat(String.valueOf(gTriggerDepth)), "WARN");
+            this.logAuditAutonomous(fluxgauss.plsql.StrUtil.concat("Account cascade suppressed at depth ", gTriggerDepth), "WARN");
             return;
         }
         if ((java.util.Objects.equals(pOp, "UPDATE") && pNewRec.getOrDefault("accountId", pNewRec.get("account_id")) != null)) {
@@ -161,7 +161,7 @@ public class ComplexClearingPkgService {
                 complexClearingPkgMapper.updateAccount(pOp, pOldRec, pNewRec, pCascade);
                 { Object _val = complexClearingPkgMapper.selectTradeRecord_3(pOp, pOldRec, pNewRec, pCascade); if (_val != null) vRelatedCount = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }
                 if (vRelatedCount > 0) {
-                    this.logAuditAutonomous(String.valueOf(String.valueOf(String.valueOf(String.valueOf("Account ").concat(String.valueOf(pNewRec.getOrDefault("accountId", pNewRec.get("account_id"))))).concat(String.valueOf(" has "))).concat(String.valueOf(vRelatedCount))).concat(String.valueOf(" disputed trades")), "WARN");
+                    this.logAuditAutonomous(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat("Account ", pNewRec.getOrDefault("accountId", pNewRec.get("account_id"))), " has "), vRelatedCount), " disputed trades"), "WARN");
                 }
             }
         }
@@ -171,11 +171,11 @@ public class ComplexClearingPkgService {
     public void handleDdlEvent(String pTag, String pObjectName, String pObjectType, String pCommand) {
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
-        gDdlStack = String.valueOf(String.valueOf(String.valueOf(String.valueOf(gDdlStack).concat(String.valueOf(String.valueOf((char)(10))))).concat(String.valueOf(pTag))).concat(String.valueOf(":"))).concat(String.valueOf(pObjectName));
+        gDdlStack = fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(gDdlStack, String.valueOf((char)(10))), pTag), ":"), pObjectName);
         if ((pTag.contains("DROP") && pObjectName.contains("trade"))) {
             log.info("e_ddl_intercept");
         }
-        this.logAuditAutonomous(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf("DDL executed: ").concat(String.valueOf(pTag))).concat(String.valueOf(" on "))).concat(String.valueOf(pObjectType))).concat(String.valueOf(" "))).concat(String.valueOf(pObjectName)), "INFO");
+        this.logAuditAutonomous(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat("DDL executed: ", pTag), " on "), pObjectType), " "), pObjectName), "INFO");
         if ((java.util.Objects.equals(pTag, "CREATE TABLE") && !pObjectName.matches("pg..*"))) {
             try {
                 // SQL: ALTER TABLE ${pObjectName} ADD COLUMN IF NOT EXISTS created_by VARCHAR(50) DEFAULT CURRENT_USER
@@ -183,7 +183,7 @@ public class ComplexClearingPkgService {
             } catch (Exception __e1) {
                 __SQLERRM__ = __e1.getMessage();
                 __SQLCODE__ = -1;
-                this.logAuditAutonomous(String.valueOf(String.valueOf(String.valueOf("Auto-alter failed for ").concat(String.valueOf(pObjectName))).concat(String.valueOf(": "))).concat(String.valueOf(__SQLERRM__)), "WARN");
+                this.logAuditAutonomous(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat(fluxgauss.plsql.StrUtil.concat("Auto-alter failed for ", pObjectName), ": "), __SQLERRM__), "WARN");
             }
         }
     }
@@ -191,7 +191,7 @@ public class ComplexClearingPkgService {
     // Source: complex_clearing_pkg.run_clearing (PROCEDURE) — {FIXTURES_ROOT}/complex_clearing_pkg.sql:453-463
     public void runClearing(java.sql.Date pBatchDate, int pParallelDegree, boolean pDryRun, AtomicReference<String> oSummary, AtomicReference<String> oStatus) {
         if (gTriggerDepth > 0) {
-            this.logAuditAutonomous(String.valueOf("run_clearing called from trigger context at depth ").concat(String.valueOf(gTriggerDepth)), "WARN");
+            this.logAuditAutonomous(fluxgauss.plsql.StrUtil.concat("run_clearing called from trigger context at depth ", gTriggerDepth), "WARN");
         }
         oStatus.set("SUCCESS");
         oSummary.set("{}");

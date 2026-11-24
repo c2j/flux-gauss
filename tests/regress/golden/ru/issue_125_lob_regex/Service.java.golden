@@ -56,7 +56,7 @@ public class LobStrService {
         pOut.set(fluxgauss.plsql.StrUtil.byteSubstr(pSrc, (-4)));
     }
 
-    // Source: pkg_lob_str.prc_regex_demo (PROCEDURE) — {FIXTURES_ROOT}/issue_125_lob_regex.sql:48-58
+    // Source: pkg_lob_str.prc_regex_demo (PROCEDURE) — {FIXTURES_ROOT}/issue_125_lob_regex.sql:48-63
     public void prcRegexDemo(String pSrc, AtomicReference<String> pOut) {
         Boolean vFlag = false;
         Long vN = 0L;
@@ -66,5 +66,8 @@ public class LobStrService {
         vN = fluxgauss.plsql.Regexp.count(pSrc, "[aeiou]");
         pOut.set(fluxgauss.plsql.Regexp.replace(pSrc, "([a-z]+)([0-9]*)", "\\2-\\1", 1, 1, "i"));
         pOut.set(fluxgauss.plsql.Regexp.replace(pSrc, "[aeiou]", "*"));
+        pOut.set(fluxgauss.plsql.Regexp.replace(pSrc, "[aeiou]", "*", 2));
+        pOut.set(fluxgauss.plsql.Regexp.replace(pSrc, "[aeiou]", "*", 2, 1));
+        pOut.set(fluxgauss.plsql.Regexp.replace(pSrc, "[aeiou]", null));
     }
 }

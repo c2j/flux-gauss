@@ -1859,6 +1859,10 @@ fn process_procedure_call(
                                     || arg_type_inferred == "Object"
                                     || arg_type_inferred == "BigDecimal")
                                 && !is_nullish_java_expr(&arg)
+                                // Issue #125 review R3 (3.5'): plsql string
+                                // helpers already return String — wrapping
+                                // turns SQL NULL into the literal "null".
+                                && !crate::expr::is_nullable_plsql_string_call(&arg)
                             {
                                 arg = format!("String.valueOf({})", arg);
                             } else if target_is_long && arg_type_inferred == "String" && !is_nullish_java_expr(&arg) {
