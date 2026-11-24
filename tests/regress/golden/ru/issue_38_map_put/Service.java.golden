@@ -36,7 +36,7 @@ public class Issue38MainService {
             pStatus.set("FAILED");
         } else {
             ((java.util.Map<String, Object>) pkgIssue38Shared).put("outStatus", "SUCCESS");
-            ((java.util.Map<String, Object>) pkgIssue38Shared).put("globalCounter", java.util.Optional.ofNullable((Number) ((java.util.Map<String, Object>) pkgIssue38Shared).getOrDefault("globalCounter", ((java.util.Map<String, Object>) pkgIssue38Shared).get("global_counter"))).map(Number::longValue).orElse(0L) + 1);
+            ((java.util.Map<String, Object>) pkgIssue38Shared).put("globalCounter", java.util.Optional.ofNullable((Number) (((java.util.Map<String, Object>) pkgIssue38Shared).getOrDefault("globalCounter", ((java.util.Map<String, Object>) pkgIssue38Shared).get("global_counter")))).map(Number::longValue).orElse(0L) + 1);
             pStatus.set("SUCCESS");
         }
     }
@@ -49,6 +49,6 @@ public class Issue38MainService {
 
     // Source: pkg_issue38_main.proc_increment_counter (PROCEDURE) — {FIXTURES_ROOT}/issue_38_map_put.sql:75-82
     public void procIncrementCounter() {
-        ((java.util.Map<String, Object>) pkgIssue38Shared).put("globalCounter", java.util.Optional.ofNullable((Number) ((java.util.Map<String, Object>) pkgIssue38Shared).getOrDefault("globalCounter", ((java.util.Map<String, Object>) pkgIssue38Shared).get("global_counter"))).map(Number::longValue).orElse(0L) + 1);
+        ((java.util.Map<String, Object>) pkgIssue38Shared).put("globalCounter", java.util.Optional.ofNullable((Number) (((java.util.Map<String, Object>) pkgIssue38Shared).getOrDefault("globalCounter", ((java.util.Map<String, Object>) pkgIssue38Shared).get("global_counter")))).map(Number::longValue).orElse(0L) + 1);
     }
 }

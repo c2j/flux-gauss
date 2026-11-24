@@ -20,13 +20,13 @@ impl CodeWriter {
 
     pub fn line(&mut self, text: &str) {
         let indent = "    ".repeat(self.indent_level);
-        let cleaned = text.replace('\r', "");
+        let cleaned = sanitize_java_line(&text.replace('\r', ""));
         self.lines.push(format!("{}{}", indent, cleaned));
     }
 
     /// Pre-formatted line; skips current indent (for fully-indented method blocks).
     pub fn raw_line(&mut self, text: &str) {
-        self.lines.push(text.to_string());
+        self.lines.push(sanitize_java_line(text));
     }
 
     pub fn blank(&mut self) {
@@ -62,6 +62,20 @@ impl CodeWriter {
         let (cow, _, _) = encoding.encode(&content);
         std::fs::write(path, &cow)
     }
+}
+
+/// `String.valueOf(null)` resolves to the `valueOf(char[])` overload and NPEs
+/// at runtime; casting the literal to Object selects `valueOf(Object)` and
+/// preserves the intended "null" stringify. Applied at emission so every
+/// generated Java file gets the fix (previously a delivery-side postprocess
+/// byte patch). TOBEFIX comments inside the parens are preserved.
+fn sanitize_java_line(text: &str) -> String {
+    if !(text.contains("String.valueOf(") && text.contains("null")) {
+        return text.to_string();
+    }
+    static RE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"String\.valueOf\((\s*(?:/\*.*?\*/\s*)?)null(\s*\))").unwrap());
+    RE.replace_all(text, "String.valueOf($1(Object) null$2)").into_owned()
 }
 
 /// Brace-depth re-indent (Python parity). `base` = depth-0 indent (usually 8 spaces).
@@ -208,6 +222,18 @@ mod tests {
         let lines = vec!["if (x == null) { x = 0; }".to_string(), "y = 1;".to_string()];
         let out = indent_java_body(&lines, "        ");
         assert_eq!(out, vec!["        if (x == null) { x = 0; }", "        y = 1;",]);
+    }
+
+    #[test]
+    fn test_sanitize_string_value_of_null() {
+        let mut w = CodeWriter::new();
+        w.line("x = String.valueOf(null);");
+        w.line("y = String.valueOf(nullable);");
+        w.line("z = String.valueOf(/* TOBEFIX: fn */ null);");
+        let out = w.to_string();
+        assert!(out.contains("String.valueOf((Object) null)"), "got: {}", out);
+        assert!(out.contains("String.valueOf(nullable)"), "non-literal untouched: {}", out);
+        assert!(out.contains("String.valueOf(/* TOBEFIX: fn */ (Object) null)"), "comment preserved: {}", out);
     }
 
     #[test]

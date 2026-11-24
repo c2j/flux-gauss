@@ -163,15 +163,22 @@ pub fn assignment_to_java(
                 } else if ptype == "Long" && (val.contains("BigDecimal") || val.contains("java.math.BigDecimal")) {
                     format!("({}).longValue()", val)
                 } else if ptype == "Long" {
-                    let trimmed = val.trim();
-                    let matched = proc.local_vars.iter().any(|(k, t)| {
-                        k.to_lowercase().replace("_", "") == trimmed.to_lowercase().replace("_", "")
-                            && t.contains("BigDecimal")
-                    });
-                    if matched {
-                        format!("({}).longValue()", val)
+                    // `.set(123)` / `.set((-1))` — a bare int literal cannot
+                    // widen+box to Long in one method-invocation step; emit an
+                    // explicit long literal instead.
+                    if let Some(lit) = int_literal_digits(&val) {
+                        format!("({}L)", lit)
                     } else {
-                        val
+                        let trimmed = val.trim();
+                        let matched = proc.local_vars.iter().any(|(k, t)| {
+                            k.to_lowercase().replace("_", "") == trimmed.to_lowercase().replace("_", "")
+                                && t.contains("BigDecimal")
+                        });
+                        if matched {
+                            format!("({}).longValue()", val)
+                        } else {
+                            val
+                        }
                     }
                 } else if ptype == "java.math.BigDecimal" {
                     if val.starts_with("String.valueOf(") {
@@ -268,6 +275,24 @@ pub fn assignment_to_java(
     format!("{} = {};", var, val)
 }
 
+/// Integer literal possibly wrapped in one pair of parens: `123`, `(-1)`,
+/// `(123)`. Returns the signed digits, or None for anything else.
+fn int_literal_digits(expr: &str) -> Option<String> {
+    let t = expr.trim();
+    let inner = t
+        .strip_prefix('(')
+        .and_then(|s| s.strip_suffix(')'))
+        .map(str::trim)
+        .filter(|_| t.starts_with('(') && t.ends_with(')'))
+        .unwrap_or(t);
+    let digits = inner.strip_prefix('-').unwrap_or(inner);
+    if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
+        Some(inner.to_string())
+    } else {
+        None
+    }
+}
+
 /// Render a Java integer literal with an `L` suffix when it exceeds the
 /// `int` range (2^31-1). Unsuffixed literals are `int`-typed per JLS 3.10.1,
 /// so `BigDecimal.valueOf(99999999999)` fails to compile — needs `...L`.
@@ -351,6 +376,30 @@ fn is_bare_identifier(expr: &str) -> bool {
     !t.is_empty()
         && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
         && !t.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(true)
+}
+
+/// True when `inner` is a bare identifier naming an IN parameter that the
+/// service emitter declares as a Java primitive (`long`, `int`, ...). Only
+/// parameters are emitted via `boxed_to_primitive`; locals stay boxed, so a
+/// `Long` local legitimately supports `== null`.
+fn is_primitive_emitted_param(inner: &str, proc: &ProcedureInfo) -> bool {
+    let base = inner.trim().trim_start_matches('(').trim_end_matches(')').split(['.', '(']).next().unwrap_or("");
+    if base.is_empty() || !is_bare_identifier(base) {
+        return false;
+    }
+    proc.parameters.iter().any(|p| {
+        if p.is_out() || p.default_value.as_ref().is_some_and(|dv| dv.eq_ignore_ascii_case("null")) {
+            return false;
+        }
+        let java_name = crate::naming::snake_to_camel(&p.name);
+        if java_name != base && !p.name.eq_ignore_ascii_case(base) {
+            return false;
+        }
+        matches!(
+            crate::generate::service::boxed_to_primitive(&p.java_type),
+            "long" | "int" | "boolean" | "double" | "float" | "short" | "byte"
+        )
+    })
 }
 
 /// Whether a rendered value contains the Long literal `0L` as a standalone
@@ -984,6 +1033,12 @@ fn expr_to_java_impl(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> St
         Expr::SpecialFunction { name, args, .. } => special_function_to_java(name, args, proc),
         Expr::IsNull { expr, negated } => {
             let inner = expr_to_java(expr, proc);
+            // A primitive-typed parameter can never be null — `prim == null`
+            // does not compile, so fold at generation time (postprocess
+            // migration: primitive == null -> false, != null -> true).
+            if is_primitive_emitted_param(&inner, proc) {
+                return if *negated { "true".to_string() } else { "false".to_string() };
+            }
             if *negated {
                 format!("{} != null", inner)
             } else {
@@ -1932,7 +1987,9 @@ fn needs_get_unwrap(expr: &str) -> bool {
 
 /// Generate null-safe Number extraction from Map .get() or .getOrDefault() result
 fn safe_long_value(expr: &str) -> String {
-    format!("java.util.Optional.ofNullable((Number) {}).map(Number::longValue).orElse(0L)", expr)
+    // Parenthesize the operand: `(Number) a + 1` parses as `((Number) a) + 1`
+    // (Number + int is a compile error); the cast must cover the whole expr.
+    format!("java.util.Optional.ofNullable((Number) ({})).map(Number::longValue).orElse(0L)", expr)
 }
 
 /// Extract (value_java, unit) from an interval expression (literal or concat).
@@ -5020,5 +5077,65 @@ mod tests {
         let out = expr_to_java(&call, &proc);
         assert!(out.contains("indexOf"), "array_position must lower to indexOf, got: {}", out);
         assert!(out.contains("orElse(null)"), "missing key must yield NULL, got: {}", out);
+    }
+
+    #[test]
+    fn test_is_null_on_primitive_param_folds_to_false() {
+        // `p_amount` is emitted as primitive `long` — `pAmount == null` cannot
+        // compile, so IS NULL folds to false / IS NOT NULL to true.
+        let mut proc = empty_proc();
+        proc.parameters.push(crate::types::Parameter {
+            name: "p_amount".into(),
+            java_type: "Long".into(),
+            sql_type: "number".into(),
+            mode: Some(crate::types::ParamMode::In),
+            default_value: None,
+        });
+        let col = || Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["p_amount".into()]));
+        let is_null = ogsql_parser::ast::Expr::IsNull { expr: col(), negated: false };
+        assert_eq!(expr_to_java(&is_null, &proc), "false");
+        let is_not_null = ogsql_parser::ast::Expr::IsNull { expr: col(), negated: true };
+        assert_eq!(expr_to_java(&is_not_null, &proc), "true");
+    }
+
+    #[test]
+    fn test_is_null_on_boxed_local_still_emits_comparison() {
+        // Local vars stay boxed (`Long`), so `== null` remains valid Java.
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_amount".into(), "Long".into());
+        let expr = ogsql_parser::ast::Expr::IsNull {
+            expr: Box::new(ogsql_parser::ast::Expr::ColumnRef(vec!["v_amount".into()])),
+            negated: false,
+        };
+        assert_eq!(expr_to_java(&expr, &proc), "vAmount == null");
+    }
+
+    #[test]
+    fn test_out_param_long_set_negative_literal_gets_l_suffix() {
+        // `v_flag := -1` on an OUT Long param must emit `.set((-1L))` — a bare
+        // int literal cannot widen+box to Long in one invocation step.
+        let mut proc = empty_proc();
+        proc.parameters.push(crate::types::Parameter {
+            name: "v_flag".into(),
+            java_type: "Long".into(),
+            sql_type: "number".into(),
+            mode: Some(crate::types::ParamMode::Out),
+            default_value: None,
+        });
+        let target = plvar(&["v_flag"]);
+        let value = ogsql_parser::ast::Expr::UnaryOp {
+            op: "-".into(),
+            expr: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Integer(1))),
+        };
+        let out = assignment_to_java(&target, &value, &proc);
+        assert!(out.contains(".set((-1L))"), "expected long literal in .set(), got: {}", out);
+    }
+
+    #[test]
+    fn test_safe_long_value_parenthesizes_cast_operand() {
+        // `(Number) a.get("x") + 1` parses as `((Number) a.get("x")) + 1` —
+        // Number + int is a compile error. The cast must cover the sum.
+        let out = safe_long_value("m.get(\"x\") + 1");
+        assert!(out.contains("(Number) (m.get(\"x\") + 1)"), "got: {}", out);
     }
 }
