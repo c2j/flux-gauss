@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.6.29] - 2026-11-25
+
+### Fixed
+- `sanitize_java_line` template defect: each `String.valueOf(null)` rewrite net-added one `)` (regex group `$2` captured the closing paren AND the template appended a literal `)`), breaking paren balance inside nested calls → generated Java failed `mvn compile` with `';' expected`/`')' expected` while the converter exited 0 (#134, introduced in 0.6.28). Affects 0.6.28 output wherever NULL literals appear inside nested `String.valueOf(...)`/function-call arguments — upgrade to 0.6.29 if generated projects fail compilation for no obvious reason.
+
 ## [0.6.28] - 2026-11-24
 
 ### Added
