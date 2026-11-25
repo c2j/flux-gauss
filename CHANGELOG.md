@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.31] - 2026-11-25
+
+### Fixed
+- Schema-qualified package names (`REPRO.PKG_X` form): `CREATE PACKAGE`/`CREATE PACKAGE BODY` with `END schema.pkg;` terminators were silently parsed as 0 packages — the converter exited 0 and emitted only skeleton output. Upgraded the bundled ogsql-parser to v0.11.1 (upstream fix in ogsql-parser PR #344) so schema-qualified `END` is recognized; the 0-package extraction WARNING added in 0.6.30 is retained as a guard.
+- Affects 0.6.28–0.6.30: inputs using schema-qualified package names produced empty output with a successful exit code — upgrade recommended for schema-qualified package users.
+
 ## [0.6.30] - 2026-11-25
 
 ### Fixed
