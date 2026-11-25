@@ -1,0 +1,46 @@
+CREATE OR REPLACE PACKAGE PKG_C_CALLEE AS
+  PROCEDURE prc_log(p_a IN VARCHAR2, p_b IN VARCHAR2, p_c IN VARCHAR2);
+  PROCEDURE prc_log(
+    p_a IN VARCHAR2,
+    p_b IN VARCHAR2,
+    p_c IN VARCHAR2,
+    p_d IN VARCHAR2,
+    p_e IN VARCHAR2,
+    p_f IN VARCHAR2
+  );
+END PKG_C_CALLEE;
+/
+
+CREATE OR REPLACE PACKAGE BODY PKG_C_CALLEE AS
+  PROCEDURE prc_log(p_a IN VARCHAR2, p_b IN VARCHAR2, p_c IN VARCHAR2) IS
+  BEGIN
+    NULL;
+  END prc_log;
+
+  PROCEDURE prc_log(
+    p_a IN VARCHAR2,
+    p_b IN VARCHAR2,
+    p_c IN VARCHAR2,
+    p_d IN VARCHAR2,
+    p_e IN VARCHAR2,
+    p_f IN VARCHAR2
+  ) IS
+  BEGIN
+    NULL;
+  END prc_log;
+END PKG_C_CALLEE;
+/
+
+CREATE OR REPLACE PACKAGE PKG_C_CALLER AS
+  PROCEDURE prc_caller(p_code OUT VARCHAR2);
+END PKG_C_CALLER;
+/
+
+CREATE OR REPLACE PACKAGE BODY PKG_C_CALLER AS
+  PROCEDURE prc_caller(p_code OUT VARCHAR2) IS
+  BEGIN
+    p_code := '0';
+    pkg_c_callee.prc_log('proc', '1', 'info', '4', p_code, '');
+  END prc_caller;
+END PKG_C_CALLER;
+/

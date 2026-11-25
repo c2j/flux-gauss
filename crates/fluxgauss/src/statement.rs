@@ -1855,7 +1855,25 @@ fn process_procedure_call(
             let lower = matched_pkg_name.to_lowercase();
             ctx.summaries.iter().find(|(k, _)| k.to_lowercase() == lower).map(|(_, v)| v)
         });
-        let target_proc = target_summary.and_then(|s| s.find_procedure(func));
+        // Issue #136-C: packages may declare same-name overloads — pick the
+        // signature whose arity best fits this call site (exact match first,
+        // then smallest arity >= args so DEFAULT params can be padded, else
+        // the widest). `find_procedure` alone returns the first declaration,
+        // which can have fewer params than the call provides and silently
+        // skips per-arg OUT/IN-OUT unwrapping for the tail arguments.
+        let target_proc = target_summary.and_then(|s| {
+            let mut matches: Vec<&crate::types::ProcedureSummary> =
+                s.procedures.iter().filter(|p| p.proc_name.eq_ignore_ascii_case(func)).collect();
+            matches.sort_by_key(|p| p.parameters.len());
+            matches
+                .iter()
+                .find(|p| p.parameters.len() == raw_args.len())
+                .or_else(|| {
+                    matches.iter().filter(|p| p.parameters.len() >= raw_args.len()).min_by_key(|p| p.parameters.len())
+                })
+                .or_else(|| matches.last())
+                .copied()
+        });
 
         let _target_param_count = target_proc.as_ref().map(|tp| tp.parameters.len()).unwrap_or(0);
         let mut args: Vec<String> = raw_args
@@ -4166,5 +4184,81 @@ mod tests {
         // The raw index expression must not appear twice.
         let idx_occurrences = lines.iter().filter(|l| l.contains("vI") && l.contains("+ 1")).count();
         assert!(idx_occurrences <= 1, "index expr must be evaluated once, got {} lines: {:?}", idx_occurrences, lines);
+    }
+
+    fn str_param(name: &str) -> crate::types::Parameter {
+        crate::types::Parameter {
+            name: name.into(),
+            java_type: "String".into(),
+            sql_type: "varchar2".into(),
+            mode: Some(crate::types::ParamMode::In),
+            default_value: None,
+        }
+    }
+
+    #[test]
+    fn test_issue136c_cross_pkg_overload_out_arg_is_unwrapped() {
+        // pkg_c_callee.prc_log has 3- and 6-param overloads; the caller passes
+        // its own OUT param p_code into the 6-param IN slot. The emitted call
+        // must dereference the AtomicReference (`.get()`), not pass it bare.
+        let mut proc = ProcedureInfo::new("pkg_c_caller.prc_caller".into(), "pkg_c_caller".into(), "prc_caller".into());
+        proc.parameters.push(crate::types::Parameter {
+            name: "p_code".into(),
+            java_type: "String".into(),
+            sql_type: "varchar2".into(),
+            mode: Some(crate::types::ParamMode::Out),
+            default_value: None,
+        });
+
+        let overload = |n: usize| crate::types::ProcedureSummary {
+            name: "prc_log".into(),
+            proc_name: "prc_log".into(),
+            package: "pkg_c_callee".into(),
+            is_function: false,
+            return_type: None,
+            parameters: (0..n).map(|i| str_param(&format!("p_{}", (b'a' + i as u8) as char))).collect(),
+            service_calls: Vec::new(),
+        };
+        let mut summaries: HashMap<String, crate::types::PackageSummary> = HashMap::new();
+        summaries.insert(
+            "pkg_c_callee".into(),
+            crate::types::PackageSummary {
+                name: "pkg_c_callee".into(),
+                java_package: "com.example".into(),
+                procedures: vec![overload(3), overload(6)],
+                package_vars: HashMap::new(),
+            },
+        );
+        let mut ctx = empty_stmt_ctx();
+        ctx.summaries = Box::leak(Box::new(summaries));
+
+        let lit = |s: &str| ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String(s.into()));
+        let call = ogsql_parser::ast::plpgsql::PlProcedureCall {
+            name: vec![ogsql_parser::ast::Ident::new("pkg_c_callee"), ogsql_parser::ast::Ident::new("prc_log")],
+            arguments: vec![
+                lit("proc"),
+                lit("1"),
+                lit("info"),
+                lit("4"),
+                ogsql_parser::ast::Expr::PlVariable(vec!["p_code".into()]),
+                lit(""),
+            ],
+            builtin: None,
+        };
+        process_statement(
+            &ogsql_parser::ast::plpgsql::PlStatement::ProcedureCall(ogsql_parser::ast::Spanned::without_span(call)),
+            &mut proc,
+            &mut ctx,
+        )
+        .unwrap();
+
+        let line =
+            proc.java_logic_lines.iter().find(|l| l.contains("prcLog(")).expect("cross-package call must be emitted");
+        assert!(line.contains("pCode.get()"), "OUT param passed to IN slot must be dereferenced, got: {}", line);
+        assert!(
+            !line.contains("pCode,") && !line.contains("pCode)"),
+            "bare AtomicReference must not be passed, got: {}",
+            line
+        );
     }
 }

@@ -146,6 +146,17 @@ pub fn assignment_to_java(
         }
 
         let camel = snake_to_camel(ref_name);
+        // Issue #136-B: OUT refcursor params are promoted to a `List` return
+        // value and removed from the method signature — residual references
+        // (e.g. the exception-branch `p_result := NULL`) must not emit
+        // `.set()` on a variable that no longer exists. Degrade to a comment.
+        if proc.parameters.iter().any(|p| {
+            p.is_out()
+                && p.is_refcursor()
+                && p.name.to_lowercase().replace('_', "") == ref_name.to_lowercase().replace('_', "")
+        }) {
+            return format!("// {} := <value> — refcursor OUT param promoted to List return (issue #136)", ref_name);
+        }
         if is_out_param(ref_name, proc) {
             let val = expr_to_java(value, proc);
             let param = proc.parameters.iter().find(|p| {
@@ -841,6 +852,17 @@ fn coerce_arg_to_type(arg: &str, target_type: &str, proc: &ProcedureInfo) -> Str
     let target_is_bigdecimal = target_type.contains("BigDecimal");
     let target_is_long = target_type == "long" || target_type == "Long";
 
+    // Issue #136-B: refcursor OUT params were removed from the signature
+    // (promoted to a List return) — passing one as an argument degrades to
+    // `null` rather than `.get()` on a non-existent variable.
+    if proc.parameters.iter().any(|p| {
+        p.is_out()
+            && p.is_refcursor()
+            && p.name.to_lowercase().replace('_', "") == trimmed.to_lowercase().replace('_', "")
+    }) {
+        return "null".to_string();
+    }
+
     // Unwrap AtomicReference OUT params when passed as regular-type args
     if is_out_param(trimmed, proc)
         || proc
@@ -1042,6 +1064,24 @@ fn default_padding_for_param(param: &crate::types::Parameter) -> String {
     }
 }
 
+/// `.get()`-unwrap a call argument that is the caller's own OUT/IN-OUT param
+/// or an already-promoted OUT local (both are `AtomicReference<T>` on this
+/// side). Issue #136-C: passing such an arg to a callee's plain IN parameter
+/// must dereference it — the bare `AtomicReference` does not compile against
+/// `String`/`Long`/etc.
+fn unwrap_out_arg(a: &str, proc: &ProcedureInfo) -> String {
+    if is_out_param(a, proc)
+        || proc
+            .out_local_vars
+            .iter()
+            .any(|(k, _)| k.to_lowercase().replace("_", "") == a.to_lowercase().replace("_", ""))
+    {
+        format!("{}.get()", a)
+    } else {
+        a.to_string()
+    }
+}
+
 /// Render a cross-package service call: IN arguments are coerced to the callee's
 /// declared param type (mirrors the is_self_call branch); OUT/IN-OUT arguments are
 /// either passed through unchanged (already `AtomicReference<T>` on this side — the
@@ -1058,18 +1098,7 @@ fn emit_cross_pkg_call(
     target_params: Option<&[crate::types::Parameter]>,
     proc: &ProcedureInfo,
 ) -> String {
-    let unwrap_if_out = |a: &str| -> String {
-        if is_out_param(a, proc)
-            || proc
-                .out_local_vars
-                .iter()
-                .any(|(k, _)| k.to_lowercase().replace("_", "") == a.to_lowercase().replace("_", ""))
-        {
-            format!("{}.get()", a)
-        } else {
-            a.to_string()
-        }
-    };
+    let unwrap_if_out = |a: &str| unwrap_out_arg(a, proc);
 
     // Handle an OUT/IN-OUT argument of the callee. Already-AtomicReference args
     // (caller's own OUT param, or already-promoted local) pass through unchanged.
@@ -1101,7 +1130,10 @@ fn emit_cross_pkg_call(
         .enumerate()
         .map(|(i, a)| match target_params.and_then(|params| params.get(i)) {
             Some(param) if param.is_out() => promote_or_pass_through(a, &param.java_type),
-            Some(param) => coerce_arg_to_type(a, &param.java_type, proc),
+            // Issue #136-C: an IN parameter still needs the caller-side OUT
+            // wrapper (`AtomicReference<T>`) dereferenced before coercion —
+            // `coerce_arg_to_type` alone passes `pCode` through unchanged.
+            Some(param) => coerce_arg_to_type(&unwrap_if_out(a), &param.java_type, proc),
             None => unwrap_if_out(a),
         })
         .collect();
@@ -1485,13 +1517,19 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
                 }
             } else {
                 let camel = snake_to_camel(name);
-                let is_out = proc.parameters.iter().any(|p| p.name == name && p.is_out());
+                let is_out = proc.parameters.iter().any(|p| p.name == name && p.is_out() && !p.is_refcursor());
                 if is_out {
                     return format!("{}.get()", camel);
                 }
                 let name_lower = name.to_lowercase().replace("_", "");
                 let param_match = proc.parameters.iter().find(|p| p.name.to_lowercase().replace("_", "") == name_lower);
                 if let Some(p) = param_match {
+                    // Issue #136-B: refcursor OUT params are promoted to a List
+                    // return and removed from the signature — a read degrades
+                    // to `null` (the cursor is never a readable value anyway).
+                    if p.is_refcursor() {
+                        return "null".to_string();
+                    }
                     let param_camel = snake_to_camel(&p.name);
                     if p.is_out() {
                         return format!("{}.get()", param_camel);
@@ -3614,7 +3652,9 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                             if param.is_out() {
                                 return arg.clone();
                             }
-                            coerce_arg_to_type(arg, &param.java_type, proc)
+                            // Issue #136-C: dereference the caller's own OUT
+                            // wrapper before coercing into an IN parameter.
+                            coerce_arg_to_type(&unwrap_out_arg(arg, proc), &param.java_type, proc)
                         } else {
                             arg.clone()
                         }
@@ -5631,6 +5671,27 @@ mod tests {
         );
         let out = expr_to_java(&expr, &proc);
         assert_eq!(out, "gTargetService.fncWithDefaults(\"a\", \"b\", \"\")");
+    }
+
+    #[test]
+    fn test_issue136b_refcursor_out_residual_assign_is_comment() {
+        // `p_result := NULL` inside the exception branch of a proc whose
+        // refcursor OUT param was promoted to a List return — the variable no
+        // longer exists in the signature, so `.set()` must not be emitted.
+        let mut proc = empty_proc();
+        proc.parameters.push(crate::types::Parameter {
+            name: "p_result".into(),
+            java_type: "Object".into(),
+            sql_type: "refcursor".into(),
+            mode: Some(crate::types::ParamMode::Out),
+            default_value: None,
+        });
+        let target = ogsql_parser::ast::Expr::PlVariable(vec!["p_result".into()]);
+        let value = ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Null);
+        let out = assignment_to_java(&target, &value, &proc);
+        assert!(out.starts_with("//"), "residual refcursor assign must be a comment, got: {}", out);
+        assert!(out.contains("p_result"), "comment must name the variable: {}", out);
+        assert!(!out.contains(".set("), "must not emit .set() on removed var: {}", out);
     }
 
     #[test]

@@ -1,0 +1,16 @@
+CREATE OR REPLACE PACKAGE PKG_B_OUT_CURSOR AS
+  PROCEDURE prc_out_cursor(p_result OUT refcur);
+END PKG_B_OUT_CURSOR;
+/
+
+CREATE OR REPLACE PACKAGE BODY PKG_B_OUT_CURSOR AS
+  PROCEDURE prc_out_cursor(p_result OUT refcur) IS
+  BEGIN
+    OPEN p_result FOR SELECT 1 AS id FROM dual;
+    RAISE NO_DATA_FOUND;
+  EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+      p_result := NULL;
+  END prc_out_cursor;
+END PKG_B_OUT_CURSOR;
+/
