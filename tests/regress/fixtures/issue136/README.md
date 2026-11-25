@@ -78,3 +78,44 @@ Expected generated shapes:
 - c: `cCalleeService.prcLog("proc", "1", "info", "4", String.valueOf(pCode.get()), "")`
 - b: `// p_result := <value> — refcursor OUT param promoted to List return (issue #136)`
 - f: `selectPrcDynamic(@Param("pId") Long pId, @Param("n") Long n)` — single `n`.
+
+Batch 3 (`fix/issue-136-d-e-x`):
+
+- `d-coercion.sql` + `d.yaml` — case **d** (D-class): `v_count := fnc_text('1')`
+  assigns a String-returning call to NUMBER (`(Number)` cast cannot compile →
+  `Long.parseLong(String.valueOf(..))`); `fnc_text(1)` passes an int literal
+  into a VARCHAR2 param (`String.valueOf(1)`).
+- `e-collection.sql` + `e.yaml` — case **e** (E-class): `v_nums :=
+  t_num_table()` is a `TYPE ... IS TABLE OF NUMBER` constructor (→
+  `new java.util.ArrayList<Long>()`); `FOR v_i IN 1 .. v_item.item_count`
+  has a record-field (`Object`) upper bound and a boxed `Long` counter
+  (bounds coerced via null-safe `Optional...orElse(0L)` / `1L`).
+- `b-xml.sql` + `bxml.yaml` — case **b-xml** (B-XMLDOM): unresolved
+  `DBE_XMLDOM.*` calls must degrade to `/* TOBEFIX: unresolved fn ... */ null`
+  instead of a phantom `this.<fn>` self-call (the builtin prefix check now
+  runs before the package `ends_with` self-match).
+- `b-xml-schema-prefixed.sql` + `bxml-schema.yaml` — 附带发现: `END
+  REPRO.PKG_XMLDOM;` (schema-qualified END name) defeats the ogsql-parser
+  package-body parser → 0 packages / skeleton output. flux-gauss now emits a
+  WARNING in the conversion report; the parser-side fix is tracked
+  separately (see issue #136).
+
+```bash
+cd tests/regress/fixtures/issue136
+../../../../target/debug/fluxgauss -c d.yaml -o /tmp/issue136-d
+../../../../target/debug/fluxgauss -c e.yaml -o /tmp/issue136-e
+../../../../target/debug/fluxgauss -c bxml.yaml -o /tmp/issue136-bxml
+../../../../target/debug/fluxgauss -c bxml-schema.yaml -o /tmp/issue136-bxml-schema
+(cd /tmp/issue136-d && mvn -B -ntp -Duser.language=en clean compile)            # BUILD SUCCESS
+(cd /tmp/issue136-e && mvn -B -ntp -Duser.language=en clean compile)            # BUILD SUCCESS
+(cd /tmp/issue136-bxml && mvn -B -ntp -Duser.language=en clean compile)         # BUILD SUCCESS
+# bxml-schema: skeleton output + "0 packages" WARNING in conversion report
+```
+
+Expected generated shapes:
+
+- d: `vCount = Long.parseLong(String.valueOf(this.fncText("1")));` and
+  `this.fncText(String.valueOf(1))`.
+- e: `vNums = new java.util.ArrayList<Long>();` and
+  `for (vI = 1L; vI <= java.util.Optional.ofNullable((Number) (vItem.getOrDefault(...))).map(Number::longValue).orElse(0L); vI++)`.
+- b-xml: `vValue = /* TOBEFIX: unresolved fn GETCHILDNODES(pNode) - pkg=DBE_XMLDOM, ... */ null;`

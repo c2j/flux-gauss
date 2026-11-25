@@ -1,0 +1,5 @@
+output_dir: out-bxml-schema
+base_package: com.example.repro
+encoding: utf-8
+sources:
+  - b-xml-schema-prefixed.sql
