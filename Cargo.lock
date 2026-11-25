@@ -271,7 +271,7 @@ dependencies = [
  "globset",
  "indicatif",
  "libc",
- "ogsql-parser",
+ "ogsql-parser 0.11.0",
  "pathdiff",
  "petgraph",
  "rayon",
@@ -508,7 +508,7 @@ dependencies = [
  "codeweb",
  "encoding_rs",
  "indexmap",
- "ogsql-parser",
+ "ogsql-parser 0.11.1",
  "pretty_assertions",
  "rayon",
  "regex",
@@ -527,7 +527,7 @@ version = "0.6.30"
 dependencies = [
  "anyhow",
  "fluxgauss",
- "ogsql-parser",
+ "ogsql-parser 0.11.1",
  "rmcp",
  "schemars",
  "serde",
@@ -912,6 +912,18 @@ dependencies = [
 name = "ogsql-parser"
 version = "0.11.0"
 source = "git+https://github.com/c2j/ogsql-parser.git?tag=v0.11.0#13d9baa4358ca9537eb4f753fd2e5cd2d5a2517b"
+dependencies = [
+ "encoding_rs",
+ "phf",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "ogsql-parser"
+version = "0.11.1"
+source = "git+https://github.com/c2j/ogsql-parser.git?tag=v0.11.1#cf3cbd2c46f81d6274144733be895f4ce25932da"
 dependencies = [
  "encoding_rs",
  "phf",
