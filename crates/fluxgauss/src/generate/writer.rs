@@ -78,9 +78,13 @@ fn sanitize_java_line(text: &str) -> String {
     if !(text.contains("String.valueOf(") && text.contains("null")) {
         return text.to_string();
     }
+    // The trailing `)` is consumed by the match but NOT captured — the
+    // template writes exactly one literal `)`. (Issue #134: capturing it in
+    // $2 AND appending a literal `)` net-added one `)` per rewrite, breaking
+    // paren balance inside nested calls.)
     static RE: std::sync::LazyLock<regex::Regex> =
-        std::sync::LazyLock::new(|| regex::Regex::new(r"String\.valueOf\((\s*(?:/\*.*?\*/\s*)?)null(\s*\))").unwrap());
-    RE.replace_all(text, "String.valueOf($1(Object) null$2)").into_owned()
+        std::sync::LazyLock::new(|| regex::Regex::new(r"String\.valueOf\((\s*(?:/\*.*?\*/\s*)?)null\s*\)").unwrap());
+    RE.replace_all(text, "String.valueOf($1(Object) null)").into_owned()
 }
 
 /// Brace-depth re-indent (Python parity). `base` = depth-0 indent (usually 8 spaces).
@@ -231,14 +235,56 @@ mod tests {
 
     #[test]
     fn test_sanitize_string_value_of_null() {
-        let mut w = CodeWriter::new();
-        w.line("x = String.valueOf(null);");
-        w.line("y = String.valueOf(nullable);");
-        w.line("z = String.valueOf(/* TOBEFIX: fn */ null);");
-        let out = w.to_string();
-        assert!(out.contains("String.valueOf((Object) null)"), "got: {}", out);
-        assert!(out.contains("String.valueOf(nullable)"), "non-literal untouched: {}", out);
-        assert!(out.contains("String.valueOf(/* TOBEFIX: fn */ (Object) null)"), "comment preserved: {}", out);
+        // Issue #134: exact-equality assertions — contains() let the extra-
+        // paren bug slip through because the broken output still contained
+        // the correct substring.
+        assert_eq!(sanitize_java_line("x = String.valueOf(null);"), "x = String.valueOf((Object) null);");
+        assert_eq!(
+            sanitize_java_line("y = String.valueOf(nullable);"),
+            "y = String.valueOf(nullable);",
+            "non-literal untouched"
+        );
+        assert_eq!(
+            sanitize_java_line("z = String.valueOf(/* TOBEFIX: fn */ null);"),
+            "z = String.valueOf(/* TOBEFIX: fn */ (Object) null);",
+            "TOBEFIX comment preserved, single closing paren"
+        );
+        assert_eq!(sanitize_java_line("w = String.valueOf( null );"), "w = String.valueOf( (Object) null);");
+    }
+
+    #[test]
+    fn test_sanitize_nested_calls_keep_paren_balance() {
+        // Issue #134 minimal repro shape: NULL nested inside outer calls —
+        // the rewrite must not add a paren (previously produced `null)))`).
+        assert_eq!(
+            sanitize_java_line(
+                "return String.valueOf(this.genHead(String.valueOf(a), String.valueOf(b), String.valueOf(null)));"
+            ),
+            "return String.valueOf(this.genHead(String.valueOf(a), String.valueOf(b), String.valueOf((Object) null)));"
+        );
+        // NULL as a middle argument inside a nested call.
+        assert_eq!(
+            sanitize_java_line("v = outer(inner(x, String.valueOf(null), y), z);"),
+            "v = outer(inner(x, String.valueOf((Object) null), y), z);"
+        );
+        // Multiple rewrites on one line each stay balanced.
+        assert_eq!(
+            sanitize_java_line("a = String.valueOf(String.valueOf(null));"),
+            "a = String.valueOf(String.valueOf((Object) null));"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_skips_line_comments() {
+        // P4-J: `//` comment lines stay byte-identical.
+        assert_eq!(
+            sanitize_java_line("// CALL map_object.ad_item(String.valueOf(null))"),
+            "// CALL map_object.ad_item(String.valueOf(null))"
+        );
+        assert_eq!(
+            sanitize_java_line("    // indented comment String.valueOf(null)"),
+            "    // indented comment String.valueOf(null)"
+        );
     }
 
     #[test]
