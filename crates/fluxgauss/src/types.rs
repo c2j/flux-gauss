@@ -260,6 +260,11 @@ pub struct ProcedureInfo {
     /// Populated before analysis phase so function_call_to_java can coerce args.
     pub package_proc_params: HashMap<String, Vec<Vec<Parameter>>>,
 
+    /// Maps java method name → sibling procedures' declared return types
+    /// (one entry per overload). Used by `expr.rs::call_expr_return_type` to
+    /// resolve `this.<fn>(...)` self-calls for return-type coercion.
+    pub package_proc_returns: HashMap<String, Vec<Option<String>>>,
+
     /// Maps java method name → all candidate procedures across ALL packages sharing that name.
     /// Used during expression resolution to find cross-package function references.
     /// Populated during analysis phase from proc_summaries.
@@ -340,6 +345,7 @@ impl ProcedureInfo {
             out_local_vars: HashMap::new(),
             goto_analysis: None,
             package_proc_params: HashMap::new(),
+            package_proc_returns: HashMap::new(),
             all_proc_params: HashMap::new(),
             select_counter: 0,
             for_loop_counter: 0,
