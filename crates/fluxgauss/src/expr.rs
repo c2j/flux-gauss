@@ -657,7 +657,30 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
             }
         }
         Some(t) if t.contains("BigDecimal") && trimmed.contains("this.") && !trimmed.starts_with('(') => {
-            format!("((java.math.BigDecimal) {})", trimmed)
+            // Issue #136-A: a blind `(BigDecimal)` cast only compiles when the
+            // callee actually returns BigDecimal — `RETURN NUMBER` functions
+            // emit `Long`. Resolve the sibling return type and convert
+            // numerics via valueOf instead.
+            match call_expr_return_type(trimmed, proc).as_deref() {
+                Some(rt)
+                    if !rt.contains("BigDecimal")
+                        && (rt.contains("Long")
+                            || rt.contains("long")
+                            || rt.contains("Integer")
+                            || rt.contains("int")
+                            || rt.contains("Double")
+                            || rt.contains("double")
+                            || rt.contains("Float")
+                            || rt.contains("float")
+                            || rt.contains("Short")
+                            || rt.contains("short")
+                            || rt.contains("Byte")
+                            || rt.contains("byte")) =>
+                {
+                    format!("java.math.BigDecimal.valueOf({})", trimmed)
+                }
+                _ => format!("((java.math.BigDecimal) {})", trimmed),
+            }
         }
         Some(t)
             if t.contains("BigDecimal")
@@ -963,6 +986,62 @@ pub fn take_pending_out_promotions() -> Vec<(String, String)> {
     PENDING_OUT_PROMOTIONS.with(|q| q.borrow_mut().drain(..).collect())
 }
 
+/// Java expression used to pad a missing call argument for `param`'s
+/// declared signature type. Mirrors the service emitter: `default null`
+/// params stay boxed (→ `null`); otherwise the signature is the
+/// primitive-narrowed type, so a bare `null` would not compile — numeric
+/// params get `0L`/`0`, booleans `false`. Explicit DEFAULT literals are
+/// rendered for the effective type (`DEFAULT 0` → `0L` on `long`,
+/// `DEFAULT ''` → `""` on `String`). Issue #136-A/G.
+fn default_padding_for_param(param: &crate::types::Parameter) -> String {
+    if param.is_out() {
+        return "new java.util.concurrent.atomic.AtomicReference<>(null)".into();
+    }
+    let null_default = param.default_value.as_ref().is_some_and(|d| d.trim().eq_ignore_ascii_case("null"));
+    let eff = if null_default {
+        param.java_type.as_str()
+    } else {
+        crate::generate::service::boxed_to_primitive(&param.java_type)
+    };
+    if let Some(dv) = param.default_value.as_deref().filter(|d| !d.trim().eq_ignore_ascii_case("null")) {
+        let d = dv.trim();
+        if d.starts_with('\'') {
+            let inner = d.trim_matches('\'').replace("''", "'");
+            return format!("\"{}\"", inner.replace('\\', "\\\\").replace('"', "\\\""));
+        }
+        if eff == "String" {
+            return format!("\"{}\"", d);
+        }
+        if eff == "long" {
+            return if d.chars().all(|c| c.is_ascii_digit() || c == '-') { format!("{}L", d) } else { "0L".into() };
+        }
+        if eff == "int" {
+            return if d.chars().all(|c| c.is_ascii_digit() || c == '-') { d.to_string() } else { "0".into() };
+        }
+        if eff == "double" {
+            return format!("{}d", d);
+        }
+        if eff == "float" {
+            return format!("{}f", d);
+        }
+        if eff.contains("BigDecimal") {
+            return format!("new java.math.BigDecimal(\"{}\")", d);
+        }
+        if eff == "boolean" {
+            return if d.eq_ignore_ascii_case("true") { "true".into() } else { "false".into() };
+        }
+        return "null".into();
+    }
+    match eff {
+        "long" => "0L".into(),
+        "int" => "0".into(),
+        "boolean" => "false".into(),
+        "double" => "0.0".into(),
+        "float" => "0.0f".into(),
+        _ => "null".into(),
+    }
+}
+
 /// Render a cross-package service call: IN arguments are coerced to the callee's
 /// declared param type (mirrors the is_self_call branch); OUT/IN-OUT arguments are
 /// either passed through unchanged (already `AtomicReference<T>` on this side — the
@@ -1029,12 +1108,7 @@ fn emit_cross_pkg_call(
 
     if let Some(params) = target_params {
         while x_args.len() < params.len() {
-            let param = &params[x_args.len()];
-            if param.is_out() {
-                x_args.push("new java.util.concurrent.atomic.AtomicReference<>(null)".into());
-            } else {
-                x_args.push("null".into());
-            }
+            x_args.push(default_padding_for_param(&params[x_args.len()]));
         }
     }
 
@@ -1760,6 +1834,14 @@ fn call_expr_return_type(expr_str: &str, proc: &ProcedureInfo) -> Option<String>
     if svc_var.is_empty() || method.is_empty() {
         return None;
     }
+    // Issue #136-A: same-package self-calls emit `this.<fn>(...)` — resolve
+    // the return type from the sibling-return table (all overloads must
+    // agree, mirroring the cross-package rule below).
+    if svc_var == "this" {
+        let rets = proc.package_proc_returns.get(method)?;
+        let first = rets.first()?.clone()?;
+        return if rets.iter().all(|r| r.as_deref() == Some(first.as_str())) { Some(first) } else { None };
+    }
     let candidates = proc.all_proc_params.get(method)?;
     let matches: Vec<&GlobalFnEntry> = candidates.iter().filter(|e| e.svc_var == svc_var).collect();
     let first = matches.first()?.return_type.clone()?;
@@ -2371,6 +2453,14 @@ fn binary_op_to_java(
         "->" => format!("this.jsonbGet({}, {})", l, r),
         "->>" => format!("this.jsonbGetText({}, {})", l, r),
         "=" => {
+            // Issue #136-A2: `p = NULL` on a primitive-emitted IN param can
+            // never be true (mirrors the IS NULL fold — the param cannot
+            // hold null, so the comparison is constant-false).
+            if (is_nullish_java_expr(strip_outer_parens(&l)) && is_primitive_emitted_param(&r, proc))
+                || (is_nullish_java_expr(strip_outer_parens(&r)) && is_primitive_emitted_param(&l, proc))
+            {
+                return "false".to_string();
+            }
             let l_kind = boxed_num_kind(&l, proc);
             let r_kind = boxed_num_kind(&r, proc);
             // Boxed numeric vs numeric literal: Objects.equals compares Java
@@ -2406,6 +2496,13 @@ fn binary_op_to_java(
             }
         }
         "!=" | "<>" => {
+            // Issue #136-A2: `p != NULL` / `p <> NULL` on a primitive-emitted
+            // IN param is constant-true (the param cannot be null).
+            if (is_nullish_java_expr(strip_outer_parens(&l)) && is_primitive_emitted_param(&r, proc))
+                || (is_nullish_java_expr(strip_outer_parens(&r)) && is_primitive_emitted_param(&l, proc))
+            {
+                return "true".to_string();
+            }
             let l_kind = boxed_num_kind(&l, proc);
             let r_kind = boxed_num_kind(&r, proc);
             if let Some(k) = l_kind {
@@ -2863,6 +2960,31 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                 jargs[1].clone()
             };
             let arg0 = jargs[0].trim();
+            // Issue #136-A2: NVL/COALESCE on a primitive-emitted IN param —
+            // the arg can never be null, so the result is the arg itself,
+            // boxed so downstream `((Number)..)` casts still compile.
+            if is_primitive_emitted_param(arg0, proc) {
+                let sig = proc
+                    .parameters
+                    .iter()
+                    .find(|p| {
+                        !p.is_out()
+                            && (crate::naming::snake_to_camel(&p.name) == arg0.trim()
+                                || p.name.eq_ignore_ascii_case(arg0.trim()))
+                    })
+                    .map(|p| crate::generate::service::in_param_signature_type(p, proc));
+                let boxed = match sig {
+                    Some("long") => "java.lang.Long.valueOf",
+                    Some("int") => "java.lang.Integer.valueOf",
+                    Some("double") => "java.lang.Double.valueOf",
+                    Some("float") => "java.lang.Float.valueOf",
+                    Some("boolean") => "java.lang.Boolean.valueOf",
+                    _ => "",
+                };
+                if !boxed.is_empty() {
+                    return format!("{}({})", boxed, arg0);
+                }
+            }
             let arg0_is_ar = proc.out_local_vars.iter().any(|(k,_)|
                 k.to_lowercase().replace("_", "") == arg0.to_lowercase().replace("_", ""))
                 || proc.parameters.iter().any(|p| p.is_out()
@@ -3378,8 +3500,17 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                         // Only trust a unique (pkg + arity) match for arg coercion;
                         // ambiguous/absent arity matches still emit the call without
                         // coercion (same as the previous unconditional behaviour).
+                        // Issue #136-G: when no exact-arity candidate exists, fall
+                        // back to the smallest arity >= jargs so DEFAULT parameters
+                        // can be padded (emit_cross_pkg_call appends them).
                         let target_params = if arity_matches.len() == 1 {
                             Some(arity_matches[0].params.clone())
+                        } else if arity_matches.is_empty() {
+                            pkg_matches
+                                .iter()
+                                .filter(|e| e.params.len() > jargs.len())
+                                .min_by_key(|e| e.params.len())
+                                .map(|e| e.params.clone())
                         } else {
                             None
                         };
@@ -3400,10 +3531,23 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                     let mut cross: Vec<&GlobalFnEntry> = candidates
                         .iter()
                         .filter(|e| e.package.to_lowercase() != proc_pkg_lower)
-                        // 已知限制：跨包解析使用严格 arity 相等（不支持默认参数省略实参）；
-                        // 同包重载（is_self_call 分支）支持 len>=jargs.len() 的宽松匹配
+                        // Issue #136-G: strict arity equality first; when no
+                        // exact match exists, relax to the smallest arity
+                        // >= jargs.len() so DEFAULT parameters can be padded
+                        // (emit_cross_pkg_call appends default_padding_for_param).
                         .filter(|e| e.params.len() == jargs.len())
                         .collect();
+                    if cross.is_empty() {
+                        let mut ge: Vec<&GlobalFnEntry> = candidates
+                            .iter()
+                            .filter(|e| e.package.to_lowercase() != proc_pkg_lower)
+                            .filter(|e| e.params.len() >= jargs.len())
+                            .collect();
+                        if let Some(min_len) = ge.iter().map(|e| e.params.len()).min() {
+                            ge.retain(|e| e.params.len() == min_len);
+                            cross = ge;
+                        }
+                    }
                     cross.sort_by(|a, b| {
                         (&a.package, &a.svc_var)
                             .cmp(&(&b.package, &b.svc_var))
@@ -3480,12 +3624,7 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                 };
                 if let Some(tp) = target_params {
                     while coerced_args.len() < tp.len() {
-                        let param = &tp[coerced_args.len()];
-                        if param.is_out() {
-                            coerced_args.push("new java.util.concurrent.atomic.AtomicReference<>(null)".into());
-                        } else {
-                            coerced_args.push("null".into());
-                        }
+                        coerced_args.push(default_padding_for_param(&tp[coerced_args.len()]));
                     }
                 }
                 return format!("this.{}({})", method, coerced_args.join(", "));
@@ -5382,5 +5521,128 @@ mod tests {
         // Number + int is a compile error. The cast must cover the sum.
         let out = safe_long_value("m.get(\"x\") + 1");
         assert!(out.contains("(Number) (m.get(\"x\") + 1)"), "got: {}", out);
+    }
+
+    fn param(name: &str, java_type: &str, default: Option<&str>) -> crate::types::Parameter {
+        crate::types::Parameter {
+            name: name.into(),
+            java_type: java_type.into(),
+            sql_type: "number".into(),
+            mode: Some(crate::types::ParamMode::In),
+            default_value: default.map(|s| s.to_string()),
+        }
+    }
+
+    #[test]
+    fn test_issue136_default_padding_matrix() {
+        // Primitive-narrowed params must never be padded with `null`.
+        assert_eq!(default_padding_for_param(&param("p_a", "long", Some("0"))), "0L");
+        assert_eq!(default_padding_for_param(&param("p_b", "Long", Some("null"))), "null");
+        assert_eq!(default_padding_for_param(&param("p_c", "long", Some("0"))), "0L");
+        assert_eq!(default_padding_for_param(&param("p_d", "long", None)), "0L");
+        assert_eq!(default_padding_for_param(&param("p_e", "int", None)), "0");
+        assert_eq!(default_padding_for_param(&param("p_f", "boolean", None)), "false");
+        assert_eq!(default_padding_for_param(&param("p_g", "String", None)), "null");
+        let mut sp = param("p_h", "String", Some("''"));
+        sp.sql_type = "varchar2".into();
+        assert_eq!(default_padding_for_param(&sp), "\"\"");
+        let mut op = param("p_i", "String", None);
+        op.mode = Some(crate::types::ParamMode::Out);
+        assert!(default_padding_for_param(&op).contains("AtomicReference"));
+    }
+
+    #[test]
+    fn test_issue136_self_call_pads_defaults_by_param_type() {
+        // fnc_calc(1) against (p_a long DEFAULT 0, p_b Long DEFAULT NULL,
+        // p_c long DEFAULT 0) must emit `this.fncCalc(1, null, 0L)` — the old
+        // unconditional `null` padding did not compile against `long`.
+        let mut proc = empty_proc();
+        proc.package_proc_params.insert(
+            "fncCalc".into(),
+            vec![vec![
+                param("p_a", "long", Some("0")),
+                param("p_b", "Long", Some("null")),
+                param("p_c", "long", Some("0")),
+            ]],
+        );
+        proc.package_proc_returns.insert("fncCalc".into(), vec![Some("Long".into())]);
+        let expr = fc_expr(&["fnc_calc"], vec![int_lit(1)]);
+        let out = expr_to_java(&expr, &proc);
+        assert_eq!(out, "this.fncCalc(1, null, 0L)");
+    }
+
+    #[test]
+    fn test_issue136_primitive_param_null_compare_folds() {
+        // `p_value != NULL` on a primitive-emitted IN param folds to `true`
+        // (`=` folds to `false`); boxed params keep the null-safe comparison.
+        let mut proc = empty_proc();
+        proc.parameters.push(param("p_value", "long", None));
+        proc.parameters.push(param("p_opt", "Long", Some("null")));
+        let ne = ogsql_parser::ast::Expr::BinaryOp {
+            left: Box::new(col_expr(&["p_value"])),
+            op: "!=".into(),
+            right: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Null)),
+        };
+        assert_eq!(expr_to_java(&ne, &proc), "true");
+        let eq = ogsql_parser::ast::Expr::BinaryOp {
+            left: Box::new(col_expr(&["p_value"])),
+            op: "=".into(),
+            right: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Null)),
+        };
+        assert_eq!(expr_to_java(&eq, &proc), "false");
+        // Boxed (DEFAULT NULL) param: `p_opt != NULL` must NOT fold — it can
+        // genuinely be null, so keep the Objects.equals form.
+        let boxed_ne = ogsql_parser::ast::Expr::BinaryOp {
+            left: Box::new(col_expr(&["p_opt"])),
+            op: "!=".into(),
+            right: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Null)),
+        };
+        let out = expr_to_java(&boxed_ne, &proc);
+        assert!(out.contains("Objects.equals"), "boxed param must keep null-safe compare: {}", out);
+    }
+
+    #[test]
+    fn test_issue136_cross_pkg_relaxed_arity_pads_default() {
+        // pkg_g_target.fnc_with_defaults('a','b') against a 3-param callee
+        // whose p_c has DEFAULT '' resolves via the >= arity fallback and
+        // pads `""` — strict equality used to drop every candidate.
+        let mut proc = empty_proc();
+        proc.package = "pkg_g_caller".into();
+        proc.all_proc_params.insert(
+            "fncWithDefaults".into(),
+            vec![GlobalFnEntry {
+                svc_var: "gTargetService".into(),
+                package: "pkg_g_target".into(),
+                params: vec![
+                    param("p_a", "String", None),
+                    param("p_b", "String", Some("null")),
+                    param("p_c", "String", Some("''")),
+                ],
+                return_type: Some("String".into()),
+                param_sig_types: Vec::new(),
+            }],
+        );
+        let expr = fc_expr(
+            &["pkg_g_target", "fnc_with_defaults"],
+            vec![
+                ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String("a".into())),
+                ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String("b".into())),
+            ],
+        );
+        let out = expr_to_java(&expr, &proc);
+        assert_eq!(out, "gTargetService.fncWithDefaults(\"a\", \"b\", \"\")");
+    }
+
+    #[test]
+    fn test_issue136_self_call_bigdecimal_coercion_uses_return_type() {
+        // `v_result := fnc_calc(1)` where the sibling returns Long but the
+        // target is BigDecimal: valueOf, not a blind (BigDecimal) cast.
+        let mut proc = empty_proc();
+        proc.package_proc_params.insert("fncCalc".into(), vec![vec![param("p_a", "long", Some("0"))]]);
+        proc.package_proc_returns.insert("fncCalc".into(), vec![Some("Long".into())]);
+        let call = expr_to_java(&fc_expr(&["fnc_calc"], vec![int_lit(1)]), &proc);
+        assert_eq!(call, "this.fncCalc(1)");
+        let out = coerce_for_type(&call, Some("java.math.BigDecimal"), &proc);
+        assert_eq!(out, "java.math.BigDecimal.valueOf(this.fncCalc(1))");
     }
 }

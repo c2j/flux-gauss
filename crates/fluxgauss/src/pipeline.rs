@@ -821,15 +821,18 @@ fn phase2_analyze(
             resolve_params(&mut p.parameters, &pkg.package_name);
         }
         let mut sibling_params: HashMap<String, Vec<Vec<_>>> = HashMap::new();
+        let mut sibling_returns: HashMap<String, Vec<Option<String>>> = HashMap::new();
         for p in &pkg.procedures {
             let method_name = crate::naming::java_method_name(&p.proc_name);
-            sibling_params.entry(method_name).or_default().push(p.parameters.clone());
+            sibling_params.entry(method_name.clone()).or_default().push(p.parameters.clone());
+            sibling_returns.entry(method_name).or_default().push(p.return_type.clone());
         }
 
         for proc in &mut pkg.procedures {
             proc.custom_types = pkg_custom_types.clone();
             proc.package_vars = pkg_vars.clone();
             proc.package_proc_params = sibling_params.clone();
+            proc.package_proc_returns = sibling_returns.clone();
             proc.all_proc_params = global_proc_map.clone();
             idx += 1;
             crate::progress::progress_bar("Analyze", idx, total, &proc.name);

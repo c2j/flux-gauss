@@ -1,0 +1,6 @@
+output_dir: out-a
+base_package: com.example.repro
+encoding: utf-8
+sources:
+  - a-null-numeric.sql
+  - a-caller.sql

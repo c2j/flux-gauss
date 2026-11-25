@@ -1,0 +1,34 @@
+CREATE OR REPLACE PACKAGE PKG_G_TARGET AS
+  FUNCTION fnc_with_defaults(
+    p_a IN VARCHAR2,
+    p_b IN VARCHAR2 DEFAULT NULL,
+    p_c IN VARCHAR2 DEFAULT ''
+  ) RETURN VARCHAR2;
+END PKG_G_TARGET;
+/
+
+CREATE OR REPLACE PACKAGE BODY PKG_G_TARGET AS
+  FUNCTION fnc_with_defaults(
+    p_a IN VARCHAR2,
+    p_b IN VARCHAR2 DEFAULT NULL,
+    p_c IN VARCHAR2 DEFAULT ''
+  ) RETURN VARCHAR2 IS
+  BEGIN
+    RETURN p_a;
+  END fnc_with_defaults;
+END PKG_G_TARGET;
+/
+
+CREATE OR REPLACE PACKAGE PKG_G_CALLER AS
+  PROCEDURE prc_caller;
+END PKG_G_CALLER;
+/
+
+CREATE OR REPLACE PACKAGE BODY PKG_G_CALLER AS
+  PROCEDURE prc_caller IS
+    v_result VARCHAR2(32);
+  BEGIN
+    v_result := pkg_g_target.fnc_with_defaults('a', 'b');
+  END prc_caller;
+END PKG_G_CALLER;
+/
