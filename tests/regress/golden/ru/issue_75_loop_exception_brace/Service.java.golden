@@ -3,6 +3,7 @@ package com.example.demo.service;
 import com.example.demo.exception.BusinessException;
 import com.example.demo.mapper.Issue75Mapper;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -32,7 +33,7 @@ public class Issue75Service {
             List<Map<String, Object>> r2List = issue75Mapper.selectProcNestedBlockBodyFails();
             if (r2List == null) r2List = new ArrayList<>();
             for (Map<String, Object> r2 : r2List) {
-                vTmp = String.valueOf(((java.util.Map<String, Object>) r2).get("v"));
+                vTmp = String.valueOf(r2.get("v"));
             }
         } catch (Exception __e1) {
             __SQLERRM__ = __e1.getMessage();
@@ -52,7 +53,7 @@ public class Issue75Service {
         if (recList == null) recList = new ArrayList<>();
         for (Map<String, Object> rec : recList) {
             try {
-                vTmp = String.valueOf(((java.util.Map<String, Object>) rec).get("v"));
+                vTmp = String.valueOf(rec.get("v"));
             } catch (Exception __e1) {
                 __SQLERRM__ = __e1.getMessage();
                 __SQLCODE__ = -1;
@@ -60,7 +61,7 @@ public class Issue75Service {
                 List<Map<String, Object>> r2List2 = issue75Mapper.selectProcLoopExcHandler_1();
                 if (r2List2 == null) r2List2 = new ArrayList<>();
                 for (Map<String, Object> r2 : r2List2) {
-                    vTmp = String.valueOf(((java.util.Map<String, Object>) r2).get("v"));
+                    vTmp = String.valueOf(r2.get("v"));
                 }
                 continue;
             }

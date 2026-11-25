@@ -58,6 +58,17 @@ impl Parameter {
         let t = self.sql_type.to_lowercase();
         t == "refcursor" || t == "ref cursor" || t == "refcur" || t == "cursor"
     }
+
+    /// True when this param does not appear in the generated Java method
+    /// signature: refcursor OUT params are returned as
+    /// `List<Map<String, Object>>` instead of an `AtomicReference` slot
+    /// (see `generate::service::build_service_method`). Call sites must
+    /// neither count nor emit an argument for them — otherwise the call
+    /// has more arguments than the method declares ("required N found
+    /// N+1", issue #136 batch-4).
+    pub fn dropped_from_signature(&self) -> bool {
+        self.is_out() && self.is_refcursor()
+    }
 }
 
 /// A single candidate for a globally-visible (cross-package) procedure/function

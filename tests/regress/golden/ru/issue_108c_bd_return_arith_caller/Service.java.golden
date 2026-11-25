@@ -22,6 +22,6 @@ public class Issue108cBdReturnArithCallerService {
     // Source: prc_bd_return_arith (PROCEDURE) — {FIXTURES_ROOT}/issue_108c_bd_return_arith_caller.sql:1-7
     public void prcBdReturnArith(int pIId) {
         java.math.BigDecimal vThreshold = java.math.BigDecimal.ZERO;
-        vThreshold = java.math.BigDecimal.valueOf(0 * 1.2);
+        vThreshold = java.math.BigDecimal.valueOf(/* TOBEFIX: unresolved fn fn_avg_amount(pIId) - pkg=?, caller={FIXTURES_ROOT}/issue_108c_bd_return_arith_caller.sql:prc_bd_return_arith */ 0 * 1.2);
     }
 }

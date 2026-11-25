@@ -863,6 +863,40 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
         Some(t) if t == "String" && looks_like_numeric_expr(trimmed) => {
             format!("String.valueOf({})", trimmed)
         }
+        // Issue #136 batch-4 F4: Object-typed sources into a Map slot need an
+        // explicit cast (record reads produce Object from .get()). `.get(` is
+        // only safe when the container is Map-typed — `List<Long>.get()`
+        // returns Long and a Long→Map cast does not compile.
+        Some(t)
+            if (t.starts_with("Map<") || t.contains("Map<String"))
+                && !trimmed.contains("Map<")
+                && !trimmed.starts_with("((")
+                && {
+                    let src = resolve_var_java_type(trimmed, proc).unwrap_or_default();
+                    src == "Object"
+                        || trimmed.contains("getOrDefault(")
+                        || (trimmed.contains(".get(") && (src.contains("Map<") || src.contains("Map<String")))
+                } =>
+        {
+            format!("((Map<String, Object>) {})", trimmed)
+        }
+        // Issue #136 batch-4 F4: Map<->List assignments have no sound Java
+        // coercion — degrade to a typed null with a visible marker instead
+        // of an uncompilable assignment.
+        Some(t)
+            if (t.contains("List<") || t.contains("java.util.List"))
+                && (resolve_var_java_type(trimmed, proc).is_some_and(|s| s.contains("Map<"))
+                    || call_expr_return_type(trimmed, proc).is_some_and(|s| s.contains("Map<"))) =>
+        {
+            "/* TOBEFIX: Map->List assignment has no sound coercion */ null".to_string()
+        }
+        Some(t)
+            if (t.starts_with("Map<") || t.contains("Map<String"))
+                && (resolve_var_java_type(trimmed, proc).is_some_and(|s| s.contains("List<"))
+                    || call_expr_return_type(trimmed, proc).is_some_and(|s| s.contains("List<"))) =>
+        {
+            "/* TOBEFIX: List->Map assignment has no sound coercion */ null".to_string()
+        }
         _ => expr.to_string(),
     }
 }
@@ -1134,12 +1168,28 @@ fn emit_cross_pkg_call(
     // Anything else (expressions, Map access, etc.) is left untouched — we can't
     // safely rewrite it here.
     let promote_or_pass_through = |a: &str, java_type: &str| -> String {
-        if is_out_param(a, proc)
-            || proc
-                .out_local_vars
+        // Already-`AtomicReference` args (caller's own OUT param or promoted
+        // local) pass through — UNLESS the wrapper's generic argument differs
+        // from the callee slot's (e.g. caller `AtomicReference<Long>` into a
+        // callee `AtomicReference<String>` param). Rewrap with the dereferenced
+        // value coerced through the standard matrix (issue #136 batch-4 F3).
+        let caller_inner: Option<String> = if is_out_param(a, proc) {
+            let bn = a.split('.').next().unwrap_or(a).to_lowercase().replace("_", "");
+            proc.parameters
                 .iter()
-                .any(|(k, _)| k.to_lowercase().replace("_", "") == a.to_lowercase().replace("_", ""))
-        {
+                .find(|p| p.is_out() && p.name.to_lowercase().replace("_", "") == bn)
+                .map(|p| p.java_type.clone())
+        } else {
+            proc.out_local_vars
+                .iter()
+                .find(|(k, _)| k.to_lowercase().replace("_", "") == a.to_lowercase().replace("_", ""))
+                .map(|(_, t)| t.clone())
+        };
+        if let Some(inner) = caller_inner {
+            if inner != java_type {
+                let coerced = coerce_arg_to_type(&format!("{}.get()", a), java_type, proc);
+                return format!("new java.util.concurrent.atomic.AtomicReference<>({})", coerced);
+            }
             return a.to_string();
         }
         let trimmed = a.trim();
@@ -1151,23 +1201,32 @@ fn emit_cross_pkg_call(
         a.to_string()
     };
 
-    let mut x_args: Vec<String> = jargs
-        .iter()
-        .enumerate()
-        .map(|(i, a)| match target_params.and_then(|params| params.get(i)) {
-            Some(param) if param.is_out() => promote_or_pass_through(a, &param.java_type),
-            // Issue #136-C: an IN parameter still needs the caller-side OUT
-            // wrapper (`AtomicReference<T>`) dereferenced before coercion —
-            // `coerce_arg_to_type` alone passes `pCode` through unchanged.
-            Some(param) => coerce_arg_to_type(&unwrap_if_out(a), &param.java_type, proc),
-            None => unwrap_if_out(a),
-        })
-        .collect();
-
+    let mut x_args: Vec<String> = Vec::new();
     if let Some(params) = target_params {
-        while x_args.len() < params.len() {
-            x_args.push(default_padding_for_param(&params[x_args.len()]));
+        // Iterate the callee's declared params positionally: jargs[i]
+        // corresponds to params[i]. Params dropped from the Java signature
+        // (refcursor OUT) skip BOTH the param and its call-site argument.
+        for (i, param) in params.iter().enumerate() {
+            if param.dropped_from_signature() {
+                continue;
+            }
+            match jargs.get(i) {
+                Some(a) if param.is_out() => x_args.push(promote_or_pass_through(a, &param.java_type)),
+                // Issue #136-C: an IN parameter still needs the caller-side OUT
+                // wrapper (`AtomicReference<T>`) dereferenced before coercion —
+                // `coerce_arg_to_type` alone passes `pCode` through unchanged.
+                Some(a) => x_args.push(coerce_arg_to_type(&unwrap_if_out(a), &param.java_type, proc)),
+                None => x_args.push(default_padding_for_param(param)),
+            }
         }
+        // Surplus call-site args beyond the callee's param list cannot map to
+        // a parameter — pass them through unwrapped (pre-#136 behaviour for
+        // unresolved arity; selection upstream should prevent this).
+        for a in jargs.iter().skip(params.len()) {
+            x_args.push(unwrap_if_out(a));
+        }
+    } else {
+        x_args = jargs.iter().map(|a| unwrap_if_out(a)).collect();
     }
 
     format!("{}.{}({})", cross_pkg_svc, method, x_args.join(", "))
@@ -1280,6 +1339,11 @@ fn expr_to_java_impl(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> St
                 let idx =
                     lower.as_ref().or(upper.as_ref()).map(|e| expr_to_java(e, proc)).unwrap_or_else(|| "0".into());
                 let obj_java = expr_to_java(object, proc);
+                // Issue #136 batch-4 F4: `null.get(i)` does not compile —
+                // degrade unresolved/null receivers to a compile-safe marker.
+                if obj_java.trim() == "null" {
+                    return "/* TOBEFIX: subscript on unresolved/null receiver */ null".into();
+                }
                 if record_list_field_access(object, proc) {
                     format!("{}.get((int) (({}) - 1))", obj_java, idx)
                 } else {
@@ -1289,6 +1353,10 @@ fn expr_to_java_impl(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> St
         }
         Expr::FieldAccess { object, field } => {
             let mut object_java = expr_to_java(object, proc);
+            // Issue #136 batch-4 F4: `null.get("f")` does not compile.
+            if object_java.trim() == "null" {
+                return "/* TOBEFIX: field access on unresolved/null receiver */ null".into();
+            }
             // Review #129 §4.3: `coll(i).field` reads must be gated on the
             // collection's element type — scalar elements (List<Long> etc.)
             // have no fields and `.getOrDefault` on them is a javac error;
@@ -1510,6 +1578,20 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
                     })
                     .or_else(|| proc.package_vars.get(&snake_base.to_lowercase()).map(|v| v.java_type.as_str()))
                     .unwrap_or("");
+                // Issue #136 batch-4 F4: a dotted reference whose base is not
+                // any declared var/param/package-var would emit an undeclared
+                // Java identifier (`base.getOrDefault(...)`). Cross-package
+                // package-var accessors do not exist — degrade to a
+                // compile-safe TOBEFIX marker instead.
+                if base_type.is_empty() {
+                    return format!(
+                        "/* TOBEFIX: unresolved ref {}.{} - caller={}:{} */ null",
+                        flatten_comment(parts[0]),
+                        flatten_comment(parts[1]),
+                        flatten_comment(&proc.source_file),
+                        flatten_comment(&proc.proc_name)
+                    );
+                }
                 if field == "count" {
                     return format!("((java.util.List<?>) {}).size()", var_name);
                 }
@@ -2488,11 +2570,24 @@ fn binary_op_to_java(
                 );
             }
         }
+        // TOBEFIX-marked nullish operands fold to `0` but keep their marker
+        // comment — dropping it would hide the unresolved-name warning
+        // (issue #136 batch-4: `/* TOBEFIX */ null + 1` used to become `0 + 1`).
+        let fold_nullish = |e: &str| -> String {
+            if e.contains("/* TOBEFIX") {
+                if let (Some(cs), Some(ce)) = (e.find("/*"), e.find("*/")) {
+                    if ce > cs {
+                        return format!("{} 0", &e[cs..ce + 2]);
+                    }
+                }
+            }
+            "0".to_string()
+        };
         if is_nullish_java_expr(&l) && !l_is_ts {
-            l = "0".into();
+            l = fold_nullish(&l);
         }
         if is_nullish_java_expr(&r) && !r_is_ts {
-            r = "0".into();
+            r = fold_nullish(&r);
         }
 
         let l_is_string = looks_string_expr(&l, proc);
@@ -3183,6 +3278,17 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             // latter dominates the delivery corpus). Guard both.
             let is_nullable_read = |a: &str| a.contains(".get(") || a.contains("getOrDefault(");
             let has_get = is_nullable_read(a1) || is_nullable_read(a2);
+            // Issue #136 batch-4 F4: an Object-typed receiver has no
+            // `.replace` — wrap in String.valueOf (S2 pattern) unless the
+            // receiver is already known-String.
+            let recv = {
+                let known_string = s.starts_with('"')
+                    || s.starts_with('\'')
+                    || s.contains("String.valueOf")
+                    || s.ends_with(".toString()")
+                    || resolve_var_java_type(s, proc).is_some_and(|t| t == "String" || t == "java.lang.String");
+                if known_string { s.to_string() } else { format!("String.valueOf({})", s) }
+            };
             if has_get {
                 // Review #129 S2: PL/SQL string functions return NULL when any
                 // arg is NULL — `String.valueOf(null)` would silently replace
@@ -3193,10 +3299,10 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                 let r2 = if is_nullable_read(a2) { format!("String.valueOf({})", a2) } else { a2.to_string() };
                 format!(
                     "(({}) == null || ({}) == null || ({}) == null ? null : ({}).replace({}, {}))",
-                    s, a1, a2, s, r1, r2
+                    s, a1, a2, recv, r1, r2
                 )
             } else {
-                format!("{}.replace({}, {})", s, a1, a2)
+                format!("{}.replace({}, {})", recv, a1, a2)
             }
         }
         "SUBSTRING" | "SUBSTR" => {
@@ -3619,7 +3725,16 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                         } else {
                             None
                         };
-                        (method_name, false, svc_var, target_params)
+                        // Issue #136 batch-4: when every candidate is NARROWER
+                        // than the call site there is no signature to pad
+                        // into — emitting anyway produces "required N found
+                        // M" (over-padding). Degrade to the unresolved marker
+                        // instead of a broken call.
+                        if arity_matches.is_empty() && target_params.is_none() {
+                            (String::new(), false, String::new(), None)
+                        } else {
+                            (method_name, false, svc_var, target_params)
+                        }
                     }
                 }
             } else if name_parts.len() == 1 {
@@ -3712,28 +3827,34 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                                     .min_by_key(|params| params.len())
                             })
                     });
-                let mut coerced_args: Vec<String> = if let Some(target_params) = target_params {
-                    jargs.iter().enumerate().map(|(i, arg)| {
-                        if i < target_params.len() {
-                            let param = &target_params[i];
-                            if param.is_out() {
-                                return arg.clone();
-                            }
-                            // Issue #136-C: dereference the caller's own OUT
-                            // wrapper before coercing into an IN parameter.
-                            coerce_arg_to_type(&unwrap_out_arg(arg, proc), &param.java_type, proc)
-                        } else {
-                            arg.clone()
+                let coerced_args: Vec<String> = if let Some(target_params) = target_params {
+                    let mut out = Vec::new();
+                    for (i, param) in target_params.iter().enumerate() {
+                        // Refcursor OUT params have no Java signature slot —
+                        // skip the param AND its positional call-site arg.
+                        if param.dropped_from_signature() {
+                            continue;
                         }
-                    }).collect()
+                        if i < jargs.len() {
+                            let arg = &jargs[i];
+                            if param.is_out() {
+                                out.push(arg.clone());
+                            } else {
+                                // Issue #136-C: dereference the caller's own OUT
+                                // wrapper before coercing into an IN parameter.
+                                out.push(coerce_arg_to_type(&unwrap_out_arg(arg, proc), &param.java_type, proc));
+                            }
+                        } else {
+                            out.push(default_padding_for_param(param));
+                        }
+                    }
+                    for a in jargs.iter().skip(target_params.len()) {
+                        out.push(a.clone());
+                    }
+                    out
                 } else {
                     jargs
                 };
-                if let Some(tp) = target_params {
-                    while coerced_args.len() < tp.len() {
-                        coerced_args.push(default_padding_for_param(&tp[coerced_args.len()]));
-                    }
-                }
                 return format!("this.{}({})", method, coerced_args.join(", "));
             }
             if !cross_pkg_svc.is_empty() && !method.is_empty() {
@@ -5858,5 +5979,153 @@ mod tests {
         let bound = coerce_range_for_bound("vItem.getOrDefault(\"itemCount\", vItem.get(\"item_count\"))", "Long");
         assert!(bound.contains("orElse(0L)"), "got: {}", bound);
         assert!(bound.contains("(Number)"), "got: {}", bound);
+    }
+
+    fn out_param(name: &str, java_type: &str, sql_type: &str) -> crate::types::Parameter {
+        crate::types::Parameter {
+            name: name.into(),
+            java_type: java_type.into(),
+            sql_type: sql_type.into(),
+            mode: Some(crate::types::ParamMode::Out),
+            default_value: None,
+        }
+    }
+
+    #[test]
+    fn test_issue136b4_self_call_skips_refcursor_out_param() {
+        // `fn_c(p_a, p_cur OUT refcursor)` — the Java signature drops p_cur,
+        // so `fn_c(1, cur)` must emit `this.fnC(1)`, not `this.fnC(1, cur)`
+        // ("required 1 found 2" over-padding, issue #136 batch-4 F2).
+        let mut proc = empty_proc();
+        proc.package_proc_params
+            .insert("fnC".into(), vec![vec![param("p_a", "long", None), out_param("p_cur", "Object", "refcursor")]]);
+        proc.package_proc_returns.insert("fnC".into(), vec![None]);
+        let expr = fc_expr(&["fn_c"], vec![int_lit(1), col_expr(&["cur"])]);
+        let out = expr_to_java(&expr, &proc);
+        assert_eq!(out, "this.fnC(1)");
+    }
+
+    #[test]
+    fn test_issue136b4_cross_pkg_call_skips_refcursor_out_param() {
+        // Same skip through emit_cross_pkg_call: callee params
+        // (p_a long, p_cur OUT refcursor) → `otherService.fnC(1)`.
+        let proc = empty_proc();
+        let callee_params = vec![param("p_a", "long", None), out_param("p_cur", "Object", "refcursor")];
+        let out =
+            emit_cross_pkg_call("otherService", "fnC", vec!["1".into(), "cur".into()], Some(&callee_params), &proc);
+        assert_eq!(out, "otherService.fnC(1)");
+    }
+
+    #[test]
+    fn test_issue136b4_cross_pkg_call_pads_only_emitted_params() {
+        // Call `fnD(1)` against (p_a long, p_cur OUT refcursor, p_b Long
+        // DEFAULT NULL): emitted args = p_a + p_b padding, cursor skipped.
+        let proc = empty_proc();
+        let mut p_b = param("p_b", "Long", Some("null"));
+        p_b.sql_type = "number".into();
+        let callee_params = vec![param("p_a", "long", None), out_param("p_cur", "Object", "refcursor"), p_b];
+        let out = emit_cross_pkg_call("otherService", "fnD", vec!["1".into()], Some(&callee_params), &proc);
+        assert_eq!(out, "otherService.fnD(1, null)");
+    }
+
+    #[test]
+    fn test_issue136b4_qualified_call_narrower_than_args_is_tobefix() {
+        // `other_pkg.fn_e(1,2,3)` where the only candidate takes 2 params —
+        // no signature can accept 3 args; must degrade to TOBEFIX, not emit
+        // a "required 2 found 3" call.
+        let mut proc = empty_proc();
+        proc.package = "pkg_inventory".into();
+        proc.all_proc_params.insert(
+            "fnE".into(),
+            vec![crate::types::GlobalFnEntry {
+                svc_var: "otherService".into(),
+                package: "other_schema".into(),
+                params: vec![param("p_a", "long", None), param("p_b", "long", None)],
+                return_type: None,
+                param_sig_types: vec![],
+            }],
+        );
+        let expr = fc_expr(&["other_schema", "fn_e"], vec![int_lit(1), int_lit(2), int_lit(3)]);
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains("TOBEFIX"), "got: {}", out);
+        assert!(!out.contains("otherService.fnE("), "must not emit over-arity call: {}", out);
+    }
+
+    #[test]
+    fn test_issue136b4_out_arg_generics_mismatch_rewraps() {
+        // Caller OUT `AtomicReference<Long> pCode` into callee OUT
+        // `AtomicReference<String>`: rewrap with String.valueOf(pCode.get()).
+        let mut proc = empty_proc();
+        proc.parameters.push(out_param("p_code", "Long", "number"));
+        let callee_params = vec![out_param("p_code", "String", "varchar2")];
+        let out = emit_cross_pkg_call("otherService", "fnF", vec!["pCode".into()], Some(&callee_params), &proc);
+        assert!(
+            out.contains("new java.util.concurrent.atomic.AtomicReference<>(String.valueOf(pCode.get()))"),
+            "got: {}",
+            out
+        );
+    }
+
+    #[test]
+    fn test_issue136b4_out_arg_generics_match_passes_through() {
+        // Same generic on both sides → pass the AtomicReference unchanged.
+        let mut proc = empty_proc();
+        proc.parameters.push(out_param("p_code", "Long", "number"));
+        let callee_params = vec![out_param("p_code", "Long", "number")];
+        let out = emit_cross_pkg_call("otherService", "fnF", vec!["pCode".into()], Some(&callee_params), &proc);
+        assert_eq!(out, "otherService.fnF(pCode)");
+    }
+
+    #[test]
+    fn test_issue136b4_replace_wraps_object_receiver() {
+        // `REPLACE(v_obj, 'a', 'b')` with `Object v_obj` — Object has no
+        // .replace; wrap the receiver in String.valueOf.
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_obj".into(), "Object".into());
+        let lit = |s: &str| ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String(s.into()));
+        let expr = fc_expr(&["replace"], vec![plvar(&["v_obj"]), lit("a"), lit("b")]);
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains("String.valueOf(vObj).replace(\"a\", \"b\")"), "got: {}", out);
+    }
+
+    #[test]
+    fn test_issue136b4_map_list_assignment_degrades() {
+        // `v_list := v_map` (Map→List) has no sound coercion → typed null +
+        // TOBEFIX marker; `v_map := v_obj` (Object→Map) gets a cast.
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_map".into(), "Map<String, Object>".into());
+        proc.local_vars.insert("v_list".into(), "java.util.List<Object>".into());
+        proc.local_vars.insert("v_obj".into(), "Object".into());
+        let out = coerce_for_type("vMap", Some("java.util.List<Object>"), &proc);
+        assert!(out.contains("TOBEFIX"), "got: {}", out);
+        assert!(out.trim_end().ends_with("null"), "got: {}", out);
+        let out2 = coerce_for_type("vObj", Some("Map<String, Object>"), &proc);
+        assert_eq!(out2, "((Map<String, Object>) vObj)");
+    }
+
+    #[test]
+    fn test_issue136b4_unresolved_dotted_ref_is_tobefix() {
+        // `pkg_x.node_name` where neither base nor field is declared —
+        // previously emitted `pkgX.getOrDefault(...)` (undeclared identifier).
+        let proc = empty_proc();
+        let expr = col_expr(&["pkg_x", "node_name"]);
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains("TOBEFIX: unresolved ref"), "got: {}", out);
+        assert!(!out.contains("getOrDefault"), "must not emit undeclared receiver: {}", out);
+    }
+
+    #[test]
+    fn test_issue136b4_subscript_on_null_receiver_is_tobefix() {
+        // `null[i]` → `null.get(i)` does not compile; degrade to marker.
+        let proc = empty_proc();
+        let expr = ogsql_parser::ast::Expr::Subscript {
+            object: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Null)),
+            lower: Some(Box::new(int_lit(1))),
+            upper: None,
+            is_slice: false,
+        };
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains("TOBEFIX"), "got: {}", out);
+        assert!(!out.contains("null.get("), "got: {}", out);
     }
 }

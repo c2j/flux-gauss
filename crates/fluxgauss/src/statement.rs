@@ -1875,15 +1875,53 @@ fn process_procedure_call(
                 .copied()
         });
 
-        let _target_param_count = target_proc.as_ref().map(|tp| tp.parameters.len()).unwrap_or(0);
-        let mut args: Vec<String> = raw_args
-            .iter()
-            .enumerate()
-            .map(|(i, raw)| {
-                let mut arg = strip_out_param_get(raw, proc);
-                if let Some(tp) = &target_proc {
-                    if i < tp.parameters.len() {
-                        let param = &tp.parameters[i];
+        // Issue #136 batch-4: more call-site args than the widest candidate
+        // signature means no overload can accept them — emitting anyway
+        // produces "required N found M". Keep the failure visible as a
+        // commented CALL + unresolved-call record instead of broken Java.
+        if let Some(tp) = &target_proc {
+            if raw_args.len() > tp.parameters.len() {
+                let args_dbg = raw_args.join(", ");
+                push_logic_line(
+                    proc,
+                    format!(
+                        "// CALL {}.{}({}) — arity {} exceeds callee params {}",
+                        matched_pkg_name,
+                        method,
+                        args_dbg,
+                        raw_args.len(),
+                        tp.parameters.len()
+                    ),
+                );
+                ctx.unresolved_calls.push(UnresolvedCall {
+                    caller: format!("{}.{}", proc.package, proc.proc_name),
+                    callee: format!("{}.{}", matched_pkg_name, func),
+                    caller_file: proc.source_file.clone(),
+                    args: args_dbg,
+                    hint: "call arity exceeds all candidate signatures".to_string(),
+                });
+                return;
+            }
+        }
+
+        // Positions of callee params that occupy a Java signature slot —
+        // refcursor OUT params are dropped by build_service_method, so both
+        // the param and its positional call-site arg are skipped (otherwise
+        // the call has one arg too many: "required N found N+1").
+        let emitted_positions: Vec<usize> = target_proc
+            .as_ref()
+            .map(|tp| {
+                tp.parameters.iter().enumerate().filter(|(_, p)| !p.dropped_from_signature()).map(|(i, _)| i).collect()
+            })
+            .unwrap_or_default();
+
+        let mut args: Vec<String> = Vec::new();
+        if let Some(tp) = &target_proc {
+            for &pos in &emitted_positions {
+                let param = &tp.parameters[pos];
+                match raw_args.get(pos) {
+                    Some(raw) => {
+                        let mut arg = strip_out_param_get(raw, proc);
                         let target_type = &param.java_type;
                         if param.is_out() {
                             let arg_trimmed = arg.trim();
@@ -1943,11 +1981,26 @@ fn process_procedure_call(
                                 arg = format!("((Map<String, Object>) {})", arg);
                             }
                         }
+                        args.push(arg);
+                    }
+                    None => {
+                        // Pad a missing trailing param (DEFAULT semantics).
+                        let param = &tp.parameters[pos];
+                        if param.is_out() {
+                            args.push("new AtomicReference<>(null)".to_string());
+                        } else if param.java_type == "long" {
+                            args.push("0L".into());
+                        } else if param.java_type == "int" {
+                            args.push("0".into());
+                        } else {
+                            args.push("null".into());
+                        }
                     }
                 }
-                arg
-            })
-            .collect();
+            }
+        } else {
+            args = raw_args.iter().map(|raw| strip_out_param_get(raw, proc)).collect();
+        }
 
         // When target procedure info is not available (cross-package call to framework service),
         // unwrap AtomicReference OUT params since the callee likely expects plain types.
@@ -1970,22 +2023,6 @@ fn process_procedure_call(
                     arg.clone()
                 })
                 .collect();
-        }
-
-        // Pad missing args when target has more params than caller provides
-        if let Some(tp) = &target_proc {
-            while args.len() < tp.parameters.len() {
-                let param = &tp.parameters[args.len()];
-                if param.is_out() {
-                    args.push("new AtomicReference<>(null)".to_string());
-                } else if param.java_type == "long" {
-                    args.push("0L".into());
-                } else if param.java_type == "int" {
-                    args.push("0".into());
-                } else {
-                    args.push("null".into());
-                }
-            }
         }
 
         let args_java = args.join(", ");
@@ -3013,7 +3050,7 @@ pub fn process_statement(
                     let cursor_java = crate::expr::get_column_ref_name(cursor_name)
                         .unwrap_or_else(|| crate::expr::expr_to_java(cursor_name, proc));
                     push_logic_line(proc, format!("// for {} in cursor {}", var, cursor_java));
-                    proc.local_vars.remove(&for_stmt.node.variable);
+                    proc.local_vars.insert(for_stmt.node.variable.to_lowercase(), "Map<String, Object>".into());
                     proc.local_var_defaults.remove(&for_stmt.node.variable);
                     proc.imports.insert("import java.util.List;".to_string());
                     proc.imports.insert("import java.util.Map;".to_string());

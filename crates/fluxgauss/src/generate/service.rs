@@ -313,6 +313,10 @@ pub fn write_service_class(
     w.pop_indent();
     w.line("}");
 
+    // Import-completeness safety net: any emission path that produced a
+    // java.* type without registering its import is caught here.
+    w.ensure_imports();
+
     std::fs::create_dir_all(&svc_dir)?;
     let file_path = svc_dir.join(format!("{}.java", class_name));
     w.write_to_file(&file_path, encoding)?;
