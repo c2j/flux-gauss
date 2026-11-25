@@ -1,0 +1,5 @@
+output_dir: out-f
+base_package: com.example.repro
+encoding: utf-8
+sources:
+  - f-mapper-duplicate.sql

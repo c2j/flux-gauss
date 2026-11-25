@@ -1,9 +1,11 @@
-# issue #136 regression fixtures (batch 1: A + G root causes)
+# issue #136 regression fixtures
 
-Minimal repros for the NULL/primitive-default-arg and cross-package arity
-defects fixed in `fix/issue-136-a-g`.
+Minimal repros for the defects fixed across `fix/issue-136-a-g` (batch 1:
+classes A + G) and `fix/issue-136-c-b-f` (batch 2: classes C, B-OUT, F).
 
 ## Layout
+
+Batch 1 (PR #137):
 
 - `a-null-numeric.sql` + `a-caller.sql` + `a.yaml` — case **a** (A-class):
   same-package call `fnc_calc(1)` omits `DEFAULT` params (one `DEFAULT NULL`,
@@ -41,3 +43,38 @@ Expected generated call shapes:
   `Long`→`BigDecimal` assignment.
 - g: `gTargetService.fncWithDefaults("a", "b", "")` — relaxed arity match +
   `DEFAULT ''` padding.
+
+Batch 2:
+
+- `c-atomic.sql` + `c.yaml` — case **c** (C-class): `pkg_c_callee.prc_log`
+  declares 3- and 6-param overloads; the caller passes its own OUT param
+  `p_code` into the 6-param IN slot. Statement-level procedure calls used to
+  resolve only the first-declared overload for arg coercion, so tail args
+  skipped the OUT→IN `.get()` unwrap (`AtomicReference<String>` passed where
+  `String` expected). Now the overload whose arity best fits the call site
+  is selected (exact → smallest ≥ → widest).
+- `b-out-cursor.sql` + `b.yaml` — case **b** (B-OUT): a procedure whose
+  `OUT refcur` param is promoted to a `List` return still emitted
+  `pResult.set(null)` for the exception-branch `p_result := NULL`. Residual
+  reads/writes of the removed variable now degrade to a comment / `null`.
+- `f-mapper-duplicate.sql` + `f.yaml` — case **f** (F-class):
+  `EXECUTE IMMEDIATE v_sql ... USING n` where the template contains a named
+  `:n` bind produced two `@Param("n")` entries (one from `extra_params`, one
+  from SQL-text local-var scanning) and a 3-param mapper vs 2-arg service
+  call. `build_mapper_method` now dedupes bind names across all sources.
+
+```bash
+cd tests/regress/fixtures/issue136
+../../../../target/debug/fluxgauss -c c.yaml -o /tmp/issue136-c
+../../../../target/debug/fluxgauss -c b.yaml -o /tmp/issue136-b
+../../../../target/debug/fluxgauss -c f.yaml -o /tmp/issue136-f
+(cd /tmp/issue136-c && mvn -B -ntp -Duser.language=en clean compile)   # BUILD SUCCESS
+(cd /tmp/issue136-b && mvn -B -ntp -Duser.language=en clean compile)   # BUILD SUCCESS
+(cd /tmp/issue136-f && mvn -B -ntp -Duser.language=en clean compile)   # BUILD SUCCESS
+```
+
+Expected generated shapes:
+
+- c: `cCalleeService.prcLog("proc", "1", "info", "4", String.valueOf(pCode.get()), "")`
+- b: `// p_result := <value> — refcursor OUT param promoted to List return (issue #136)`
+- f: `selectPrcDynamic(@Param("pId") Long pId, @Param("n") Long n)` — single `n`.

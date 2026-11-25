@@ -257,23 +257,29 @@ fn build_mapper_method(
 
     let mut params: Vec<String> = Vec::new();
 
+    // Issue #136-F: a bind name can arrive from multiple sources — proc IN
+    // params, `extra_params` (USING args / concat vars), local-var refs and
+    // package-var refs scanned out of the SQL text (`:n` in a dynamic
+    // template AND `USING n` both yield `n`). Every source must dedupe
+    // against ALL previously emitted names, not just proc params, or the
+    // interface gets a duplicate `@Param("n")` that breaks compilation and
+    // mismatches the service call arity.
+    let mut emitted_param_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+
     for p in &proc.parameters {
         if p.is_out() {
             continue;
         }
         let jn = snake_to_camel(&p.name);
+        emitted_param_names.insert(jn.to_lowercase());
         params.push(format!("@Param(\"{}\") {} {}", jn, p.java_type, jn));
         if let Some(imp) = resolve_import(&p.java_type) {
             imports.insert(imp);
         }
     }
 
-    let param_java_names: std::collections::HashSet<String> =
-        proc.parameters.iter().filter(|p| !p.is_out()).map(|p| snake_to_camel(&p.name).to_lowercase()).collect();
-
     for (java_name, java_type) in &dml.extra_params {
-        let jn_lower = java_name.to_lowercase();
-        if param_java_names.iter().any(|pn| pn == &jn_lower) {
+        if !emitted_param_names.insert(java_name.to_lowercase()) {
             continue;
         }
         params.push(format!("@Param(\"{}\") {} {}", java_name, java_type, java_name));
@@ -283,20 +289,22 @@ fn build_mapper_method(
     }
 
     let local_var_refs =
-        extract_local_var_refs(&dml.sql_text, &proc.local_vars, &param_java_names, &proc.out_local_vars);
-    let mut all_param_names: std::collections::HashSet<String> = param_java_names.clone();
-    for (jn, _) in &local_var_refs {
-        all_param_names.insert(jn.to_lowercase());
-    }
+        extract_local_var_refs(&dml.sql_text, &proc.local_vars, &emitted_param_names, &proc.out_local_vars);
     for (java_name, java_type) in &local_var_refs {
+        if !emitted_param_names.insert(java_name.to_lowercase()) {
+            continue;
+        }
         params.push(format!("@Param(\"{}\") {} {}", java_name, java_type, java_name));
         if let Some(imp) = resolve_import(java_type) {
             imports.insert(imp);
         }
     }
 
-    let pkg_var_refs = extract_package_var_refs(&dml.sql_text, package_vars, &all_param_names);
+    let pkg_var_refs = extract_package_var_refs(&dml.sql_text, package_vars, &emitted_param_names);
     for (java_name, java_type) in &pkg_var_refs {
+        if !emitted_param_names.insert(java_name.to_lowercase()) {
+            continue;
+        }
         params.push(format!("@Param(\"{}\") {} {}", java_name, java_type, java_name));
         if let Some(imp) = resolve_import(java_type) {
             imports.insert(imp);
@@ -2314,5 +2322,36 @@ mod tests {
             "warning must not double the Mapper suffix: {:?}",
             warnings
         );
+    }
+
+    #[test]
+    fn test_issue136f_duplicate_bind_name_emits_single_param() {
+        // `:n` inside a dynamic-SQL template AND `USING n` both resolve to the
+        // same bind name — the mapper interface must emit exactly one
+        // `@Param("n")`, matching the deduped service call arity.
+        let mut proc = make_proc(
+            "prc_dynamic",
+            vec![Parameter {
+                name: "p_id".into(),
+                java_type: "Long".into(),
+                sql_type: "number".into(),
+                mode: Some(ParamMode::In),
+                default_value: None,
+            }],
+            vec![],
+        );
+        proc.local_vars.insert("n".into(), "Long".into());
+        let mut dml = make_dml(DmlType::Select, "selectPrcDynamic", "SELECT 1 FROM dual WHERE 1 = :n");
+        dml.extra_params = vec![("n".to_string(), "Long".to_string())];
+
+        let mut imports = BTreeSet::new();
+        let out = build_mapper_method(&proc, &dml, &mut imports, &HashMap::new());
+        assert_eq!(
+            out.matches("@Param(\"n\")").count(),
+            1,
+            "bind name must be deduped across extra_params and SQL-text refs: {}",
+            out
+        );
+        assert!(out.contains("@Param(\"pId\")"), "proc param kept: {}", out);
     }
 }

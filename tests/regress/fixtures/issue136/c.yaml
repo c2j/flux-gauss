@@ -1,0 +1,5 @@
+output_dir: out-c
+base_package: com.example.repro
+encoding: utf-8
+sources:
+  - c-atomic.sql
