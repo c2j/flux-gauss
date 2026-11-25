@@ -198,6 +198,17 @@ pub fn analyze_procedure(
             proc.param_rowtype_fields.insert(pname.to_lowercase(), fields);
         }
     }
+    // Issue #136 batch-4 F5: snapshot which IN params participate in NULL
+    // semantics BEFORE `body` is detached for statement lowering — the
+    // boxed-signature decision must be identical during expr lowering and
+    // method emission.
+    let null_semantic_params: Vec<String> = proc
+        .parameters
+        .iter()
+        .filter(|p| !p.is_out() && crate::generate::service::param_in_null_semantics(proc, &p.name))
+        .map(|p| p.name.to_lowercase())
+        .collect();
+    proc.null_semantics_params.extend(null_semantic_params);
     let body = proc.body.take();
     let mut result = Ok(());
     if let Some(ref body_inner) = body {

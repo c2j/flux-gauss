@@ -21,26 +21,31 @@ Batch 1 (PR #137):
 
 ## Verification
 
-`fluxgauss.yaml` `sources` paths resolve relative to the **current working
-directory**, so run from this directory and override `output_dir` with `-o`
-(to keep the fixture dir clean):
+Since batch 4 (F7), relative `sources` entries in a yaml resolve against
+the **yaml file's directory**, not the process CWD — the commands below
+work from any directory (`output_dir` still resolves against the CWD, and
+`-o` is ignored when `-c` is used, so run from this directory to keep the
+`out-*` dirs together). Declared sources that are missing, or runs that
+produce zero procedures, now exit non-zero instead of silently emitting a
+skeleton project:
 
 ```bash
 cd tests/regress/fixtures/issue136
 # case a uses schema-qualified standalone functions (REPRO.*) which the
 # validator rejects — pass --skip-validate (same as the original repro).
-../../../../target/debug/fluxgauss -c a.yaml --skip-validate -o /tmp/issue136-a
-../../../../target/debug/fluxgauss -c g.yaml -o /tmp/issue136-g
-(cd /tmp/issue136-a && mvn -B -ntp -Duser.language=en clean compile)   # BUILD SUCCESS
-(cd /tmp/issue136-g && mvn -B -ntp -Duser.language=en clean compile)   # BUILD SUCCESS
+../../../../target/debug/fluxgauss -c a.yaml --skip-validate
+../../../../target/debug/fluxgauss -c g.yaml
+(cd out-a && mvn -B -ntp -Duser.language=en clean compile)   # BUILD SUCCESS
+(cd out-g && mvn -B -ntp -Duser.language=en clean compile)   # BUILD SUCCESS
 ```
 
 Expected generated call shapes:
 
 - a: `this.fncCalc(1, null, 0L)` — `DEFAULT NULL` param stays `null` (boxed
-  `Long`), `DEFAULT 0` params pad `0L` (primitive `long`); `if (true)` for
-  `p_value != NULL`; `BigDecimal.valueOf(this.fncCalc(...))` for the
-  `Long`→`BigDecimal` assignment.
+  `Long`), `DEFAULT 0` params pad `0L` (primitive `long`); batch-4 F5:
+  `p_value != NULL` folds to `if (false)` (SQL UNKNOWN, not constant-true),
+  `NVL(p_value, 3600)` emits `(pValue != null ? pValue : 3600L)` on the
+  boxed `Long` signature, and the generated test passes `null` for `p_b`.
 - g: `gTargetService.fncWithDefaults("a", "b", "")` — relaxed arity match +
   `DEFAULT ''` padding.
 
@@ -65,12 +70,12 @@ Batch 2:
 
 ```bash
 cd tests/regress/fixtures/issue136
-../../../../target/debug/fluxgauss -c c.yaml -o /tmp/issue136-c
-../../../../target/debug/fluxgauss -c b.yaml -o /tmp/issue136-b
-../../../../target/debug/fluxgauss -c f.yaml -o /tmp/issue136-f
-(cd /tmp/issue136-c && mvn -B -ntp -Duser.language=en clean compile)   # BUILD SUCCESS
-(cd /tmp/issue136-b && mvn -B -ntp -Duser.language=en clean compile)   # BUILD SUCCESS
-(cd /tmp/issue136-f && mvn -B -ntp -Duser.language=en clean compile)   # BUILD SUCCESS
+../../../../target/debug/fluxgauss -c c.yaml
+../../../../target/debug/fluxgauss -c b.yaml
+../../../../target/debug/fluxgauss -c f.yaml
+(cd out-c && mvn -B -ntp -Duser.language=en clean compile)   # BUILD SUCCESS
+(cd out-b && mvn -B -ntp -Duser.language=en clean compile)   # BUILD SUCCESS
+(cd out-f && mvn -B -ntp -Duser.language=en clean compile)   # BUILD SUCCESS
 ```
 
 Expected generated shapes:
@@ -102,13 +107,13 @@ Batch 3 (`fix/issue-136-d-e-x`):
 
 ```bash
 cd tests/regress/fixtures/issue136
-../../../../target/debug/fluxgauss -c d.yaml -o /tmp/issue136-d
-../../../../target/debug/fluxgauss -c e.yaml -o /tmp/issue136-e
-../../../../target/debug/fluxgauss -c bxml.yaml -o /tmp/issue136-bxml
-../../../../target/debug/fluxgauss -c bxml-schema.yaml -o /tmp/issue136-bxml-schema
-(cd /tmp/issue136-d && mvn -B -ntp -Duser.language=en clean compile)            # BUILD SUCCESS
-(cd /tmp/issue136-e && mvn -B -ntp -Duser.language=en clean compile)            # BUILD SUCCESS
-(cd /tmp/issue136-bxml && mvn -B -ntp -Duser.language=en clean compile)         # BUILD SUCCESS
+../../../../target/debug/fluxgauss -c d.yaml
+../../../../target/debug/fluxgauss -c e.yaml
+../../../../target/debug/fluxgauss -c bxml.yaml
+../../../../target/debug/fluxgauss -c bxml-schema.yaml
+(cd out-d && mvn -B -ntp -Duser.language=en clean compile)            # BUILD SUCCESS
+(cd out-e && mvn -B -ntp -Duser.language=en clean compile)            # BUILD SUCCESS
+(cd out-bxml && mvn -B -ntp -Duser.language=en clean compile)         # BUILD SUCCESS
 # bxml-schema: skeleton output + "0 packages" WARNING in conversion report
 ```
 

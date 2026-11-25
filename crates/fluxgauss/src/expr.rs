@@ -13,6 +13,23 @@ pub(crate) fn is_nullish_java_expr(expr: &str) -> bool {
     t.ends_with("null") && t.contains("/*") && !t.starts_with('"')
 }
 
+/// SQL three-valued logic: `expr = NULL`, `expr != NULL`, `expr <> NULL`
+/// and ordering comparisons against NULL are UNKNOWN — never TRUE — for
+/// every operand type, primitive or boxed. In IF/WHILE condition context
+/// UNKNOWN behaves as false, so the comparison folds to `false`. A
+/// `/* TOBEFIX */` marker on either operand is preserved so unresolved-name
+/// diagnostics stay visible (issue #136 batch-4 F5).
+fn null_comparison_result(l: &str, r: &str) -> String {
+    for side in [l, r] {
+        if let Some(start) = side.find("/* TOBEFIX") {
+            if let Some(end) = side[start..].find("*/") {
+                return format!("{} false", &side[start..start + end + 2]);
+            }
+        }
+    }
+    "false".to_string()
+}
+
 /// Strip one layer of wrapping parentheses when they enclose the whole
 /// expression (`(null)` -> `null`), ignoring parens inside literals is not
 /// attempted — callers pass generated code where this is rare.
@@ -2533,13 +2550,11 @@ fn binary_op_to_java(
         "->" => format!("this.jsonbGet({}, {})", l, r),
         "->>" => format!("this.jsonbGetText({}, {})", l, r),
         "=" => {
-            // Issue #136-A2: `p = NULL` on a primitive-emitted IN param can
-            // never be true (mirrors the IS NULL fold — the param cannot
-            // hold null, so the comparison is constant-false).
-            if (is_nullish_java_expr(strip_outer_parens(&l)) && is_primitive_emitted_param(&r, proc))
-                || (is_nullish_java_expr(strip_outer_parens(&r)) && is_primitive_emitted_param(&l, proc))
-            {
-                return "false".to_string();
+            // Issue #136 batch-4 F5: `x = NULL` is SQL UNKNOWN for every
+            // operand type — never true. Folds to `false` (IF does not
+            // run), preserving any TOBEFIX marker on the other operand.
+            if is_nullish_java_expr(strip_outer_parens(&l)) || is_nullish_java_expr(strip_outer_parens(&r)) {
+                return null_comparison_result(&l, &r);
             }
             let l_kind = boxed_num_kind(&l, proc);
             let r_kind = boxed_num_kind(&r, proc);
@@ -2576,12 +2591,12 @@ fn binary_op_to_java(
             }
         }
         "!=" | "<>" => {
-            // Issue #136-A2: `p != NULL` / `p <> NULL` on a primitive-emitted
-            // IN param is constant-true (the param cannot be null).
-            if (is_nullish_java_expr(strip_outer_parens(&l)) && is_primitive_emitted_param(&r, proc))
-                || (is_nullish_java_expr(strip_outer_parens(&r)) && is_primitive_emitted_param(&l, proc))
-            {
-                return "true".to_string();
+            // Issue #136 batch-4 F5: `x != NULL` / `x <> NULL` is SQL
+            // UNKNOWN — never true — even when `x` is a primitive that
+            // cannot hold null (batch-1 folded this to `true`, which let
+            // `IF p != NULL` run unconditionally; wrong).
+            if is_nullish_java_expr(strip_outer_parens(&l)) || is_nullish_java_expr(strip_outer_parens(&r)) {
+                return null_comparison_result(&l, &r);
             }
             let l_kind = boxed_num_kind(&l, proc);
             let r_kind = boxed_num_kind(&r, proc);
@@ -2616,7 +2631,8 @@ fn binary_op_to_java(
             let l_null = is_nullish_java_expr(&l);
             let r_null = is_nullish_java_expr(&r);
             if l_null || r_null {
-                return "true".to_string();
+                // Ordering vs SQL NULL is UNKNOWN — never true (F5).
+                return null_comparison_result(&l, &r);
             }
             let l_is_str = looks_string_expr(&l, proc);
             let r_is_str = looks_string_expr(&r, proc);
@@ -3077,7 +3093,7 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             // Optional producers (ARRAY_LENGTH etc.) yield Integer — box a
             // numeric else-branch too or the ternary unboxes to int and
             // downstream ((Number)..) coercions fail to compile.
-            let else_val = if jargs[0].trim().starts_with("java.util.Optional")
+            let mut else_val = if jargs[0].trim().starts_with("java.util.Optional")
                 && else_val.chars().all(|c| c.is_ascii_digit())
                 && !else_val.is_empty()
             {
@@ -3085,6 +3101,20 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             } else {
                 else_val
             };
+            // Issue #136 batch-4 F5: a boxed `Long` arg0 with a bare integer
+            // else literal (`NVL(p_value, 3600)`) must align the literal to
+            // `3600L` — `Long` vs `int` in a ternary is legal but the spec'd
+            // numeric type is Long, and the suffix keeps the else branch
+            // primitive-wide so the arg0 branch only unboxes when non-null.
+            if let Some(vt) = resolve_var_java_type(arg0, proc) {
+                if vt == "Long"
+                    && else_val.chars().all(|c| c.is_ascii_digit())
+                    && !else_val.is_empty()
+                    && !else_val.ends_with(['L', 'l'])
+                {
+                    else_val = format!("{}L", else_val);
+                }
+            }
             format!("({} != null ? {} : {})", arg0, true_val, else_val)
         }
         "UPPER" => format!("String.valueOf({}).toUpperCase()", jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")),
@@ -5680,8 +5710,9 @@ mod tests {
 
     #[test]
     fn test_issue136_primitive_param_null_compare_folds() {
-        // `p_value != NULL` on a primitive-emitted IN param folds to `true`
-        // (`=` folds to `false`); boxed params keep the null-safe comparison.
+        // Issue #136 batch-4 F5: `p != NULL` is SQL UNKNOWN for EVERY
+        // operand — both `=` and `!=` fold to `false` (IF does not run).
+        // Batch-1 folded `!=` to `true`, which was semantically wrong.
         let mut proc = empty_proc();
         proc.parameters.push(param("p_value", "long", None));
         proc.parameters.push(param("p_opt", "Long", Some("null")));
@@ -5690,22 +5721,64 @@ mod tests {
             op: "!=".into(),
             right: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Null)),
         };
-        assert_eq!(expr_to_java(&ne, &proc), "true");
+        assert_eq!(expr_to_java(&ne, &proc), "false");
         let eq = ogsql_parser::ast::Expr::BinaryOp {
             left: Box::new(col_expr(&["p_value"])),
             op: "=".into(),
             right: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Null)),
         };
         assert_eq!(expr_to_java(&eq, &proc), "false");
-        // Boxed (DEFAULT NULL) param: `p_opt != NULL` must NOT fold — it can
-        // genuinely be null, so keep the Objects.equals form.
+        // Boxed param: `p_opt != NULL` is UNKNOWN too — folds to `false`
+        // (SQL semantics), not a Java `pOpt != null` check.
         let boxed_ne = ogsql_parser::ast::Expr::BinaryOp {
             left: Box::new(col_expr(&["p_opt"])),
             op: "!=".into(),
             right: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Null)),
         };
-        let out = expr_to_java(&boxed_ne, &proc);
-        assert!(out.contains("Objects.equals"), "boxed param must keep null-safe compare: {}", out);
+        assert_eq!(expr_to_java(&boxed_ne, &proc), "false");
+        // `IS NOT NULL` is a real null check — unaffected by the fold.
+        let is_not = ogsql_parser::ast::Expr::BinaryOp {
+            left: Box::new(col_expr(&["p_opt"])),
+            op: "IS NOT".into(),
+            right: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Null)),
+        };
+        let out = expr_to_java(&is_not, &proc);
+        assert!(out.contains("!="), "IS NOT NULL must stay a real check: {}", out);
+    }
+
+    #[test]
+    fn test_issue136b4_null_comparison_folds_false_and_keeps_marker() {
+        // Ordering vs NULL is UNKNOWN too; a TOBEFIX operand keeps its
+        // diagnostic marker in the folded result.
+        let mut proc = empty_proc();
+        proc.local_vars.insert("v_x".into(), "Long".into());
+        let gt = ogsql_parser::ast::Expr::BinaryOp {
+            left: Box::new(col_expr(&["v_x"])),
+            op: ">".into(),
+            right: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Null)),
+        };
+        assert_eq!(expr_to_java(&gt, &proc), "false");
+        // Unresolved operand + NULL: marker survives the fold.
+        let ne_tobefix = ogsql_parser::ast::Expr::BinaryOp {
+            left: Box::new(col_expr(&["no_such_var"])),
+            op: "!=".into(),
+            right: Box::new(ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Null)),
+        };
+        let out = expr_to_java(&ne_tobefix, &proc);
+        assert!(out.contains("TOBEFIX") && out.ends_with("false"), "got: {}", out);
+    }
+
+    #[test]
+    fn test_issue136b4_nvl_boxed_long_keeps_null_branch() {
+        // NVL/COALESCE on a boxed Long param keeps the real ternary null
+        // branch (batch-1 emitted `Long.valueOf(p)` which dropped NULL
+        // handling); the integer else literal aligns to `3600L`.
+        let mut proc = empty_proc();
+        proc.parameters.push(param("p_value", "Long", None));
+        proc.sql_text = "v := NVL(p_value, 3600);".into();
+        let expr = fc_expr(&["nvl"], vec![col_expr(&["p_value"]), int_lit(3600)]);
+        let out = expr_to_java(&expr, &proc);
+        assert_eq!(out, "(pValue != null ? pValue : 3600L)");
     }
 
     #[test]

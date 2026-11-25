@@ -25,6 +25,12 @@ pub struct AppConfig {
     /// subscript/indexOf semantics.
     pub composite_type_shims: Option<Vec<CompositeTypeShim>>,
     pub encoding: Option<String>,
+    /// Directory of the yaml file this config was loaded from. Relative
+    /// `sources`/`source_dirs`/`ddl_sources`/`ddl_source_dirs` entries resolve
+    /// against it (issue #136 batch-4 F7); `None` (e.g. MCP JSON configs)
+    /// keeps the historical process-CWD resolution.
+    #[serde(skip)]
+    pub base_dir: Option<std::path::PathBuf>,
 }
 
 /// One entry of `composite_type_shims`: a declared SQL composite/record type
@@ -59,18 +65,39 @@ impl AppConfig {
         self.encoding.clone().unwrap_or_else(|| "utf-8".to_string())
     }
 
-    /// Routine files: `sources` + `source_dirs`, with dir/glob expansion (#120)
+    /// Routine files: `sources` + `source_dirs`, with dir/glob expansion (#120).
+    /// Relative entries resolve against `base_dir` (the yaml file's
+    /// directory) when set, else the process CWD.
     pub fn resolve_source_files(&self) -> Vec<std::path::PathBuf> {
         let mut entries = self.sources.clone().unwrap_or_default();
         entries.extend(self.source_dirs.clone().unwrap_or_default());
-        expand_source_patterns(&entries)
+        expand_source_patterns(&self.resolve_against_base(&entries))
     }
 
     /// DDL-only files: `ddl_sources` + `ddl_source_dirs` (#120)
     pub fn resolve_ddl_files(&self) -> Vec<std::path::PathBuf> {
         let mut entries = self.ddl_sources.clone().unwrap_or_default();
         entries.extend(self.ddl_source_dirs.clone().unwrap_or_default());
-        expand_source_patterns(&entries)
+        expand_source_patterns(&self.resolve_against_base(&entries))
+    }
+
+    /// Rewrite relative entries to `base_dir`-relative paths; absolute
+    /// entries pass through unchanged.
+    fn resolve_against_base(&self, entries: &[String]) -> Vec<String> {
+        match &self.base_dir {
+            Some(base) => entries
+                .iter()
+                .map(|e| {
+                    let p = std::path::Path::new(e.trim());
+                    if p.is_absolute() {
+                        e.clone()
+                    } else {
+                        base.join(p).to_string_lossy().into_owned()
+                    }
+                })
+                .collect(),
+            None => entries.to_vec(),
+        }
     }
 }
 
@@ -354,7 +381,8 @@ fn logger_preset(name: &str) -> ResolvedLogger {
 
 pub fn load_config(path: &std::path::Path) -> Result<AppConfig, Box<dyn std::error::Error>> {
     let content = std::fs::read_to_string(path)?;
-    let config: AppConfig = serde_yaml::from_str(&content)?;
+    let mut config: AppConfig = serde_yaml::from_str(&content)?;
+    config.base_dir = path.parent().map(|p| p.to_path_buf());
     Ok(config)
 }
 
@@ -472,5 +500,27 @@ integration_test:
         let it = config.integration_test.unwrap();
         assert_eq!(it.enabled, Some(true));
         assert_eq!(it.mode.as_deref(), Some("remote"));
+    }
+
+    #[test]
+    fn test_issue136b4_sources_resolve_relative_to_yaml_dir() {
+        // Issue #136 batch-4 F7: relative `sources` entries resolve against
+        // the yaml file's directory (via `base_dir` set by `load_config`),
+        // not the process CWD; absolute entries pass through unchanged.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("sql")).unwrap();
+        std::fs::write(root.join("sql").join("a.sql"), "x").unwrap();
+        let yaml_path = root.join("fluxgauss.yaml");
+        std::fs::write(&yaml_path, "sources:\n  - sql/a.sql\n  - /abs/definitely-missing.sql\n").unwrap();
+        let config = load_config(&yaml_path).unwrap();
+        assert_eq!(config.base_dir.as_deref(), Some(root));
+        let files = config.resolve_source_files();
+        assert!(files.contains(&root.join("sql").join("a.sql")), "got: {:?}", files);
+        assert!(files.contains(&std::path::PathBuf::from("/abs/definitely-missing.sql")));
+        // Without base_dir (MCP JSON path) entries stay CWD-relative.
+        let mut config2: AppConfig = serde_yaml::from_str("sources:\n  - sql/a.sql\n").unwrap();
+        config2.base_dir = None;
+        assert_eq!(config2.resolve_source_files(), vec![std::path::PathBuf::from("sql/a.sql")]);
     }
 }

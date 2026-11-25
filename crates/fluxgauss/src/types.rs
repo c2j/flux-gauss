@@ -243,6 +243,13 @@ pub struct ProcedureInfo {
     // Cursor tracking
     pub open_cursors: HashMap<String, CursorInfo>,
     pub refcursor_out_params: HashSet<String>,
+    /// IN params (lowercased names) used in NULL semantics — `IS [NOT]
+    /// NULL`, `= / != / <> NULL`, or `NVL`/`NVL2`/`COALESCE`/`NANVL` args.
+    /// Populated during analyze (while `body` is still attached) so the
+    /// boxed-signature decision in `in_param_signature_type` stays
+    /// consistent between expression lowering and method emission
+    /// (issue #136 batch-4 F5).
+    pub null_semantics_params: HashSet<String>,
     pub cursor_decls: HashMap<String, String>,
     pub cursor_params: HashMap<String, Vec<String>>,
 
@@ -337,6 +344,7 @@ impl ProcedureInfo {
             scheduler_tasks: Vec::new(),
             open_cursors: HashMap::new(),
             refcursor_out_params: HashSet::new(),
+            null_semantics_params: HashSet::new(),
             cursor_decls: HashMap::new(),
             cursor_params: HashMap::new(),
             custom_types: HashMap::new(),

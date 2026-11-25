@@ -360,28 +360,123 @@ pub(crate) fn boxed_to_primitive(t: &str) -> &str {
 }
 
 /// Java type an IN parameter is declared with in the generated service
-/// signature. `default null` parameters and parameters referenced by
-/// `IS [NOT] NULL` keep the boxed type — the latter act as "argument not
-/// passed" sentinels, which a primitive `long`/`int` cannot represent
-/// (a primitive `0` is indistinguishable from an omitted argument).
+/// signature. `default null` parameters and parameters referenced by any
+/// NULL semantics (`IS [NOT] NULL`, `= / != / <> NULL`, `NVL`/`COALESCE`/
+/// `NVL2`/`NANVL` arguments) keep the boxed type — a primitive `long`/`int`
+/// cannot represent SQL NULL, and folding `p != NULL` to a constant needs
+/// the boxed form to stay honest about the omitted-argument sentinel.
 pub(crate) fn in_param_signature_type<'a>(
     p: &'a crate::types::Parameter,
     proc: &crate::types::ProcedureInfo,
 ) -> &'a str {
     let is_null_default = p.default_value.as_ref().is_some_and(|dv| dv.to_lowercase() == "null");
-    if is_null_default || param_used_in_is_null(proc, &p.name) {
+    if is_null_default || param_in_null_semantics(proc, &p.name) {
         &p.java_type
     } else {
         boxed_to_primitive(&p.java_type)
     }
 }
 
-/// True when `proc`'s body tests `param_name` with `IS [NOT] NULL`. Scans the
-/// raw SQL text; a false positive (e.g. a same-named column) only keeps the
-/// parameter boxed, which is always safe.
-pub(crate) fn param_used_in_is_null(proc: &crate::types::ProcedureInfo, param_name: &str) -> bool {
-    let pat = format!(r"(?i)\b{}\s+IS\s+(?:NOT\s+)?NULL\b", regex::escape(param_name));
-    regex::Regex::new(&pat).is_ok_and(|re| re.is_match(&proc.sql_text))
+/// True when `proc`'s body uses `param_name` in a NULL-semantics context:
+/// `IS [NOT] NULL`, `= NULL` / `!= NULL` / `<> NULL` (either operand order),
+/// or as an argument of `NVL`/`NVL2`/`COALESCE`/`NANVL`. A false positive
+/// (e.g. a same-named column) only keeps the parameter boxed, which is
+/// always safe.
+///
+/// `proc.sql_text` is empty for parser-produced procedures (ogsql-parser
+/// emits `sql_text: ""`), so the authoritative scan walks the serialized
+/// body AST; the raw-text regexes remain as a fast path for callers/tests
+/// that populate `sql_text` directly.
+pub(crate) fn param_in_null_semantics(proc: &crate::types::ProcedureInfo, param_name: &str) -> bool {
+    // Fast path: the analyze-time snapshot. `proc.body` is detached while
+    // statements are lowered, so callers during expression generation must
+    // not depend on re-scanning it.
+    if proc.null_semantics_params.contains(&param_name.to_lowercase()) {
+        return true;
+    }
+    if !proc.sql_text.is_empty() {
+        let n = regex::escape(param_name);
+        let pats = [
+            format!(r"(?i)\b{}\s+IS\s+(?:NOT\s+)?NULL\b", n),
+            format!(r"(?i)\b{}\s*(?:=|!=|<>)\s*NULL\b", n),
+            format!(r"(?i)\bNULL\s*(?:=|!=|<>)\s*{}\b", n),
+            format!(r"(?i)\b(?:NVL2?|COALESCE|NANVL)\s*\([^;]*\b{}\b", n),
+        ];
+        if pats.iter().any(|p| regex::Regex::new(p).is_ok_and(|re| re.is_match(&proc.sql_text))) {
+            return true;
+        }
+    }
+    let Some(body) = &proc.body else {
+        return false;
+    };
+    let Ok(v) = serde_json::to_value(body) else {
+        return false;
+    };
+    ast_null_semantics(&v, param_name)
+}
+
+/// Recursively scan a serialized AST for NULL-semantics uses of `name`.
+fn ast_null_semantics(v: &serde_json::Value, name: &str) -> bool {
+    use serde_json::Value;
+    match v {
+        Value::Object(map) => {
+            for (k, inner) in map {
+                let hit = match k.as_str() {
+                    // `{"IsNull":{"expr":<param>,"negated":..}}`
+                    "IsNull" => inner.get("expr").is_some_and(|e| json_tree_has_ident(e, name)),
+                    // `{"BinaryOp":{"left":..,"op":"!=","right":{"Literal":"Null"}}}`
+                    "BinaryOp" => {
+                        let op = inner.get("op").and_then(Value::as_str).unwrap_or("");
+                        let is_cmp = matches!(op, "=" | "!=" | "<>" | "IS" | "IS NOT");
+                        is_cmp
+                            && ((inner.get("left").is_some_and(|l| json_tree_has_ident(l, name))
+                                && inner.get("right").is_some_and(is_json_null_literal))
+                                || (inner.get("right").is_some_and(|r| json_tree_has_ident(r, name))
+                                    && inner.get("left").is_some_and(is_json_null_literal)))
+                    }
+                    // `{"FunctionCall":{"name":["nvl"],"args":[<param>,..]}}`
+                    "FunctionCall" => {
+                        let fname = inner
+                            .get("name")
+                            .and_then(Value::as_array)
+                            .and_then(|a| a.last())
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_uppercase();
+                        matches!(fname.as_str(), "NVL" | "NVL2" | "COALESCE" | "NANVL")
+                            && inner
+                                .get("args")
+                                .and_then(Value::as_array)
+                                .is_some_and(|args| args.iter().any(|a| json_tree_has_ident(a, name)))
+                    }
+                    _ => false,
+                };
+                if hit {
+                    return true;
+                }
+            }
+            map.values().any(|x| ast_null_semantics(x, name))
+        }
+        Value::Array(a) => a.iter().any(|x| ast_null_semantics(x, name)),
+        _ => false,
+    }
+}
+
+/// True when the JSON subtree contains the identifier `name` as a string
+/// value (AST idents serialize as plain strings, e.g. `"PlVariable":["p_x"]`).
+fn json_tree_has_ident(v: &serde_json::Value, name: &str) -> bool {
+    use serde_json::Value;
+    match v {
+        Value::String(s) => s.eq_ignore_ascii_case(name),
+        Value::Array(a) => a.iter().any(|x| json_tree_has_ident(x, name)),
+        Value::Object(o) => o.values().any(|x| json_tree_has_ident(x, name)),
+        _ => false,
+    }
+}
+
+/// `{"Literal":"Null"}` — the parser's NULL literal serialization.
+fn is_json_null_literal(v: &serde_json::Value) -> bool {
+    matches!(v.get("Literal"), Some(serde_json::Value::String(s)) if s == "Null")
 }
 
 fn default_for_type(t: &str) -> &'static str {
@@ -2211,6 +2306,38 @@ mod tests {
         p2.default_value = Some("null".into());
         proc.sql_text = "x := p_amount + 1;".into();
         assert_eq!(in_param_signature_type(&p2, &proc), "Long");
+    }
+
+    #[test]
+    fn test_issue136b4_null_semantics_params_keep_boxed_signature() {
+        // Issue #136 batch-4 F5: ANY NULL-semantics usage keeps the param
+        // boxed — `= / != / <> NULL` comparisons and NVL-family arguments,
+        // not just `IS [NOT] NULL`.
+        let mut proc = make_proc("null_semantics");
+        let p = Parameter {
+            name: "p_amount".into(),
+            java_type: "Long".into(),
+            sql_type: "number".into(),
+            mode: Some(ParamMode::In),
+            default_value: None,
+        };
+        for body in [
+            "IF p_amount != NULL THEN x := 1; END IF;",
+            "IF p_amount = NULL THEN x := 1; END IF;",
+            "IF NULL <> p_amount THEN x := 1; END IF;",
+            "x := NVL(p_amount, 0);",
+            "x := COALESCE(p_amount, 1, 2);",
+            "x := NVL2(p_amount, 1, 0);",
+        ] {
+            proc.sql_text = body.into();
+            assert_eq!(in_param_signature_type(&p, &proc), "Long", "body: {}", body);
+        }
+        // Plain arithmetic still narrows to primitive.
+        proc.sql_text = "x := p_amount + 1;".into();
+        assert_eq!(in_param_signature_type(&p, &proc), "long");
+        // A different param's NULL usage must not box this one.
+        proc.sql_text = "IF p_other != NULL THEN x := 1; END IF;".into();
+        assert_eq!(in_param_signature_type(&p, &proc), "long");
     }
 
     #[test]

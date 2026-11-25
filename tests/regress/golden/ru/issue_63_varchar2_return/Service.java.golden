@@ -53,7 +53,7 @@ public class Issue63RetService {
     // Source: pkg_issue63_ret.fnc_get_price_num (FUNCTION) — {FIXTURES_ROOT}/issue_63_varchar2_return.sql:65-72
     public Long fncGetPriceNum(String pIId) {
         Long vTotal = 0L;
-        vTotal = (vTotal != null ? vTotal : 0) + 1;
-        return ((Number)((vTotal != null ? vTotal : 0))).longValue();
+        vTotal = (vTotal != null ? vTotal : 0L) + 1;
+        return ((Number)((vTotal != null ? vTotal : 0L))).longValue();
     }
 }
