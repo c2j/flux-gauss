@@ -1,0 +1,12 @@
+{
+  "schema_version": "3:ogsql-0.6.31",
+  "files": {
+    "b-xml.sql": {
+      "hash": "e5118c03878b384ddc755fb9eafbedc223259e769071c4a807397596db6403b2",
+      "packages": [
+        "PKG_XMLDOM"
+      ],
+      "java_package": "com.example.repro.service"
+    }
+  }
+}

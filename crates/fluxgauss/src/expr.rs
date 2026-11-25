@@ -1583,7 +1583,17 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
                 // Java identifier (`base.getOrDefault(...)`). Cross-package
                 // package-var accessors do not exist — degrade to a
                 // compile-safe TOBEFIX marker instead.
-                if base_type.is_empty() {
+                // Before degrading, check the record-field registries and the
+                // shared package-var registry: `pkg_shared.counter` has an
+                // empty base_type (the base is a package qualifier, not a
+                // var) but the FIELD resolves in package_vars — that shape
+                // must keep the legacy getOrDefault form (issue #38).
+                let base_resolvable = !base_type.is_empty()
+                    || proc.rowtype_field_types.contains_key(&snake_base.to_lowercase())
+                    || proc.param_rowtype_fields.contains_key(&snake_base.to_lowercase())
+                    || proc.package_vars.contains_key(&parts[1].to_lowercase())
+                    || proc.package_vars.keys().any(|k| k.eq_ignore_ascii_case(parts[1]));
+                if !base_resolvable {
                     return format!(
                         "/* TOBEFIX: unresolved ref {}.{} - caller={}:{} */ null",
                         flatten_comment(parts[0]),
@@ -6127,5 +6137,42 @@ mod tests {
         let out = expr_to_java(&expr, &proc);
         assert!(out.contains("TOBEFIX"), "got: {}", out);
         assert!(!out.contains("null.get("), "got: {}", out);
+    }
+
+    #[test]
+    fn test_issue136b4_shared_pkg_var_dotted_ref_keeps_getordefault() {
+        // issue_38 shape: `pkg_issue38_shared.global_counter` — the base is a
+        // package qualifier (empty base_type) but the FIELD resolves in the
+        // shared package-var registry. Must keep the legacy getOrDefault
+        // form, not degrade to TOBEFIX (counter would be pinned at 1).
+        let mut proc = empty_proc();
+        proc.package_vars.insert(
+            "global_counter".into(),
+            crate::types::VarInfo {
+                name: "global_counter".into(),
+                java_type: "Integer".into(),
+                sql_type: "INT".into(),
+                default_value: Some("0".into()),
+                is_constant: false,
+            },
+        );
+        let expr = col_expr(&["pkg_issue38_shared", "global_counter"]);
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains("getOrDefault(\"globalCounter\""), "got: {}", out);
+        assert!(!out.contains("TOBEFIX"), "got: {}", out);
+    }
+
+    #[test]
+    fn test_issue136b4_rowtype_base_dotted_ref_keeps_getordefault() {
+        // A record-typed base known only via rowtype_field_types (no
+        // local_vars/parameters entry) is still resolvable — keep the
+        // getOrDefault form instead of TOBEFIX.
+        let mut proc = empty_proc();
+        proc.rowtype_field_types
+            .insert("v_rec".into(), [("f_one".to_string(), "Long".to_string())].into_iter().collect());
+        let expr = col_expr(&["v_rec", "f_one"]);
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains("getOrDefault(\"fOne\""), "got: {}", out);
+        assert!(!out.contains("TOBEFIX"), "got: {}", out);
     }
 }

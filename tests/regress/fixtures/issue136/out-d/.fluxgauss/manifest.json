@@ -1,0 +1,12 @@
+{
+  "schema_version": "3:ogsql-0.6.31",
+  "files": {
+    "d-coercion.sql": {
+      "hash": "182cb6ab8c5e915d851809a247fc54b947ba021fbedcc264df1752bc919da667",
+      "packages": [
+        "PKG_D_COERCION"
+      ],
+      "java_package": "com.example.repro.service"
+    }
+  }
+}

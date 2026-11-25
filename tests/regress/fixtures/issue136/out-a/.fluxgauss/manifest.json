@@ -1,0 +1,19 @@
+{
+  "schema_version": "3:ogsql-0.6.31",
+  "files": {
+    "a-null-numeric.sql": {
+      "hash": "4db6a4b9583f373e128a66087c86a4862aad5ee055858f3a7da483a926a10011",
+      "packages": [
+        "REPRO"
+      ],
+      "java_package": "com.example.repro.service"
+    },
+    "a-caller.sql": {
+      "hash": "447babcc4be128e6e0a27e0afd95f57323372dd598790e28e85e96beb2481ea6",
+      "packages": [
+        "REPRO"
+      ],
+      "java_package": "com.example.repro.service"
+    }
+  }
+}

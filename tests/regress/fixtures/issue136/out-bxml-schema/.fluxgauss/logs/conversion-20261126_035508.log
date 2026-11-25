@@ -1,0 +1,12 @@
+FluxGauss Conversion Log
+Started: 2026-11-26 03:55:08
+Output: out-bxml-schema
+
+[03:55:08] Output: out-bxml-schema
+[03:55:08] Config: bxml-schema.yaml
+[03:55:08] Input: 1 SQL file(s)
+[03:55:08] Validate: 0 error(s), 0 warning(s) across 1 file(s)
+[03:55:08]   ✅ b-xml-schema-prefixed.sql OK
+[03:55:08] Done! 1 packages, 1 procedures, 5 files
+[03:55:08]     Unresolved call: PKG_XMLDOM.getnodevalue -> GETNODEVALUE (args: pNode) [b-xml-schema-prefixed.sql] — TOBEFIX: 函数/名称未解析（定义包不在 sources 或跨包同名冲突），需人工确认
+[03:55:08]     Unresolved call: PKG_XMLDOM.getnodevalue -> GETCHILDNODES (args: pNode) [b-xml-schema-prefixed.sql] — TOBEFIX: 函数/名称未解析（定义包不在 sources 或跨包同名冲突），需人工确认

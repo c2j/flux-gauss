@@ -1,0 +1,10 @@
+FluxGauss Conversion Log
+Started: 2026-11-26 03:55:07
+Output: out-b
+
+[03:55:07] Output: out-b
+[03:55:07] Config: b.yaml
+[03:55:07] Input: 1 SQL file(s)
+[03:55:07] Validate: 0 error(s), 0 warning(s) across 1 file(s)
+[03:55:07]   ✅ b-out-cursor.sql OK
+[03:55:08] Done! 1 packages, 1 procedures, 5 files

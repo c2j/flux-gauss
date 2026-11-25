@@ -1,0 +1,10 @@
+FluxGauss Conversion Log
+Started: 2026-11-26 03:55:07
+Output: out-c
+
+[03:55:07] Output: out-c
+[03:55:07] Config: c.yaml
+[03:55:07] Input: 1 SQL file(s)
+[03:55:07] Validate: 0 error(s), 0 warning(s) across 1 file(s)
+[03:55:07]   ✅ c-atomic.sql OK
+[03:55:07] Done! 2 packages, 3 procedures, 6 files
