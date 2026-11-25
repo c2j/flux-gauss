@@ -619,6 +619,26 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
             _ => {}
         }
     }
+    // Issue #136-D: same String→numeric parse when the source is a CALL whose
+    // return type resolves to String (`this.fncText(...)`, `svc.fncText(...)`).
+    // `(Number)` cannot cast a String — route through String.valueOf like #72.
+    if call_expr_return_type(trimmed, proc).as_deref() == Some("String") {
+        match target_type {
+            Some(t) if t == "Long" || t == "long" => {
+                return format!("Long.parseLong(String.valueOf({}))", trimmed);
+            }
+            Some(t) if t == "Integer" || t == "int" => {
+                return format!("Integer.parseInt(String.valueOf({}))", trimmed);
+            }
+            Some(t) if t == "Double" || t == "double" => {
+                return format!("Double.parseDouble(String.valueOf({}))", trimmed);
+            }
+            Some(t) if t.contains("BigDecimal") => {
+                return format!("new java.math.BigDecimal(String.valueOf({}))", trimmed);
+            }
+            _ => {}
+        }
+    }
     match target_type {
         Some(t) if t.contains("BigDecimal") && trimmed.starts_with('"') => {
             format!("new java.math.BigDecimal({})", trimmed)
@@ -929,7 +949,13 @@ fn coerce_arg_to_type(arg: &str, target_type: &str, proc: &ProcedureInfo) -> Str
         }
     }
 
-    if target_type == "String" && (trimmed.contains(".get(") || infer_arg_type_from_expr(trimmed, proc) == "Object") {
+    // Issue #136-D: numeric args into a String parameter — a bare `1` does not
+    // widen to String; `String.valueOf` preserves the implicit conversion.
+    // `infer_arg_type_from_expr` reports bare digit literals as "long".
+    if target_type == "String"
+        && (trimmed.contains(".get(")
+            || matches!(infer_arg_type_from_expr(trimmed, proc), "Object" | "long" | "BigDecimal"))
+    {
         return format!("String.valueOf({})", trimmed);
     }
 
@@ -2171,6 +2197,22 @@ fn safe_long_value(expr: &str) -> String {
     // Parenthesize the operand: `(Number) a + 1` parses as `((Number) a) + 1`
     // (Number + int is a compile error); the cast must cover the whole expr.
     format!("java.util.Optional.ofNullable((Number) ({})).map(Number::longValue).orElse(0L)", expr)
+}
+
+/// Coerce a numeric-range FOR bound to the loop counter's Java type
+/// (issue #136-E). Record/Map field reads (`.get`/`.getOrDefault`) yield
+/// `Object`, which cannot appear in `counter <= bound` — route them through
+/// the null-safe long extraction. A boxed `Long` counter also rejects a
+/// bare int literal in `for (v = 1; ...)`, so suffix `L`.
+pub(crate) fn coerce_range_for_bound(bound: &str, counter_java_type: &str) -> String {
+    let b = bound.trim();
+    let b = if needs_get_unwrap(b) { safe_long_value(b) } else { b.to_string() };
+    if counter_java_type == "Long" {
+        if let Some(digits) = int_literal_digits(&b) {
+            return format!("{}L", digits);
+        }
+    }
+    b
 }
 
 /// Unwrap an `Optional...orElse(null)` operand produced by array_position /
@@ -3467,6 +3509,17 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             }
         }
         _ => {
+            // Issue #136-E: `t_num_table()` is a collection-type constructor
+            // (`TYPE t IS TABLE OF NUMBER` → `List<Long>`), not a function —
+            // emit an empty typed list instead of the unresolved-fn marker.
+            if jargs.is_empty() {
+                if let Some(ct) = crate::extract::find_custom_type(&proc.custom_types, name) {
+                    if ct.is_collection() {
+                        let elem = ct.elem_java_type.clone().unwrap_or_else(|| "Object".into());
+                        return format!("new java.util.ArrayList<{}>()", elem);
+                    }
+                }
+            }
             let name_parts: Vec<&str> = name.split('.').collect();
             let mut ambig_candidates: Vec<String> = Vec::new();
             let mut ambig_note: Option<Vec<String>> = None;
@@ -3485,10 +3538,24 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                 let pkg_lower = proc.package.to_lowercase();
                 let hint_lower = pkg_hint.to_lowercase().replace("_", "");
                 let pkg_no_prefix = pkg_lower.trim_start_matches("pkg_").replace("_", "");
-                if hint_lower == pkg_lower || hint_lower == pkg_no_prefix || hint_lower.ends_with(&pkg_no_prefix) {
-                    (crate::naming::java_method_name(func_name), true, String::new(), None)
-                } else if ["dbescheduler", "dbmsoutput", "dbmsrandom", "dbmslob", "dbeoutput", "utlfile", "dbmssql", "dbmsjob"].iter().any(|sp| hint_lower.starts_with(sp)) {
+                // Oracle/GaussDB-supplied API packages (DBE_XMLDOM.*, DBMS_*,
+                // UTL_*, ...) are never same-package methods — check BEFORE the
+                // self-call match, whose `ends_with` suffix test would otherwise
+                // claim `dbexmldom` for a package named `pkg_xmldom` (issue #136).
+                // The underscore-anchored prefixes keep user packages like
+                // `DBEMP` safe; the explicit list keeps covering underscore-free
+                // spellings (DBMSOUTPUT, UTLFILE, ...).
+                let hint_upper = pkg_hint.to_uppercase();
+                let is_builtin_pkg = ["DBE_", "DBMS_", "UTL_", "CTX_", "ORD_", "APEX_", "WWV_", "DBS_"]
+                    .iter()
+                    .any(|p| hint_upper.starts_with(p))
+                    || ["dbescheduler", "dbmsoutput", "dbmsrandom", "dbmslob", "dbeoutput", "utlfile", "dbmssql", "dbmsjob", "dbexmldom"]
+                        .iter()
+                        .any(|sp| hint_lower.starts_with(sp));
+                if is_builtin_pkg {
                     (crate::naming::java_method_name(func_name), false, String::new(), None)
+                } else if hint_lower == pkg_lower || hint_lower == pkg_no_prefix || hint_lower.ends_with(&pkg_no_prefix) {
+                    (crate::naming::java_method_name(func_name), true, String::new(), None)
                 } else {
                     let method_name = crate::naming::java_method_name(func_name);
                     // Qualified calls (pkg.func / schema.pkg.func) must resolve against the
@@ -5705,5 +5772,91 @@ mod tests {
         assert_eq!(call, "this.fncCalc(1)");
         let out = coerce_for_type(&call, Some("java.math.BigDecimal"), &proc);
         assert_eq!(out, "java.math.BigDecimal.valueOf(this.fncCalc(1))");
+    }
+
+    #[test]
+    fn test_issue136e_collection_type_constructor_emits_typed_list() {
+        // `v_nums := t_num_table()` — `TYPE t_num_table IS TABLE OF NUMBER`
+        // is a collection constructor, not a function: emit a typed list.
+        let mut proc = empty_proc();
+        proc.custom_types.insert(
+            "t_num_table".into(),
+            crate::types::CustomTypeInfo {
+                fields: Vec::new(),
+                field_sql_types: Vec::new(),
+                is_record: false,
+                elem_java_type: Some("Long".into()),
+            },
+        );
+        let out = expr_to_java(&fc_expr(&["t_num_table"], Vec::new()), &proc);
+        assert_eq!(out, "new java.util.ArrayList<Long>()");
+        // Record types are NOT collection constructors — unchanged path.
+        proc.custom_types.insert(
+            "t_item".into(),
+            crate::types::CustomTypeInfo {
+                fields: vec![("item_count".into(), "Long".into())],
+                field_sql_types: Vec::new(),
+                is_record: true,
+                elem_java_type: None,
+            },
+        );
+        let rec = expr_to_java(&fc_expr(&["t_item"], Vec::new()), &proc);
+        assert!(rec.contains("TOBEFIX"), "record ctor must stay unresolved: {}", rec);
+    }
+
+    #[test]
+    fn test_issue136e_builtin_xml_package_call_is_tobefix() {
+        // `DBE_XMLDOM.GETCHILDNODES(p_node)` inside PKG_XMLDOM: the builtin
+        // prefix must win over the self-call `ends_with` suffix match —
+        // `this.getchildnodes` does not exist and would not compile.
+        let mut proc = empty_proc();
+        proc.package = "pkg_xmldom".into();
+        let expr = fc_expr(&["DBE_XMLDOM", "GETCHILDNODES"], vec![col_expr(&["p_node"])]);
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains("TOBEFIX"), "got: {}", out);
+        assert!(out.trim_end().ends_with("null"), "got: {}", out);
+        assert!(!out.contains("this.getchildnodes"), "must not emit phantom self-call: {}", out);
+    }
+
+    #[test]
+    fn test_issue136d_string_call_return_to_long_parses() {
+        // `v_count := fnc_text('1')` — fncText returns String; `(Number)` cast
+        // cannot compile, route through Long.parseLong(String.valueOf(..)).
+        let mut proc = empty_proc();
+        proc.package_proc_params.insert("fncText".into(), vec![vec![param("p_value", "String", None)]]);
+        proc.package_proc_returns.insert("fncText".into(), vec![Some("String".into())]);
+        let call = expr_to_java(
+            &fc_expr(
+                &["fnc_text"],
+                vec![ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String("1".into()))],
+            ),
+            &proc,
+        );
+        assert_eq!(call, "this.fncText(\"1\")");
+        let out = coerce_for_type(&call, Some("Long"), &proc);
+        assert_eq!(out, "Long.parseLong(String.valueOf(this.fncText(\"1\")))");
+    }
+
+    #[test]
+    fn test_issue136d_numeric_arg_into_string_param_wraps() {
+        // `fnc_text(1)` — a bare int literal cannot widen to String; the
+        // implicit conversion becomes String.valueOf(1).
+        assert_eq!(coerce_arg_to_type("1", "String", &empty_proc()), "String.valueOf(1)");
+        let mut proc = empty_proc();
+        proc.package_proc_params.insert("fncText".into(), vec![vec![param("p_value", "String", None)]]);
+        proc.package_proc_returns.insert("fncText".into(), vec![Some("String".into())]);
+        let out = expr_to_java(&fc_expr(&["fnc_text"], vec![int_lit(1)]), &proc);
+        assert_eq!(out, "this.fncText(String.valueOf(1))");
+    }
+
+    #[test]
+    fn test_issue136e_range_for_bound_coercion() {
+        // `FOR v_i IN 1 .. v_item.item_count` with `Long v_i`: the record-field
+        // read yields Object (null-safe long) and the literal needs an L.
+        assert_eq!(coerce_range_for_bound("1", "Long"), "1L");
+        assert_eq!(coerce_range_for_bound("10", "int"), "10");
+        let bound = coerce_range_for_bound("vItem.getOrDefault(\"itemCount\", vItem.get(\"item_count\"))", "Long");
+        assert!(bound.contains("orElse(0L)"), "got: {}", bound);
+        assert!(bound.contains("(Number)"), "got: {}", bound);
     }
 }

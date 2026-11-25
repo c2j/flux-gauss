@@ -1,0 +1,5 @@
+output_dir: out-d
+base_package: com.example.repro
+encoding: utf-8
+sources:
+  - d-coercion.sql

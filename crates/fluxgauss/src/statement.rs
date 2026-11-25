@@ -2907,6 +2907,13 @@ pub fn process_statement(
                         proc.local_vars.insert(var_lower.clone(), "int".into());
                         proc.range_loop_counters.insert(var_lower.clone());
                     }
+                    // Issue #136-E: bounds must be numeric for `counter <= bound`
+                    // and the counter assignment — record/Map reads yield Object
+                    // (null-safe long extraction) and a boxed Long counter rejects
+                    // a bare int literal (`for (vI = 1; ...)`).
+                    let counter_ty = proc.local_vars.get(&var_lower).cloned().unwrap_or_else(|| "int".into());
+                    let lo_bound = crate::expr::coerce_range_for_bound(&lo_safe, &counter_ty);
+                    let hi_bound = crate::expr::coerce_range_for_bound(&hi_safe, &counter_ty);
                     // Nested same-name counter: the enclosing loop's `int i`
                     // is still in scope — reuse it (no `int`) and bracket the
                     // inner loop with save/restore so the outer counter keeps
@@ -2930,14 +2937,20 @@ pub fn process_statement(
                     let header = if reuse_header {
                         // Reuse the enclosing/method-level declaration; no `int` in the init.
                         if *reverse {
-                            format!("for ({} = {}; {} >= {}; {}--) {{", iter_var, hi_safe, iter_var, lo_safe, iter_var)
+                            format!(
+                                "for ({} = {}; {} >= {}; {}--) {{",
+                                iter_var, hi_bound, iter_var, lo_bound, iter_var
+                            )
                         } else {
-                            format!("for ({} = {}; {} <= {}; {}) {{", iter_var, lo_safe, iter_var, hi_safe, step_code)
+                            format!("for ({} = {}; {} <= {}; {}) {{", iter_var, lo_bound, iter_var, hi_bound, step_code)
                         }
                     } else if *reverse {
-                        format!("for (int {} = {}; {} >= {}; {}--) {{", iter_var, hi_safe, iter_var, lo_safe, iter_var)
+                        format!(
+                            "for (int {} = {}; {} >= {}; {}--) {{",
+                            iter_var, hi_bound, iter_var, lo_bound, iter_var
+                        )
                     } else {
-                        format!("for (int {} = {}; {} <= {}; {}) {{", iter_var, lo_safe, iter_var, hi_safe, step_code)
+                        format!("for (int {} = {}; {} <= {}; {}) {{", iter_var, lo_bound, iter_var, hi_bound, step_code)
                     };
                     push_logic_line(proc, header);
                 }

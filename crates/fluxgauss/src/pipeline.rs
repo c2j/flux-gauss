@@ -458,6 +458,7 @@ fn phase1_parse(sql_files: &[PathBuf], config: &AppConfig, incremental: &mut Inc
     let mut skipped = Vec::new();
     let mut errors = Vec::new();
     let mut package_origins: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut total_statements_parsed = 0usize;
     let total = sql_files.len();
 
     for (idx, sql_file) in sql_files.iter().enumerate() {
@@ -466,6 +467,7 @@ fn phase1_parse(sql_files: &[PathBuf], config: &AppConfig, incremental: &mut Inc
         if incremental.is_cached(sql_file) {
             if let Some(ast_json) = incremental.load_cached_ast(sql_file) {
                 if let Ok(parse_output) = serde_json::from_str::<ogsql_parser::parser::ParseOutput>(&ast_json) {
+                    total_statements_parsed += parse_output.statements.len();
                     track_package_origins(&parse_output, &mut package_origins);
                     let result = crate::extract::extract_from_parse_output(
                         &parse_output,
@@ -519,6 +521,7 @@ fn phase1_parse(sql_files: &[PathBuf], config: &AppConfig, incremental: &mut Inc
         };
 
         let stmts_with_info = ogsql_parser::Parser::with_source(tokens, content).parse_with_text();
+        total_statements_parsed += stmts_with_info.len();
         let parse_output =
             ogsql_parser::parser::ParseOutput { statements: stmts_with_info, errors: Vec::new(), comments: Vec::new() };
         track_package_origins(&parse_output, &mut package_origins);
@@ -558,7 +561,7 @@ fn phase1_parse(sql_files: &[PathBuf], config: &AppConfig, incremental: &mut Inc
     let summaries = packages.iter().map(PackageSummary::from_package).collect();
     let _ = incremental.save_manifest();
 
-    let warnings = package_origins
+    let mut warnings: Vec<String> = package_origins
         .into_iter()
         .filter_map(|(registration_name, qualified_names)| {
             (qualified_names.len() > 1).then(|| {
@@ -570,6 +573,17 @@ fn phase1_parse(sql_files: &[PathBuf], config: &AppConfig, incremental: &mut Inc
             })
         })
         .collect();
+
+    // Issue #136: input that parses into statements but yields zero packages
+    // must not exit silently with a skeleton-only output (e.g. schema-qualified
+    // `END schema.pkg;` defeated the package-body parser). Surface a WARNING.
+    if packages.is_empty() && total_statements_parsed > 0 {
+        warnings.push(format!(
+            "WARNING: parsed {} statement(s) from {} SQL file(s) but extracted 0 packages / 0 procedures — output is a skeleton only. Common cause: parser-unsupported syntax (e.g. schema-qualified END <schema>.<pkg>;); see issue #136.",
+            total_statements_parsed,
+            sql_files.len(),
+        ));
+    }
 
     ParsedPackages { packages, summaries, warnings, skipped, errors, filter_dropped: Vec::new() }
 }
@@ -1090,5 +1104,28 @@ mod tests {
         assert_eq!(shim_field_java_type("numeric[]"), "java.util.List<java.math.BigDecimal>");
         assert_eq!(shim_field_java_type("varchar2"), "String");
         assert_eq!(shim_field_java_type("java.util.List<Long>"), "java.util.List<Long>");
+    }
+
+    /// Issue #136: SQL that parses into statements but extracts zero packages
+    /// (e.g. `END schema.pkg;` defeats the package-body parser) must surface a
+    /// WARNING instead of silently emitting a skeleton-only project.
+    #[test]
+    fn zero_package_extraction_emits_warning() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sql_path = tmp.path().join("b-xml.sql");
+        std::fs::write(
+            &sql_path,
+            "CREATE OR REPLACE PACKAGE REPRO.PKG_XMLDOM AS\n  FUNCTION f(p_node IN DBE_XMLDOM.DOMNODE) RETURN VARCHAR2;\nEND REPRO.PKG_XMLDOM;\n/\nCREATE OR REPLACE PACKAGE BODY REPRO.PKG_XMLDOM AS\n  FUNCTION f(p_node IN DBE_XMLDOM.DOMNODE) RETURN VARCHAR2 IS\n  BEGIN\n    RETURN NULL;\n  END f;\nEND REPRO.PKG_XMLDOM;\n/\n",
+        )
+        .unwrap();
+        let mut incremental = IncrementalState::new(tmp.path().join("out"), false);
+        incremental.initialize().unwrap();
+        let parsed = phase1_parse(&[sql_path], &AppConfig::default(), &mut incremental);
+        assert!(parsed.packages.is_empty(), "schema-qualified END must still drop the body (parser bug)");
+        assert!(
+            parsed.warnings.iter().any(|w| w.contains("0 packages")),
+            "expected silent-drop WARNING, got: {:?}",
+            parsed.warnings
+        );
     }
 }

@@ -1,0 +1,5 @@
+output_dir: out-e
+base_package: com.example.repro
+encoding: utf-8
+sources:
+  - e-collection.sql
