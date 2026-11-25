@@ -172,7 +172,7 @@ jobs:
 
   build-ogsql-macos-arm64:
     name: Build ogsql macos-arm64
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout ogsql-parser
         uses: actions/checkout@v4
@@ -353,7 +353,7 @@ jobs:
 
   build-fluxgauss-macos-arm64:
     name: Build fluxgauss macos-arm64
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout flux-gauss
         uses: actions/checkout@v4
@@ -577,7 +577,7 @@ jobs:
 
   build-fluxgauss-py-macos-arm64:
     name: Build fluxgauss-py macos-arm64
-    runs-on: macos-14
+    runs-on: macos-15
     needs: [build-ogsql-macos-arm64]
     steps:
       - name: Checkout flux-gauss
