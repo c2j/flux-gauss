@@ -1106,11 +1106,11 @@ mod tests {
         assert_eq!(shim_field_java_type("java.util.List<Long>"), "java.util.List<Long>");
     }
 
-    /// Issue #136: SQL that parses into statements but extracts zero packages
-    /// (e.g. `END schema.pkg;` defeats the package-body parser) must surface a
-    /// WARNING instead of silently emitting a skeleton-only project.
+    /// Issue #136: schema-qualified `END schema.pkg;` used to defeat the
+    /// package-body parser (spec swallowed the body → 0 packages, silent).
+    /// ogsql-parser v0.11.1 fixed the parser; the package must now extract.
     #[test]
-    fn zero_package_extraction_emits_warning() {
+    fn schema_qualified_end_name_extracts_package() {
         let tmp = tempfile::tempdir().unwrap();
         let sql_path = tmp.path().join("b-xml.sql");
         std::fs::write(
@@ -1121,7 +1121,22 @@ mod tests {
         let mut incremental = IncrementalState::new(tmp.path().join("out"), false);
         incremental.initialize().unwrap();
         let parsed = phase1_parse(&[sql_path], &AppConfig::default(), &mut incremental);
-        assert!(parsed.packages.is_empty(), "schema-qualified END must still drop the body (parser bug)");
+        assert_eq!(parsed.packages.len(), 1, "schema-qualified END must extract the package: {:?}", parsed.warnings);
+        assert!(parsed.warnings.iter().all(|w| !w.contains("0 packages")));
+    }
+
+    /// Issue #136: input that parses into statements but extracts zero
+    /// packages must surface a WARNING instead of silently emitting a
+    /// skeleton-only project.
+    #[test]
+    fn zero_package_extraction_emits_warning() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sql_path = tmp.path().join("select_only.sql");
+        std::fs::write(&sql_path, "SELECT 1 FROM dual;\n").unwrap();
+        let mut incremental = IncrementalState::new(tmp.path().join("out"), false);
+        incremental.initialize().unwrap();
+        let parsed = phase1_parse(&[sql_path], &AppConfig::default(), &mut incremental);
+        assert!(parsed.packages.is_empty());
         assert!(
             parsed.warnings.iter().any(|w| w.contains("0 packages")),
             "expected silent-drop WARNING, got: {:?}",

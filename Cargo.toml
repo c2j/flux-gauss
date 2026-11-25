@@ -7,7 +7,7 @@ version = "0.6.30"
 edition = "2021"
 
 [workspace.dependencies]
-ogsql-parser = { git = "https://github.com/c2j/ogsql-parser.git", tag = "v0.11.0" }
+ogsql-parser = { git = "https://github.com/c2j/ogsql-parser.git", tag = "v0.11.1" }
 codeweb = { git = "https://github.com/c2j/codeweb.git", tag = "v0.9.11", default-features = false, features = ["analyze"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
