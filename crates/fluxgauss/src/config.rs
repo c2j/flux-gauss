@@ -82,23 +82,64 @@ impl AppConfig {
     }
 
     /// Rewrite relative entries to `base_dir`-relative paths; absolute
-    /// entries pass through unchanged.
+    /// entries pass through unchanged. When the yaml-dir-joined path does
+    /// not exist but the entry does resolve relative to the process CWD
+    /// (legacy repo-root-relative configs such as demo-project/*.yaml),
+    /// the CWD-relative form wins — yaml-dir resolution stays preferred.
     fn resolve_against_base(&self, entries: &[String]) -> Vec<String> {
         match &self.base_dir {
-            Some(base) => entries
-                .iter()
-                .map(|e| {
-                    let p = std::path::Path::new(e.trim());
-                    if p.is_absolute() {
-                        e.clone()
-                    } else {
-                        base.join(p).to_string_lossy().into_owned()
-                    }
-                })
-                .collect(),
+            Some(base) => {
+                let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                entries.iter().map(|e| resolve_source_entry(base, e, &cwd)).collect()
+            }
             None => entries.to_vec(),
         }
     }
+}
+
+/// Resolve one relative source entry: prefer `base`-relative (the yaml
+/// file's directory); fall back to the CWD-relative form when the joined
+/// path does not exist but the entry does under `cwd` (legacy
+/// repo-root-relative configs). Absolute entries pass through; entries
+/// missing under both keep the base-joined form so the missing-source
+/// error reports the yaml-dir interpretation.
+fn resolve_source_entry(base: &std::path::Path, entry: &str, cwd: &std::path::Path) -> String {
+    let p = std::path::Path::new(entry.trim());
+    if p.is_absolute() {
+        return entry.to_string();
+    }
+    let joined = base.join(p);
+    if path_or_glob_anchor_exists(&joined, cwd) || !path_or_glob_anchor_exists(p, cwd) {
+        joined.to_string_lossy().into_owned()
+    } else {
+        entry.to_string()
+    }
+}
+
+/// Existence check for a source entry resolved against `cwd`: plain paths
+/// use `exists`; glob patterns check their literal anchor directory (the
+/// portion before the first wildcard segment), mirroring `expand_glob`.
+fn path_or_glob_anchor_exists(path: &std::path::Path, cwd: &std::path::Path) -> bool {
+    let s = path.to_string_lossy();
+    let has_glob = s.contains('*') || s.contains('?') || s.contains('[');
+    let probe = if path.is_absolute() { path.to_path_buf() } else { cwd.join(path) };
+    if !has_glob {
+        return probe.exists();
+    }
+    let mut anchor = if s.starts_with('/') { std::path::PathBuf::from("/") } else { std::path::PathBuf::new() };
+    for seg in s.split('/') {
+        if seg.contains('*') || seg.contains('?') || seg.contains('[') {
+            break;
+        }
+        if !seg.is_empty() {
+            anchor.push(seg);
+        }
+    }
+    if anchor.as_os_str().is_empty() {
+        anchor.push(".");
+    }
+    let anchor = if anchor.is_absolute() { anchor } else { cwd.join(anchor) };
+    anchor.exists()
 }
 
 /// Expand source entries: plain files pass through, directories contribute
@@ -522,5 +563,37 @@ integration_test:
         let mut config2: AppConfig = serde_yaml::from_str("sources:\n  - sql/a.sql\n").unwrap();
         config2.base_dir = None;
         assert_eq!(config2.resolve_source_files(), vec![std::path::PathBuf::from("sql/a.sql")]);
+    }
+
+    #[test]
+    fn test_repo_root_relative_entries_fall_back_to_cwd() {
+        // demo-project/*.yaml keeps repo-root-relative entries
+        // (`demo-project/sql/...`, `lib/...`). CI invokes
+        // `fluxgauss --config demo-project/fluxgauss_ru.yaml` from the repo
+        // root: the yaml-dir join misses and the CWD-relative form must
+        // win (PR #142 CI regression guard).
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path();
+        // Layout: repo/demo-project/yaml dir + repo/demo-project/sql file.
+        let yaml_dir = repo.join("demo-project");
+        std::fs::create_dir_all(yaml_dir.join("sql")).unwrap();
+        std::fs::write(yaml_dir.join("sql").join("local.sql"), "x").unwrap();
+        std::fs::write(repo.join("demo-project").join("tables.sql"), "x").unwrap();
+
+        // yaml-dir-relative entry wins when it exists under the yaml dir.
+        assert_eq!(
+            resolve_source_entry(&yaml_dir, "sql/local.sql", repo),
+            yaml_dir.join("sql").join("local.sql").to_string_lossy().into_owned()
+        );
+        // repo-root-relative entry (`demo-project/tables.sql`) misses under
+        // the yaml dir but resolves under the CWD → kept CWD-relative.
+        assert_eq!(resolve_source_entry(&yaml_dir, "demo-project/tables.sql", repo), "demo-project/tables.sql");
+        // Missing under both → base-joined form kept for the error message.
+        assert_eq!(
+            resolve_source_entry(&yaml_dir, "nope/missing.sql", repo),
+            yaml_dir.join("nope").join("missing.sql").to_string_lossy().into_owned()
+        );
+        // Absolute entries pass through untouched.
+        assert_eq!(resolve_source_entry(&yaml_dir, "/abs/x.sql", repo), "/abs/x.sql");
     }
 }
