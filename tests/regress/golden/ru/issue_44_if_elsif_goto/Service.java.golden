@@ -26,9 +26,9 @@ public class Issue44BugsService {
         String vName = null;
         String vSql = null;
         vSql = "SELECT order_id, order_name FROM t_issue44_orders WHERE 1=1";
-        { Object _val = issue44BugsMapper.selectTIssue44Orders(pStatus, pDate); if (_val != null) vCount = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }
+        { Object _val = issue44BugsMapper.selectTIssue44Orders(pStatus,  pDate); if (_val != null) vCount = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }
         if (vCount > 0) {
-            vName = String.valueOf(issue44BugsMapper.selectTIssue44Orders_1(pStatus, pDate));
+            vName = String.valueOf(issue44BugsMapper.selectTIssue44Orders_1(pStatus,  pDate));
             pResult.set(String.valueOf(vName));
         } else {
             if (java.util.Objects.equals(pStatus, "ACTIVE")) {
@@ -56,7 +56,7 @@ public class Issue44BugsService {
             vSql = String.valueOf(vSql).concat(String.valueOf(" AND status = 'CLOSED'"));
         }
         if (pFilter != null) {
-            { Object _strResult = issue44BugsMapper.selectTIssue44Orders_2(pFilter, pMode); if (_strResult != null) { /* concatenated string assigned to Integer var */ } }
+            { Object _strResult = issue44BugsMapper.selectTIssue44Orders_2(pFilter,  pMode); if (_strResult != null) { /* concatenated string assigned to Integer var */ } }
             pResult.set(String.valueOf(String.valueOf("FILTERED: ").concat(String.valueOf(String.valueOf(vCount)))));
         } else {
             pResult.set("ALL_MODE");
@@ -72,7 +72,7 @@ public class Issue44BugsService {
             vSql = String.valueOf(vSql).concat(String.valueOf(" GROUP BY status"));
         } else {
         }
-        { Object _val = issue44BugsMapper.selectTIssue44Orders_3(pType, pSubType); if (_val != null) vAmount = (java.math.BigDecimal) _val; }
+        { Object _val = issue44BugsMapper.selectTIssue44Orders_3(pType,  pSubType); if (_val != null) vAmount = (java.math.BigDecimal) _val; }
         if (vAmount.compareTo(java.math.BigDecimal.valueOf(0)) > 0) {
             pResult.set(String.valueOf(String.valueOf("AMOUNT: ").concat(String.valueOf(String.valueOf(vAmount)))));
         } else if (java.util.Objects.equals(pType, "SUMMARY")) {

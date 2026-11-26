@@ -23,8 +23,8 @@ public class Issue48CompareService {
     // Source: pkg_issue48_compare.proc_check_pro_id (PROCEDURE) — {FIXTURES_ROOT}/issue_48_long_compareto_string.sql:51-75
     public void procCheckProId(long pProId, AtomicReference<String> pResult) {
         Integer vCount = 0;
-        Long vProId = 0L;
-        vProId = ((Number)(pProId)).longValue();
+        Long vProId = ((Number)(0L)).longValue();
+        vProId = Long.valueOf(pProId);
         if (java.util.Objects.equals(vProId, "9999")) {
             pResult.set("MATCH_9999");
         } else if (java.util.Objects.equals(vProId, "350")) {

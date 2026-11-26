@@ -27,7 +27,7 @@ public class Issue61ExcService {
         try {
             if (java.util.Objects.equals(pIMarketType, "A")) {
                 try {
-                    pOMarketPrice.set(new java.math.BigDecimal(String.valueOf(issue61ExcMapper.selectTIssue61Bond(pISecurityId, pIMarketType))));
+                    pOMarketPrice.set(new java.math.BigDecimal(String.valueOf(issue61ExcMapper.selectTIssue61Bond(pISecurityId,  pIMarketType))));
                 } catch (Exception __e1) {
                     __SQLERRM__ = __e1.getMessage();
                     __SQLCODE__ = -1;
@@ -35,7 +35,7 @@ public class Issue61ExcService {
                 }
             } else if (java.util.Objects.equals(pIMarketType, "B")) {
                 try {
-                    pOMarketPrice.set(new java.math.BigDecimal(String.valueOf(issue61ExcMapper.selectTIssue61Bond_1(pISecurityId, pIMarketType))));
+                    pOMarketPrice.set(new java.math.BigDecimal(String.valueOf(issue61ExcMapper.selectTIssue61Bond_1(pISecurityId,  pIMarketType))));
                 } catch (Exception __e2) {
                     __SQLERRM__ = __e2.getMessage();
                     __SQLCODE__ = -1;
@@ -43,7 +43,7 @@ public class Issue61ExcService {
                 }
             } else {
                 try {
-                    pOMarketPrice.set(new java.math.BigDecimal(String.valueOf(issue61ExcMapper.selectTIssue61Bond_2(pISecurityId, pIMarketType))));
+                    pOMarketPrice.set(new java.math.BigDecimal(String.valueOf(issue61ExcMapper.selectTIssue61Bond_2(pISecurityId,  pIMarketType))));
                 } catch (Exception __e3) {
                     __SQLERRM__ = __e3.getMessage();
                     __SQLCODE__ = -1;

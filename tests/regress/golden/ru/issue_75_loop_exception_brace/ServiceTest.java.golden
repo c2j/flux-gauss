@@ -29,9 +29,9 @@ class Issue75ServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procNestedBlockBodyFails_success() {
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
-        { var m = new java.util.HashMap<String,Object>(); m.put("v", 1L); when(issue75Mapper.selectProcNestedBlockBodyFails()).thenReturn(m); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("v", 1L); when(issue75Mapper.selectProcLoopExcHandler()).thenReturn(m); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("v", 1L); when(issue75Mapper.selectProcLoopExcHandler_1()).thenReturn(m); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("v", 1L); when(issue75Mapper.selectProcNestedBlockBodyFails()).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("v", 1L); when(issue75Mapper.selectProcLoopExcHandler()).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("v", 1L); when(issue75Mapper.selectProcLoopExcHandler_1()).thenReturn(java.util.List.of(m)); }
         service.procNestedBlockBodyFails(pResultRef);
     }
 
@@ -39,9 +39,9 @@ class Issue75ServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procLoopExcHandler_success() {
         AtomicReference<String> pResultRef = new AtomicReference<>(null);
-        { var m = new java.util.HashMap<String,Object>(); m.put("v", 1L); when(issue75Mapper.selectProcNestedBlockBodyFails()).thenReturn(m); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("v", 1L); when(issue75Mapper.selectProcLoopExcHandler()).thenReturn(m); }
-        { var m = new java.util.HashMap<String,Object>(); m.put("v", 1L); when(issue75Mapper.selectProcLoopExcHandler_1()).thenReturn(m); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("v", 1L); when(issue75Mapper.selectProcNestedBlockBodyFails()).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("v", 1L); when(issue75Mapper.selectProcLoopExcHandler()).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("v", 1L); when(issue75Mapper.selectProcLoopExcHandler_1()).thenReturn(java.util.List.of(m)); }
         service.procLoopExcHandler(pResultRef);
     }
 }

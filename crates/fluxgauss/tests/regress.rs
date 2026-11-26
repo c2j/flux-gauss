@@ -325,7 +325,7 @@ fn issue_108_cross_pkg_call_arg_and_out_handling() {
     // (already used by the same-package call path), `0.10` becomes
     // `Long.parseLong(String.valueOf(0.10))` (existing Object-fallback branch).
     assert!(
-        caller.contains("fnCalcBonus(12000, Long.parseLong(String.valueOf(0.10)), 2)"),
+        caller.contains("fnCalcBonus(Long.valueOf(12000), Long.parseLong(String.valueOf(0.10)), Long.valueOf(2))"),
         "B1: numeric literal args to cross-pkg calls must be coerced to the callee's declared \
          param type (bare `0.10` cannot implicitly narrow to `long`):\n{}",
         caller

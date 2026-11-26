@@ -345,6 +345,7 @@ mod tests {
             procedures: vec![ProcedureInfo::new("pkg_test.do_thing".into(), "pkg_test".into(), "do_thing".into())],
             table_refs: Default::default(),
             package_vars: Default::default(),
+            externally_shared_vars: Default::default(),
             source_file: "test.sql".into(),
             source_files: Vec::new(),
             comments: vec![],

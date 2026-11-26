@@ -22,7 +22,7 @@ public class Issue44NestedExcService {
     public void procNestedExceptionBlocks() {
         String vConfig = null;
         Integer vCount = 0;
-        String vDate = new java.text.SimpleDateFormat("yyyyMMdd").format(new java.sql.Timestamp(System.currentTimeMillis()));
+        String vDate = String.valueOf(new java.text.SimpleDateFormat("yyyyMMdd").format(new java.sql.Timestamp(System.currentTimeMillis())));
         String vFlag = null;
         String vFlag2 = null;
         String vMsg = null;

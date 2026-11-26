@@ -822,6 +822,7 @@ fn build_package_info(
         procedures,
         table_refs,
         package_vars,
+        externally_shared_vars: std::collections::HashSet::new(),
         source_file: source_file.into(),
         source_files: vec![source_file.into()],
         comments: Vec::new(),

@@ -30,26 +30,26 @@ public class CollTypesService {
     @Transactional
     public void prcCollectionDemo(String pMode) {
         java.math.BigDecimal vAmt = java.math.BigDecimal.ZERO;
-        Long vCnt = 0L;
+        Long vCnt = ((Number)(0L)).longValue();
         java.sql.Date vD = null;
         Long vI = 1L;
         java.util.List<Long> vNums = new java.util.ArrayList<>();
         java.util.List<Map<String, Object>> vRectab = new java.util.ArrayList<>();
         vCnt = ((vI) >= 1 && (vI) <= (vNums).size() ? vNums.get((int)(long)(vI) - 1) : null);
-        vCnt = ((Number)(((java.util.List<?>) vNums).size())).longValue();
+        vCnt = Long.valueOf(((java.util.List<?>) vNums).size());
         if (((1) >= 1 && (1) <= (vNums).size())) {
             vNums.remove((int)(long)(1) - 1);
         }
         for (int _ext = 0; _ext < (int)(long)(2); _ext++) { vNums.add(null); }
         for (int _trim = 0; _trim < (int)(long)(1) && !vNums.isEmpty(); _trim++) { vNums.remove(vNums.size() - 1); }
         while (vNums.size() < (int)(long)(vI)) { vNums.add(null); }
-        vNums.set((int)(long)(vI) - 1, ((Number)(vCnt)).longValue());
+        vNums.set((int)(long)(vI) - 1, Long.valueOf(vCnt));
         vCnt = (((vI) + 1) <= (vNums).size() ? java.lang.Long.valueOf((vI) + 1) : null);
         vAmt = (vAmt).negate();
         vRectab = collTypesMapper.selectEmp(pMode);
         vD = java.sql.Date.valueOf(new java.sql.Date((new java.sql.Timestamp(System.currentTimeMillis())).getTime()).toLocalDate().plusMonths(Long.parseLong(String.valueOf(1))));
         vD = java.sql.Date.valueOf(new java.sql.Date((vD).getTime()).toLocalDate().withDayOfMonth(new java.sql.Date((vD).getTime()).toLocalDate().lengthOfMonth()));
-        collTypesMapper.updateCfgTable(pMode, vCnt);
+        collTypesMapper.updateCfgTable(pMode,  vCnt);
     }
 
     // Source: pkg_coll_types.prc_collection_index_demo (PROCEDURE) — {FIXTURES_ROOT}/issue_124_collections.sql:40-50
@@ -60,7 +60,7 @@ public class CollTypesService {
         java.util.List<Map<String, Object>> vRectab = new java.util.ArrayList<>();
         final int _collIdx1 = (int)(long)(vI + 1);
         while (vNums.size() < _collIdx1) { vNums.add(null); }
-        vNums.set(_collIdx1 - 1, ((Number)(vCnt)).longValue());
+        vNums.set(_collIdx1 - 1, Long.valueOf(vCnt));
         ((java.util.Map<String, Object>) vRectab.get((int)(long)(vI) - 1)).put("itemId", vCnt);
         ((java.util.Map<String, Object>) vRectab.get((int)(long)(vI) - 1)).put("itemName", "demo");
         vCnt = ((vI + 1) >= 1 && (vI + 1) <= (vNums).size() ? vNums.get((int)(long)(vI + 1) - 1) : null);
