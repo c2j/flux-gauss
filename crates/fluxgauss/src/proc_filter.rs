@@ -367,6 +367,7 @@ mod tests {
             procedures: procs,
             table_refs: HashSet::new(),
             package_vars: HashMap::new(),
+            externally_shared_vars: Default::default(),
             source_file: source_file.to_string(),
             source_files: vec![source_file.to_string()],
             comments: Vec::new(),

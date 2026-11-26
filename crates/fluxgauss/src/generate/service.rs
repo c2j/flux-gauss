@@ -138,13 +138,24 @@ pub fn write_service_class(
     sorted_pkg_vars.sort_by_key(|(k, _)| *k);
     for (var_name, var_info) in sorted_pkg_vars {
         let field_name = crate::naming::java_safe_identifier(&crate::naming::snake_to_camel(var_name));
-        let is_readonly = var_info.is_constant || !written_package_vars.contains(var_name.as_str());
+        // Issue #136: vars accessed from other packages via `<pkg>Service.<var>`
+        // must be visible AND writable outside this class — emit `public
+        // static` (never `final`) for exactly those, marked by
+        // mark_externally_shared_vars during analysis. Non-final is required
+        // because the same access shape serves cross-package writes.
+        let externally_shared = pkg.externally_shared_vars.contains(var_name);
+        // `final` is dropped only for non-constant externally-shared vars:
+        // constant vars never receive emitted writes (they degrade to a
+        // comment), so `public static final` stays correct for reads.
+        let is_readonly =
+            var_info.is_constant || (!written_package_vars.contains(var_name.as_str()) && !externally_shared);
         let default_val = var_info.default_value.as_deref().unwrap_or_else(|| default_for_type(&var_info.java_type));
-        let coerced_default = coerce_default_value(&var_info.java_type, default_val);
+        let coerced_default = coerce_default_value(&var_info.java_type, default_val, None);
+        let vis = if externally_shared { "public" } else { "private" };
         if is_readonly {
-            w.line(&format!("private static final {} {} = {};", var_info.java_type, field_name, coerced_default));
+            w.line(&format!("{} static final {} {} = {};", vis, var_info.java_type, field_name, coerced_default));
         } else {
-            w.line(&format!("private static {} {} = {};", var_info.java_type, field_name, coerced_default));
+            w.line(&format!("{} static {} {} = {};", vis, var_info.java_type, field_name, coerced_default));
         }
         if var_info.java_type == "BigDecimal" {
             all_imports.insert("import java.math.BigDecimal;".to_string());
@@ -313,6 +324,10 @@ pub fn write_service_class(
     w.pop_indent();
     w.line("}");
 
+    // Import-completeness safety net: any emission path that produced a
+    // java.* type without registering its import is caught here.
+    w.ensure_imports();
+
     std::fs::create_dir_all(&svc_dir)?;
     let file_path = svc_dir.join(format!("{}.java", class_name));
     w.write_to_file(&file_path, encoding)?;
@@ -360,28 +375,123 @@ pub(crate) fn boxed_to_primitive(t: &str) -> &str {
 }
 
 /// Java type an IN parameter is declared with in the generated service
-/// signature. `default null` parameters and parameters referenced by
-/// `IS [NOT] NULL` keep the boxed type — the latter act as "argument not
-/// passed" sentinels, which a primitive `long`/`int` cannot represent
-/// (a primitive `0` is indistinguishable from an omitted argument).
+/// signature. `default null` parameters and parameters referenced by any
+/// NULL semantics (`IS [NOT] NULL`, `= / != / <> NULL`, `NVL`/`COALESCE`/
+/// `NVL2`/`NANVL` arguments) keep the boxed type — a primitive `long`/`int`
+/// cannot represent SQL NULL, and folding `p != NULL` to a constant needs
+/// the boxed form to stay honest about the omitted-argument sentinel.
 pub(crate) fn in_param_signature_type<'a>(
     p: &'a crate::types::Parameter,
     proc: &crate::types::ProcedureInfo,
 ) -> &'a str {
     let is_null_default = p.default_value.as_ref().is_some_and(|dv| dv.to_lowercase() == "null");
-    if is_null_default || param_used_in_is_null(proc, &p.name) {
+    if is_null_default || param_in_null_semantics(proc, &p.name) {
         &p.java_type
     } else {
         boxed_to_primitive(&p.java_type)
     }
 }
 
-/// True when `proc`'s body tests `param_name` with `IS [NOT] NULL`. Scans the
-/// raw SQL text; a false positive (e.g. a same-named column) only keeps the
-/// parameter boxed, which is always safe.
-pub(crate) fn param_used_in_is_null(proc: &crate::types::ProcedureInfo, param_name: &str) -> bool {
-    let pat = format!(r"(?i)\b{}\s+IS\s+(?:NOT\s+)?NULL\b", regex::escape(param_name));
-    regex::Regex::new(&pat).is_ok_and(|re| re.is_match(&proc.sql_text))
+/// True when `proc`'s body uses `param_name` in a NULL-semantics context:
+/// `IS [NOT] NULL`, `= NULL` / `!= NULL` / `<> NULL` (either operand order),
+/// or as an argument of `NVL`/`NVL2`/`COALESCE`/`NANVL`. A false positive
+/// (e.g. a same-named column) only keeps the parameter boxed, which is
+/// always safe.
+///
+/// `proc.sql_text` is empty for parser-produced procedures (ogsql-parser
+/// emits `sql_text: ""`), so the authoritative scan walks the serialized
+/// body AST; the raw-text regexes remain as a fast path for callers/tests
+/// that populate `sql_text` directly.
+pub(crate) fn param_in_null_semantics(proc: &crate::types::ProcedureInfo, param_name: &str) -> bool {
+    // Fast path: the analyze-time snapshot. `proc.body` is detached while
+    // statements are lowered, so callers during expression generation must
+    // not depend on re-scanning it.
+    if proc.null_semantics_params.contains(&param_name.to_lowercase()) {
+        return true;
+    }
+    if !proc.sql_text.is_empty() {
+        let n = regex::escape(param_name);
+        let pats = [
+            format!(r"(?i)\b{}\s+IS\s+(?:NOT\s+)?NULL\b", n),
+            format!(r"(?i)\b{}\s*(?:=|!=|<>)\s*NULL\b", n),
+            format!(r"(?i)\bNULL\s*(?:=|!=|<>)\s*{}\b", n),
+            format!(r"(?i)\b(?:NVL2?|COALESCE|NANVL)\s*\([^;]*\b{}\b", n),
+        ];
+        if pats.iter().any(|p| regex::Regex::new(p).is_ok_and(|re| re.is_match(&proc.sql_text))) {
+            return true;
+        }
+    }
+    let Some(body) = &proc.body else {
+        return false;
+    };
+    let Ok(v) = serde_json::to_value(body) else {
+        return false;
+    };
+    ast_null_semantics(&v, param_name)
+}
+
+/// Recursively scan a serialized AST for NULL-semantics uses of `name`.
+fn ast_null_semantics(v: &serde_json::Value, name: &str) -> bool {
+    use serde_json::Value;
+    match v {
+        Value::Object(map) => {
+            for (k, inner) in map {
+                let hit = match k.as_str() {
+                    // `{"IsNull":{"expr":<param>,"negated":..}}`
+                    "IsNull" => inner.get("expr").is_some_and(|e| json_tree_has_ident(e, name)),
+                    // `{"BinaryOp":{"left":..,"op":"!=","right":{"Literal":"Null"}}}`
+                    "BinaryOp" => {
+                        let op = inner.get("op").and_then(Value::as_str).unwrap_or("");
+                        let is_cmp = matches!(op, "=" | "!=" | "<>" | "IS" | "IS NOT");
+                        is_cmp
+                            && ((inner.get("left").is_some_and(|l| json_tree_has_ident(l, name))
+                                && inner.get("right").is_some_and(is_json_null_literal))
+                                || (inner.get("right").is_some_and(|r| json_tree_has_ident(r, name))
+                                    && inner.get("left").is_some_and(is_json_null_literal)))
+                    }
+                    // `{"FunctionCall":{"name":["nvl"],"args":[<param>,..]}}`
+                    "FunctionCall" => {
+                        let fname = inner
+                            .get("name")
+                            .and_then(Value::as_array)
+                            .and_then(|a| a.last())
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_uppercase();
+                        matches!(fname.as_str(), "NVL" | "NVL2" | "COALESCE" | "NANVL")
+                            && inner
+                                .get("args")
+                                .and_then(Value::as_array)
+                                .is_some_and(|args| args.iter().any(|a| json_tree_has_ident(a, name)))
+                    }
+                    _ => false,
+                };
+                if hit {
+                    return true;
+                }
+            }
+            map.values().any(|x| ast_null_semantics(x, name))
+        }
+        Value::Array(a) => a.iter().any(|x| ast_null_semantics(x, name)),
+        _ => false,
+    }
+}
+
+/// True when the JSON subtree contains the identifier `name` as a string
+/// value (AST idents serialize as plain strings, e.g. `"PlVariable":["p_x"]`).
+fn json_tree_has_ident(v: &serde_json::Value, name: &str) -> bool {
+    use serde_json::Value;
+    match v {
+        Value::String(s) => s.eq_ignore_ascii_case(name),
+        Value::Array(a) => a.iter().any(|x| json_tree_has_ident(x, name)),
+        Value::Object(o) => o.values().any(|x| json_tree_has_ident(x, name)),
+        _ => false,
+    }
+}
+
+/// `{"Literal":"Null"}` — the parser's NULL literal serialization.
+fn is_json_null_literal(v: &serde_json::Value) -> bool {
+    matches!(v.get("Literal"), Some(serde_json::Value::String(s)) if s == "Null")
 }
 
 fn default_for_type(t: &str) -> &'static str {
@@ -563,9 +673,24 @@ fn dead_code_guard(lines: &mut [String]) {
     }
 }
 
-fn coerce_default_value(java_type: &str, default_val: &str) -> String {
+fn coerce_default_value(java_type: &str, default_val: &str, proc: Option<&crate::types::ProcedureInfo>) -> String {
     let trimmed = default_val.trim();
     let tl = java_type.to_lowercase();
+    if tl.contains("byte[") || tl.contains("byte []") {
+        // `byte[] x = 0` / `= /* TOBEFIX */ 0` do not compile — empty_blob()
+        // and friends degrade to an empty array (or null) instead.
+        if trimmed == "null" {
+            return "null".to_string();
+        }
+        if trimmed.starts_with('"') {
+            return format!("{}.getBytes(java.nio.charset.StandardCharsets.UTF_8)", trimmed);
+        }
+        if trimmed.chars().all(|c| c.is_ascii_digit()) || trimmed.contains("TOBEFIX") || trimmed.is_empty() {
+            return "new byte[0]".to_string();
+        }
+        // Complex exprs (vars, calls) pass through — assume already byte[].
+        return default_val.to_string();
+    }
     if tl.contains("list") || tl.contains("array") {
         if trimmed.starts_with('"') {
             return "new java.util.ArrayList<>()".to_string();
@@ -597,6 +722,16 @@ fn coerce_default_value(java_type: &str, default_val: &str) -> String {
             let inner = &trimmed[1..trimmed.len() - 1];
             if inner.parse::<i64>().is_ok() || inner.parse::<f64>().is_ok() {
                 return format!("java.math.BigDecimal.valueOf({})", crate::expr::java_int_lit(inner));
+            }
+        }
+        if trimmed.starts_with('"') {
+            return format!("new java.math.BigDecimal({})", trimmed);
+        }
+        // Complex exprs (vars, calls) — `BigDecimal v = pLongParam` does not
+        // compile; delegate to the coercion matrix (valueOf(long) etc.).
+        if let Some(p) = proc {
+            if trimmed.chars().any(|c| c.is_ascii_alphabetic() || c == '_') || trimmed.contains('(') {
+                return crate::expr::coerce_for_type(default_val, Some(java_type), p);
             }
         }
         return default_val.to_string();
@@ -638,6 +773,17 @@ fn coerce_default_value(java_type: &str, default_val: &str) -> String {
     }
     if tl.contains("float") && trimmed.parse::<f64>().is_ok() && !trimmed.ends_with('f') && !trimmed.ends_with('F') {
         return format!("{}f", trimmed);
+    }
+    // Complex exprs (vars, calls, arithmetic, quoted numerics) need the full
+    // type-directed coercion matrix — the literal branches above only cover
+    // constants.
+    if let Some(p) = proc {
+        if trimmed.contains('(')
+            || trimmed.starts_with('"')
+            || trimmed.chars().any(|c| c.is_ascii_alphabetic() || c == '_')
+        {
+            return crate::expr::coerce_for_type(default_val, Some(java_type), p);
+        }
     }
     default_val.to_string()
 }
@@ -790,6 +936,31 @@ fn build_service_method(
         ret_type = "List<Object>".to_string();
     }
 
+    // Object-typed locals that the declaration pass below promotes to
+    // List/Map (collection usage in generated logic). Collected up-front so
+    // a post-pass can coerce bare assignments (`v = expr;`) that were
+    // emitted while the var still typed as Object.
+    let mut promoted_var_types: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for (var_name, var_type) in &proc.local_vars {
+        if var_type != "Object" {
+            continue;
+        }
+        let var_java = snake_to_camel(var_name);
+        let used_as_map = proc.java_logic_lines.iter().any(|l| {
+            l.contains(&format!("((java.util.Map<String, Object>) {}).put(", var_java))
+                || l.contains(&format!("{}.getOrDefault(", var_java))
+                || l.contains(&format!("{}.put(", var_java))
+                || l.contains(&format!("{}.get(\"", var_java))
+        });
+        let used_as_list =
+            proc.java_logic_lines.iter().any(|l| l.contains(&format!("((java.util.List<?>) {})", var_java)));
+        if used_as_map {
+            promoted_var_types.insert(var_java, "java.util.Map<String, Object>".to_string());
+        } else if used_as_list {
+            promoted_var_types.insert(var_java, "java.util.List<Object>".to_string());
+        }
+    }
+
     if should_stub_procedure(proc, object_pkg_var_names) {
         body_lines
             .push("// TODO: Auto-generated stub — complex PL/pgSQL pattern requires manual implementation".to_string());
@@ -847,7 +1018,7 @@ fn build_service_method(
                         .get(&var_name.to_lowercase())
                         .cloned()
                         .unwrap_or_else(|| default_for_type(var_type).to_string());
-                    let coerced = coerce_default_value(var_type, &default_val);
+                    let coerced = coerce_default_value(var_type, &default_val, Some(proc));
                     let is_object_used_as_map = var_type == "Object"
                         && proc.java_logic_lines.iter().any(|l| {
                             l.contains(&format!("((java.util.Map<String, Object>) {}).put(", var_java))
@@ -939,6 +1110,27 @@ fn build_service_method(
                 if !body_lines.contains(&decl) {
                     body_lines.push(decl);
                 }
+            }
+        }
+        // Cursors declared but never materialized into open_cursors (e.g. an
+        // OPEN that degraded to a comment) are still referenced by `%ISOPEN`
+        // checks (`cursor != null`) — declare them as null Objects so javac
+        // resolves the symbol.
+        let mut declared_cursor_javas: std::collections::HashSet<String> = proc.open_cursors.keys().cloned().collect();
+        // Sort for deterministic declaration order — HashMap iteration order
+        // varies between runs (two-pass generation must be byte-identical).
+        let mut cursor_decl_keys: Vec<&String> = proc.cursor_decls.keys().collect();
+        cursor_decl_keys.sort();
+        for cursor_raw in cursor_decl_keys {
+            let camel = crate::naming::snake_to_camel(cursor_raw);
+            if !declared_cursor_javas.insert(camel.clone()) {
+                continue;
+            }
+            let is_param_name = proc.parameters.iter().any(|p| crate::naming::snake_to_camel(&p.name) == camel);
+            let is_local_var = proc.local_vars.keys().any(|k| crate::naming::snake_to_camel(k) == camel)
+                || proc.out_local_vars.contains_key(&cursor_raw.to_lowercase());
+            if !is_param_name && !is_local_var {
+                body_lines.push(format!("Object {} = null;", camel));
             }
         }
 
@@ -1103,6 +1295,239 @@ fn build_service_method(
         let formatted = format_comment_for_java(c);
         if !formatted.is_empty() {
             body_lines.insert(0, formatted);
+        }
+    }
+    // Post-pass: vars promoted Object→List/Map above may have bare
+    // `var = rhs;` assignments emitted while they still typed as Object
+    // (e.g. `v = this.concatNumlist(...)`, `v = /* TOBEFIX */ 0`). Route them
+    // through a compile-safe cast — `(T)(Object) rhs` type-checks for any
+    // reference RHS and preserves the TOBEFIX marker.
+    if !promoted_var_types.is_empty() {
+        for (var_java, ty) in &promoted_var_types {
+            let re = regex::Regex::new(&format!(r"(^|[\s;{{(]){} = ([^;]+);", regex::escape(var_java))).unwrap();
+            for line in body_lines.iter_mut() {
+                if line.trim_start().starts_with("//") {
+                    continue;
+                }
+                *line = re
+                    .replace_all(line, |caps: &regex::Captures| {
+                        let rhs = caps[2].trim();
+                        let already_typed = rhs == "null"
+                            || rhs.contains("ArrayList")
+                            || rhs.contains("HashMap")
+                            || rhs.contains("new java.util")
+                            || rhs.contains("AtomicReference")
+                            || rhs.contains("(Object)")
+                            || rhs.contains("List<")
+                            || rhs.contains("Map<")
+                            || rhs.contains("Collections.");
+                        if already_typed {
+                            format!("{}{} = {};", &caps[1], var_java, rhs)
+                        } else {
+                            format!("{}{} = (({}) (Object) {});", &caps[1], var_java, ty, rhs)
+                        }
+                    })
+                    .to_string();
+            }
+        }
+    }
+    // Return-type alignment: when the signature was promoted to
+    // `Map<String, Object>` but a `return <ident>;` was emitted while the
+    // statement-level heuristic still saw `Object` (map access appears later
+    // in the body), the bare identifier needs an explicit cast.
+    if ret_type == "Map<String, Object>" {
+        let mut obj_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for p in &proc.parameters {
+            if p.java_type == "Object" {
+                obj_names.insert(snake_to_camel(&p.name));
+            }
+        }
+        for (k, v) in &proc.local_vars {
+            if v == "Object" {
+                obj_names.insert(snake_to_camel(k));
+            }
+        }
+        for (k, v) in &promoted_var_types {
+            if v.contains("Map<String, Object>") {
+                obj_names.remove(&snake_to_camel(k));
+            }
+        }
+        if !obj_names.is_empty() {
+            let ret_ident_re = regex::Regex::new(r"^(\s*)return ([A-Za-z_]\w*);\s*$").unwrap();
+            for line in body_lines.iter_mut() {
+                if let Some(caps) = ret_ident_re.captures(line) {
+                    if obj_names.contains(caps.get(2).map(|m| m.as_str()).unwrap_or("")) {
+                        *line = format!("{}return ((Map<String, Object>) (Object) {});", &caps[1], &caps[2]);
+                    }
+                }
+            }
+        }
+    }
+    // Compile-safety net: bare identifier args to mapper calls that resolve
+    // to no declared name (e.g. record-field accesses like `p.node_name`
+    // flattened to `nodeName` inside dynamic SQL concat vars) would be
+    // cannot-find-symbol javac errors — degrade them to `null`.
+    {
+        let mut declared: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for p in &proc.parameters {
+            declared.insert(snake_to_camel(&p.name));
+        }
+        for k in proc.local_vars.keys() {
+            declared.insert(snake_to_camel(k));
+        }
+        for k in proc.out_local_vars.keys() {
+            declared.insert(snake_to_camel(k));
+        }
+        for k in proc.package_vars.keys() {
+            declared.insert(snake_to_camel(k));
+        }
+        for ci in proc.open_cursors.values() {
+            if let Some(rv) = &ci.result_var {
+                declared.insert(rv.clone());
+            }
+            if let Some(iv) = &ci.index_var {
+                declared.insert(iv.clone());
+            }
+        }
+        for kw in ["null", "true", "false", "this", "super"] {
+            declared.insert(kw.to_string());
+        }
+        // Name → java type for degraded args: `null` does not compile against
+        // primitive mapper params (`int i`), so out-of-scope/undeclared args
+        // degrade to a type-correct literal instead.
+        let mut ident_types: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        for p in &proc.parameters {
+            ident_types.insert(snake_to_camel(&p.name), p.java_type.clone());
+        }
+        for (k, v) in &proc.local_vars {
+            ident_types.insert(snake_to_camel(k), v.clone());
+        }
+        for (k, v) in &proc.out_local_vars {
+            ident_types.insert(snake_to_camel(k), format!("AtomicReference<{}>", v));
+        }
+        for (k, v) in &proc.package_vars {
+            ident_types.insert(snake_to_camel(k), v.java_type.clone());
+        }
+        for d in &proc.dml_statements {
+            for (n, t) in &d.extra_params {
+                ident_types.entry(snake_to_camel(n)).or_insert_with(|| t.clone());
+            }
+        }
+        let default_for_ident = |name: &str| -> &'static str {
+            match ident_types.get(name).map(|s| s.as_str()) {
+                Some("int") | Some("Integer") => "0",
+                Some("short") | Some("Short") => "(short) 0",
+                Some("long") | Some("Long") => "0L",
+                Some("byte") | Some("Byte") => "(byte) 0",
+                Some("float") | Some("Float") => "0f",
+                Some("double") | Some("Double") => "0.0",
+                Some("boolean") | Some("Boolean") => "false",
+                Some(t) if t.contains("BigDecimal") => "java.math.BigDecimal.ZERO",
+                _ => "null",
+            }
+        };
+        // Per-line in-scope for-loop variables (`for (int n = ...`,
+        // `for (Map<..> i : ...`). A loop var is only visible inside its
+        // body — tracking scope by brace depth keeps `mapper.x(n)` inside
+        // the loop intact while degrading out-of-scope uses to `null`.
+        // Only type-declared loop vars (`for (int n = ...`, `for (Map<..> m : ...`)
+        // are truly scoped to the loop body; `for (i = 0; ...)` reuses an outer
+        // variable and must not be treated as scoped.
+        let for_var_re = regex::Regex::new(r"for\s*\(\s*[\w<>\[\],.? ]+?\s(\w+)\s*[:=]").unwrap();
+        let strip_literals = |s: &str| -> String {
+            let mut out = String::with_capacity(s.len());
+            let mut chars = s.chars();
+            while let Some(c) = chars.next() {
+                if c == '"' || c == '\'' {
+                    let quote = c;
+                    while let Some(c2) = chars.next() {
+                        if c2 == '\\' {
+                            chars.next();
+                        } else if c2 == quote {
+                            break;
+                        }
+                    }
+                } else {
+                    out.push(c);
+                }
+            }
+            out
+        };
+        let mut depth = 0i32;
+        let mut for_stack: Vec<(String, i32)> = Vec::new();
+        let mut for_var_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut line_for_vars: Vec<std::collections::HashSet<String>> = Vec::with_capacity(body_lines.len());
+        for line in body_lines.iter() {
+            for_stack.retain(|(_, d)| *d <= depth);
+            let mut live = std::collections::HashSet::new();
+            for (v, _) in &for_stack {
+                live.insert(v.clone());
+            }
+            line_for_vars.push(live);
+            let stripped = strip_literals(line);
+            let opens = stripped.matches('{').count() as i32;
+            let closes = stripped.matches('}').count() as i32;
+            depth += opens - closes;
+            if line.contains("for") {
+                if let Some(caps) = for_var_re.captures(line) {
+                    for_var_names.insert(caps[1].to_string());
+                    // Body depth: when the `{` opening the loop body is on this
+                    // same line, `depth` already counts it; otherwise the body
+                    // sits one level deeper.
+                    let body_depth = if stripped.contains('{') { depth } else { depth + 1 };
+                    for_stack.push((caps[1].to_string(), body_depth));
+                }
+            }
+            for_stack.retain(|(_, d)| *d <= depth);
+        }
+        let arg_re =
+            regex::Regex::new(&format!(r"\b{}\.(\w+)\(((?:[^()]|\([^()]*\))*)\)", regex::escape(mapper_name))).unwrap();
+        let bare_ident = regex::Regex::new(r"^[A-Za-z_]\w*$").unwrap();
+        for (li, line) in body_lines.iter_mut().enumerate() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            let in_scope = &line_for_vars[li];
+            *line = arg_re
+                .replace_all(line, |caps: &regex::Captures| {
+                    let args = &caps[2];
+                    if args.trim().is_empty() {
+                        return format!("{}.{}({})", mapper_name, &caps[1], args);
+                    }
+                    // Split on top-level commas only.
+                    let mut parts: Vec<&str> = Vec::new();
+                    let mut depth = 0i32;
+                    let mut last = 0usize;
+                    for (i, c) in args.char_indices() {
+                        match c {
+                            '(' => depth += 1,
+                            ')' => depth -= 1,
+                            ',' if depth == 0 => {
+                                parts.push(&args[last..i]);
+                                last = i + 1;
+                            }
+                            _ => {}
+                        }
+                    }
+                    parts.push(&args[last..]);
+                    let fixed: Vec<String> = parts
+                        .iter()
+                        .map(|a| {
+                            let t = a.trim();
+                            // A for-loop variable outside its body is not a
+                            // valid reference even when `local_vars` lists it —
+                            // its Java scope ended with the loop.
+                            let ok = in_scope.contains(t) || (declared.contains(t) && !for_var_names.contains(t));
+                            if bare_ident.is_match(t) && !ok {
+                                default_for_ident(t).to_string()
+                            } else {
+                                a.to_string()
+                            }
+                        })
+                        .collect();
+                    format!("{}.{}({})", mapper_name, &caps[1], fixed.join(", "))
+                })
+                .to_string();
         }
     }
     dead_code_guard(&mut body_lines);
@@ -1793,6 +2218,7 @@ mod tests {
             procedures: procs,
             table_refs: Default::default(),
             package_vars: Default::default(),
+            externally_shared_vars: Default::default(),
             source_file: String::new(),
             source_files: Vec::new(),
             comments: Vec::new(),
@@ -2214,6 +2640,38 @@ mod tests {
     }
 
     #[test]
+    fn test_issue136b4_null_semantics_params_keep_boxed_signature() {
+        // Issue #136 batch-4 F5: ANY NULL-semantics usage keeps the param
+        // boxed — `= / != / <> NULL` comparisons and NVL-family arguments,
+        // not just `IS [NOT] NULL`.
+        let mut proc = make_proc("null_semantics");
+        let p = Parameter {
+            name: "p_amount".into(),
+            java_type: "Long".into(),
+            sql_type: "number".into(),
+            mode: Some(ParamMode::In),
+            default_value: None,
+        };
+        for body in [
+            "IF p_amount != NULL THEN x := 1; END IF;",
+            "IF p_amount = NULL THEN x := 1; END IF;",
+            "IF NULL <> p_amount THEN x := 1; END IF;",
+            "x := NVL(p_amount, 0);",
+            "x := COALESCE(p_amount, 1, 2);",
+            "x := NVL2(p_amount, 1, 0);",
+        ] {
+            proc.sql_text = body.into();
+            assert_eq!(in_param_signature_type(&p, &proc), "Long", "body: {}", body);
+        }
+        // Plain arithmetic still narrows to primitive.
+        proc.sql_text = "x := p_amount + 1;".into();
+        assert_eq!(in_param_signature_type(&p, &proc), "long");
+        // A different param's NULL usage must not box this one.
+        proc.sql_text = "IF p_other != NULL THEN x := 1; END IF;".into();
+        assert_eq!(in_param_signature_type(&p, &proc), "long");
+    }
+
+    #[test]
     fn test_seq_fallthrough_enhanced_for_is_finite() {
         // CI regression (PR #132): `for (T v : list)` has no ';' clauses —
         // the "missing cond = JLS-true" C-style rule must not fire, or a
@@ -2233,5 +2691,24 @@ mod tests {
         ])));
         // C-style for with empty cond remains infinite.
         assert!(seq_cannot_fall_through(&lines(&["for (int i = 0; ; i++) {", "    x = next();", "}"])));
+    }
+
+    #[test]
+    fn test_cursor_decls_emit_deterministic_sorted_order() {
+        // Two-pass generation must be byte-identical: cursor_decls is a
+        // HashMap, so declaration emission must sort keys (issue #136 D1 —
+        // cLastInst/cLastInst2 swapped between runs before the sort).
+        let mut proc = make_proc("det_cursor_order");
+        proc.cursor_decls.insert("c_last_inst2".to_string(), "select 1".to_string());
+        proc.cursor_decls.insert("c_last_inst".to_string(), "select 1".to_string());
+        proc.cursor_decls.insert("a_first_cursor".to_string(), "select 1".to_string());
+        let pkg_vars = std::collections::HashMap::new();
+        let out1 = build_service_method(&proc, "detCursorOrderMapper", &[], &pkg_vars, false);
+        let out2 = build_service_method(&proc, "detCursorOrderMapper", &[], &pkg_vars, false);
+        assert_eq!(out1, out2, "two invocations must be byte-identical");
+        let i_a = out1.find("Object aFirstCursor = null;").expect("aFirstCursor decl");
+        let i_c1 = out1.find("Object cLastInst = null;").expect("cLastInst decl");
+        let i_c2 = out1.find("Object cLastInst2 = null;").expect("cLastInst2 decl");
+        assert!(i_a < i_c1 && i_c1 < i_c2, "decls must emit in sorted key order:\n{}", out1);
     }
 }

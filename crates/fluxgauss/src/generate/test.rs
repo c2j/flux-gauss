@@ -183,7 +183,16 @@ fn build_success_test(
             param_values.push(crate::generate::service::atomic_ref_decl(&inner_type, &ref_var));
             param_args.push(ref_var);
         } else {
-            let val = domain_test_value(proc, pkg, &p.java_type, &p.name, &p.sql_type);
+            // Issue #136 batch-4 F5: a `DEFAULT NULL` param is the PL
+            // "argument not passed" sentinel — the generated test must
+            // exercise the null path (`fncCalc(1, null, 0L)`), not mask it
+            // with a numeric fixture.
+            let null_default = p.default_value.as_ref().is_some_and(|d| d.trim().eq_ignore_ascii_case("null"));
+            let val = if null_default {
+                "null".to_string()
+            } else {
+                domain_test_value(proc, pkg, &p.java_type, &p.name, &p.sql_type)
+            };
             param_values.push(format!("{} {} = {};", p.java_type, snake_to_camel(&p.name), val));
             param_args.push(snake_to_camel(&p.name));
         }
@@ -637,7 +646,14 @@ fn domain_test_value(
     for line in &proc.java_logic_lines {
         if let Some(caps) = as_list_re.captures(line) {
             if let Some(lit) = lit_re.captures(caps.get(1).map(|m| m.as_str()).unwrap_or("")) {
-                return format!("\"{}\"", &lit[1]);
+                // Issue #136 batch-4 F6: a String literal is only a valid
+                // test value for String/Object params — assigning `"A"`
+                // to a `Long` param would not compile. (`==`, not
+                // `contains`: "Map<String, Object>" contains "String".)
+                let jtl = java_type.to_lowercase();
+                if jtl == "string" || jtl == "object" {
+                    return format!("\"{}\"", &lit[1]);
+                }
             }
         }
     }
@@ -660,6 +676,26 @@ fn domain_test_value(
             || line.contains(&format!("{})).concat(String.valueOf(\"-0", jn))
         {
             return "\"2024-01\"".to_string();
+        }
+    }
+    // Issue #136 batch-4 F6: a String param consumed by a numeric parse in
+    // the generated body (`TO_NUMBER` lowers to `new BigDecimal(p)`,
+    // `Long.parseLong(p)`, ...) must receive a numeric literal — the generic
+    // "test_p_x" placeholder throws NumberFormatException at test runtime.
+    // The param must appear INSIDE the parse call's argument list — a mere
+    // same-line co-occurrence with `BigDecimal(` is not enough (dynamic-SQL
+    // builders legitimately mix identifiers and numeric calls).
+    let jtl = java_type.to_lowercase();
+    if (jtl == "string" || jtl == "object") && !proc.param_rowtype_fields.contains_key(&param_name.to_lowercase()) {
+        let parse_re = regex::Regex::new(&format!(
+            r#"(?:BigDecimal|Long\.parseLong|Integer\.parseInt|Double\.parseDouble|Float\.parseFloat|Short\.parseShort|Byte\.parseByte|Long\.decode|Integer\.decode)\s*\((?:[^()]|\([^()]*\))*\b{}\b"#,
+            regex::escape(&jn)
+        ))
+        .unwrap();
+        for line in &proc.java_logic_lines {
+            if parse_re.is_match(line) {
+                return "\"1\"".to_string();
+            }
         }
     }
     // Review #129 B3: record-typed params (Map<String,Object>) must get a
@@ -880,6 +916,7 @@ mod tests {
             procedures: procs,
             table_refs: Default::default(),
             package_vars: Default::default(),
+            externally_shared_vars: Default::default(),
             source_file: String::new(),
             source_files: Vec::new(),
             comments: Vec::new(),
@@ -1197,5 +1234,26 @@ mod tests {
         let pkg = make_pkg("pkg_x", vec![]);
         let val = domain_test_value(&proc, &pkg, "Map<String, Object>", "p_old_rec", "trade_record%ROWTYPE");
         assert_eq!(val, "new java.util.HashMap<String, Object>()");
+    }
+
+    #[test]
+    fn test_issue136b4_domain_test_value_numeric_consumed_string_param() {
+        // Issue #136 batch-4 F6 (case d): `fnc_decimal(p_value VARCHAR2)`
+        // lowers `TO_NUMBER(p_value)` to `new BigDecimal(pValue)` — the
+        // generic "test_p_value" placeholder throws NumberFormatException.
+        // A String param consumed by a numeric parse must get "1".
+        let mut proc = make_proc("fnc_decimal");
+        proc.java_logic_lines.push("return (new java.math.BigDecimal(pValue)).longValue();".into());
+        let pkg = make_pkg("pkg_x", vec![]);
+        let val = domain_test_value(&proc, &pkg, "String", "p_value", "varchar2");
+        assert_eq!(val, "\"1\"");
+        // A String param NOT consumed numerically keeps the placeholder.
+        proc.java_logic_lines.clear();
+        proc.java_logic_lines.push("return String.valueOf(pValue);".into());
+        let val = domain_test_value(&proc, &pkg, "String", "p_value", "varchar2");
+        assert_eq!(val, "\"test_p_value\"");
+        // Numeric params already get numeric literals.
+        let val = domain_test_value(&proc, &pkg, "Long", "p_num", "number");
+        assert!(val.ends_with('L') || val.parse::<i64>().is_ok() || val.contains("BigDecimal"), "got: {}", val);
     }
 }

@@ -62,6 +62,79 @@ impl CodeWriter {
         let (cow, _, _) = encoding.encode(&content);
         std::fs::write(path, &cow)
     }
+
+    /// Post-pass over the fully assembled file: scan emitted lines for
+    /// `java.*` type usages and insert any missing imports into the import
+    /// block (deduped, sorted). Safety net for emission paths that produce
+    /// a type without registering its import — e.g. a record/JSON return
+    /// shape yielding `Map<String, Object>` after the import scan ran.
+    pub fn ensure_imports(&mut self) {
+        let needed = required_imports(&self.lines);
+        if needed.is_empty() {
+            return;
+        }
+        let import_idx: Vec<usize> = self
+            .lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.trim_start().starts_with("import "))
+            .map(|(i, _)| i)
+            .collect();
+        if import_idx.is_empty() {
+            return;
+        }
+        let start = *import_idx.first().unwrap();
+        let end = *import_idx.last().unwrap();
+        let mut merged: Vec<String> = self.lines[start..=end].iter().map(|l| l.trim().to_string()).collect();
+        for imp in needed {
+            if !merged.iter().any(|m| m == &imp) {
+                merged.push(imp);
+            }
+        }
+        merged.sort();
+        self.lines.splice(start..=end, merged);
+    }
+}
+
+/// Map of emitted-code usage pattern -> required import. Word-boundary
+/// regexes so `myMap`/`mapping` don't false-positive; generics-aware where
+/// the bare name could appear in prose.
+fn required_imports(lines: &[String]) -> Vec<String> {
+    static PATTERNS: &[(&str, &str)] = &[
+        (r"\bMap\s*<", "import java.util.Map;"),
+        (r"\bList\s*<", "import java.util.List;"),
+        (r"\bHashMap\b", "import java.util.HashMap;"),
+        (r"\bArrayList\b", "import java.util.ArrayList;"),
+        (r"\bBigDecimal\b", "import java.math.BigDecimal;"),
+        (r"\bLocalDate\b", "import java.time.LocalDate;"),
+        (r"\bLocalDateTime\b", "import java.time.LocalDateTime;"),
+        (r"\bLocalTime\b", "import java.time.LocalTime;"),
+        (r"\bAtomicReference\b", "import java.util.concurrent.atomic.AtomicReference;"),
+        (r"\bArrays\.", "import java.util.Arrays;"),
+        (r"\bOptional\s*<", "import java.util.Optional;"),
+    ];
+    let mut out = Vec::new();
+    'outer: for (pat, imp) in PATTERNS {
+        let re = regex::Regex::new(pat).unwrap();
+        for line in lines {
+            let t = line.trim_start();
+            if t.starts_with("import ") || t.starts_with("package ") || t.starts_with("//") {
+                continue;
+            }
+            // A match immediately preceded by '.' is already fully qualified
+            // (`java.time.LocalDate.parse`) — no import needed.
+            for m in re.find_iter(line) {
+                if line[..m.start()].ends_with('.') {
+                    continue;
+                }
+                if !out.iter().any(|i| i == imp) {
+                    out.push(imp.to_string());
+                }
+                continue 'outer;
+            }
+        }
+    }
+    out
 }
 
 /// `String.valueOf(null)` resolves to the `valueOf(char[])` overload and NPEs
@@ -285,6 +358,58 @@ mod tests {
             sanitize_java_line("    // indented comment String.valueOf(null)"),
             "    // indented comment String.valueOf(null)"
         );
+    }
+
+    #[test]
+    fn test_ensure_imports_adds_missing_and_dedupes() {
+        let mut w = CodeWriter::new();
+        w.line("package com.example.service;");
+        w.blank();
+        w.line("import java.util.List;");
+        w.line("import org.springframework.stereotype.Service;");
+        w.blank();
+        w.line("@Service");
+        w.line("public class JsonService {");
+        w.line("    public Map<String, Object> build() {");
+        w.line("        Map<String, Object> m = new HashMap<>();");
+        w.line("        m.put(\"k\", new BigDecimal(\"1\"));");
+        w.line("        return m;");
+        w.line("    }");
+        w.line("}");
+        w.ensure_imports();
+        let out = w.to_string();
+        assert!(out.contains("import java.util.Map;"), "missing Map import:\n{out}");
+        assert!(out.contains("import java.util.HashMap;"), "missing HashMap import:\n{out}");
+        assert!(out.contains("import java.math.BigDecimal;"), "missing BigDecimal import:\n{out}");
+        // existing imports preserved, no duplicates
+        assert_eq!(out.matches("import java.util.List;").count(), 1);
+        assert_eq!(out.matches("import java.util.Map;").count(), 1);
+        // import block stays sorted
+        let map_pos = out.find("import java.util.Map;").unwrap();
+        let svc_pos = out.find("import org.springframework").unwrap();
+        assert!(map_pos < svc_pos, "imports not sorted:\n{out}");
+    }
+
+    #[test]
+    fn test_ensure_imports_skips_fully_qualified_usage() {
+        // `java.time.LocalDate.parse` is already qualified — must NOT add
+        // `import java.time.LocalDate;` (golden churn guard).
+        let mut w = CodeWriter::new();
+        w.line("package com.example.service;");
+        w.line("import org.springframework.stereotype.Service;");
+        w.line("public class S { public Object f() { return java.time.LocalDate.parse(\"2020-01-01\"); } }");
+        w.ensure_imports();
+        assert!(!w.to_string().contains("import java.time.LocalDate;"));
+    }
+
+    #[test]
+    fn test_ensure_imports_noop_when_complete() {
+        let mut w = CodeWriter::new();
+        w.line("package com.example.service;");
+        w.line("import java.util.Map;");
+        w.line("public class S { public Map<String, Object> f() { return null; } }");
+        w.ensure_imports();
+        assert_eq!(w.to_string().matches("import java.util.Map;").count(), 1);
     }
 
     #[test]

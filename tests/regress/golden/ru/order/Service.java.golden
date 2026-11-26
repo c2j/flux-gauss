@@ -24,16 +24,16 @@ public class OrderService {
     @Transactional
     public void createOrder(long pUserId, long pProductId, int pQty) {
         // CALL pkg_inventory.reserve_stock(pProductId, pQty)
-        orderMapper.insertTOrders(pUserId, pProductId, pQty);
+        orderMapper.insertTOrders(pUserId,  pProductId,  pQty);
         // PERFORM(unresolved): /* TOBEFIX: unresolved fn log_operation("ORDER", "CREATE", 0) - pkg=pkg_common, caller={FIXTURES_ROOT}/pkg_order.sql:create_order */ null;
     }
 
     // Source: pkg_order.cancel_order (PROCEDURE) — {FIXTURES_ROOT}/pkg_order.sql:14-29
     @Transactional
     public void cancelOrder(long pOrderId) {
-        Long vProductId = 0L;
+        Long vProductId = ((Number)(0L)).longValue();
         Integer vQty = 0;
-        Object _row_obj = orderMapper.selectTOrders(pOrderId, vProductId, vQty); Map<String, Object> _row = (_row_obj instanceof java.util.Map) ? (java.util.Map<String, Object>) _row_obj : null;
+        Object _row_obj = orderMapper.selectTOrders(pOrderId,  vProductId,  vQty); Map<String, Object> _row = (_row_obj instanceof java.util.Map) ? (java.util.Map<String, Object>) _row_obj : null;
         if (_row != null) {
             vProductId = (_row.get("v_product_id") instanceof Number ? ((Number) _row.get("v_product_id")).longValue() : 0L);
             vQty = (_row.get("v_qty") instanceof Number ? ((Number) _row.get("v_qty")).intValue() : 0);
@@ -51,7 +51,7 @@ public class OrderService {
 
     // Source: pkg_order.batch_create_orders (PROCEDURE) — {FIXTURES_ROOT}/pkg_order.sql:42-51
     public void batchCreateOrders(long pUserId, String pItems) {
-        this.createOrder(pUserId, 1, 1);
+        this.createOrder(Long.valueOf(pUserId), Long.valueOf(1), 1);
         // PERFORM(unresolved): /* TOBEFIX: unresolved fn log_operation("ORDER", "BATCH_CREATE", pUserId) - pkg=pkg_common, caller={FIXTURES_ROOT}/pkg_order.sql:batch_create_orders */ null;
         // PERFORM(unresolved): /* TOBEFIX: unresolved fn send_notification("EMAIL", "Batch order created") - pkg=pkg_common, caller={FIXTURES_ROOT}/pkg_order.sql:batch_create_orders */ null;
     }

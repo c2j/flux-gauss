@@ -204,6 +204,15 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let total_procedures: usize = result.packages.iter().map(|p| p.procedures.len()).sum();
     let total_generated = result.generated_files.len();
 
+    // Issue #136 batch-4 F7: sources that parse but yield zero procedures
+    // (missing files, wrong dialect, skeleton output) must not exit 0 —
+    // that is a silent false-pass.
+    if total_procedures == 0 {
+        println!("  ❌ 转换未产生任何过程（源文件缺失或全部被跳过），中止。请检查 sources 配置与 SQL 内容。");
+        let _ = log.close();
+        std::process::exit(1);
+    }
+
     log.log(&format!("Done! {} packages, {} procedures, {} files", total_packages, total_procedures, total_generated));
 
     println!();
@@ -324,6 +333,21 @@ fn apply_dependency_graph(
     Ok(())
 }
 
+/// Issue #136 batch-4 F7: a declared source that does not exist must fail
+/// loudly — silently generating a skeleton project and exiting 0 hides
+/// path/config mistakes (relative `sources` used to resolve against the
+/// process CWD instead of the yaml directory).
+fn reject_missing_sources(sql_files: &[PathBuf]) -> Result<(), Box<dyn std::error::Error>> {
+    let missing: Vec<String> = sql_files.iter().filter(|p| !p.exists()).map(|p| p.display().to_string()).collect();
+    if !missing.is_empty() {
+        return Err(format!("Source file(s) not found: {}", missing.join(", ")).into());
+    }
+    if sql_files.is_empty() {
+        return Err("No source files resolved from config/CLI — nothing to convert.".into());
+    }
+    Ok(())
+}
+
 fn format_validate_error(err: &ogsql_parser::ParserError) -> String {
     match err {
         ogsql_parser::ParserError::UnexpectedToken { location, expected, got } => {
@@ -361,12 +385,14 @@ fn resolve_inputs(cli: &Cli) -> Result<(config::AppConfig, Vec<PathBuf>, String)
         let config = config::load_config(config_path)?;
         let output_dir = config.output_dir_or_default();
         let sql_files = config.resolve_source_files();
+        reject_missing_sources(&sql_files)?;
         Ok((config, sql_files, output_dir))
     } else if cli.output.is_some() || !cli.sources.is_empty() {
         let output = cli.output.clone().ok_or("Missing --output directory. Use -o <dir> with -s <sql_files>")?;
         let sql_files = fluxgauss::config::expand_source_patterns(
             &cli.sources.iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>(),
         );
+        reject_missing_sources(&sql_files)?;
         let config = config::AppConfig { output_dir: Some(output.to_string_lossy().to_string()), ..Default::default() };
         Ok((config, sql_files, output.to_string_lossy().to_string()))
     } else {

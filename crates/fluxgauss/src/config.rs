@@ -25,6 +25,12 @@ pub struct AppConfig {
     /// subscript/indexOf semantics.
     pub composite_type_shims: Option<Vec<CompositeTypeShim>>,
     pub encoding: Option<String>,
+    /// Directory of the yaml file this config was loaded from. Relative
+    /// `sources`/`source_dirs`/`ddl_sources`/`ddl_source_dirs` entries resolve
+    /// against it (issue #136 batch-4 F7); `None` (e.g. MCP JSON configs)
+    /// keeps the historical process-CWD resolution.
+    #[serde(skip)]
+    pub base_dir: Option<std::path::PathBuf>,
 }
 
 /// One entry of `composite_type_shims`: a declared SQL composite/record type
@@ -59,19 +65,81 @@ impl AppConfig {
         self.encoding.clone().unwrap_or_else(|| "utf-8".to_string())
     }
 
-    /// Routine files: `sources` + `source_dirs`, with dir/glob expansion (#120)
+    /// Routine files: `sources` + `source_dirs`, with dir/glob expansion (#120).
+    /// Relative entries resolve against `base_dir` (the yaml file's
+    /// directory) when set, else the process CWD.
     pub fn resolve_source_files(&self) -> Vec<std::path::PathBuf> {
         let mut entries = self.sources.clone().unwrap_or_default();
         entries.extend(self.source_dirs.clone().unwrap_or_default());
-        expand_source_patterns(&entries)
+        expand_source_patterns(&self.resolve_against_base(&entries))
     }
 
     /// DDL-only files: `ddl_sources` + `ddl_source_dirs` (#120)
     pub fn resolve_ddl_files(&self) -> Vec<std::path::PathBuf> {
         let mut entries = self.ddl_sources.clone().unwrap_or_default();
         entries.extend(self.ddl_source_dirs.clone().unwrap_or_default());
-        expand_source_patterns(&entries)
+        expand_source_patterns(&self.resolve_against_base(&entries))
     }
+
+    /// Rewrite relative entries to `base_dir`-relative paths; absolute
+    /// entries pass through unchanged. When the yaml-dir-joined path does
+    /// not exist but the entry does resolve relative to the process CWD
+    /// (legacy repo-root-relative configs such as demo-project/*.yaml),
+    /// the CWD-relative form wins — yaml-dir resolution stays preferred.
+    fn resolve_against_base(&self, entries: &[String]) -> Vec<String> {
+        match &self.base_dir {
+            Some(base) => {
+                let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                entries.iter().map(|e| resolve_source_entry(base, e, &cwd)).collect()
+            }
+            None => entries.to_vec(),
+        }
+    }
+}
+
+/// Resolve one relative source entry: prefer `base`-relative (the yaml
+/// file's directory); fall back to the CWD-relative form when the joined
+/// path does not exist but the entry does under `cwd` (legacy
+/// repo-root-relative configs). Absolute entries pass through; entries
+/// missing under both keep the base-joined form so the missing-source
+/// error reports the yaml-dir interpretation.
+fn resolve_source_entry(base: &std::path::Path, entry: &str, cwd: &std::path::Path) -> String {
+    let p = std::path::Path::new(entry.trim());
+    if p.is_absolute() {
+        return entry.to_string();
+    }
+    let joined = base.join(p);
+    if path_or_glob_anchor_exists(&joined, cwd) || !path_or_glob_anchor_exists(p, cwd) {
+        joined.to_string_lossy().into_owned()
+    } else {
+        entry.to_string()
+    }
+}
+
+/// Existence check for a source entry resolved against `cwd`: plain paths
+/// use `exists`; glob patterns check their literal anchor directory (the
+/// portion before the first wildcard segment), mirroring `expand_glob`.
+fn path_or_glob_anchor_exists(path: &std::path::Path, cwd: &std::path::Path) -> bool {
+    let s = path.to_string_lossy();
+    let has_glob = s.contains('*') || s.contains('?') || s.contains('[');
+    let probe = if path.is_absolute() { path.to_path_buf() } else { cwd.join(path) };
+    if !has_glob {
+        return probe.exists();
+    }
+    let mut anchor = if s.starts_with('/') { std::path::PathBuf::from("/") } else { std::path::PathBuf::new() };
+    for seg in s.split('/') {
+        if seg.contains('*') || seg.contains('?') || seg.contains('[') {
+            break;
+        }
+        if !seg.is_empty() {
+            anchor.push(seg);
+        }
+    }
+    if anchor.as_os_str().is_empty() {
+        anchor.push(".");
+    }
+    let anchor = if anchor.is_absolute() { anchor } else { cwd.join(anchor) };
+    anchor.exists()
 }
 
 /// Expand source entries: plain files pass through, directories contribute
@@ -354,7 +422,17 @@ fn logger_preset(name: &str) -> ResolvedLogger {
 
 pub fn load_config(path: &std::path::Path) -> Result<AppConfig, Box<dyn std::error::Error>> {
     let content = std::fs::read_to_string(path)?;
-    let config: AppConfig = serde_yaml::from_str(&content)?;
+    let mut config: AppConfig = serde_yaml::from_str(&content)?;
+    // base_dir must be ABSOLUTE: a relative --config argument yields a
+    // relative parent ("demo-project"), and joining sources onto it only
+    // resolves correctly while the process CWD happens to match. Canonicalize
+    // the config path first so source resolution is CWD-independent.
+    let abs = path.canonicalize().unwrap_or_else(|_| {
+        std::env::current_dir()
+            .map(|cwd| if path.is_absolute() { path.to_path_buf() } else { cwd.join(path) })
+            .unwrap_or_else(|_| path.to_path_buf())
+    });
+    config.base_dir = abs.parent().map(|p| p.to_path_buf());
     Ok(config)
 }
 
@@ -472,5 +550,62 @@ integration_test:
         let it = config.integration_test.unwrap();
         assert_eq!(it.enabled, Some(true));
         assert_eq!(it.mode.as_deref(), Some("remote"));
+    }
+
+    #[test]
+    fn test_issue136b4_sources_resolve_relative_to_yaml_dir() {
+        // Issue #136 batch-4 F7: relative `sources` entries resolve against
+        // the yaml file's directory (via `base_dir` set by `load_config`),
+        // not the process CWD; absolute entries pass through unchanged.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("sql")).unwrap();
+        std::fs::write(root.join("sql").join("a.sql"), "x").unwrap();
+        let yaml_path = root.join("fluxgauss.yaml");
+        std::fs::write(&yaml_path, "sources:\n  - sql/a.sql\n  - /abs/definitely-missing.sql\n").unwrap();
+        let config = load_config(&yaml_path).unwrap();
+        // base_dir is canonicalized (absolute) — on macOS tempdir paths
+        // resolve /var → /private/var.
+        let canon_root = root.canonicalize().unwrap();
+        assert_eq!(config.base_dir.as_deref(), Some(canon_root.as_path()));
+        let files = config.resolve_source_files();
+        assert!(files.contains(&canon_root.join("sql").join("a.sql")), "got: {:?}", files);
+        assert!(files.contains(&std::path::PathBuf::from("/abs/definitely-missing.sql")));
+        // Without base_dir (MCP JSON path) entries stay CWD-relative.
+        let mut config2: AppConfig = serde_yaml::from_str("sources:\n  - sql/a.sql\n").unwrap();
+        config2.base_dir = None;
+        assert_eq!(config2.resolve_source_files(), vec![std::path::PathBuf::from("sql/a.sql")]);
+    }
+
+    #[test]
+    fn test_repo_root_relative_entries_fall_back_to_cwd() {
+        // demo-project/*.yaml keeps repo-root-relative entries
+        // (`demo-project/sql/...`, `lib/...`). CI invokes
+        // `fluxgauss --config demo-project/fluxgauss_ru.yaml` from the repo
+        // root: the yaml-dir join misses and the CWD-relative form must
+        // win (PR #142 CI regression guard).
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path();
+        // Layout: repo/demo-project/yaml dir + repo/demo-project/sql file.
+        let yaml_dir = repo.join("demo-project");
+        std::fs::create_dir_all(yaml_dir.join("sql")).unwrap();
+        std::fs::write(yaml_dir.join("sql").join("local.sql"), "x").unwrap();
+        std::fs::write(repo.join("demo-project").join("tables.sql"), "x").unwrap();
+
+        // yaml-dir-relative entry wins when it exists under the yaml dir.
+        assert_eq!(
+            resolve_source_entry(&yaml_dir, "sql/local.sql", repo),
+            yaml_dir.join("sql").join("local.sql").to_string_lossy().into_owned()
+        );
+        // repo-root-relative entry (`demo-project/tables.sql`) misses under
+        // the yaml dir but resolves under the CWD → kept CWD-relative.
+        assert_eq!(resolve_source_entry(&yaml_dir, "demo-project/tables.sql", repo), "demo-project/tables.sql");
+        // Missing under both → base-joined form kept for the error message.
+        assert_eq!(
+            resolve_source_entry(&yaml_dir, "nope/missing.sql", repo),
+            yaml_dir.join("nope").join("missing.sql").to_string_lossy().into_owned()
+        );
+        // Absolute entries pass through untouched.
+        assert_eq!(resolve_source_entry(&yaml_dir, "/abs/x.sql", repo), "/abs/x.sql");
     }
 }

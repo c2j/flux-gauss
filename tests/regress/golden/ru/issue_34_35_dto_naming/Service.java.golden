@@ -25,15 +25,15 @@ public class Issue34OrderService {
     @Transactional
     public void procCreateOrder(String pCustomerName, String pProductCode, int pQuantity, java.math.BigDecimal pUnitPrice, String pCreatedBy, AtomicReference<Long> pOrderId, AtomicReference<java.math.BigDecimal> pTotalAmount, AtomicReference<String> pStatusMsg) {
         java.math.BigDecimal vAmount = java.math.BigDecimal.ZERO;
-        Long vOrderId = 0L;
+        Long vOrderId = ((Number)(0L)).longValue();
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
         try {
-            { Object _val = issue34OrderMapper.selectTIssue34Order(pCustomerName, pProductCode, pQuantity, pUnitPrice, pCreatedBy); if (_val != null) vOrderId = (_val instanceof Number ? ((Number)_val).longValue() : Long.parseLong(String.valueOf(_val))); }
+            { Object _val = issue34OrderMapper.selectTIssue34Order(pCustomerName,  pProductCode,  pQuantity,  pUnitPrice,  pCreatedBy); if (_val != null) vOrderId = (_val instanceof Number ? ((Number)_val).longValue() : Long.parseLong(String.valueOf(_val))); }
             vAmount = java.math.BigDecimal.valueOf(pQuantity).multiply(pUnitPrice);
-            issue34OrderMapper.insertTIssue34Order(pCustomerName, pProductCode, pQuantity, pUnitPrice, pCreatedBy, vAmount, vOrderId);
-            issue34OrderMapper.insertTIssue34OrderLog(pCustomerName, pProductCode, pQuantity, pUnitPrice, pCreatedBy, vOrderId);
-            pOrderId.set(vOrderId);
+            issue34OrderMapper.insertTIssue34Order(pCustomerName,  pProductCode,  pQuantity,  pUnitPrice,  pCreatedBy,  vAmount,  vOrderId);
+            issue34OrderMapper.insertTIssue34OrderLog(pCustomerName,  pProductCode,  pQuantity,  pUnitPrice,  pCreatedBy,  vOrderId);
+            pOrderId.set(Long.parseLong(String.valueOf(vOrderId)));
             pTotalAmount.set(vAmount);
             pStatusMsg.set("Order created successfully");
         } catch (Exception __e1) {
@@ -46,17 +46,17 @@ public class Issue34OrderService {
 
     // Source: pkg_issue34_order.proc_query_order_stats (PROCEDURE) — {FIXTURES_ROOT}/issue_34_35_dto_naming.sql:117-143
     public void procQueryOrderStats(String pStatus, java.math.BigDecimal pMinAmount, AtomicReference<Integer> pOrderCount, AtomicReference<java.math.BigDecimal> pTotalRevenue, AtomicReference<java.math.BigDecimal> pAvgAmount) {
-        pOrderCount.set((Integer) issue34OrderMapper.selectTIssue34Order_1(pStatus, pMinAmount));
-        pTotalRevenue.set(new java.math.BigDecimal(String.valueOf(issue34OrderMapper.selectTIssue34Order_2(pStatus, pMinAmount))));
-        pAvgAmount.set(new java.math.BigDecimal(String.valueOf(issue34OrderMapper.selectTIssue34Order_3(pStatus, pMinAmount))));
+        pOrderCount.set((Integer) issue34OrderMapper.selectTIssue34Order_1(pStatus,  pMinAmount));
+        pTotalRevenue.set(new java.math.BigDecimal(String.valueOf(issue34OrderMapper.selectTIssue34Order_2(pStatus,  pMinAmount))));
+        pAvgAmount.set(new java.math.BigDecimal(String.valueOf(issue34OrderMapper.selectTIssue34Order_3(pStatus,  pMinAmount))));
     }
 
     // Source: pkg_issue34_order.proc_update_order (PROCEDURE) — {FIXTURES_ROOT}/issue_34_35_dto_naming.sql:146-175
     @Transactional
     public void procUpdateOrder(long pOrderId, String pNewStatus, String pUpdatedBy, AtomicReference<String> pOldStatus, AtomicReference<Integer> pRowsUpdated) {
-        pOldStatus.set(String.valueOf(issue34OrderMapper.selectTIssue34Order_4(pOrderId, pNewStatus, pUpdatedBy)));
-        issue34OrderMapper.updateTIssue34Order(pOrderId, pNewStatus, pUpdatedBy);
-        pRowsUpdated.set((Integer) issue34OrderMapper.selectTIssue34Order_5(pOrderId, pNewStatus, pUpdatedBy));
-        issue34OrderMapper.insertTIssue34OrderLog_1(pOrderId, pNewStatus, pUpdatedBy, pOldStatus.get());
+        pOldStatus.set(String.valueOf(issue34OrderMapper.selectTIssue34Order_4(pOrderId,  pNewStatus,  pUpdatedBy)));
+        issue34OrderMapper.updateTIssue34Order(pOrderId,  pNewStatus,  pUpdatedBy);
+        pRowsUpdated.set((Integer) issue34OrderMapper.selectTIssue34Order_5(pOrderId,  pNewStatus,  pUpdatedBy));
+        issue34OrderMapper.insertTIssue34OrderLog_1(pOrderId,  pNewStatus,  pUpdatedBy,  pOldStatus.get());
     }
 }

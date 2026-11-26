@@ -3,6 +3,7 @@ package com.example.demo.service;
 import com.example.demo.exception.BusinessException;
 import com.example.demo.mapper.Issue75Mapper;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -25,6 +26,7 @@ public class Issue75Service {
     // Source: pkg_issue75.proc_nested_block_body_fails (PROCEDURE) — {FIXTURES_ROOT}/issue_75_loop_exception_brace.sql:14-27
     public void procNestedBlockBodyFails(AtomicReference<String> pResult) {
         String vTmp = null;
+        Object cInner = null;
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
         try {
@@ -32,7 +34,7 @@ public class Issue75Service {
             List<Map<String, Object>> r2List = issue75Mapper.selectProcNestedBlockBodyFails();
             if (r2List == null) r2List = new ArrayList<>();
             for (Map<String, Object> r2 : r2List) {
-                vTmp = String.valueOf(((java.util.Map<String, Object>) r2).get("v"));
+                vTmp = String.valueOf(r2.get("v"));
             }
         } catch (Exception __e1) {
             __SQLERRM__ = __e1.getMessage();
@@ -45,6 +47,8 @@ public class Issue75Service {
     // Source: pkg_issue75.proc_loop_exc_handler (PROCEDURE) — {FIXTURES_ROOT}/issue_75_loop_exception_brace.sql:29-46
     public void procLoopExcHandler(AtomicReference<String> pResult) {
         String vTmp = null;
+        Object cInner = null;
+        Object cOuter = null;
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
         // for rec in cursor c_outer
@@ -52,7 +56,7 @@ public class Issue75Service {
         if (recList == null) recList = new ArrayList<>();
         for (Map<String, Object> rec : recList) {
             try {
-                vTmp = String.valueOf(((java.util.Map<String, Object>) rec).get("v"));
+                vTmp = String.valueOf(rec.get("v"));
             } catch (Exception __e1) {
                 __SQLERRM__ = __e1.getMessage();
                 __SQLCODE__ = -1;
@@ -60,7 +64,7 @@ public class Issue75Service {
                 List<Map<String, Object>> r2List2 = issue75Mapper.selectProcLoopExcHandler_1();
                 if (r2List2 == null) r2List2 = new ArrayList<>();
                 for (Map<String, Object> r2 : r2List2) {
-                    vTmp = String.valueOf(((java.util.Map<String, Object>) r2).get("v"));
+                    vTmp = String.valueOf(r2.get("v"));
                 }
                 continue;
             }

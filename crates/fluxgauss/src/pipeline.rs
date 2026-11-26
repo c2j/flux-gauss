@@ -845,6 +845,22 @@ fn phase2_analyze(
         for proc in &mut pkg.procedures {
             proc.custom_types = pkg_custom_types.clone();
             proc.package_vars = pkg_vars.clone();
+            // Issue #136 corpus: `other_pkg.var` references need the OTHER
+            // packages' package-var tables — proc.package_vars only holds
+            // this package's (plus same-file spec leakage). Snapshot each
+            // summary's vars with the same svc_var naming used for calls.
+            proc.cross_pkg_vars = proc_summaries
+                .iter()
+                .map(|(sum_name, summary)| {
+                    let class_name = crate::naming::package_to_classname(sum_name);
+                    let mut c = class_name.chars();
+                    let svc_var = match c.next() {
+                        Some(f) => f.to_ascii_lowercase().to_string() + c.as_str(),
+                        None => String::new(),
+                    };
+                    (sum_name.to_lowercase(), (format!("{}Service", svc_var), summary.package_vars.clone()))
+                })
+                .collect();
             proc.package_proc_params = sibling_params.clone();
             proc.package_proc_returns = sibling_returns.clone();
             proc.all_proc_params = global_proc_map.clone();
@@ -862,6 +878,8 @@ fn phase2_analyze(
         crate::analyze::collect_tobefix_warnings(pkg, ctx);
     }
 
+    mark_externally_shared_vars(&mut packages);
+
     crate::progress::progress_done("Analyze", total);
 
     AnalyzedPackages {
@@ -871,6 +889,60 @@ fn phase2_analyze(
         skipped: parsed.skipped,
         errors,
         filter_dropped: parsed.filter_dropped,
+    }
+}
+
+/// Issue #136 corpus: expr lowering emits `<pkg>Service.<var>` for
+/// cross-package package-var reads (`pkg_inst_crossday_deal` shape). The
+/// target field lives on ANOTHER service class, so `private static` would
+/// not compile — collect every (package, var) pair actually referenced and
+/// mark it on the defining `PackageInfo`; service generation emits `public`
+/// for exactly those vars (minimal visibility widening, no blanket change).
+fn mark_externally_shared_vars(packages: &mut [crate::types::PackageInfo]) {
+    let re = regex::Regex::new(r"(\w+Service)\.([A-Za-z_]\w*)").unwrap();
+    // pkg_name_lower → package_vars keys accessed from other packages.
+    let mut accessed: std::collections::HashMap<String, std::collections::HashSet<String>> =
+        std::collections::HashMap::new();
+    for pkg in packages.iter() {
+        for proc in &pkg.procedures {
+            if proc.cross_pkg_vars.is_empty() {
+                continue;
+            }
+            // svc_var → (pkg_key, vars) for THIS proc's cross-package table.
+            let svc_lookup: std::collections::HashMap<
+                &str,
+                (&String, &std::collections::HashMap<String, crate::types::VarInfo>),
+            > = proc.cross_pkg_vars.iter().map(|(k, (s, v))| (s.as_str(), (k, v))).collect();
+            let mut hits: Vec<(String, String)> = Vec::new();
+            for line in proc.java_logic_lines.iter().chain(proc.local_var_defaults.values()) {
+                if line.trim_start().starts_with("//") {
+                    continue;
+                }
+                for cap in re.captures_iter(line) {
+                    let svc = &cap[1];
+                    let Some(&(pkg_key, vars)) = svc_lookup.get(svc) else { continue };
+                    let field = &cap[2];
+                    // Match the emitted camelCase field back to its snake_case
+                    // package_vars key (same normalization as the accessors).
+                    if let Some(var_key) =
+                        vars.keys().find(|k| crate::naming::snake_to_camel(k.as_str()).eq_ignore_ascii_case(field))
+                    {
+                        hits.push((pkg_key.clone(), var_key.clone()));
+                    }
+                }
+            }
+            for (pkg_key, var_key) in hits {
+                accessed.entry(pkg_key).or_default().insert(var_key);
+            }
+        }
+    }
+    if accessed.is_empty() {
+        return;
+    }
+    for pkg in packages.iter_mut() {
+        if let Some(vars) = accessed.remove(&pkg.package_name.to_lowercase()) {
+            pkg.externally_shared_vars = vars;
+        }
     }
 }
 
@@ -1029,6 +1101,7 @@ mod tests {
             procedures: Vec::new(),
             table_refs: HashSet::new(),
             package_vars: HashMap::new(),
+            externally_shared_vars: Default::default(),
             source_file: String::new(),
             source_files: Vec::new(),
             comments: Vec::new(),
