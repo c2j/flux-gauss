@@ -423,7 +423,16 @@ fn logger_preset(name: &str) -> ResolvedLogger {
 pub fn load_config(path: &std::path::Path) -> Result<AppConfig, Box<dyn std::error::Error>> {
     let content = std::fs::read_to_string(path)?;
     let mut config: AppConfig = serde_yaml::from_str(&content)?;
-    config.base_dir = path.parent().map(|p| p.to_path_buf());
+    // base_dir must be ABSOLUTE: a relative --config argument yields a
+    // relative parent ("demo-project"), and joining sources onto it only
+    // resolves correctly while the process CWD happens to match. Canonicalize
+    // the config path first so source resolution is CWD-independent.
+    let abs = path.canonicalize().unwrap_or_else(|_| {
+        std::env::current_dir()
+            .map(|cwd| if path.is_absolute() { path.to_path_buf() } else { cwd.join(path) })
+            .unwrap_or_else(|_| path.to_path_buf())
+    });
+    config.base_dir = abs.parent().map(|p| p.to_path_buf());
     Ok(config)
 }
 
@@ -555,9 +564,12 @@ integration_test:
         let yaml_path = root.join("fluxgauss.yaml");
         std::fs::write(&yaml_path, "sources:\n  - sql/a.sql\n  - /abs/definitely-missing.sql\n").unwrap();
         let config = load_config(&yaml_path).unwrap();
-        assert_eq!(config.base_dir.as_deref(), Some(root));
+        // base_dir is canonicalized (absolute) — on macOS tempdir paths
+        // resolve /var → /private/var.
+        let canon_root = root.canonicalize().unwrap();
+        assert_eq!(config.base_dir.as_deref(), Some(canon_root.as_path()));
         let files = config.resolve_source_files();
-        assert!(files.contains(&root.join("sql").join("a.sql")), "got: {:?}", files);
+        assert!(files.contains(&canon_root.join("sql").join("a.sql")), "got: {:?}", files);
         assert!(files.contains(&std::path::PathBuf::from("/abs/definitely-missing.sql")));
         // Without base_dir (MCP JSON path) entries stay CWD-relative.
         let mut config2: AppConfig = serde_yaml::from_str("sources:\n  - sql/a.sql\n").unwrap();
