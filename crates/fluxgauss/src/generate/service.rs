@@ -150,7 +150,7 @@ pub fn write_service_class(
         let is_readonly =
             var_info.is_constant || (!written_package_vars.contains(var_name.as_str()) && !externally_shared);
         let default_val = var_info.default_value.as_deref().unwrap_or_else(|| default_for_type(&var_info.java_type));
-        let coerced_default = coerce_default_value(&var_info.java_type, default_val);
+        let coerced_default = coerce_default_value(&var_info.java_type, default_val, None);
         let vis = if externally_shared { "public" } else { "private" };
         if is_readonly {
             w.line(&format!("{} static final {} {} = {};", vis, var_info.java_type, field_name, coerced_default));
@@ -578,9 +578,24 @@ fn dead_code_guard(lines: &mut [String]) {
     }
 }
 
-fn coerce_default_value(java_type: &str, default_val: &str) -> String {
+fn coerce_default_value(java_type: &str, default_val: &str, proc: Option<&crate::types::ProcedureInfo>) -> String {
     let trimmed = default_val.trim();
     let tl = java_type.to_lowercase();
+    if tl.contains("byte[") || tl.contains("byte []") {
+        // `byte[] x = 0` / `= /* TOBEFIX */ 0` do not compile — empty_blob()
+        // and friends degrade to an empty array (or null) instead.
+        if trimmed == "null" {
+            return "null".to_string();
+        }
+        if trimmed.starts_with('"') {
+            return format!("{}.getBytes(java.nio.charset.StandardCharsets.UTF_8)", trimmed);
+        }
+        if trimmed.chars().all(|c| c.is_ascii_digit()) || trimmed.contains("TOBEFIX") || trimmed.is_empty() {
+            return "new byte[0]".to_string();
+        }
+        // Complex exprs (vars, calls) pass through — assume already byte[].
+        return default_val.to_string();
+    }
     if tl.contains("list") || tl.contains("array") {
         if trimmed.starts_with('"') {
             return "new java.util.ArrayList<>()".to_string();
@@ -612,6 +627,16 @@ fn coerce_default_value(java_type: &str, default_val: &str) -> String {
             let inner = &trimmed[1..trimmed.len() - 1];
             if inner.parse::<i64>().is_ok() || inner.parse::<f64>().is_ok() {
                 return format!("java.math.BigDecimal.valueOf({})", crate::expr::java_int_lit(inner));
+            }
+        }
+        if trimmed.starts_with('"') {
+            return format!("new java.math.BigDecimal({})", trimmed);
+        }
+        // Complex exprs (vars, calls) — `BigDecimal v = pLongParam` does not
+        // compile; delegate to the coercion matrix (valueOf(long) etc.).
+        if let Some(p) = proc {
+            if trimmed.chars().any(|c| c.is_ascii_alphabetic() || c == '_') || trimmed.contains('(') {
+                return crate::expr::coerce_for_type(default_val, Some(java_type), p);
             }
         }
         return default_val.to_string();
@@ -653,6 +678,17 @@ fn coerce_default_value(java_type: &str, default_val: &str) -> String {
     }
     if tl.contains("float") && trimmed.parse::<f64>().is_ok() && !trimmed.ends_with('f') && !trimmed.ends_with('F') {
         return format!("{}f", trimmed);
+    }
+    // Complex exprs (vars, calls, arithmetic, quoted numerics) need the full
+    // type-directed coercion matrix — the literal branches above only cover
+    // constants.
+    if let Some(p) = proc {
+        if trimmed.contains('(')
+            || trimmed.starts_with('"')
+            || trimmed.chars().any(|c| c.is_ascii_alphabetic() || c == '_')
+        {
+            return crate::expr::coerce_for_type(default_val, Some(java_type), p);
+        }
     }
     default_val.to_string()
 }
@@ -805,6 +841,31 @@ fn build_service_method(
         ret_type = "List<Object>".to_string();
     }
 
+    // Object-typed locals that the declaration pass below promotes to
+    // List/Map (collection usage in generated logic). Collected up-front so
+    // a post-pass can coerce bare assignments (`v = expr;`) that were
+    // emitted while the var still typed as Object.
+    let mut promoted_var_types: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for (var_name, var_type) in &proc.local_vars {
+        if var_type != "Object" {
+            continue;
+        }
+        let var_java = snake_to_camel(var_name);
+        let used_as_map = proc.java_logic_lines.iter().any(|l| {
+            l.contains(&format!("((java.util.Map<String, Object>) {}).put(", var_java))
+                || l.contains(&format!("{}.getOrDefault(", var_java))
+                || l.contains(&format!("{}.put(", var_java))
+                || l.contains(&format!("{}.get(\"", var_java))
+        });
+        let used_as_list =
+            proc.java_logic_lines.iter().any(|l| l.contains(&format!("((java.util.List<?>) {})", var_java)));
+        if used_as_map {
+            promoted_var_types.insert(var_java, "java.util.Map<String, Object>".to_string());
+        } else if used_as_list {
+            promoted_var_types.insert(var_java, "java.util.List<Object>".to_string());
+        }
+    }
+
     if should_stub_procedure(proc, object_pkg_var_names) {
         body_lines
             .push("// TODO: Auto-generated stub — complex PL/pgSQL pattern requires manual implementation".to_string());
@@ -862,7 +923,7 @@ fn build_service_method(
                         .get(&var_name.to_lowercase())
                         .cloned()
                         .unwrap_or_else(|| default_for_type(var_type).to_string());
-                    let coerced = coerce_default_value(var_type, &default_val);
+                    let coerced = coerce_default_value(var_type, &default_val, Some(proc));
                     let is_object_used_as_map = var_type == "Object"
                         && proc.java_logic_lines.iter().any(|l| {
                             l.contains(&format!("((java.util.Map<String, Object>) {}).put(", var_java))
@@ -954,6 +1015,23 @@ fn build_service_method(
                 if !body_lines.contains(&decl) {
                     body_lines.push(decl);
                 }
+            }
+        }
+        // Cursors declared but never materialized into open_cursors (e.g. an
+        // OPEN that degraded to a comment) are still referenced by `%ISOPEN`
+        // checks (`cursor != null`) — declare them as null Objects so javac
+        // resolves the symbol.
+        let mut declared_cursor_javas: std::collections::HashSet<String> = proc.open_cursors.keys().cloned().collect();
+        for cursor_raw in proc.cursor_decls.keys() {
+            let camel = crate::naming::snake_to_camel(cursor_raw);
+            if !declared_cursor_javas.insert(camel.clone()) {
+                continue;
+            }
+            let is_param_name = proc.parameters.iter().any(|p| crate::naming::snake_to_camel(&p.name) == camel);
+            let is_local_var = proc.local_vars.keys().any(|k| crate::naming::snake_to_camel(k) == camel)
+                || proc.out_local_vars.contains_key(&cursor_raw.to_lowercase());
+            if !is_param_name && !is_local_var {
+                body_lines.push(format!("Object {} = null;", camel));
             }
         }
 
@@ -1118,6 +1196,239 @@ fn build_service_method(
         let formatted = format_comment_for_java(c);
         if !formatted.is_empty() {
             body_lines.insert(0, formatted);
+        }
+    }
+    // Post-pass: vars promoted Object→List/Map above may have bare
+    // `var = rhs;` assignments emitted while they still typed as Object
+    // (e.g. `v = this.concatNumlist(...)`, `v = /* TOBEFIX */ 0`). Route them
+    // through a compile-safe cast — `(T)(Object) rhs` type-checks for any
+    // reference RHS and preserves the TOBEFIX marker.
+    if !promoted_var_types.is_empty() {
+        for (var_java, ty) in &promoted_var_types {
+            let re = regex::Regex::new(&format!(r"(^|[\s;{{(]){} = ([^;]+);", regex::escape(var_java))).unwrap();
+            for line in body_lines.iter_mut() {
+                if line.trim_start().starts_with("//") {
+                    continue;
+                }
+                *line = re
+                    .replace_all(line, |caps: &regex::Captures| {
+                        let rhs = caps[2].trim();
+                        let already_typed = rhs == "null"
+                            || rhs.contains("ArrayList")
+                            || rhs.contains("HashMap")
+                            || rhs.contains("new java.util")
+                            || rhs.contains("AtomicReference")
+                            || rhs.contains("(Object)")
+                            || rhs.contains("List<")
+                            || rhs.contains("Map<")
+                            || rhs.contains("Collections.");
+                        if already_typed {
+                            format!("{}{} = {};", &caps[1], var_java, rhs)
+                        } else {
+                            format!("{}{} = (({}) (Object) {});", &caps[1], var_java, ty, rhs)
+                        }
+                    })
+                    .to_string();
+            }
+        }
+    }
+    // Return-type alignment: when the signature was promoted to
+    // `Map<String, Object>` but a `return <ident>;` was emitted while the
+    // statement-level heuristic still saw `Object` (map access appears later
+    // in the body), the bare identifier needs an explicit cast.
+    if ret_type == "Map<String, Object>" {
+        let mut obj_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for p in &proc.parameters {
+            if p.java_type == "Object" {
+                obj_names.insert(snake_to_camel(&p.name));
+            }
+        }
+        for (k, v) in &proc.local_vars {
+            if v == "Object" {
+                obj_names.insert(snake_to_camel(k));
+            }
+        }
+        for (k, v) in &promoted_var_types {
+            if v.contains("Map<String, Object>") {
+                obj_names.remove(&snake_to_camel(k));
+            }
+        }
+        if !obj_names.is_empty() {
+            let ret_ident_re = regex::Regex::new(r"^(\s*)return ([A-Za-z_]\w*);\s*$").unwrap();
+            for line in body_lines.iter_mut() {
+                if let Some(caps) = ret_ident_re.captures(line) {
+                    if obj_names.contains(caps.get(2).map(|m| m.as_str()).unwrap_or("")) {
+                        *line = format!("{}return ((Map<String, Object>) (Object) {});", &caps[1], &caps[2]);
+                    }
+                }
+            }
+        }
+    }
+    // Compile-safety net: bare identifier args to mapper calls that resolve
+    // to no declared name (e.g. record-field accesses like `p.node_name`
+    // flattened to `nodeName` inside dynamic SQL concat vars) would be
+    // cannot-find-symbol javac errors — degrade them to `null`.
+    {
+        let mut declared: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for p in &proc.parameters {
+            declared.insert(snake_to_camel(&p.name));
+        }
+        for k in proc.local_vars.keys() {
+            declared.insert(snake_to_camel(k));
+        }
+        for k in proc.out_local_vars.keys() {
+            declared.insert(snake_to_camel(k));
+        }
+        for k in proc.package_vars.keys() {
+            declared.insert(snake_to_camel(k));
+        }
+        for ci in proc.open_cursors.values() {
+            if let Some(rv) = &ci.result_var {
+                declared.insert(rv.clone());
+            }
+            if let Some(iv) = &ci.index_var {
+                declared.insert(iv.clone());
+            }
+        }
+        for kw in ["null", "true", "false", "this", "super"] {
+            declared.insert(kw.to_string());
+        }
+        // Name → java type for degraded args: `null` does not compile against
+        // primitive mapper params (`int i`), so out-of-scope/undeclared args
+        // degrade to a type-correct literal instead.
+        let mut ident_types: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        for p in &proc.parameters {
+            ident_types.insert(snake_to_camel(&p.name), p.java_type.clone());
+        }
+        for (k, v) in &proc.local_vars {
+            ident_types.insert(snake_to_camel(k), v.clone());
+        }
+        for (k, v) in &proc.out_local_vars {
+            ident_types.insert(snake_to_camel(k), format!("AtomicReference<{}>", v));
+        }
+        for (k, v) in &proc.package_vars {
+            ident_types.insert(snake_to_camel(k), v.java_type.clone());
+        }
+        for d in &proc.dml_statements {
+            for (n, t) in &d.extra_params {
+                ident_types.entry(snake_to_camel(n)).or_insert_with(|| t.clone());
+            }
+        }
+        let default_for_ident = |name: &str| -> &'static str {
+            match ident_types.get(name).map(|s| s.as_str()) {
+                Some("int") | Some("Integer") => "0",
+                Some("short") | Some("Short") => "(short) 0",
+                Some("long") | Some("Long") => "0L",
+                Some("byte") | Some("Byte") => "(byte) 0",
+                Some("float") | Some("Float") => "0f",
+                Some("double") | Some("Double") => "0.0",
+                Some("boolean") | Some("Boolean") => "false",
+                Some(t) if t.contains("BigDecimal") => "java.math.BigDecimal.ZERO",
+                _ => "null",
+            }
+        };
+        // Per-line in-scope for-loop variables (`for (int n = ...`,
+        // `for (Map<..> i : ...`). A loop var is only visible inside its
+        // body — tracking scope by brace depth keeps `mapper.x(n)` inside
+        // the loop intact while degrading out-of-scope uses to `null`.
+        // Only type-declared loop vars (`for (int n = ...`, `for (Map<..> m : ...`)
+        // are truly scoped to the loop body; `for (i = 0; ...)` reuses an outer
+        // variable and must not be treated as scoped.
+        let for_var_re = regex::Regex::new(r"for\s*\(\s*[\w<>\[\],.? ]+?\s(\w+)\s*[:=]").unwrap();
+        let strip_literals = |s: &str| -> String {
+            let mut out = String::with_capacity(s.len());
+            let mut chars = s.chars();
+            while let Some(c) = chars.next() {
+                if c == '"' || c == '\'' {
+                    let quote = c;
+                    while let Some(c2) = chars.next() {
+                        if c2 == '\\' {
+                            chars.next();
+                        } else if c2 == quote {
+                            break;
+                        }
+                    }
+                } else {
+                    out.push(c);
+                }
+            }
+            out
+        };
+        let mut depth = 0i32;
+        let mut for_stack: Vec<(String, i32)> = Vec::new();
+        let mut for_var_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut line_for_vars: Vec<std::collections::HashSet<String>> = Vec::with_capacity(body_lines.len());
+        for line in body_lines.iter() {
+            for_stack.retain(|(_, d)| *d <= depth);
+            let mut live = std::collections::HashSet::new();
+            for (v, _) in &for_stack {
+                live.insert(v.clone());
+            }
+            line_for_vars.push(live);
+            let stripped = strip_literals(line);
+            let opens = stripped.matches('{').count() as i32;
+            let closes = stripped.matches('}').count() as i32;
+            depth += opens - closes;
+            if line.contains("for") {
+                if let Some(caps) = for_var_re.captures(line) {
+                    for_var_names.insert(caps[1].to_string());
+                    // Body depth: when the `{` opening the loop body is on this
+                    // same line, `depth` already counts it; otherwise the body
+                    // sits one level deeper.
+                    let body_depth = if stripped.contains('{') { depth } else { depth + 1 };
+                    for_stack.push((caps[1].to_string(), body_depth));
+                }
+            }
+            for_stack.retain(|(_, d)| *d <= depth);
+        }
+        let arg_re =
+            regex::Regex::new(&format!(r"\b{}\.(\w+)\(((?:[^()]|\([^()]*\))*)\)", regex::escape(mapper_name))).unwrap();
+        let bare_ident = regex::Regex::new(r"^[A-Za-z_]\w*$").unwrap();
+        for (li, line) in body_lines.iter_mut().enumerate() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            let in_scope = &line_for_vars[li];
+            *line = arg_re
+                .replace_all(line, |caps: &regex::Captures| {
+                    let args = &caps[2];
+                    if args.trim().is_empty() {
+                        return format!("{}.{}({})", mapper_name, &caps[1], args);
+                    }
+                    // Split on top-level commas only.
+                    let mut parts: Vec<&str> = Vec::new();
+                    let mut depth = 0i32;
+                    let mut last = 0usize;
+                    for (i, c) in args.char_indices() {
+                        match c {
+                            '(' => depth += 1,
+                            ')' => depth -= 1,
+                            ',' if depth == 0 => {
+                                parts.push(&args[last..i]);
+                                last = i + 1;
+                            }
+                            _ => {}
+                        }
+                    }
+                    parts.push(&args[last..]);
+                    let fixed: Vec<String> = parts
+                        .iter()
+                        .map(|a| {
+                            let t = a.trim();
+                            // A for-loop variable outside its body is not a
+                            // valid reference even when `local_vars` lists it —
+                            // its Java scope ended with the loop.
+                            let ok = in_scope.contains(t) || (declared.contains(t) && !for_var_names.contains(t));
+                            if bare_ident.is_match(t) && !ok {
+                                default_for_ident(t).to_string()
+                            } else {
+                                a.to_string()
+                            }
+                        })
+                        .collect();
+                    format!("{}.{}({})", mapper_name, &caps[1], fixed.join(", "))
+                })
+                .to_string();
         }
     }
     dead_code_guard(&mut body_lines);

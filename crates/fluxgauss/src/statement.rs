@@ -1426,56 +1426,67 @@ fn process_sql_statement(
                         let line = out_param_set_expr(&var_java, method_id.as_str(), args.as_str(), proc);
                         ("Object".to_string(), line, String::new(), false)
                     } else {
-                        let declared_type = proc
-                            .local_vars
-                            .get(&var_name.to_lowercase())
-                            .cloned()
-                            .unwrap_or_else(|| "Object".to_string());
-                        // Issue #124: `SELECT ... BULK COLLECT INTO coll` (or a
-                        // plain INTO targeting a record-collection variable)
-                        // assigns the mapper's row list directly.
-                        if declared_type.contains("List<") && declared_type.contains("Map") {
-                            proc.imports.insert("import java.util.List;".to_string());
-                            proc.imports.insert("import java.util.Map;".to_string());
-                            let line = format!("{} = mapper.{}({});", var_java, method_id, args);
-                            ("List<Map<String, Object>>".to_string(), line, String::new(), true)
+                        // A local promoted to `AtomicReference<T>` for OUT-arg
+                        // use is declared as the wrapper — assigning the bare
+                        // mapper `_val` (Object) needs `.set((T) _val)`.
+                        if let Some(ar_inner) = proc.out_local_vars.get(&var_name.to_lowercase()).cloned() {
+                            let line = format!(
+                                "{{ Object _val = mapper.{}({}); if (_val != null) {}.set(({}) _val); }}",
+                                method_id, args, var_java, ar_inner
+                            );
+                            ("Object".to_string(), line, String::new(), false)
                         } else {
-                            let rt = infer_select_result_type(&declared_type, &clean_sql);
-                            let line = if declared_type.contains("Map") {
-                                format!("{{ Object _tmp = mapper.{}({}); {} = (_tmp instanceof java.util.Map) ? (java.util.Map<String, Object>) _tmp : null; }}", method_id, args, var_java)
-                            } else if rt != declared_type
-                                && matches!(
-                                    declared_type.as_str(),
-                                    "Long"
-                                        | "long"
-                                        | "Integer"
-                                        | "int"
-                                        | "Double"
-                                        | "double"
-                                        | "Float"
-                                        | "float"
-                                        | "BigDecimal"
-                                )
-                            {
-                                format!("{{ Object _strResult = mapper.{}({}); if (_strResult != null) {{ /* concatenated string assigned to {} var */ }} }}", method_id, args, declared_type)
-                            } else if declared_type == "Long" || declared_type == "long" {
-                                format!("{{ Object _val = mapper.{}({}); if (_val != null) {} = (_val instanceof Number ? ((Number)_val).longValue() : Long.parseLong(String.valueOf(_val))); }}", method_id, args, var_java)
-                            } else if declared_type == "Integer" || declared_type == "int" {
-                                format!("{{ Object _val = mapper.{}({}); if (_val != null) {} = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }}", method_id, args, var_java)
-                            } else if declared_type == "String" {
-                                format!("{} = String.valueOf(mapper.{}({}));", var_java, method_id, args)
-                            } else if declared_type != "Object" {
-                                format!(
-                                    "{{ Object _val = mapper.{}({}); if (_val != null) {} = ({}) _val; }}",
-                                    method_id, args, var_java, declared_type
-                                )
+                            let declared_type = proc
+                                .local_vars
+                                .get(&var_name.to_lowercase())
+                                .cloned()
+                                .unwrap_or_else(|| "Object".to_string());
+                            // Issue #124: `SELECT ... BULK COLLECT INTO coll` (or a
+                            // plain INTO targeting a record-collection variable)
+                            // assigns the mapper's row list directly.
+                            if declared_type.contains("List<") && declared_type.contains("Map") {
+                                proc.imports.insert("import java.util.List;".to_string());
+                                proc.imports.insert("import java.util.Map;".to_string());
+                                let line = format!("{} = mapper.{}({});", var_java, method_id, args);
+                                ("List<Map<String, Object>>".to_string(), line, String::new(), true)
                             } else {
-                                format!(
-                                    "{{ Object _val = mapper.{}({}); if (_val != null) {} = _val; }}",
-                                    method_id, args, var_java
-                                )
-                            };
-                            (rt, line, String::new(), false)
+                                let rt = infer_select_result_type(&declared_type, &clean_sql);
+                                let line = if declared_type.contains("Map") {
+                                    format!("{{ Object _tmp = mapper.{}({}); {} = (_tmp instanceof java.util.Map) ? (java.util.Map<String, Object>) _tmp : null; }}", method_id, args, var_java)
+                                } else if rt != declared_type
+                                    && matches!(
+                                        declared_type.as_str(),
+                                        "Long"
+                                            | "long"
+                                            | "Integer"
+                                            | "int"
+                                            | "Double"
+                                            | "double"
+                                            | "Float"
+                                            | "float"
+                                            | "BigDecimal"
+                                    )
+                                {
+                                    format!("{{ Object _strResult = mapper.{}({}); if (_strResult != null) {{ /* concatenated string assigned to {} var */ }} }}", method_id, args, declared_type)
+                                } else if declared_type == "Long" || declared_type == "long" {
+                                    format!("{{ Object _val = mapper.{}({}); if (_val != null) {} = (_val instanceof Number ? ((Number)_val).longValue() : Long.parseLong(String.valueOf(_val))); }}", method_id, args, var_java)
+                                } else if declared_type == "Integer" || declared_type == "int" {
+                                    format!("{{ Object _val = mapper.{}({}); if (_val != null) {} = (_val instanceof Number ? ((Number)_val).intValue() : Integer.parseInt(String.valueOf(_val))); }}", method_id, args, var_java)
+                                } else if declared_type == "String" {
+                                    format!("{} = String.valueOf(mapper.{}({}));", var_java, method_id, args)
+                                } else if declared_type != "Object" {
+                                    format!(
+                                        "{{ Object _val = mapper.{}({}); if (_val != null) {} = ({}) _val; }}",
+                                        method_id, args, var_java, declared_type
+                                    )
+                                } else {
+                                    format!(
+                                        "{{ Object _val = mapper.{}({}); if (_val != null) {} = _val; }}",
+                                        method_id, args, var_java
+                                    )
+                                };
+                                (rt, line, String::new(), false)
+                            }
                         }
                     }
                 } else {
@@ -1620,6 +1631,12 @@ fn infer_arg_type(arg: &str, proc: &ProcedureInfo) -> &'static str {
     let trimmed = arg.trim();
     if trimmed.starts_with('"') || trimmed.starts_with("String.valueOf(") {
         return "String";
+    }
+    // BigDecimal-producing exprs (`new java.math.BigDecimal(x)`,
+    // `BigDecimal.valueOf(x)`, `.longValue()` chains on BigDecimal vars) so a
+    // Long target unwraps via `.longValue()` instead of passing BigDecimal raw.
+    if trimmed.contains("BigDecimal") || trimmed.contains(".bigDecimalValue(") {
+        return "BigDecimal";
     }
     if trimmed.starts_with("Long.parseLong(") || trimmed == "null" {
         return "unknown";
@@ -1926,11 +1943,58 @@ fn process_procedure_call(
                         if param.is_out() {
                             let arg_trimmed = arg.trim();
                             if !arg_trimmed.contains('.') && !arg_trimmed.contains('(') {
+                                // Capture the caller's ACTUAL wrapper type
+                                // before the out_local_vars insert below
+                                // overwrites it with the callee's target type —
+                                // otherwise the AtomicReference<T> mismatch
+                                // check can never fire for promoted locals.
+                                let caller_inner_pre = proc
+                                    .parameters
+                                    .iter()
+                                    .find(|p| p.is_out() && crate::naming::snake_to_camel(&p.name) == arg_trimmed)
+                                    .map(|p| p.java_type.clone())
+                                    .or_else(|| {
+                                        proc.out_local_vars
+                                            .iter()
+                                            .find(|(k, _)| crate::naming::snake_to_camel(k) == arg_trimmed)
+                                            .map(|(_, t)| t.clone())
+                                    })
+                                    .or_else(|| {
+                                        proc.local_vars
+                                            .iter()
+                                            .find(|(k, _)| crate::naming::snake_to_camel(k) == arg_trimmed)
+                                            .map(|(_, t)| t.clone())
+                                    });
                                 for vname in proc.local_vars.keys() {
                                     let vname_camel = crate::naming::snake_to_camel(vname);
                                     if vname_camel == arg_trimmed {
                                         proc.out_local_vars.insert(vname.to_lowercase(), target_type.clone());
                                         break;
+                                    }
+                                }
+                                // AtomicReference<T> generics are invariant: a
+                                // caller OUT var typed AtomicReference<Long>
+                                // cannot feed a callee OUT param typed
+                                // AtomicReference<String> (and vice versa).
+                                // Rewrap with the coerced .get() value.
+                                if let Some(ci) = caller_inner_pre {
+                                    // local_vars may store the full
+                                    // `AtomicReference<T>` form — compare the
+                                    // INNER type against the callee's inner
+                                    // `target_type`.
+                                    let ci_inner = ci
+                                        .strip_prefix("AtomicReference<")
+                                        .or_else(|| ci.strip_prefix("atomicreference<"))
+                                        .and_then(|s| s.strip_suffix('>'))
+                                        .unwrap_or(&ci)
+                                        .to_string();
+                                    if !ci_inner.is_empty() && ci_inner != *target_type {
+                                        let inner = crate::expr::coerce_arg_to_type(
+                                            &format!("{}.get()", arg_trimmed),
+                                            target_type,
+                                            proc,
+                                        );
+                                        arg = format!("new AtomicReference<>({})", inner);
                                     }
                                 }
                             }
@@ -1967,6 +2031,14 @@ fn process_procedure_call(
                                 arg = format!("Long.parseLong(String.valueOf({}))", arg);
                             } else if target_is_long && arg_type_inferred == "BigDecimal" {
                                 arg = format!("({}).longValue()", arg);
+                            } else if target_type == "Long"
+                                && (arg.trim().chars().all(|c| c.is_ascii_digit()) || arg_type_inferred == "long")
+                            {
+                                // int/long literals and primitive vars cannot
+                                // widen+box to Long in one step — box explicitly.
+                                arg = format!("Long.valueOf({})", arg);
+                            } else if target_is_long && arg_type_inferred == "Object" && !arg_has_get {
+                                arg = format!("Long.parseLong(String.valueOf({}))", arg);
                             } else if target_is_int && arg_has_get {
                                 arg = format!("((Number) {}).intValue()", arg);
                             } else if target_is_long && arg_has_get {
@@ -2603,11 +2675,37 @@ pub fn process_statement(
                 // M5 (#114 review): a promoted local var (AtomicReference) returned
                 // bare fails javac — deref to the value first.
                 val = crate::expr::maybe_deref_promoted(&val, proc);
-                let coerced = if let Some(rt) = &proc.return_type {
-                    crate::expr::coerce_for_type(&val, Some(rt), proc)
+                // service.rs promotes an "Object" function return to
+                // Map<String, Object> when the body uses map-style access —
+                // mirror that here so `return <Object var>;` gets the cast.
+                let rt_is_object = proc.return_type.as_deref() == Some("Object");
+                let effective_rt = proc.return_type.clone().or_else(|| {
+                    if proc.is_function {
+                        let logic_text = proc.java_logic_lines.join(" ");
+                        if logic_text.contains(".put(")
+                            || logic_text.contains(".getOrDefault(")
+                            || logic_text.contains(".get(\"")
+                        {
+                            return Some("Map<String, Object>".to_string());
+                        }
+                    }
+                    None
+                });
+                let effective_rt = if rt_is_object {
+                    let logic_text = proc.java_logic_lines.join(" ");
+                    if logic_text.contains(".put(")
+                        || logic_text.contains(".getOrDefault(")
+                        || logic_text.contains(".get(\"")
+                    {
+                        Some("Map<String, Object>".to_string())
+                    } else {
+                        effective_rt
+                    }
                 } else {
-                    val
+                    effective_rt
                 };
+                let coerced =
+                    if let Some(rt) = &effective_rt { crate::expr::coerce_for_type(&val, Some(rt), proc) } else { val };
                 push_logic_line(proc, format!("return {};", coerced));
             } else if proc.return_type.as_ref().is_some_and(|rt| rt != "void") {
                 push_logic_line(proc, "return null;".into());
@@ -3079,6 +3177,10 @@ pub fn process_statement(
                             method_id: method_id.clone(),
                             sql_text: clean_sql,
                             result_type: Some("Map<String, Object>".to_string()),
+                            // The materialization below assigns the mapper
+                            // result to `List<Map<...>>` — the mapper method
+                            // must be generated with a List return type.
+                            returns_list: true,
                             ..Default::default()
                         });
 

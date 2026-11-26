@@ -13,6 +13,63 @@ pub(crate) fn is_nullish_java_expr(expr: &str) -> bool {
     t.ends_with("null") && t.contains("/*") && !t.starts_with('"')
 }
 
+/// True when the Java expression can never evaluate to `null` — primitive
+/// unboxing calls, `Math.*`, `String.valueOf`, `parse*`, literals, and
+/// non-null boxed factories. Used to fold `IS [NOT] NULL` on operands where
+/// `expr == null` would not compile (primitive `double`/`int`/`long`).
+fn expr_never_null_java(expr: &str, proc: &ProcedureInfo) -> bool {
+    let t = expr.trim();
+    if t.is_empty() || t == "null" || t.contains('?') {
+        return false;
+    }
+    if t == "true" || t == "false" || t.starts_with('"') || t.starts_with('\'') {
+        return true;
+    }
+    if !t.is_empty()
+        && t.chars().all(|c| c.is_ascii_digit() || c == '-' || c == '+' || c == '.')
+        && t.chars().any(|c| c.is_ascii_digit())
+    {
+        return true;
+    }
+    for m in [
+        ".doubleValue()",
+        ".intValue()",
+        ".longValue()",
+        ".floatValue()",
+        ".shortValue()",
+        ".byteValue()",
+        ".compareTo(",
+        ".length()",
+        ".size()",
+        ".indexOf(",
+        "parseLong",
+        "parseInt",
+        "parseDouble",
+        "parseFloat",
+        "String.valueOf(",
+        ".concat(",
+        ".toString()",
+        "Math.",
+        "new java.math.BigDecimal",
+        "BigDecimal.valueOf",
+        "Long.valueOf",
+        "Integer.valueOf",
+        "Double.valueOf",
+        "String.format",
+        "new java.lang.String",
+    ] {
+        if t.contains(m) {
+            return true;
+        }
+    }
+    if is_bare_identifier(t) {
+        if let Some(ty) = resolve_var_java_type(t, proc) {
+            return matches!(ty.as_str(), "int" | "long" | "short" | "byte" | "double" | "float" | "boolean");
+        }
+    }
+    false
+}
+
 /// Strip one layer of wrapping parentheses when they enclose the whole
 /// expression (`(null)` -> `null`), ignoring parens inside literals is not
 /// attempted — callers pass generated code where this is rare.
@@ -204,7 +261,7 @@ pub fn assignment_to_java(
                         if matched {
                             format!("({}).longValue()", val)
                         } else {
-                            val
+                            coerce_arg_to_type(&val, "Long", proc)
                         }
                     }
                 } else if ptype == "java.math.BigDecimal" {
@@ -224,7 +281,10 @@ pub fn assignment_to_java(
                     } else if produces_double(&val) {
                         format!("java.math.BigDecimal.valueOf({})", val)
                     } else {
-                        val
+                        // Long/int-producing args (`Long.parseLong`, Long vars)
+                        // have no direct BigDecimal conversion — route through
+                        // the standard coercion matrix (valueOf(long) etc.).
+                        coerce_for_type(&val, Some("java.math.BigDecimal"), proc)
                     }
                 } else if ptype == "Integer" || ptype == "int" {
                     // Narrow long-producing expressions to int; plain int literals
@@ -256,13 +316,26 @@ pub fn assignment_to_java(
             };
             return format!("{}.set({});", camel, coerced);
         }
-        let mut var_type = proc.local_vars.get(&ref_name.to_lowercase()).cloned().or_else(|| {
-            let ref_lower = ref_name.to_lowercase().replace("_", "");
-            proc.package_vars
-                .iter()
-                .find(|(k, _)| k.to_lowercase().replace("_", "") == ref_lower)
-                .map(|(_, vi)| vi.java_type.clone())
-        });
+        let mut var_type = proc
+            .local_vars
+            .get(&ref_name.to_lowercase())
+            .cloned()
+            .or_else(|| {
+                // local_vars keys are not always snake_case — fall back to a
+                // normalized comparison so `v_serial_no` still finds `vSerialNo`.
+                let ref_cmp = ref_name.to_lowercase().replace("_", "");
+                proc.local_vars
+                    .iter()
+                    .find(|(k, _)| k.to_lowercase().replace("_", "") == ref_cmp)
+                    .map(|(_, t)| t.clone())
+            })
+            .or_else(|| {
+                let ref_lower = ref_name.to_lowercase().replace("_", "");
+                proc.package_vars
+                    .iter()
+                    .find(|(k, _)| k.to_lowercase().replace("_", "") == ref_lower)
+                    .map(|(_, vi)| vi.java_type.clone())
+            });
         // Check if promoted to AtomicReference<> by out_local_vars (OUT-arg usage)
         let ref_lower_no_underscore = ref_name.to_lowercase().replace("_", "");
         if let Some((_, inner_type)) =
@@ -655,6 +728,30 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
             _ => {}
         }
     }
+    // String-producing expression chains (`String.valueOf(..).concat(..)`,
+    // `.substring(..)`, `.replace(..)`) assigned to a numeric local — same
+    // parse convention as the bare-identifier and call arms above.
+    if looks_string_expr(trimmed, proc)
+        && !trimmed.contains("parseLong")
+        && !trimmed.contains("parseInt")
+        && !trimmed.contains("parseDouble")
+    {
+        match target_type {
+            Some(t) if t == "Long" || t == "long" => {
+                return format!("Long.parseLong(String.valueOf({}))", trimmed);
+            }
+            Some(t) if t == "Integer" || t == "int" => {
+                return format!("Integer.parseInt(String.valueOf({}))", trimmed);
+            }
+            Some(t) if t == "Double" || t == "double" => {
+                return format!("Double.parseDouble(String.valueOf({}))", trimmed);
+            }
+            Some(t) if t.contains("BigDecimal") => {
+                return format!("new java.math.BigDecimal(String.valueOf({}))", trimmed);
+            }
+            _ => {}
+        }
+    }
     match target_type {
         Some(t) if t.contains("BigDecimal") && trimmed.starts_with('"') => {
             format!("new java.math.BigDecimal({})", trimmed)
@@ -872,6 +969,21 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
                 format!("{}.getTime()", trimmed)
             } else if looks_like_string_expr(trimmed) {
                 format!("Long.parseLong(String.valueOf({}))", trimmed)
+            } else if trimmed.ends_with(".length()")
+                || trimmed.ends_with(".size()")
+                || trimmed.contains(".indexOf(")
+                || trimmed.contains(".intValue()")
+                || matches!(
+                    resolve_var_java_type(trimmed, proc).as_deref(),
+                    Some("int") | Some("Integer") | Some("long") | Some("Long")
+                )
+            {
+                // int-producing exprs cannot cast to Number — box directly.
+                format!("Long.valueOf({})", trimmed)
+            } else if trimmed.contains('?') && trimmed.contains('"') {
+                // String-typed ternary (NVL/CASE mixing quoted literals and
+                // String vars) cannot cast to Number — parse the text.
+                format!("Long.parseLong(String.valueOf({}))", trimmed)
             } else {
                 format!("((Number)({})).longValue()", trimmed)
             }
@@ -902,6 +1014,53 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
         // Object with the TOBEFIX marker kept visible — javac accepts the
         // unchecked cast, and a genuine type mismatch surfaces as a runtime
         // ClassCastException at the assignment site instead of vanishing.
+        // TOBEFIX-degraded exprs (`/* TOBEFIX */ 0`) and bare int literals have
+        // no sound coercion into a collection slot — emit a compile-safe null
+        // cast through Object (same convention as the Map<->List arms below).
+        // Call-shaped RHS into a List slot: service calls declared `Object`
+        // (or unresolvable cross-service calls) do not convert to `List<T>`
+        // implicitly — route through `(Object)` so any reference return type
+        // compiles. Known-primitive returns are excluded (`(Object) int`
+        // would not compile either, but that shape was already broken).
+        Some(t)
+            if t.contains("List<")
+                && !trimmed.contains("List<")
+                && !trimmed.contains("Map<")
+                && !trimmed.contains("ArrayList")
+                && !trimmed.starts_with("((")
+                && trimmed.contains('(')
+                && trimmed.ends_with(')')
+                && !call_expr_return_type(trimmed, proc).is_some_and(|rt| {
+                    matches!(
+                        rt.as_str(),
+                        "int"
+                            | "Integer"
+                            | "long"
+                            | "Long"
+                            | "short"
+                            | "Short"
+                            | "byte"
+                            | "Byte"
+                            | "double"
+                            | "Double"
+                            | "float"
+                            | "Float"
+                            | "boolean"
+                            | "Boolean"
+                    )
+                }) =>
+        {
+            format!("(({}) (Object) {})", t, trimmed)
+        }
+        Some(t)
+            if (t.contains("List<")
+                || t.contains("java.util.List")
+                || t.starts_with("Map<")
+                || t.contains("Map<String"))
+                && (trimmed.contains("TOBEFIX") || trimmed.chars().all(|c| c.is_ascii_digit())) =>
+        {
+            format!("/* TOBEFIX: literal->collection assignment has no sound coercion */ (({}) (Object) null)", t)
+        }
         Some(t)
             if (t.contains("List<") || t.contains("java.util.List"))
                 && (resolve_var_java_type(trimmed, proc).is_some_and(|s| s.contains("Map<"))
@@ -920,7 +1079,7 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
     }
 }
 
-fn coerce_arg_to_type(arg: &str, target_type: &str, proc: &ProcedureInfo) -> String {
+pub(crate) fn coerce_arg_to_type(arg: &str, target_type: &str, proc: &ProcedureInfo) -> String {
     let trimmed = arg.trim();
     let target_is_bigdecimal = target_type.contains("BigDecimal");
     let target_is_long = target_type == "long" || target_type == "Long";
@@ -975,6 +1134,16 @@ fn coerce_arg_to_type(arg: &str, target_type: &str, proc: &ProcedureInfo) -> Str
         if is_integer_type(trimmed, proc) {
             return format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed));
         }
+        // long-producing call/expr forms (`Long.parseLong`, `.longValue()`,
+        // `.intValue()`, `Long.valueOf`) feed `valueOf(long)` directly —
+        // a bare `long`/`Long` cannot convert to BigDecimal.
+        if trimmed.contains("parseLong")
+            || trimmed.contains("Long.valueOf(")
+            || trimmed.contains(".longValue()")
+            || trimmed.contains(".intValue()")
+        {
+            return format!("java.math.BigDecimal.valueOf({})", trimmed);
+        }
         if trimmed.contains(".get(") {
             return format!("java.math.BigDecimal.valueOf(((Number) {}).longValue())", trimmed);
         }
@@ -999,6 +1168,11 @@ fn coerce_arg_to_type(arg: &str, target_type: &str, proc: &ProcedureInfo) -> Str
         }
         if arg_type == "String" {
             return format!("Long.parseLong(String.valueOf({}))", trimmed);
+        }
+        // int/long literals and primitive vars cannot widen+box to Long in one
+        // step (`set(1)`, `fn(60)` fail javac) — box via Long.valueOf.
+        if target_type == "Long" && arg_type == "long" {
+            return format!("Long.valueOf({})", trimmed);
         }
     }
 
@@ -1170,6 +1344,42 @@ fn unwrap_out_arg(a: &str, proc: &ProcedureInfo) -> String {
 /// callee's `AtomicReference<T>` signature type-checks. `target_params` is `None`
 /// when the callee's params couldn't be resolved, which falls back to `.get()`-only
 /// unwrapping (no coercion, no promotion — can't know the callee's OUT-ness).
+/// Shared OUT/IN-OUT argument lowering for cross-package AND same-package
+/// (`this.`) calls — see `emit_cross_pkg_call` for the full contract.
+fn promote_or_pass_through_arg(a: &str, java_type: &str, proc: &ProcedureInfo) -> String {
+    // Already-`AtomicReference` args (caller's own OUT param or promoted
+    // local) pass through — UNLESS the wrapper's generic argument differs
+    // from the callee slot's (e.g. caller `AtomicReference<Long>` into a
+    // callee `AtomicReference<String>` param). Rewrap with the dereferenced
+    // value coerced through the standard matrix (issue #136 batch-4 F3).
+    let caller_inner: Option<String> = if is_out_param(a, proc) {
+        let bn = a.split('.').next().unwrap_or(a).to_lowercase().replace("_", "");
+        proc.parameters
+            .iter()
+            .find(|p| p.is_out() && p.name.to_lowercase().replace("_", "") == bn)
+            .map(|p| p.java_type.clone())
+    } else {
+        proc.out_local_vars
+            .iter()
+            .find(|(k, _)| k.to_lowercase().replace("_", "") == a.to_lowercase().replace("_", ""))
+            .map(|(_, t)| t.clone())
+    };
+    if let Some(inner) = caller_inner {
+        if inner != java_type {
+            let coerced = coerce_arg_to_type(&format!("{}.get()", a), java_type, proc);
+            return format!("new java.util.concurrent.atomic.AtomicReference<>({})", coerced);
+        }
+        return a.to_string();
+    }
+    let trimmed = a.trim();
+    if !trimmed.contains('.') && !trimmed.contains('(') {
+        if let Some(vname) = proc.local_vars.keys().find(|v| snake_to_camel(v) == trimmed) {
+            queue_out_promotion(vname.to_lowercase(), java_type.to_string());
+        }
+    }
+    a.to_string()
+}
+
 fn emit_cross_pkg_call(
     cross_pkg_svc: &str,
     method: &str,
@@ -1186,39 +1396,7 @@ fn emit_cross_pkg_call(
     // as-is — no `.get()`, since after promotion it *is* an AtomicReference.
     // Anything else (expressions, Map access, etc.) is left untouched — we can't
     // safely rewrite it here.
-    let promote_or_pass_through = |a: &str, java_type: &str| -> String {
-        // Already-`AtomicReference` args (caller's own OUT param or promoted
-        // local) pass through — UNLESS the wrapper's generic argument differs
-        // from the callee slot's (e.g. caller `AtomicReference<Long>` into a
-        // callee `AtomicReference<String>` param). Rewrap with the dereferenced
-        // value coerced through the standard matrix (issue #136 batch-4 F3).
-        let caller_inner: Option<String> = if is_out_param(a, proc) {
-            let bn = a.split('.').next().unwrap_or(a).to_lowercase().replace("_", "");
-            proc.parameters
-                .iter()
-                .find(|p| p.is_out() && p.name.to_lowercase().replace("_", "") == bn)
-                .map(|p| p.java_type.clone())
-        } else {
-            proc.out_local_vars
-                .iter()
-                .find(|(k, _)| k.to_lowercase().replace("_", "") == a.to_lowercase().replace("_", ""))
-                .map(|(_, t)| t.clone())
-        };
-        if let Some(inner) = caller_inner {
-            if inner != java_type {
-                let coerced = coerce_arg_to_type(&format!("{}.get()", a), java_type, proc);
-                return format!("new java.util.concurrent.atomic.AtomicReference<>({})", coerced);
-            }
-            return a.to_string();
-        }
-        let trimmed = a.trim();
-        if !trimmed.contains('.') && !trimmed.contains('(') {
-            if let Some(vname) = proc.local_vars.keys().find(|v| snake_to_camel(v) == trimmed) {
-                queue_out_promotion(vname.to_lowercase(), java_type.to_string());
-            }
-        }
-        a.to_string()
-    };
+    let promote_or_pass_through = |a: &str, java_type: &str| promote_or_pass_through_arg(a, java_type, proc);
 
     let mut x_args: Vec<String> = Vec::new();
     if let Some(params) = target_params {
@@ -1375,6 +1553,12 @@ fn expr_to_java_impl(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> St
             // Issue #136 batch-4 F4: `null.get("f")` does not compile.
             if object_java.trim() == "null" {
                 return "/* TOBEFIX: field access on unresolved/null receiver */ null".into();
+            }
+            // A TOBEFIX-degraded receiver (`/* TOBEFIX */ null`) cannot be
+            // dereferenced either — substitute a typed null map so the
+            // `.getOrDefault`/`.get` chain still compiles.
+            if object_java.contains("TOBEFIX") {
+                object_java = "((java.util.Map<String, Object>) null)".to_string();
             }
             // Review #129 §4.3: `coll(i).field` reads must be gated on the
             // collection's element type — scalar elements (List<Long> etc.)
@@ -1738,6 +1922,16 @@ pub(crate) fn is_bigdecimal_var(expr_str: &str, proc: &ProcedureInfo) -> bool {
     if base.is_empty() {
         base = name.trim_start_matches('(').split(['.', ')', '(']).next().unwrap_or(name);
     }
+    // A var promoted to `AtomicReference<T>` for OUT-arg use is declared with
+    // the PROMOTED inner type — that is the authoritative runtime type, so it
+    // must win over the local_vars entry (which may still say BigDecimal
+    // while the wrapper holds Long: `AR<Long>.get().multiply(...)` fails).
+    let base_cmp = base.to_lowercase().replace("_", "");
+    for (k, v) in &proc.out_local_vars {
+        if k.to_lowercase().replace("_", "") == base_cmp {
+            return v.contains("BigDecimal");
+        }
+    }
     // Direct lookup (snake_case key)
     if let Some(ty) = proc.local_vars.get(&base.to_lowercase()) {
         return ty.contains("BigDecimal");
@@ -1872,7 +2066,10 @@ fn wrap_bigdecimal(expr: &str, already_bd: bool, proc: &ProcedureInfo) -> String
                     base, base
                 );
             }
-            format!("java.math.BigDecimal.valueOf(((Number) {}).doubleValue())", trimmed)
+            // `BigDecimal.valueOf(double)` does not exist — route the Object
+            // read through its string form so decimals survive and any
+            // numeric holder (Long/BigDecimal/String) converts.
+            format!("new java.math.BigDecimal(String.valueOf({}))", trimmed)
         }
     } else if trimmed.chars().all(|c| c.is_ascii_digit() || c == '.') && !trimmed.is_empty() {
         format!("java.math.BigDecimal.valueOf({})", java_int_lit(trimmed))
@@ -2361,6 +2558,15 @@ fn needs_get_unwrap(expr: &str) -> bool {
 
 /// Generate null-safe Number extraction from Map .get() or .getOrDefault() result
 fn safe_long_value(expr: &str) -> String {
+    // String-producing operands (`SimpleDateFormat.format`, concat chains)
+    // cannot cast to Number — parse the text inside the same null-safe
+    // Optional wrapper so SQL NULL still degrades to 0L.
+    if expr.contains(".format(") || expr.contains(".concat(") {
+        return format!(
+            "java.util.Optional.ofNullable({}).map(__o -> Long.parseLong(String.valueOf(__o))).orElse(0L)",
+            expr
+        );
+    }
     // Parenthesize the operand: `(Number) a + 1` parses as `((Number) a) + 1`
     // (Number + int is a compile error); the cast must cover the whole expr.
     format!("java.util.Optional.ofNullable((Number) ({})).map(Number::longValue).orElse(0L)", expr)
@@ -2790,8 +2996,25 @@ fn binary_op_to_java(
         }
         "AND" => format!("({} && {})", boolean_operand_java(&l), boolean_operand_java(&r)),
         "OR" => format!("({} || {})", boolean_operand_java(&l), boolean_operand_java(&r)),
-        "IS" => format!("{} == {}", l, r),
-        "IS NOT" => format!("{} != {}", l, r),
+        "IS" | "IS NOT" => {
+            // `x IS [NOT] NULL` on an expression that can never be null
+            // (primitive unbox, Math.*, String.valueOf, literals) folds to a
+            // constant — `doubleExpr != null` does not compile.
+            let is_not = op == "IS NOT";
+            let l_nil = is_nullish_java_expr(strip_outer_parens(&l));
+            let r_nil = is_nullish_java_expr(strip_outer_parens(&r));
+            if l_nil || r_nil {
+                let other = if l_nil { r.as_str() } else { l.as_str() };
+                if expr_never_null_java(other, proc) {
+                    return (if is_not { "true" } else { "false" }).to_string();
+                }
+            }
+            if is_not {
+                format!("{} != {}", l, r)
+            } else {
+                format!("{} == {}", l, r)
+            }
+        }
         ">" | "<" | ">=" | "<=" => {
             let l_null = is_nullish_java_expr(&l);
             let r_null = is_nullish_java_expr(&r);
@@ -3265,6 +3488,12 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             } else {
                 else_val
             };
+            // arg0 can never be null (primitive unbox, Math.*, String.valueOf,
+            // literals) — `arg0 != null` does not compile on primitives, and
+            // the condition is constant-true anyway.
+            if expr_never_null_java(arg0, proc) {
+                return format!("(true ? {} : {})", true_val, else_val);
+            }
             format!("({} != null ? {} : {})", arg0, true_val, else_val)
         }
         "UPPER" => format!("String.valueOf({}).toUpperCase()", jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")),
@@ -3319,7 +3548,7 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                     let scale_int = if is_bigdecimal_var(&jargs[1], proc) {
                         format!("{}.intValue()", jargs[1])
                     } else {
-                        format!("(int)({})", jargs[1])
+                        format!("(int)(long)({})", jargs[1])
                     };
                     format!("{}.setScale({}, java.math.RoundingMode.HALF_UP)", arg, scale_int)
                 } else {
@@ -3416,13 +3645,13 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                 let s = wrap_s(&jargs[0]);
                 let start = &jargs[1];
                 let len = &jargs[2];
-                let start_cast = if might_be_long(start, proc) { format!("(int)({})", start) } else { format!("({})", start) };
-                let len_cast = if might_be_long(len, proc) { format!("(int)({})", len) } else { format!("({})", len) };
+                let start_cast = if might_be_long(start, proc) { format!("(int)(long)({})", start) } else { format!("({})", start) };
+                let len_cast = if might_be_long(len, proc) { format!("(int)(long)({})", len) } else { format!("({})", len) };
                 format!("{}.substring(Math.min({}.length(), Math.max(0, {} - 1)), Math.min({}.length(), Math.max(0, {} - 1) + {}))", s, s, start_cast, s, start_cast, len_cast)
             } else if jargs.len() >= 2 {
                 let s = wrap_s(&jargs[0]);
                 let start = &jargs[1];
-                let start_cast = if might_be_long(start, proc) { format!("(int)({})", start) } else { format!("({})", start) };
+                let start_cast = if might_be_long(start, proc) { format!("(int)(long)({})", start) } else { format!("({})", start) };
                 format!("{}.substring(Math.min({}.length(), Math.max(0, {} - 1)))", s, s, start_cast)
             } else {
                 "null".into()
@@ -3625,14 +3854,40 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             match jargs.len() {
                 0 | 1 => jargs.first().map(|s| s.as_str()).unwrap_or("\"\"").to_string(),
                 2 => format!("String.format(\"%\" + ({}) + \"s\", {})", jargs[1], jargs[0]),
-                _ => format!("String.format(\"%\" + ({}) + \"s\", {}).replace(\" \", {})", jargs[1], jargs[0], jargs[2]),
+                _ => {
+                    // Pad arg may be a numeric literal (`lpad(x,4,0)` — Oracle
+                    // implicitly converts); String.replace needs CharSequence.
+                    let pad = jargs[2].trim();
+                    let pad_expr = if pad.starts_with('"')
+                        || pad.starts_with('\'')
+                        || pad.contains("String.valueOf")
+                        || pad == "null"
+                    {
+                        pad.to_string()
+                    } else {
+                        format!("String.valueOf({})", pad)
+                    };
+                    format!("String.format(\"%\" + ({}) + \"s\", {}).replace(\" \", {})", jargs[1], jargs[0], pad_expr)
+                }
             }
         }
         "RPAD" => {
             match jargs.len() {
                 0 | 1 => jargs.first().map(|s| s.as_str()).unwrap_or("\"\"").to_string(),
                 2 => format!("String.format(\"%-\" + ({}) + \"s\", {})", jargs[1], jargs[0]),
-                _ => format!("String.format(\"%-\" + ({}) + \"s\", {}).replace(\" \", {})", jargs[1], jargs[0], jargs[2]),
+                _ => {
+                    let pad = jargs[2].trim();
+                    let pad_expr = if pad.starts_with('"')
+                        || pad.starts_with('\'')
+                        || pad.contains("String.valueOf")
+                        || pad == "null"
+                    {
+                        pad.to_string()
+                    } else {
+                        format!("String.valueOf({})", pad)
+                    };
+                    format!("String.format(\"%-\" + ({}) + \"s\", {}).replace(\" \", {})", jargs[1], jargs[0], pad_expr)
+                }
             }
         }
         "LTRIM" => {
@@ -3683,6 +3938,9 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             // Issue #57: TO_NUMBER('') should produce BigDecimal.ZERO, not new BigDecimal("")
             if arg == "\"\"" || arg == "''" {
                 "java.math.BigDecimal.ZERO".to_string()
+            } else if is_bigdecimal_var(arg, proc) || arg.starts_with("new java.math.BigDecimal") {
+                // Already BigDecimal — `new BigDecimal(BigDecimal)` has no ctor.
+                arg.to_string()
             } else {
                 format!("new java.math.BigDecimal({})", arg)
             }
@@ -3691,7 +3949,7 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             let s = if jargs[0].starts_with('"') || jargs[0].starts_with('\'') { jargs[0].clone() } else { format!("String.valueOf({})", jargs[0]) };
             let sub = if jargs[1].starts_with('"') || jargs[1].starts_with('\'') { jargs[1].clone() } else { format!("String.valueOf({})", jargs[1]) };
             let start = &jargs[2];
-            let start_cast = if might_be_long(start, proc) { format!("(int)({})", start) } else { format!("({})", start) };
+            let start_cast = if might_be_long(start, proc) { format!("(int)(long)({})", start) } else { format!("({})", start) };
             format!("{}.indexOf({}, Math.max(0, {} - 1)) + 1", s, sub, start_cast)
         }
         "INSTR" if jargs.len() >= 2 => {
@@ -3945,7 +4203,7 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
                         if i < jargs.len() {
                             let arg = &jargs[i];
                             if param.is_out() {
-                                out.push(arg.clone());
+                                out.push(promote_or_pass_through_arg(arg, &param.java_type, proc));
                             } else {
                                 // Issue #136-C: dereference the caller's own OUT
                                 // wrapper before coercing into an IN parameter.
@@ -4022,14 +4280,15 @@ fn special_function_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: 
                 let start = &jargs[1];
                 let len = &jargs[2];
                 let start_cast =
-                    if might_be_long(start, proc) { format!("(int)({})", start) } else { format!("({})", start) };
-                let len_cast = if might_be_long(len, proc) { format!("(int)({})", len) } else { format!("({})", len) };
+                    if might_be_long(start, proc) { format!("(int)(long)({})", start) } else { format!("({})", start) };
+                let len_cast =
+                    if might_be_long(len, proc) { format!("(int)(long)({})", len) } else { format!("({})", len) };
                 format!("{}.substring(Math.min({}.length(), Math.max(0, {} - 1)), Math.min({}.length(), Math.max(0, {} - 1) + {}))", s, s, start_cast, s, start_cast, len_cast)
             } else if jargs.len() >= 2 {
                 let s = wrap_s(&jargs[0]);
                 let start = &jargs[1];
                 let start_cast =
-                    if might_be_long(start, proc) { format!("(int)({})", start) } else { format!("({})", start) };
+                    if might_be_long(start, proc) { format!("(int)(long)({})", start) } else { format!("({})", start) };
                 format!("{}.substring(Math.min({}.length(), Math.max(0, {} - 1)))", s, s, start_cast)
             } else {
                 jargs.first().cloned().unwrap_or_else(|| "null".into())
@@ -4186,7 +4445,14 @@ fn like_to_java(
             return format!("{} && {}", left_java, right_java);
         }
     }
-    let left = expr_to_java(expr, proc);
+    let left_raw = expr_to_java(expr, proc);
+    // Map/record field reads (`.get(`/`getOrDefault(`) yield Object — String
+    // methods (contains/startsWith/endsWith) do not exist on Object.
+    let left = if left_raw.contains(".get(") || left_raw.contains("getOrDefault(") {
+        format!("String.valueOf({})", left_raw)
+    } else {
+        left_raw
+    };
     let pat_str = match pattern {
         ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String(s)) => Some(s.as_str()),
         _ => None,

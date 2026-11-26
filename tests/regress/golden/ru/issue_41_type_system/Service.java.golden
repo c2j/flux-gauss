@@ -32,7 +32,7 @@ public class Issue41TypesService {
     public void procTransfer(long pFromAccount, long pToAccount, java.math.BigDecimal pAmount, java.sql.Date pTransferDate, boolean pIsUrgent, AtomicReference<java.math.BigDecimal> pNewBalance, AtomicReference<String> pStatus) {
         java.math.BigDecimal vFromBalance = java.math.BigDecimal.ZERO;
         java.math.BigDecimal vToBalance = java.math.BigDecimal.ZERO;
-        { Object _val = issue41TypesMapper.selectTIssue41Account(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent); if (_val != null) vFromBalance = (java.math.BigDecimal) _val; }
+        { Object _val = issue41TypesMapper.selectTIssue41Account(pFromAccount,  pToAccount,  pAmount,  pTransferDate,  pIsUrgent); if (_val != null) vFromBalance = (java.math.BigDecimal) _val; }
         if (vFromBalance.compareTo(pAmount) < 0) {
             log.info("");
         }
@@ -40,10 +40,10 @@ public class Issue41TypesService {
             pStatus.set("URGENT TRANSFER");
         }
         vFromBalance = vFromBalance.subtract(pAmount);
-        issue41TypesMapper.updateTIssue41Account(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent, vFromBalance);
-        { Object _val = issue41TypesMapper.selectTIssue41Account_1(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent); if (_val != null) vToBalance = (java.math.BigDecimal) _val; }
+        issue41TypesMapper.updateTIssue41Account(pFromAccount,  pToAccount,  pAmount,  pTransferDate,  pIsUrgent,  vFromBalance);
+        { Object _val = issue41TypesMapper.selectTIssue41Account_1(pFromAccount,  pToAccount,  pAmount,  pTransferDate,  pIsUrgent); if (_val != null) vToBalance = (java.math.BigDecimal) _val; }
         vToBalance = vToBalance.add(pAmount);
-        issue41TypesMapper.updateTIssue41Account_1(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent, vToBalance);
+        issue41TypesMapper.updateTIssue41Account_1(pFromAccount,  pToAccount,  pAmount,  pTransferDate,  pIsUrgent,  vToBalance);
         pNewBalance.set(vFromBalance);
         pStatus.set("TRANSFER COMPLETE");
     }
@@ -55,7 +55,7 @@ public class Issue41TypesService {
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
         try {
-            { Object _val = issue41TypesMapper.selectTIssue41Account_2(pAccountId, pAmount); if (_val != null) vBalance = (java.math.BigDecimal) _val; }
+            { Object _val = issue41TypesMapper.selectTIssue41Account_2(pAccountId,  pAmount); if (_val != null) vBalance = (java.math.BigDecimal) _val; }
             if (pAmount.compareTo(java.math.BigDecimal.valueOf(0)) <= 0) {
                 log.info("");
             }
@@ -63,7 +63,7 @@ public class Issue41TypesService {
                 log.info("");
             }
             vBalance = vBalance.subtract(pAmount);
-            issue41TypesMapper.updateTIssue41Account_2(pAccountId, pAmount, vBalance);
+            issue41TypesMapper.updateTIssue41Account_2(pAccountId,  pAmount,  vBalance);
             pNewBalance.set(vBalance);
             pStatus.set("WITHDRAWAL SUCCESS");
         } catch (BusinessException __e1) { // insufficient_funds

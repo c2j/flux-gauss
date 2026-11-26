@@ -36,7 +36,7 @@ public class CursorAdvancedService {
         List<Map<String, Object>> pResultResult = null;
         int pResultIdx = 0;
         Object p_result = null;
-        vStatusArray = java.util.Arrays.asList(String.valueOf(pStatusList).split(java.util.regex.Pattern.quote(String.valueOf(","))));
+        vStatusArray = ((List<String>) (Object) java.util.Arrays.asList(String.valueOf(pStatusList).split(java.util.regex.Pattern.quote(String.valueOf(",")))));
         vStatusCount = java.util.Optional.ofNullable(vStatusArray).map(__l -> __l instanceof java.util.Collection ? ((java.util.Collection<?>) __l).size() : null).map(Number::intValue).orElse(null);
         for (int i = 1; i <= vStatusCount; i++) {
             vInClause = String.valueOf(String.valueOf(vInClause).concat(String.valueOf(":"))).concat(String.valueOf(i));
@@ -44,24 +44,24 @@ public class CursorAdvancedService {
         vSql = String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf("SELECT\n                    t.id,\n                    t.name,\n                    t.status,\n                    t.amount,\n                    t.create_time,\n                    t.customer_id,\n                    c.customer_name,\n                    CASE WHEN t.amount > :").concat(String.valueOf((vStatusCount + 1)))).concat(String.valueOf(" THEN 'HIGH' ELSE 'NORMAL' END AS amount_level,\n                    EXTRACT(DAY FROM (CURRENT_TIMESTAMP - :"))).concat(String.valueOf((vStatusCount + 2)))).concat(String.valueOf(")) AS days_elapsed\n                  FROM "))).concat(String.valueOf(pTableName))).concat(String.valueOf(" t\n                  LEFT JOIN customers c ON t.customer_id = c.customer_id\n                  WHERE t.status IN ("))).concat(String.valueOf(vInClause))).concat(String.valueOf(")\n                    AND t.amount >= :"))).concat(String.valueOf((vStatusCount + 1)))).concat(String.valueOf("\n                    AND t.create_time >= :"))).concat(String.valueOf((vStatusCount + 2)))).concat(String.valueOf("\n                  ORDER BY t.amount DESC"));
         // case vStatusCount:
         if (vStatusCount.equals(1)) {
-            pResultResult = cursorAdvancedMapper.selectProcCursorDynamicUsing(pTableName, pStatusList, pMinAmount, pStartDate, vSql, vStatusArray);
+            pResultResult = cursorAdvancedMapper.selectProcCursorDynamicUsing(pTableName,  pStatusList,  pMinAmount,  pStartDate,  vSql,  vStatusArray);
             if (pResultResult == null) pResultResult = new java.util.ArrayList<>();
             pResultIdx = 0;
         } else if (vStatusCount.equals(2)) {
-            pResultResult = cursorAdvancedMapper.selectProcCursorDynamicUsing_1(pTableName, pStatusList, pMinAmount, pStartDate, vSql, vStatusArray);
+            pResultResult = cursorAdvancedMapper.selectProcCursorDynamicUsing_1(pTableName,  pStatusList,  pMinAmount,  pStartDate,  vSql,  vStatusArray);
             if (pResultResult == null) pResultResult = new java.util.ArrayList<>();
             pResultIdx = 0;
         } else if (vStatusCount.equals(3)) {
-            pResultResult = cursorAdvancedMapper.selectProcCursorDynamicUsing_2(pTableName, pStatusList, pMinAmount, pStartDate, vSql, vStatusArray);
+            pResultResult = cursorAdvancedMapper.selectProcCursorDynamicUsing_2(pTableName,  pStatusList,  pMinAmount,  pStartDate,  vSql,  vStatusArray);
             if (pResultResult == null) pResultResult = new java.util.ArrayList<>();
             pResultIdx = 0;
         } else {
             vSql = vSql.replace(vInClause, pStatusList);
-            pResultResult = cursorAdvancedMapper.selectProcCursorDynamicUsing_3(pTableName, pStatusList, pMinAmount, pStartDate, vSql);
+            pResultResult = cursorAdvancedMapper.selectProcCursorDynamicUsing_3(pTableName,  pStatusList,  pMinAmount,  pStartDate,  vSql);
             if (pResultResult == null) pResultResult = new java.util.ArrayList<>();
             pResultIdx = 0;
         }
-        cursorAdvancedMapper.insertAuditLog(pTableName, pStatusList, pMinAmount, pStartDate, vSql);
+        cursorAdvancedMapper.insertAuditLog(pTableName,  pStatusList,  pMinAmount,  pStartDate,  vSql);
     }
 
     // Source: pkg_cursor_advanced.func_get_order_cursor (FUNCTION) — {FIXTURES_ROOT}/gauss_complete_examples.sql:599-623
@@ -72,7 +72,7 @@ public class CursorAdvancedService {
         int vCursorIdx = 0;
         Object v_cursor = null;
         vSql = "SELECT\n                    o.order_id,\n                    c.customer_name,\n                    SUM(oi.quantity * oi.unit_price) AS total_amount,\n                    COUNT(DISTINCT oi.item_id) AS item_count,\n                    o.order_status\n                  FROM orders o\n                  JOIN customers c ON o.customer_id = c.customer_id\n                  JOIN order_items oi ON o.order_id = oi.order_id\n                  WHERE o.customer_id = :1\n                    AND o.order_date BETWEEN :2 AND :3\n                  GROUP BY o.order_id, c.customer_name, o.order_status\n                  ORDER BY total_amount DESC";
-        vCursorResult = cursorAdvancedMapper.selectFuncGetOrderCursor(pCustomerId, pDateFrom, pDateTo, vSql);
+        vCursorResult = cursorAdvancedMapper.selectFuncGetOrderCursor(pCustomerId,  pDateFrom,  pDateTo,  vSql);
         if (vCursorResult == null) vCursorResult = new java.util.ArrayList<>();
         vCursorIdx = 0;
         return vCursor;
@@ -108,10 +108,10 @@ public class CursorAdvancedService {
         vOffset = (pPageNum - 1) * pPageSize;
         vCountSql = String.valueOf(String.valueOf("SELECT COUNT(*) FROM (").concat(String.valueOf(pBaseSql))).concat(String.valueOf(") t"));
         vPageSql = String.valueOf(String.valueOf("SELECT * FROM (").concat(String.valueOf(pBaseSql))).concat(String.valueOf(") t LIMIT :1 OFFSET :2"));
-        pDataCursorResult = cursorAdvancedMapper.selectProcPaginateWithUsing(pBaseSql, pPageSize, pPageNum, pBindValues, vOffset, vPageSql);
+        pDataCursorResult = cursorAdvancedMapper.selectProcPaginateWithUsing(pBaseSql,  pPageSize,  pPageNum,  pBindValues,  vOffset,  vPageSql);
         if (pDataCursorResult == null) pDataCursorResult = new java.util.ArrayList<>();
         pDataCursorIdx = 0;
-        pTotalCursorResult = cursorAdvancedMapper.selectProcPaginateWithUsing_1(pBaseSql, pPageSize, pPageNum, pBindValues);
+        pTotalCursorResult = cursorAdvancedMapper.selectProcPaginateWithUsing_1(pBaseSql,  pPageSize,  pPageNum,  pBindValues);
         if (pTotalCursorResult == null) pTotalCursorResult = new java.util.ArrayList<>();
         pTotalCursorIdx = 0;
     }
@@ -183,7 +183,7 @@ public class CursorLifecycleService {
             if (++_loopGuard1 > 1000) { break; }
             found = false; // FETCH pInCursor — cursor not materialized
             if (!found) { break; }
-            cursorLifecycleMapper.insertProcEnhanceCursor(pInCursor, vTemp, vId, vName, vSalary, vDeptId, vHireDate);
+            cursorLifecycleMapper.insertProcEnhanceCursor(pInCursor,  vTemp,  vId,  vName,  vSalary,  vDeptId,  vHireDate);
         }
         // CLOSE p_in_cursor;
         /* OPEN pOutCursor.get() FOR 'SELECT * FROM ' || v_temp || ' ORDER BY salary DESC' — dynamic SQL, not materializable */
@@ -216,7 +216,7 @@ public class CursorLifecycleService {
             }
         }
         // CLOSE p_cursor;
-        pSummary.set(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf("Total: ").concat(String.valueOf(vCount))).concat(String.valueOf(", Senior: "))).concat(String.valueOf(vSeniorCount))).concat(String.valueOf(", Avg Salary: "))).concat(String.valueOf(vTotal.divide((java.math.BigDecimal.valueOf((java.util.Objects.equals(vCount, 0) ? 1 : vCount)).signum() != 0 ? java.math.BigDecimal.valueOf((java.util.Objects.equals(vCount, 0) ? 1 : vCount)) : java.math.BigDecimal.ONE), 10, java.math.RoundingMode.HALF_UP).setScale((int)(2), java.math.RoundingMode.HALF_UP)))));
+        pSummary.set(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf("Total: ").concat(String.valueOf(vCount))).concat(String.valueOf(", Senior: "))).concat(String.valueOf(vSeniorCount))).concat(String.valueOf(", Avg Salary: "))).concat(String.valueOf(vTotal.divide((java.math.BigDecimal.valueOf((java.util.Objects.equals(vCount, 0) ? 1 : vCount)).signum() != 0 ? java.math.BigDecimal.valueOf((java.util.Objects.equals(vCount, 0) ? 1 : vCount)) : java.math.BigDecimal.ONE), 10, java.math.RoundingMode.HALF_UP).setScale((int)(long)(2), java.math.RoundingMode.HALF_UP)))));
     }
 
     // Source: pkg_cursor_lifecycle.proc_full_pipeline (PROCEDURE) — {FIXTURES_ROOT}/gauss_complete_examples.sql:785-794
@@ -226,7 +226,7 @@ public class CursorLifecycleService {
         AtomicReference<Object> vResult = new AtomicReference<>(null);
         this.procGetRawCursor(pDeptId, vCursor1);
         this.procEnhanceCursor(vCursor1.get(), vCursor2);
-        this.procConsumeCursor(vCursor2.get(), vResult, new AtomicReference<>(null));
+        this.procConsumeCursor(vCursor2.get(), new AtomicReference<>(vResult.get()), new AtomicReference<>(null));
         // CALL DBE_OUTPUT.PRINT_LINE(String.valueOf("Pipeline result: ").concat(String.valueOf(vResult.get())))
     }
 }
@@ -328,14 +328,14 @@ public class ForInSelectService {
             for (Map<String, Object> vEmp : vEmpList) {
                 try {
                     vBonusRate = java.math.BigDecimal.valueOf(((Number) this.funcGetBonusRate(((Number) vEmp.getOrDefault("departmentId", vEmp.get("department_id"))).intValue())).longValue());
-                    vBonusAmt = java.math.BigDecimal.valueOf(((Number) vEmp.get("salary")).doubleValue()).multiply(vBonusRate).setScale((int)(2), java.math.RoundingMode.HALF_UP);
+                    vBonusAmt = new java.math.BigDecimal(String.valueOf(vEmp.get("salary"))).multiply(vBonusRate).setScale((int)(long)(2), java.math.RoundingMode.HALF_UP);
                     vMaxBonus = java.math.BigDecimal.valueOf(java.util.Optional.ofNullable((Number) (vEmp.get("salary"))).map(Number::longValue).orElse(0L) * 12 * 0.20);
-                    if (java.math.BigDecimal.valueOf(((Number) vEmp.getOrDefault("yearBonusTotal", vEmp.get("year_bonus_total"))).doubleValue()).add(vBonusAmt).compareTo(vMaxBonus) > 0) {
-                        vBonusAmt = vMaxBonus.subtract(java.math.BigDecimal.valueOf(((Number) vEmp.getOrDefault("yearBonusTotal", vEmp.get("year_bonus_total"))).doubleValue()));
+                    if (new java.math.BigDecimal(String.valueOf(vEmp.getOrDefault("yearBonusTotal", vEmp.get("year_bonus_total")))).add(vBonusAmt).compareTo(vMaxBonus) > 0) {
+                        vBonusAmt = vMaxBonus.subtract(new java.math.BigDecimal(String.valueOf(vEmp.getOrDefault("yearBonusTotal", vEmp.get("year_bonus_total")))));
                         forInSelectMapper.insertBonusLimitLog(vEmp);
                     }
                     if (vBonusAmt.compareTo(java.math.BigDecimal.valueOf(0)) > 0) {
-                        forInSelectMapper.insertEmployeeBonus(vBonusAmt, vEmp, vInsertId);
+                        forInSelectMapper.insertEmployeeBonus(vBonusAmt,  vEmp,  vInsertId);
                         vTotalBonus = vTotalBonus.add(vBonusAmt);
                         vProcessed = vProcessed + 1;
                         if (java.util.Objects.equals((vProcessed % 100), 0)) {
@@ -345,7 +345,7 @@ public class ForInSelectService {
                 } catch (BusinessException __e1) { // DUP_VAL_ON_INDEX
                     __SQLERRM__ = __e1.getMessage();
                     __SQLCODE__ = -1;
-                    forInSelectMapper.updateEmployeeBonus(vBonusAmt, vEmp);
+                    forInSelectMapper.updateEmployeeBonus(vBonusAmt,  vEmp);
                 } catch (Exception __e2) {
                     __SQLERRM__ = __e2.getMessage();
                     __SQLCODE__ = -1;
@@ -354,7 +354,7 @@ public class ForInSelectService {
                 }
             }
             // COMMIT;
-            forInSelectMapper.updateBatchLog(vLogId, vProcessed, vTotalBonus);
+            forInSelectMapper.updateBatchLog(vLogId,  vProcessed,  vTotalBonus);
             // COMMIT;
         } catch (Exception __e3) {
             __SQLERRM__ = __e3.getMessage();
@@ -454,7 +454,7 @@ public class OpenCursorService {
         List<Map<String, Object>> pResultResult = null;
         int pResultIdx = 0;
         Object p_result = null;
-        pResultResult = openCursorMapper.selectProcGetEmployeeCursor(pDeptId, pMinSalary);
+        pResultResult = openCursorMapper.selectProcGetEmployeeCursor(pDeptId,  pMinSalary);
         if (pResultResult == null) pResultResult = new java.util.ArrayList<>();
         pResultIdx = 0;
     }
@@ -481,8 +481,8 @@ public class OpenCursorService {
         try {
             vStartTime = new java.sql.Timestamp(System.currentTimeMillis());
             vSql = String.valueOf("SELECT id, name, amount, status, create_time FROM ").concat(String.valueOf(pTableName));
-            openCursorMapper.insertAuditLog(pTableName, pWhereClause, pOrderBy, vSql);
-            vCursorResult = openCursorMapper.selectProcProcessDynamicQuery(pTableName, pWhereClause, pOrderBy);
+            openCursorMapper.insertAuditLog(pTableName,  pWhereClause,  pOrderBy,  vSql);
+            vCursorResult = openCursorMapper.selectProcProcessDynamicQuery(pTableName,  pWhereClause,  pOrderBy);
             if (vCursorResult == null) vCursorResult = new java.util.ArrayList<>();
             vCursorIdx = 0;
             int _loopGuard1 = 0;
@@ -503,16 +503,16 @@ public class OpenCursorService {
                 try {
                     // case vRecStatus:
                     if (vRecStatus.equals("PENDING")) {
-                        openCursorMapper.updateProcProcessDynamicQuery(pTableName, pWhereClause, pOrderBy, vRecId);
+                        openCursorMapper.updateProcProcessDynamicQuery(pTableName,  pWhereClause,  pOrderBy,  vRecId);
                     } else if (vRecStatus.equals("PROCESSING")) {
                         if (vRecTime.compareTo(new java.sql.Timestamp(new java.sql.Timestamp(System.currentTimeMillis()).getTime() - (long)(java.time.Duration.ofHours((long)2).toMillis()) * 24 * 60 * 60 * 1000)) < 0) {
-                            openCursorMapper.updateProcProcessDynamicQuery_1(pTableName, pWhereClause, pOrderBy, vRecId);
+                            openCursorMapper.updateProcProcessDynamicQuery_1(pTableName,  pWhereClause,  pOrderBy,  vRecId);
                         }
                     } else if (vRecStatus.equals("COMPLETED")) {
-                        openCursorMapper.insertArchiveTable(pTableName, pWhereClause, pOrderBy, vRecId, vRecName, vRecStatus, vRecValue);
-                        openCursorMapper.deleteProcProcessDynamicQuery(pTableName, pWhereClause, pOrderBy, vRecId);
+                        openCursorMapper.insertArchiveTable(pTableName,  pWhereClause,  pOrderBy,  vRecId,  vRecName,  vRecStatus,  vRecValue);
+                        openCursorMapper.deleteProcProcessDynamicQuery(pTableName,  pWhereClause,  pOrderBy,  vRecId);
                     } else {
-                        openCursorMapper.insertExceptionLog(pTableName, pWhereClause, pOrderBy, vRecId, vRecStatus);
+                        openCursorMapper.insertExceptionLog(pTableName,  pWhereClause,  pOrderBy,  vRecId,  vRecStatus);
                     }
                     if (java.util.Objects.equals((vRowCount % vBatchSize), 0)) {
                         // COMMIT;
@@ -520,13 +520,13 @@ public class OpenCursorService {
                 } catch (Exception __e1) {
                     __SQLERRM__ = __e1.getMessage();
                     __SQLCODE__ = -1;
-                    openCursorMapper.insertErrorLog(pTableName, pWhereClause, pOrderBy, vRecId);
+                    openCursorMapper.insertErrorLog(pTableName,  pWhereClause,  pOrderBy,  vRecId);
                     continue;
                 }
             }
             // COMMIT;
             // CLOSE v_cursor;
-            openCursorMapper.insertPerformanceLog(pTableName, pWhereClause, pOrderBy, vRowCount, vStartTime);
+            openCursorMapper.insertPerformanceLog(pTableName,  pWhereClause,  pOrderBy,  vRowCount,  vStartTime);
         } catch (Exception __e2) {
             __SQLERRM__ = __e2.getMessage();
             __SQLCODE__ = -1;
@@ -548,10 +548,10 @@ public class OpenCursorService {
         Object p_count_cursor = null;
         Object p_data_cursor = null;
         vOffset = (pPageNum - 1) * pPageSize;
-        pDataCursorResult = openCursorMapper.selectProcPaginatedQuery(pPageSize, pPageNum, vOffset);
+        pDataCursorResult = openCursorMapper.selectProcPaginatedQuery(pPageSize,  pPageNum,  vOffset);
         if (pDataCursorResult == null) pDataCursorResult = new java.util.ArrayList<>();
         pDataCursorIdx = 0;
-        pCountCursorResult = openCursorMapper.selectProcPaginatedQuery_1(pPageSize, pPageNum);
+        pCountCursorResult = openCursorMapper.selectProcPaginatedQuery_1(pPageSize,  pPageNum);
         if (pCountCursorResult == null) pCountCursorResult = new java.util.ArrayList<>();
         pCountCursorIdx = 0;
     }

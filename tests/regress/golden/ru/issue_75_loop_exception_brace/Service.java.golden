@@ -26,6 +26,7 @@ public class Issue75Service {
     // Source: pkg_issue75.proc_nested_block_body_fails (PROCEDURE) — {FIXTURES_ROOT}/issue_75_loop_exception_brace.sql:14-27
     public void procNestedBlockBodyFails(AtomicReference<String> pResult) {
         String vTmp = null;
+        Object cInner = null;
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
         try {
@@ -46,6 +47,8 @@ public class Issue75Service {
     // Source: pkg_issue75.proc_loop_exc_handler (PROCEDURE) — {FIXTURES_ROOT}/issue_75_loop_exception_brace.sql:29-46
     public void procLoopExcHandler(AtomicReference<String> pResult) {
         String vTmp = null;
+        Object cOuter = null;
+        Object cInner = null;
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
         // for rec in cursor c_outer
