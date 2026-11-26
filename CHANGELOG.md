@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.32] - 2026-11-26
+
+### Fixed
+- issue #136 batch-4 — remaining real-corpus compile residuals (four javac orders now 0 diagnostics on the issue-136 repro suite and the delivery corpus): emission-time import completeness backstop (`Map`/`List` etc. used without imports), refcursor OUT call-site arguments positionally skipped with the promoted signature, cross-package wrapper generics conversion (`AtomicReference<Long>` ↔ `<String>` via typed deref/re-wrap), defensive TOBEFIX degrade for unresolvable dotted refs / null receivers / `Object` receivers (package-qualified shared vars keep the getOrDefault path)
+- issue #136 NULL semantics — SQL three-valued logic: `= NULL` / `!= NULL` / `<> NULL` / ordering-vs-NULL fold to `false` (UNKNOWN — IF does not run) for every operand type; NUMBER params participating in NULL semantics keep boxed `Long` signatures so callers can pass NULL and `NVL(p, d)` keeps its real null branch; DEFAULT-NULL generated test fixtures exercise the null path
+- issue #136 — generated project determinism: cursor-decl emission order is now deterministic (two-round generation byte-identical); relative YAML `sources` resolve against the YAML file's directory with process-CWD fallback, and missing/empty sources exit non-zero instead of emitting a silent skeleton
+
 ## [0.6.31] - 2026-11-25
 
 ### Fixed
