@@ -138,13 +138,24 @@ pub fn write_service_class(
     sorted_pkg_vars.sort_by_key(|(k, _)| *k);
     for (var_name, var_info) in sorted_pkg_vars {
         let field_name = crate::naming::java_safe_identifier(&crate::naming::snake_to_camel(var_name));
-        let is_readonly = var_info.is_constant || !written_package_vars.contains(var_name.as_str());
+        // Issue #136: vars accessed from other packages via `<pkg>Service.<var>`
+        // must be visible AND writable outside this class — emit `public
+        // static` (never `final`) for exactly those, marked by
+        // mark_externally_shared_vars during analysis. Non-final is required
+        // because the same access shape serves cross-package writes.
+        let externally_shared = pkg.externally_shared_vars.contains(var_name);
+        // `final` is dropped only for non-constant externally-shared vars:
+        // constant vars never receive emitted writes (they degrade to a
+        // comment), so `public static final` stays correct for reads.
+        let is_readonly =
+            var_info.is_constant || (!written_package_vars.contains(var_name.as_str()) && !externally_shared);
         let default_val = var_info.default_value.as_deref().unwrap_or_else(|| default_for_type(&var_info.java_type));
         let coerced_default = coerce_default_value(&var_info.java_type, default_val);
+        let vis = if externally_shared { "public" } else { "private" };
         if is_readonly {
-            w.line(&format!("private static final {} {} = {};", var_info.java_type, field_name, coerced_default));
+            w.line(&format!("{} static final {} {} = {};", vis, var_info.java_type, field_name, coerced_default));
         } else {
-            w.line(&format!("private static {} {} = {};", var_info.java_type, field_name, coerced_default));
+            w.line(&format!("{} static {} {} = {};", vis, var_info.java_type, field_name, coerced_default));
         }
         if var_info.java_type == "BigDecimal" {
             all_imports.insert("import java.math.BigDecimal;".to_string());
@@ -1797,6 +1808,7 @@ mod tests {
             procedures: procs,
             table_refs: Default::default(),
             package_vars: Default::default(),
+            externally_shared_vars: Default::default(),
             source_file: String::new(),
             source_files: Vec::new(),
             comments: Vec::new(),

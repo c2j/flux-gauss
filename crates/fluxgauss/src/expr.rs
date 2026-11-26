@@ -140,6 +140,22 @@ pub fn assignment_to_java(
             }
 
             if base_type == "Object" || base_type.is_empty() {
+                // Issue #136 corpus: `known_pkg.var := v` — a cross-package
+                // package-var WRITE. Emit `<pkg>Service.<var> = v` (the field
+                // is marked `public` by mark_externally_shared_vars); writes
+                // to `final` (constant) vars degrade to a comment.
+                if base_type.is_empty() {
+                    if let Some((access, var_info)) = cross_pkg_var_info(proc, base, field) {
+                        let val = expr_to_java(value, proc);
+                        if var_info.is_constant {
+                            return format!(
+                                "// {} := <value> — cross-package constant package var (issue #136)",
+                                ref_name
+                            );
+                        }
+                        return format!("{} = {};", access, val);
+                    }
+                }
                 let val = expr_to_java(value, proc);
                 return format!("((java.util.Map<String, Object>) {}).put(\"{}\", {});", base_camel, field_camel, val);
             }
@@ -880,22 +896,25 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
         {
             format!("((Map<String, Object>) {})", trimmed)
         }
-        // Issue #136 batch-4 F4: Map<->List assignments have no sound Java
-        // coercion — degrade to a typed null with a visible marker instead
-        // of an uncompilable assignment.
+        // Issue #136 batch-4 F4 / batch-5 R2: Map<->List assignments have no
+        // sound Java coercion, but `null` silently dropped the value and a
+        // bare assignment did not compile. Emit a compile-safe cast through
+        // Object with the TOBEFIX marker kept visible — javac accepts the
+        // unchecked cast, and a genuine type mismatch surfaces as a runtime
+        // ClassCastException at the assignment site instead of vanishing.
         Some(t)
             if (t.contains("List<") || t.contains("java.util.List"))
                 && (resolve_var_java_type(trimmed, proc).is_some_and(|s| s.contains("Map<"))
                     || call_expr_return_type(trimmed, proc).is_some_and(|s| s.contains("Map<"))) =>
         {
-            "/* TOBEFIX: Map->List assignment has no sound coercion */ null".to_string()
+            format!("/* TOBEFIX: Map->List assignment has no sound coercion */ (({}) (Object) {})", t, trimmed)
         }
         Some(t)
             if (t.starts_with("Map<") || t.contains("Map<String"))
                 && (resolve_var_java_type(trimmed, proc).is_some_and(|s| s.contains("List<"))
                     || call_expr_return_type(trimmed, proc).is_some_and(|s| s.contains("List<"))) =>
         {
-            "/* TOBEFIX: List->Map assignment has no sound coercion */ null".to_string()
+            format!("/* TOBEFIX: List->Map assignment has no sound coercion */ (({}) (Object) {})", t, trimmed)
         }
         _ => expr.to_string(),
     }
@@ -1594,6 +1613,12 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
                     || proc.package_vars.contains_key(&parts[1].to_lowercase())
                     || proc.package_vars.keys().any(|k| k.eq_ignore_ascii_case(parts[1]));
                 if !base_resolvable {
+                    // Issue #136 corpus: `known_pkg.var` where the base is
+                    // another package's name and the field is its package-level
+                    // variable → `<pkg>Service.<var>`.
+                    if let Some(access) = cross_pkg_var_access(proc, parts[0], parts[1]) {
+                        return access;
+                    }
                     return format!(
                         "/* TOBEFIX: unresolved ref {}.{} - caller={}:{} */ null",
                         flatten_comment(parts[0]),
@@ -1663,6 +1688,12 @@ fn resolve_column_ref(name: &str, proc: &ProcedureInfo) -> String {
                     || proc.local_vars.keys().any(|k| k.to_lowercase().replace('_', "") == name_key)
                     || proc.package_vars.keys().any(|k| k.to_lowercase().replace('_', "") == name_key);
                 if !is_declared_var {
+                    // Issue #136 corpus: a bare identifier naming a known
+                    // package whose package vars include a same-named var
+                    // (`pkg_inst_crossday_deal` shape) → `<pkg>Service.<var>`.
+                    if let Some(access) = cross_pkg_self_var_access(proc, name) {
+                        return access;
+                    }
                     // 函数注册表判定（无前缀启发式，Task 5）：同包零参兄弟 → this.fn()；
                     // 跨包零参且候选唯一 → svcVar.fn()；否则 TOBEFIX + null（Task 6）
                     // （不区分"注册表未命中"与"命中但歧义"——两者都不是可安全生成的函数调用）。
@@ -2006,6 +2037,50 @@ fn call_expr_return_type(expr_str: &str, proc: &ProcedureInfo) -> Option<String>
     } else {
         None
     }
+}
+
+/// Normalize a package/var name for cross-registry comparison: lowercase
+/// with underscores stripped (matches `pkgInstCrossdayDeal` ↔
+/// `pkg_inst_crossday_deal`).
+fn norm_name_key(s: &str) -> String {
+    s.to_lowercase().replace('_', "")
+}
+
+/// `other_pkg.var` → `<pkg>Service.<var>` when `other_pkg` is a known
+/// package (proc_summaries snapshot in `cross_pkg_vars`) and `var` is one
+/// of its package-level variables. Returns None otherwise — caller falls
+/// back to TOBEFIX.
+fn cross_pkg_var_access(proc: &ProcedureInfo, pkg_ref: &str, field: &str) -> Option<String> {
+    cross_pkg_var_info(proc, pkg_ref, field).map(|(access, _)| access)
+}
+
+/// Lookup variant returning the emitted access plus the target VarInfo —
+/// assignment lowering needs `is_constant` to refuse writes to `final`
+/// package vars (issue #136 corpus).
+fn cross_pkg_var_info<'a>(
+    proc: &'a ProcedureInfo,
+    pkg_ref: &str,
+    field: &str,
+) -> Option<(String, &'a crate::types::VarInfo)> {
+    let pkg_key = norm_name_key(pkg_ref);
+    let (svc_var, vars) = proc.cross_pkg_vars.iter().find(|(k, _)| norm_name_key(k) == pkg_key).map(|(_, v)| v)?;
+    let field_key = norm_name_key(field);
+    let (var_name, var_info) = vars
+        .iter()
+        .find(|(k, _)| norm_name_key(k) == field_key)
+        .or_else(|| vars.iter().find(|(k, _)| k.eq_ignore_ascii_case(field)))?;
+    Some((format!("{}.{}", svc_var, snake_to_camel(var_name)), var_info))
+}
+
+/// Bare-name variant: identifier IS a known package name and that package
+/// has a package variable of the same name (`pkg_inst_crossday_deal`
+/// shape) → `<pkg>Service.<var>`.
+fn cross_pkg_self_var_access(proc: &ProcedureInfo, name: &str) -> Option<String> {
+    let key = norm_name_key(name);
+    let (svc_var, vars) = proc.cross_pkg_vars.iter().find(|(k, _)| norm_name_key(k) == key).map(|(_, v)| v)?;
+    let var_name =
+        vars.keys().find(|k| norm_name_key(k) == key).or_else(|| vars.keys().find(|k| k.eq_ignore_ascii_case(name)))?;
+    Some(format!("{}.{}", svc_var, snake_to_camel(var_name)))
 }
 
 /// Java type of `base_var.field` for record-typed variables/parameters
@@ -3206,8 +3281,17 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             "new java.sql.Timestamp(System.currentTimeMillis())".to_string()
         }
         "LOWER" => format!("String.valueOf({}).toLowerCase()", jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")),
-        "TRIM" => format!("{}.trim()", jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")),
-        "LENGTH" => format!("{}.length()", jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")),
+        // Issue #136 batch-5 R2: `null.trim()`/`null.length()` do not compile
+        // (`<null>` dereference) — SQL NULL propagates, so the call lowers to
+        // `null` when the receiver arg is the null literal.
+        "TRIM" => {
+            let a = jargs.first().map(|s| s.as_str()).unwrap_or("\"\"");
+            if a.trim() == "null" { "null".into() } else { format!("{}.trim()", a) }
+        }
+        "LENGTH" => {
+            let a = jargs.first().map(|s| s.as_str()).unwrap_or("\"\"");
+            if a.trim() == "null" { "null".into() } else { format!("{}.length()", a) }
+        }
         "INTERVALTONUM" | "INTERVAL_TO_NUM" => {
             jargs.first().cloned().unwrap_or_else(|| "0L".to_string())
         }
@@ -3554,19 +3638,30 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         "LTRIM" => {
             match jargs.len() {
                 0 => "\"\"".to_string(),
+                1 if jargs[0].trim() == "null" => "null".to_string(),
                 1 => format!("{}.replaceAll(\"^\\\\s+\", \"\")", jargs[0]),
+                _ if jargs[0].trim() == "null" => "null".to_string(),
                 _ => format!("{}.replaceAll(\"^\" + {} + \"+\", \"\")", jargs[0], jargs[1]),
             }
         }
         "RTRIM" => {
             match jargs.len() {
                 0 => "\"\"".to_string(),
+                1 if jargs[0].trim() == "null" => "null".to_string(),
                 1 => format!("{}.replaceAll(\"\\\\s+$\", \"\")", jargs[0]),
+                _ if jargs[0].trim() == "null" => "null".to_string(),
                 _ => format!("{}.replaceAll(\"\" + {} + \"+$\", \"\")", jargs[0], jargs[1]),
             }
         }
-        "REPEAT" if jargs.len() >= 2 => format!("{}.repeat({})", jargs[0], jargs[1]),
-        "REVERSE" => format!("new StringBuilder({}).reverse().toString()", jargs.first().map(|s| s.as_str()).unwrap_or("null")),
+        "REPEAT" if jargs.len() >= 2 => {
+            if jargs[0].trim() == "null" { "null".into() } else { format!("{}.repeat({})", jargs[0], jargs[1]) }
+        }
+        "REVERSE" => {
+            let a = jargs.first().map(|s| s.as_str()).unwrap_or("null");
+            // `new StringBuilder(null)` is an ambiguous ctor call AND NPEs —
+            // SQL NULL propagates instead.
+            if a.trim() == "null" { "null".into() } else { format!("new StringBuilder({}).reverse().toString()", a) }
+        }
         "CONCAT" | "CONCAT_WS" if !jargs.is_empty() => {
             let inner = jargs.join(").concat(String.valueOf(");
             let needs_close = inner.matches('(').count() as isize - inner.matches(')').count() as isize;
@@ -3580,7 +3675,9 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
         "SYSDATE" | "CURRENT_TIMESTAMP" | "NOW" | "SYSTIMESTAMP" | "LOCALTIMESTAMP" => "new java.sql.Timestamp(System.currentTimeMillis())".into(),
         "CURRENT_DATE" => "new java.sql.Date(System.currentTimeMillis())".into(),
         "CHR" if !jargs.is_empty() => format!("String.valueOf((char)({}))", jargs[0]),
-        "ASCII" if !jargs.is_empty() => format!("(int){}.charAt(0)", jargs[0]),
+        "ASCII" if !jargs.is_empty() => {
+            if jargs[0].trim() == "null" { "null".into() } else { format!("(int){}.charAt(0)", jargs[0]) }
+        }
         "TO_NUMBER" => {
             let arg = jargs.first().map(|s| s.as_str()).unwrap_or("\"0\"");
             // Issue #57: TO_NUMBER('') should produce BigDecimal.ZERO, not new BigDecimal("")
@@ -6108,9 +6205,13 @@ mod tests {
         proc.local_vars.insert("v_obj".into(), "Object".into());
         let out = coerce_for_type("vMap", Some("java.util.List<Object>"), &proc);
         assert!(out.contains("TOBEFIX"), "got: {}", out);
-        assert!(out.trim_end().ends_with("null"), "got: {}", out);
+        assert!(out.contains("((java.util.List<Object>) (Object) vMap)"), "got: {}", out);
         let out2 = coerce_for_type("vObj", Some("Map<String, Object>"), &proc);
         assert_eq!(out2, "((Map<String, Object>) vObj)");
+        // List→Map direction: compile-safe cast through Object + marker.
+        let out3 = coerce_for_type("vList", Some("Map<String, Object>"), &proc);
+        assert!(out3.contains("TOBEFIX: List->Map"), "got: {}", out3);
+        assert!(out3.contains("((Map<String, Object>) (Object) vList)"), "got: {}", out3);
     }
 
     #[test]
@@ -6174,5 +6275,154 @@ mod tests {
         let out = expr_to_java(&expr, &proc);
         assert!(out.contains("getOrDefault(\"fOne\""), "got: {}", out);
         assert!(!out.contains("TOBEFIX"), "got: {}", out);
+    }
+
+    #[test]
+    fn test_issue136b5_cross_pkg_var_dotted_ref() {
+        // `pkg_other.shared_flag` where pkg_other is a known package with a
+        // same-named package var → `<pkg>Service.<var>` accessor, not
+        // TOBEFIX / undeclared identifier.
+        let mut proc = empty_proc();
+        proc.cross_pkg_vars.insert(
+            "pkg_other".into(),
+            (
+                "pkgOtherService".into(),
+                [(
+                    "shared_flag".to_string(),
+                    crate::types::VarInfo {
+                        name: "shared_flag".into(),
+                        java_type: "String".into(),
+                        sql_type: "VARCHAR".into(),
+                        default_value: None,
+                        is_constant: false,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+        );
+        let expr = col_expr(&["pkg_other", "shared_flag"]);
+        let out = expr_to_java(&expr, &proc);
+        assert_eq!(out, "pkgOtherService.sharedFlag");
+        // Unknown field in a known package still degrades.
+        let expr2 = col_expr(&["pkg_other", "no_such_var"]);
+        let out2 = expr_to_java(&expr2, &proc);
+        assert!(out2.contains("TOBEFIX"), "got: {}", out2);
+    }
+
+    #[test]
+    fn test_issue136b5_cross_pkg_var_write() {
+        // `pkg_other.shared_flag := 'x'` — cross-package package-var WRITE
+        // emits `<pkg>Service.<var> = v` (field is marked public); a write
+        // to a constant var degrades to a comment instead of assigning a
+        // `final` field.
+        let mut proc = empty_proc();
+        proc.cross_pkg_vars.insert(
+            "pkg_other".into(),
+            (
+                "pkgOtherService".into(),
+                [
+                    (
+                        "shared_flag".to_string(),
+                        crate::types::VarInfo {
+                            name: "shared_flag".into(),
+                            java_type: "String".into(),
+                            sql_type: "VARCHAR".into(),
+                            default_value: None,
+                            is_constant: false,
+                        },
+                    ),
+                    (
+                        "shared_const".to_string(),
+                        crate::types::VarInfo {
+                            name: "shared_const".into(),
+                            java_type: "String".into(),
+                            sql_type: "VARCHAR".into(),
+                            default_value: None,
+                            is_constant: true,
+                        },
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+        );
+        let lit = |s: &str| ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String(s.into()));
+        let out = assignment_to_java(&plvar(&["pkg_other", "shared_flag"]), &lit("x"), &proc);
+        assert_eq!(out, "pkgOtherService.sharedFlag = \"x\";");
+        let out_const = assignment_to_java(&plvar(&["pkg_other", "shared_const"]), &lit("x"), &proc);
+        assert!(out_const.starts_with("// pkg_other.shared_const"), "got: {}", out_const);
+        // Unknown field keeps the legacy map-put degradation.
+        let out_unknown = assignment_to_java(&plvar(&["pkg_other", "no_such"]), &lit("x"), &proc);
+        assert!(
+            out_unknown.contains("pkgOther") || out_unknown.contains("Map<String, Object>"),
+            "got: {}",
+            out_unknown
+        );
+    }
+
+    #[test]
+    fn test_issue136b5_cross_pkg_self_var_bare_name() {
+        // Bare `pkg_other` where pkg_other is a known package AND has a
+        // package var of the same name → `<pkg>Service.<var>`.
+        let mut proc = empty_proc();
+        proc.cross_pkg_vars.insert(
+            "pkg_other".into(),
+            (
+                "pkgOtherService".into(),
+                [(
+                    "pkg_other".to_string(),
+                    crate::types::VarInfo {
+                        name: "pkg_other".into(),
+                        java_type: "String".into(),
+                        sql_type: "VARCHAR".into(),
+                        default_value: None,
+                        is_constant: false,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+        );
+        let expr = col_expr(&["pkg_other"]);
+        let out = expr_to_java(&expr, &proc);
+        assert_eq!(out, "pkgOtherService.pkgOther");
+    }
+
+    #[test]
+    fn test_issue136b5_null_receiver_string_funcs() {
+        // `TRIM(NULL)`/`LENGTH(NULL)`/`LTRIM(NULL)`/`REPEAT(NULL,n)`/
+        // `REVERSE(NULL)`/`ASCII(NULL)` → `null`, never `null.trim()` etc.
+        let proc = empty_proc();
+        let null_lit = || ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::Null);
+        for fname in ["trim", "length", "ltrim", "rtrim", "reverse", "ascii"] {
+            let expr = fc_expr(&[fname], vec![null_lit()]);
+            let out = expr_to_java(&expr, &proc);
+            assert_eq!(out, "null", "{} produced: {}", fname, out);
+        }
+        let expr = fc_expr(&["repeat"], vec![null_lit(), int_lit(3)]);
+        assert_eq!(expr_to_java(&expr, &proc), "null");
+        // Non-null args unaffected.
+        let lit = |s: &str| ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String(s.into()));
+        let expr = fc_expr(&["trim"], vec![lit("  x  ")]);
+        assert!(expr_to_java(&expr, &proc).contains(".trim()"));
+    }
+
+    #[test]
+    fn test_issue136b5_replace_wraps_object_param_receiver() {
+        // Object-typed IN param receiver — same String.valueOf wrap as the
+        // local-var case (corpus: `Object.replace` on non-.get() receivers).
+        let mut proc = empty_proc();
+        proc.parameters.push(crate::types::Parameter {
+            name: "p_obj".into(),
+            java_type: "Object".into(),
+            sql_type: "VARCHAR2".into(),
+            mode: Some(crate::types::ParamMode::In),
+            default_value: None,
+        });
+        let lit = |s: &str| ogsql_parser::ast::Expr::Literal(ogsql_parser::ast::Literal::String(s.into()));
+        let expr = fc_expr(&["replace"], vec![plvar(&["p_obj"]), lit("a"), lit("b")]);
+        let out = expr_to_java(&expr, &proc);
+        assert!(out.contains("String.valueOf(pObj).replace(\"a\", \"b\")"), "got: {}", out);
     }
 }

@@ -262,6 +262,13 @@ pub struct ProcedureInfo {
 
     pub package_vars: HashMap<String, VarInfo>,
 
+    /// Other packages' package-level variables for `other_pkg.var`
+    /// references: pkg_name_lower → (svc_var, var_lower → VarInfo).
+    /// Populated from proc_summaries during analysis; the dotted-ref
+    /// lowering uses it to emit `<pkg>Service.<var>` instead of an
+    /// undeclared identifier or a TOBEFIX marker (issue #136 corpus).
+    pub cross_pkg_vars: HashMap<String, (String, HashMap<String, VarInfo>)>,
+
     pub has_array_vars: bool,
     pub out_local_vars: HashMap<String, String>,
 
@@ -352,6 +359,7 @@ impl ProcedureInfo {
             cursor_params: HashMap::new(),
             custom_types: HashMap::new(),
             package_vars: HashMap::new(),
+            cross_pkg_vars: HashMap::new(),
             has_array_vars: false,
             out_local_vars: HashMap::new(),
             goto_analysis: None,
@@ -390,6 +398,10 @@ pub struct PackageInfo {
     pub procedures: Vec<ProcedureInfo>,
     pub table_refs: HashSet<String>,
     pub package_vars: HashMap<String, VarInfo>,
+    /// Package-var keys (same keys as `package_vars`) that are read from
+    /// OTHER packages via `<pkg>Service.<var>` — those fields must be
+    /// emitted `public` instead of `private` to compile (issue #136).
+    pub externally_shared_vars: HashSet<String>,
     pub source_file: String,
     pub source_files: Vec<String>,
     pub comments: Vec<CommentBlock>,
@@ -667,6 +679,7 @@ mod tests {
             ],
             table_refs: HashSet::new(),
             package_vars: HashMap::new(),
+            externally_shared_vars: Default::default(),
             source_file: "pkg_order.sql".into(),
             source_files: vec!["pkg_order.sql".into()],
             comments: Vec::new(),
