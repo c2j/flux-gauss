@@ -1022,7 +1022,11 @@ fn build_service_method(
         // checks (`cursor != null`) — declare them as null Objects so javac
         // resolves the symbol.
         let mut declared_cursor_javas: std::collections::HashSet<String> = proc.open_cursors.keys().cloned().collect();
-        for cursor_raw in proc.cursor_decls.keys() {
+        // Sort for deterministic declaration order — HashMap iteration order
+        // varies between runs (two-pass generation must be byte-identical).
+        let mut cursor_decl_keys: Vec<&String> = proc.cursor_decls.keys().collect();
+        cursor_decl_keys.sort();
+        for cursor_raw in cursor_decl_keys {
             let camel = crate::naming::snake_to_camel(cursor_raw);
             if !declared_cursor_javas.insert(camel.clone()) {
                 continue;
@@ -2560,5 +2564,24 @@ mod tests {
         ])));
         // C-style for with empty cond remains infinite.
         assert!(seq_cannot_fall_through(&lines(&["for (int i = 0; ; i++) {", "    x = next();", "}"])));
+    }
+
+    #[test]
+    fn test_cursor_decls_emit_deterministic_sorted_order() {
+        // Two-pass generation must be byte-identical: cursor_decls is a
+        // HashMap, so declaration emission must sort keys (issue #136 D1 —
+        // cLastInst/cLastInst2 swapped between runs before the sort).
+        let mut proc = make_proc("det_cursor_order");
+        proc.cursor_decls.insert("c_last_inst2".to_string(), "select 1".to_string());
+        proc.cursor_decls.insert("c_last_inst".to_string(), "select 1".to_string());
+        proc.cursor_decls.insert("a_first_cursor".to_string(), "select 1".to_string());
+        let pkg_vars = std::collections::HashMap::new();
+        let out1 = build_service_method(&proc, "detCursorOrderMapper", &[], &pkg_vars, false);
+        let out2 = build_service_method(&proc, "detCursorOrderMapper", &[], &pkg_vars, false);
+        assert_eq!(out1, out2, "two invocations must be byte-identical");
+        let i_a = out1.find("Object aFirstCursor = null;").expect("aFirstCursor decl");
+        let i_c1 = out1.find("Object cLastInst = null;").expect("cLastInst decl");
+        let i_c2 = out1.find("Object cLastInst2 = null;").expect("cLastInst2 decl");
+        assert!(i_a < i_c1 && i_c1 < i_c2, "decls must emit in sorted key order:\n{}", out1);
     }
 }
