@@ -2466,6 +2466,28 @@ def _fresh_out_tmp(proc) -> str:
     return f"__out_arg{n}"
 
 
+def _is_promoted_local_java(raw_java: str, proc, target_inner: str = None) -> bool:
+    """True when `raw_java` (as_read=False rendering) names a local var already
+    promoted to an AtomicReference carrier — safe to pass bare at an OUT arg
+    position inside expression-level calls where no pre/post statements can
+    be emitted (#144). When `target_inner` is given, the carrier's inner type
+    must match it (mismatched carriers need a temp+writeback we cannot emit
+    in expression context)."""
+    if not raw_java or not proc:
+        return False
+    bare = raw_java.strip()
+    if not re.match(r'^\w+$', bare):
+        return False
+    for var_name, var_type in (proc.local_vars or {}).items():
+        if snake_to_camel(var_name) == bare and "AtomicReference<" in str(var_type):
+            if target_inner is not None:
+                inner = _carrier_inner(str(var_type))
+                if inner is not None and inner != target_inner:
+                    return False
+            return True
+    return False
+
+
 def _plan_out_arg(arg_ast, arg_java: str, proc: ProcedureInfo, target_inner: str):
     """OUT-carrier decision matrix (#144): for an OUT/INOUT-position argument
     decide transit | temp-carrier wrap | temp-carrier + writeback.
@@ -2501,6 +2523,21 @@ def _plan_out_arg(arg_ast, arg_java: str, proc: ProcedureInfo, target_inner: str
     src_t = _infer_expr_type(arg_ast, proc)
     wrapped = _coerce_type(arg_java, src_t, target_inner)
     return f"new java.util.concurrent.atomic.AtomicReference<>({wrapped})", [], []
+
+
+def _plan_out_arg_expr(arg_ast, proc, target_inner: str, all_packages: dict = None) -> str:
+    """Expression-context variant of `_plan_out_arg` (#144): function calls
+    inside expressions cannot emit pre/post statements, so temp-carrier
+    writebacks degrade to an inline `new AtomicReference<target>(value)` —
+    the OUT value is passed in but not written back (compile-clean)."""
+    raw = _expr_to_java(arg_ast, proc, as_read=False, all_packages=all_packages)
+    expr, pre, post = _plan_out_arg(arg_ast, raw, proc, target_inner)
+    if not pre and not post:
+        return expr
+    read = _expr_to_java(arg_ast, proc, as_read=True, all_packages=all_packages)
+    src_t = _infer_expr_type(arg_ast, proc)
+    val = _coerce_type(read, src_t, target_inner)
+    return f"new java.util.concurrent.atomic.AtomicReference<{target_inner}>({val})"
 
 
 def _call_arg_spans(line: str, open_paren: int):
@@ -2551,16 +2588,51 @@ def _call_out_positions(recv: str, method: str, arg_count: int, proc: ProcedureI
     cands = []
     if recv == "this":
         if pkg:
+            _m = method.lower().replace("_", "")
             cands = [p for p in pkg.procedures
-                     if p.proc_name.lower() == method.lower()]
+                     if p.proc_name.lower().replace("_", "") == _m]
     elif recv.endswith("Mapper"):
         # Mapper calls never carry OUT carriers — every position is IN.
         return set()
     else:
-        # svcN.method → target package not recoverable here; stay conservative.
-        return None
+        # xxxService.method → resolve the target package via the proc's
+        # recorded cross-package service calls (#144).
+        pkg = None
+        for sc in getattr(proc, "service_calls", []) or []:
+            if (sc.service_name or "").lower() == recv.lower():
+                pkg = all_packages.get(sc.package_name) if all_packages else None
+                if pkg is None and all_packages and sc.package_name:
+                    for _k, _v in all_packages.items():
+                        if _k.lower() == sc.package_name.lower():
+                            pkg = _v
+                            break
+                break
+        if pkg:
+            _m = method.lower().replace("_", "")
+            cands = [p for p in pkg.procedures
+                     if p.proc_name.lower().replace("_", "") == _m]
+            if not cands:
+                return None
+        else:
+            return None
+    if not cands and recv == "this" and all_packages:
+        # Top-level/package-split procs can resolve `this.` calls to a proc
+        # stored under a different package key (e.g. functions vs procedures
+        # in one file) — mirror _find_target_proc's source_file fallback.
+        _m = method.lower().replace("_", "")
+        _hits = []
+        for _apk, _api in all_packages.items():
+            for _ap in (_api.procedures if hasattr(_api, "procedures") else []):
+                if _ap.proc_name.lower().replace("_", "") == _m:
+                    _hits.append(_ap)
+        if _hits:
+            same_file = [p for p in _hits if p.source_file == proc.source_file]
+            cands = same_file or _hits
     if not cands:
-        return None
+        # this.-call target not resolvable (helper stubs like instrb, or a
+        # package lookup miss): IN positions dominate — dereference carriers
+        # rather than leaving AtomicReference where String is expected (#144).
+        return set()
     # Prefer exact-arity match; otherwise union is unsafe → only use positions
     # that are OUT in EVERY candidate.
     exact = [p for p in cands
@@ -2582,7 +2654,7 @@ def _fix_call_arg_carriers(line: str, var_java: str, proc: ProcedureInfo,
         return line
     out = line
     # Process right-to-left so earlier offsets stay valid.
-    matches = list(re.finditer(r'\b((?:this|svc\w*|\w+Mapper)\.(\w+))\s*\(', out))
+    matches = list(re.finditer(r'\b((?:this|svc\w*|\w+Mapper|\w+Service)\.(\w+))\s*\(', out))
     for m in reversed(matches):
         recv, method = m.group(1).split(".", 1)
         recv = recv.rsplit(".", 1)[-1] if "." in recv else recv
@@ -2597,8 +2669,10 @@ def _fix_call_arg_carriers(line: str, var_java: str, proc: ProcedureInfo,
         args = [out[s:e] for s, e in spans]
         changed = False
         for idx, arg in enumerate(args):
-            bare = re.search(rf'(?<![\w.]){re.escape(var_java)}\b(?!\s*\.get\b)', arg)
-            if not bare:
+            # Match the var whether or not it already carries `.get()` —
+            # OUT positions must STRIP a stray `.get()`, IN positions must
+            # ADD one to bare occurrences (#144).
+            if not re.search(rf'(?<![\w.]){re.escape(var_java)}\b', arg):
                 continue
             if idx in outs:
                 # OUT position: carrier — strip any stray .get() on the var.
@@ -2637,6 +2711,8 @@ def _patch_promoted_var_reads(line: str, var_java: str, string_inner: bool = Fal
         rf'\b{re.escape(var_java)}\.set\s*\(',
         rf'this\.\w+\(.*\b{re.escape(var_java)}\b',
         rf'\w+Mapper\.\w+\(.*\b{re.escape(var_java)}\b',
+        rf'\w+Service\.\w+\(.*\b{re.escape(var_java)}\b',
+        rf'svc\w*\.\w+\(.*\b{re.escape(var_java)}\b',
     ]
     for pat in patterns_to_skip:
         if re.search(pat, line):
@@ -5652,7 +5728,14 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
                         raw_args = v.get("args", [])
                         target_proc = _find_target_proc(matched_pkg, func, all_packages, arg_count=len(raw_args))
                         args_java = []
+                        _tout = {i for i, p in enumerate(target_proc.parameters) if p.is_out} if target_proc else set()
                         for i, a in enumerate(raw_args):
+                            if target_proc and i in _tout:
+                                # #144: OUT position — carrier decision matrix;
+                                # expression context degrades writeback to an
+                                # inline value carrier.
+                                args_java.append(_plan_out_arg_expr(a, proc, target_proc.parameters[i].java_type, all_packages))
+                                continue
                             a_java = _expr_to_java(a, proc, all_packages=all_packages)
                             if target_proc and i < len(target_proc.parameters):
                                 a_java = _coerce_java_arg(a_java, target_proc.parameters[i].java_type, _infer_expr_type(a, proc))
@@ -6058,11 +6141,10 @@ def _process_perform(perform_data: dict, proc: ProcedureInfo, all_packages: dict
                     resolved_perform_args = []
                     for i, a in enumerate(raw_args):
                         if target_proc_info and i in target_out_indices:
-                            a_java = _expr_to_java(a, proc, as_read=False)
-                            if a_java not in out_param_java_names:
-                                a_java = _expr_to_java(a, proc, as_read=True)
-                        else:
-                            a_java = _expr_to_java(a, proc, as_read=True)
+                            resolved_perform_args.append(_plan_out_arg_expr(
+                                a, proc, target_proc_info.parameters[i].java_type, all_packages))
+                            continue
+                        a_java = _expr_to_java(a, proc, as_read=True)
                         if target_proc_info and i < len(target_proc_info.parameters):
                             a_java = _coerce_java_arg(a_java, target_proc_info.parameters[i].java_type, _infer_expr_type(a, proc))
                         resolved_perform_args.append(a_java)
@@ -6128,27 +6210,44 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
         high = _coerce_for_int(high_expr)
         reverse = range_data.get("reverse", False)
 
+        _active_loops = getattr(proc, '_active_loop_vars', None)
+        if _active_loops is None:
+            _active_loops = proc._active_loop_vars = []
         _var_bare_used = any(re.match(rf'^\s*{var_java} = ', l) for l in proc.java_logic_lines)
-        if _var_bare_used:
+        # #144: a `for (int i …)` nested inside another loop that already
+        # binds `i` in an enclosing scope is a javac "already defined" error —
+        # force the `_alias` form so the inner loop gets its own variable.
+        _var_shadowed = var_java in _active_loops
+        if _var_bare_used or _var_shadowed:
             _alias = f"_{var_java}"
+            if _alias in _active_loops:
+                _alias = f"__{var_java}"
             if reverse:
                 proc.java_logic_lines.append(f"for (int {_alias} = {high}; {_alias} >= {low}; {_alias}--) {{")
             else:
                 proc.java_logic_lines.append(f"for (int {_alias} = {low}; {_alias} <= {high}; {_alias}++) {{")
             proc.java_logic_lines.append(f"{var_java} = {_alias};")
-            for s in _iter_statements(body_stmts):
-                _process_statement(s, proc, all_packages, dml_counter)
+            _active_loops.append(_alias)
+            try:
+                for s in _iter_statements(body_stmts):
+                    _process_statement(s, proc, all_packages, dml_counter)
+            finally:
+                _active_loops.pop()
             _indent_last_lines(proc, 1)
             proc.java_logic_lines.append("}")
             return
 
-        if reverse:
-            proc.java_logic_lines.append(f"for (int {var_java} = {high}; {var_java} >= {low}; {var_java}--) {{")
-        else:
-            proc.java_logic_lines.append(f"for (int {var_java} = {low}; {var_java} <= {high}; {var_java}++) {{")
+        _active_loops.append(var_java)
+        try:
+            if reverse:
+                proc.java_logic_lines.append(f"for (int {var_java} = {high}; {var_java} >= {low}; {var_java}--) {{")
+            else:
+                proc.java_logic_lines.append(f"for (int {var_java} = {low}; {var_java} <= {high}; {var_java}++) {{")
 
-        for s in _iter_statements(body_stmts):
-            _process_statement(s, proc, all_packages, dml_counter)
+            for s in _iter_statements(body_stmts):
+                _process_statement(s, proc, all_packages, dml_counter)
+        finally:
+            _active_loops.pop()
         _indent_last_lines(proc, 1)
         proc.java_logic_lines.append("}")
     elif "Query" in kind:
@@ -11373,10 +11472,8 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                                 for i, a_java in enumerate(args_java):
                                     if i < len(target_proc.parameters):
                                         if i in target_out_indices:
-                                            raw_java = _expr_to_java(raw_args[i] if i < len(raw_args) else {}, proc, as_read=False, all_packages=all_packages)
-                                            if raw_java in out_param_java_names:
-                                                wrapped_args.append(raw_java)
-                                                continue
+                                            wrapped_args.append(_plan_out_arg_expr(raw_args[i] if i < len(raw_args) else {}, proc, target_proc.parameters[i].java_type, all_packages))
+                                            continue
                                         wrapped_args.append(_coerce_java_arg(a_java, target_proc.parameters[i].java_type, _infer_expr_type(raw_args[i] if i < len(raw_args) else {}, proc)))
                                     else:
                                         wrapped_args.append(a_java)
@@ -11407,10 +11504,8 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                         for i, a_java in enumerate(args_java):
                             if i < len(target_proc.parameters):
                                 if i in target_out_indices:
-                                    raw_java = _expr_to_java(raw_args[i] if i < len(raw_args) else {}, proc, as_read=False, all_packages=all_packages)
-                                    if raw_java in out_param_java_names:
-                                        wrapped_args.append(raw_java)
-                                        continue
+                                    wrapped_args.append(_plan_out_arg_expr(raw_args[i] if i < len(raw_args) else {}, proc, target_proc.parameters[i].java_type, all_packages))
+                                    continue
                                 wrapped_args.append(_coerce_java_arg(a_java, target_proc.parameters[i].java_type, _infer_expr_type(raw_args[i] if i < len(raw_args) else {}, proc)))
                             else:
                                 wrapped_args.append(a_java)
@@ -11459,7 +11554,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                                 # OUT params are passed through as-is (their
                                 # carrier var is promoted to AtomicReference).
                                 if _actual_target and i < len(_actual_target.parameters) and _actual_target.parameters[i].is_out:
-                                    wrapped_args.append(a_java)
+                                    wrapped_args.append(_plan_out_arg_expr(raw_args[i] if i < len(raw_args) else {}, proc, _actual_target.parameters[i].java_type, all_packages))
                                 else:
                                     wrapped_args.append(_coerce_java_arg(a_java, arg_types[i], _infer_expr_type(raw_args[i] if i < len(raw_args) else {}, proc)))
                             else:
@@ -11498,6 +11593,9 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                                     wrapped_args = []
                                     for i, a_java in enumerate(args_java):
                                         if i < len(_cp.parameters):
+                                            if _cp.parameters[i].is_out:
+                                                wrapped_args.append(_plan_out_arg_expr(val.get("args", [])[i] if i < len(val.get("args", [])) else {}, proc, _cp.parameters[i].java_type, all_packages))
+                                                continue
                                             a_java = _coerce_java_arg(a_java, _cp.parameters[i].java_type, _infer_expr_type(val.get("args", [])[i] if i < len(val.get("args", [])) else {}, proc))
                                         wrapped_args.append(a_java)
                                     return f"this.{method}({', '.join(wrapped_args)})"
@@ -11506,6 +11604,9 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                                 wrapped_args = []
                                 for i, a_java in enumerate(args_java):
                                     if i < len(_cp.parameters):
+                                        if _cp.parameters[i].is_out:
+                                            wrapped_args.append(_plan_out_arg_expr(val.get("args", [])[i] if i < len(val.get("args", [])) else {}, proc, _cp.parameters[i].java_type, all_packages))
+                                            continue
                                         a_java = _coerce_java_arg(a_java, _cp.parameters[i].java_type, _infer_expr_type(val.get("args", [])[i] if i < len(val.get("args", [])) else {}, proc))
                                     wrapped_args.append(a_java)
                                 return f"{svc_name}.{method}({', '.join(wrapped_args)})"
