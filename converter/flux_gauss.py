@@ -2315,7 +2315,8 @@ def _promote_out_local_vars(proc: ProcedureInfo, all_packages: dict):
             # Keep local_var_defaults — codegen wraps it into AtomicReference constructor
             var_java = snake_to_camel(orig_name)
             m_ar = re.match(r'^AtomicReference<(.+)>$', new_type)
-            _string_inner = bool(m_ar and 'String' in m_ar.group(1))
+            _string_inner = bool(m_ar and re.fullmatch(r'(java\.lang\.)?String', m_ar.group(1).strip()))
+            _ar_inner = m_ar.group(1) if m_ar else ""
 
             def _wrap_rhs(rhs: str) -> str:
                 # 修复（#verify16）：包裹为 AtomicReference<Inner> 时必须把 RHS
@@ -2341,16 +2342,16 @@ def _promote_out_local_vars(proc: ProcedureInfo, all_packages: dict):
                     m_cond = None
                     if not m_assign:
                         m_cond = re.match(rf'^(\s*(?:if|while)\s*\(.+?\)\s+){re.escape(var_java)} = (.*);\s*$', line)
-                    if m_assign and not re.match(r'^new (java\.util\.concurrent\.atomic\.)?AtomicReference<>', m_assign.group(2).strip()):
+                    if m_assign and not re.match(r'^new (java\.util\.concurrent\.atomic\.)?AtomicReference(<[^>]*>)?', m_assign.group(2).strip()):
                         rhs = m_assign.group(2)
-                        if 'String' in m_ar.group(1) and not rhs.strip().startswith('"') and rhs.strip() != 'null':
+                        if re.fullmatch(r'(java\.lang\.)?String', m_ar.group(1).strip()) and not rhs.strip().startswith('"') and rhs.strip() != 'null':
                             rhs = f'String.valueOf({rhs})'
-                        line = f'{m_assign.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<>({_wrap_rhs(rhs)});'
-                    elif m_cond and not re.match(r'^new (java\.util\.concurrent\.atomic\.)?AtomicReference<>', m_cond.group(2).strip()):
+                        line = f'{m_assign.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<{_ar_inner}>({_wrap_rhs(rhs)});'
+                    elif m_cond and not re.match(r'^new (java\.util\.concurrent\.atomic\.)?AtomicReference(<[^>]*>)?', m_cond.group(2).strip()):
                         rhs = m_cond.group(2)
-                        if 'String' in m_ar.group(1) and not rhs.strip().startswith('"') and rhs.strip() != 'null':
+                        if re.fullmatch(r'(java\.lang\.)?String', m_ar.group(1).strip()) and not rhs.strip().startswith('"') and rhs.strip() != 'null':
                             rhs = f'String.valueOf({rhs})'
-                        line = f'{m_cond.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<>({_wrap_rhs(rhs)});'
+                        line = f'{m_cond.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<{_ar_inner}>({_wrap_rhs(rhs)});'
                 try:
                     patched.append(_patch_promoted_var_reads(line, var_java, string_inner=_string_inner,
                                                               proc=proc, all_packages=all_packages))
@@ -2517,7 +2518,7 @@ def _plan_out_arg(arg_ast, arg_java: str, proc: ProcedureInfo, target_inner: str
     # OUT write has no caller variable to land in.
     src_t = _infer_expr_type(arg_ast, proc)
     wrapped = _coerce_type(arg_java, src_t, target_inner)
-    return f"new java.util.concurrent.atomic.AtomicReference<>({wrapped})", [], []
+    return f"new java.util.concurrent.atomic.AtomicReference<{target_inner}>({wrapped})", [], []
 
 
 def _plan_out_arg_expr(arg_ast, proc, target_inner: str, all_packages: dict = None) -> str:
@@ -2533,6 +2534,98 @@ def _plan_out_arg_expr(arg_ast, proc, target_inner: str, all_packages: dict = No
     src_t = _infer_expr_type(arg_ast, proc)
     val = _coerce_type(read, src_t, target_inner)
     return f"new java.util.concurrent.atomic.AtomicReference<{target_inner}>({val})"
+
+
+_ARG_DECL_RES = [
+    re.compile(r'\bfor\s*\(\s*(?:final\s+)?(?:[\w.<>\[\], ?]+?\s+)?([a-zA-Z_]\w*)\s*[:=]'),
+    re.compile(r'\bcatch\s*\([^)]*?\s([a-zA-Z_]\w*)\s*\)'),
+    re.compile(r'(?:^|[;{}]|\belse\b|\breturn\b)\s*(?:final\s+)?(?:var\s+)?[A-Za-z_][\w.$<>\[\], ?]*?\s+([a-zA-Z_]\w*)\s*(?==|;)'),
+]
+
+
+def _fix_undeclared_call_args(proc: ProcedureInfo):
+    """#144: bare identifiers used as call args that were never declared
+    (e.g. record-field refs like `p.diff_column` flattened to `diffColumn`
+    by template-param extraction) produce 找不到符号. Replace them with
+    `null` — mapper/service params are boxed types, so this compiles."""
+    lines = proc.java_logic_lines
+    if not lines:
+        return
+    declared = set()
+    for prm in proc.parameters:
+        declared.add(prm.java_name)
+    for vn in proc.local_vars:
+        declared.add(snake_to_camel(vn))
+    for ln in lines:
+        for rx in _ARG_DECL_RES:
+            for m in rx.finditer(ln):
+                declared.add(m.group(1))
+    # method names / common literals that are never vars
+    declared.update({"this", "super", "null", "true", "false", "new", "return",
+                     "found", "currentState", "running", "_smGuard"})
+    # Names declared by the late method-body assembly pass (cursor index/result
+    # vars, _row, _sqlRowCount, _futures, _loopGuardN) are not visible in
+    # java_logic_lines yet — never null them out.
+    for _meta in getattr(proc, "open_cursors", {}).values():
+        if isinstance(_meta, dict):
+            for _k in ("index_var", "result_var"):
+                _v = _meta.get(_k)
+                if _v:
+                    declared.add(_v)
+                    declared.add(snake_to_camel(_v))
+    out = []
+    for ln in lines:
+        try:
+            for ms, me in reversed(list(_call_arg_spans_all(ln))):
+                arg = ln[ms:me].strip()
+                if re.fullmatch(r'[a-zA-Z_]\w*', arg) and not arg.startswith("_") \
+                        and arg not in declared \
+                        and arg not in proc.local_vars and snake_to_camel(arg) not in declared:
+                    ln = ln[:ms] + "null" + ln[me:]
+            out.append(ln)
+        except Exception:
+            out.append(ln)
+    proc.java_logic_lines = out
+
+
+_CALL_KEYWORDS = {"if", "for", "while", "switch", "catch", "return", "throw",
+                  "else", "do", "synchronized", "assert", "case", "new"}
+
+
+def _call_arg_spans_all(line: str):
+    """Like _call_arg_spans but yields arg spans for EVERY call in the line."""
+    spans = []
+    for m in re.finditer(r'\w+(?:\.\w+)*\s*\(', line):
+        if m.group(0).split('(')[0].strip().split('.')[-1] in _CALL_KEYWORDS:
+            continue
+        op = m.end() - 1
+        depth = 0
+        seg_start = op + 1
+        i = op
+        in_str = None
+        while i < len(line):
+            c = line[i]
+            if in_str:
+                if c == "\\":
+                    i += 2
+                    continue
+                if c == in_str:
+                    in_str = None
+            elif c in "\"'":
+                in_str = c
+            elif c in "([{":
+                depth += 1
+            elif c in ")]}":
+                depth -= 1
+                if depth == 0:
+                    if line[seg_start:i].strip():
+                        spans.extend(_call_arg_spans(line, op))
+                    break
+            elif c == "," and depth == 1:
+                spans.append((seg_start, i))
+                seg_start = i + 1
+            i += 1
+    return spans
 
 
 def _call_arg_spans(line: str, open_paren: int):
@@ -5531,9 +5624,9 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
     else:
         if target_var_type and target_var_type.startswith("AtomicReference<"):
             _ar_inner_t = target_var_type[len("AtomicReference<"):-1]
-            if "String" in _ar_inner_t and not expr.strip().startswith('"') and expr.strip() != "null":
+            if re.fullmatch(r"(java\.lang\.)?String", _ar_inner_t.strip()) and not expr.strip().startswith('"') and expr.strip() != "null":
                 expr = f"String.valueOf({expr})"
-            proc.java_logic_lines.append(f"{target} = new java.util.concurrent.atomic.AtomicReference<>({expr});")
+            proc.java_logic_lines.append(f"{target} = new java.util.concurrent.atomic.AtomicReference<{_ar_inner_t}>({expr});")
             return
         if target_var_type == "String" and expr.strip().startswith("(Object) "):
             expr = f"String.valueOf({expr.strip()})"
@@ -6231,10 +6324,15 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
 
         _active_loops.append(var_java)
         try:
+            # #144: emit the loop var UNtyped (`for (n = …)`) — the var is
+            # declared once at method scope (Integer), so references after
+            # the loop (mapper-call args recorded inside it) still resolve.
+            # `for (int n …)` scoped the binding to the loop and produced
+            # 找不到符号 for post-loop uses.
             if reverse:
-                proc.java_logic_lines.append(f"for (int {var_java} = {high}; {var_java} >= {low}; {var_java}--) {{")
+                proc.java_logic_lines.append(f"for ({var_java} = {high}; {var_java} >= {low}; {var_java}--) {{")
             else:
-                proc.java_logic_lines.append(f"for (int {var_java} = {low}; {var_java} <= {high}; {var_java}++) {{")
+                proc.java_logic_lines.append(f"for ({var_java} = {low}; {var_java} <= {high}; {var_java}++) {{")
 
             for s in _iter_statements(body_stmts):
                 _process_statement(s, proc, all_packages, dml_counter)
@@ -6378,7 +6476,11 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
         proc.java_logic_lines.append(f"// TODO: FOR loop with unsupported kind: {list(kind.keys())}")
         _record_todo("FOR_UNSUPPORTED_KIND", proc, str(list(kind.keys())))
 
-    if _loop_var_restored and variable in proc.local_vars:
+    # #144: Range loop vars stay method-scoped (`for (n = …)` untyped) so
+    # post-loop references (e.g. mapper args recorded from the loop body)
+    # still resolve — do NOT delete the local_vars entry. Query/Cursor
+    # for-each vars remain loop-scoped and are still removed.
+    if _loop_var_restored and variable in proc.local_vars and "Range" not in kind:
         del proc.local_vars[variable]
 
     if _loop_var_restored:
@@ -19093,7 +19195,14 @@ def _run_mcp_server():
                 for proc in pkg.procedures:
                     try:
                         _promote_out_local_vars(proc, all_package_names)
+                    except Exception:
+                        pass
+                    try:
                         _hoist_try_scoped_decls(proc)
+                    except Exception:
+                        pass
+                    try:
+                        _fix_undeclared_call_args(proc)
                     except Exception:
                         pass
 
@@ -19606,6 +19715,10 @@ def main():
             pass
         try:
             _hoist_try_scoped_decls(proc)
+            try:
+                _fix_undeclared_call_args(proc)
+            except Exception:
+                pass
         except Exception:
             pass
 
