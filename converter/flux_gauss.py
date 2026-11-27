@@ -5268,7 +5268,7 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
             elif "mapper." in expr:
                 expr = f"((java.math.BigDecimal) {expr})"
             elif not _is_string_expr(expr):
-                expr = f"new java.math.BigDecimal(String.valueOf({expr}))"
+                expr = f"_toBigDecimal({expr})"
         proc.java_logic_lines.append(f"{target}.set({expr});")
     else:
         if target_var_type and target_var_type.startswith("AtomicReference<"):
@@ -5311,7 +5311,10 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
         elif target_var_type and target_var_type not in ("String", "Integer", "int", "Object", "BigDecimal", "java.math.BigDecimal", "Long", "long", "boolean", "Boolean") and ".get(" in expr and not expr.startswith("("):
             expr = f"({target_var_type}) {expr}"
         elif target_var_type in ("BigDecimal", "java.math.BigDecimal") and "mapper." in expr and "BigDecimal" not in expr:
-            expr = f"new java.math.BigDecimal(String.valueOf({expr}))"
+            # String.valueOf(null) → "null" → BigDecimal パースで NumberFormatException。
+            # null セーフな helper 経由にし、後続の null→ZERO 既定で PL/pgSQL の
+            # NULL 代入セマンティクス（呼出側の既定値）を維持する。
+            expr = f"_toBigDecimal({expr})"
         proc.java_logic_lines.append(f"{target} = {expr};")
         if ("Mapper" in expr or "mapper" in expr) and target_var_type in ("Long", "Integer", "int"):
             _null_default = "0L" if target_var_type == "Long" else "0"
@@ -7144,7 +7147,7 @@ def _wrap_handler_stmts(stmts, proc, all_packages,
                         elif "mapper." in expr:
                             expr = f"((java.math.BigDecimal) {expr})"
                         elif not _is_string_expr(expr):
-                            expr = f"new java.math.BigDecimal(String.valueOf({expr}))"
+                            expr = f"_toBigDecimal({expr})"
                     _lines.append(f"{indent}{target}.set({expr});")
                 else:
                     if target.startswith("__MAP_PUT__"):
@@ -9999,7 +10002,9 @@ def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
         if src0 == "Object" and tgt0 == "Long" and _e0 != "null":
             return f"({expr} != null ? ({expr} instanceof Number ? ((Number) ({expr})).longValue() : Long.parseLong(String.valueOf({expr}))) : 0L)"
         if src0 == "Object" and tgt0 == "java.math.BigDecimal" and _e0 != "null":
-            return f"new java.math.BigDecimal(String.valueOf({expr}))"
+            # String.valueOf(null) → "null" はパース不能。null セーフな
+            # _toBigDecimal helper 経由にする（service クラスに出力される式のみが対象）。
+            return f"_toBigDecimal({expr})"
         if src0 == "Object" and tgt0 in ("Boolean", "boolean") and _e0 != "null":
             return f"java.util.Objects.equals({expr}, true)"
         return expr
@@ -13150,6 +13155,28 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
         filter_map = ", ".join(f"{f['param']} -> {f['column']}" for f in dml.optional_filters)
         filter_line = f'<!-- Optional filters: {filter_map}. Consider using <if test="..."> in MyBatis -->'
 
+    # PL/pgSQL 配列参照 `v_arr(i)` はパラメータ変換で `#{arr}(#{i})` という
+    # 不正な MyBatis 構文になる。#{arr[i-1]} は MetaObject が index を
+    # 数値リテラルとして解釈して失敗するため、OGNL 評価される <bind> で
+    # 要素を取り出してから #{bind名} で参照する
+    # （SQL 側は 1 始まり、Java List/Map は 0 始まり）。
+    _arr_binds: dict = {}
+    def _arr_idx_repl(m):
+        _key = (m.group(1), m.group(2))
+        if _key not in _arr_binds:
+            _arr_binds[_key] = f"_b{len(_arr_binds)}"
+        return f"#{{{_arr_binds[_key]}}}"
+    sql = re.sub(
+        r'#\{(\w+)[^}]*\}\s*\(#\{(\w+)[^}]*\}\)',
+        _arr_idx_repl,
+        sql,
+    )
+    if _arr_binds:
+        _bind_xml = "\n".join(
+            f'<bind name="{_bn}" value="{_arr}[{_idx} - 1]"/>'
+            for (_arr, _idx), _bn in _arr_binds.items()
+        )
+        sql = _bind_xml + "\n" + sql
     formatted_sql = "\n".join(f"    {line}" for line in sql.split("\n"))
 
     xml_parts = []
@@ -13679,6 +13706,15 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
         lines.append("    private <T> T _unsupportedScalarSublink(String procId) {")
         lines.append("        // ScalarSublink 子查询谓词暂不支持 — 显式失败而非静默降级（PR #143 review）")
         lines.append("        throw new UnsupportedOperationException(\"ScalarSublink subquery predicate not supported at \" + procId);")
+        lines.append("    }")
+    if "_toBigDecimal(" in all_body_text:
+        lines.append("")
+        lines.append("    private java.math.BigDecimal _toBigDecimal(Object v) {")
+        lines.append("        // mapper スカラー結果 → BigDecimal。null は null のまま返す")
+        lines.append("        // （String.valueOf(null)=\"null\" のパースクラッシュを防ぐ）")
+        lines.append("        if (v == null) return null;")
+        lines.append("        if (v instanceof java.math.BigDecimal) return (java.math.BigDecimal) v;")
+        lines.append("        return new java.math.BigDecimal(String.valueOf(v));")
         lines.append("    }")
 
     # Stubs for known SQL functions that bypass _register_missing_overload
@@ -16666,6 +16702,32 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
     for _ct in _child_tables:
         if _ct not in _fk_deps:
             _fk_deps[_ct] = {'employees', 'departments', 'products', 'orders', 'customers'}
+
+    # init_sql 内の ALTER TABLE ... ADD COLUMN を schema_map に事前注入する。
+    # openGauss は ADD COLUMN IF NOT EXISTS を解さず、@Sql(ISOLATED) は
+    # スクリプト全体を単一 Tx で実行するため、1 文のエラーで全 DDL が
+    # 巻き戻る。列を CREATE TABLE に織り込み、ALTER 文自体は出力しない。
+    _init_sql_files = itest_cfg.get("init_sql", [])
+    if isinstance(_init_sql_files, str):
+        _init_sql_files = [_init_sql_files]
+    for _script in _init_sql_files:
+        if not os.path.isfile(_script):
+            continue
+        try:
+            with open(_script, 'r', encoding='utf-8', errors='replace') as _f:
+                _raw_init = _f.read()
+        except OSError:
+            continue
+        for _am in re.finditer(
+            r'ALTER\s+TABLE\s+"?([A-Za-z_]\w*)"?\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?"?([A-Za-z_]\w*)"?\s+([^;]+);',
+            _raw_init, re.IGNORECASE
+        ):
+            _at, _ac, _aty = _am.group(1), _am.group(2), _am.group(3).strip()
+            _skey = next((k for k in schema_map if k.lower() == _at.lower()), _at)
+            schema_map.setdefault(_skey, {})
+            if not any(c.lower() == _ac.lower() for c in schema_map[_skey]):
+                schema_map[_skey][_ac] = _aty
+
     _sorted_tables = list(schema_map.keys())
     _sorted_tables.sort(key=lambda t: len(_fk_deps.get(t.lower(), set())), reverse=True)
 
@@ -16758,12 +16820,15 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
                 inner = m.group(0)
                 alters = re.findall(r'ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)\s+(.+?);', inner, re.IGNORECASE | re.DOTALL)
                 if alters:
-                    return " ".join(f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {c} {ty};" for t, c, ty in alters)
+                    # openGauss-lite 不支持 ADD COLUMN IF NOT EXISTS（语法错误）；
+                    # itest-schema.sql 由 @Sql CONTINUE_ON_ERROR 逐方法执行，
+                    # 重复列报错会被忽略，plain ADD COLUMN 即可幂等。
+                    return " ".join(f"ALTER TABLE {t} ADD COLUMN {c} {ty};" for t, c, ty in alters)
                 return ""
             _init_content = re.sub(r'DO\s*\$\$.*?\$\$;', _convert_do_to_direct, _init_content, flags=re.DOTALL | re.IGNORECASE)
             _init_content = re.sub(
-                r'^(\s*ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+)(?!IF\s+NOT\s+EXISTS)(.+;)\s*$',
-                lambda m: m.group(1).strip() + " IF NOT EXISTS " + m.group(2).strip(),
+                r'^(\s*ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+)(.+;)\s*$',
+                lambda m: m.group(1).strip() + " " + m.group(2).strip(),
                 _init_content, flags=re.MULTILINE | re.IGNORECASE
             )
             _init_content = re.sub(
@@ -16773,6 +16838,13 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
             )
             for _pi, _ps in enumerate(_protected):
                 _init_content = _init_content.replace(f"__IPROT_{_pi}__", _ps)
+            # ALTER TABLE ... ADD COLUMN は schema_map へ事前注入済みのため
+            # 出力しない（openGauss 非対応構文・単一 Tx での冪等性のため）。
+            _init_content = re.sub(
+                r'ALTER\s+TABLE\s+"?[A-Za-z_]\w*"?\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?"?[A-Za-z_]\w*"?\s+[^;]*;',
+                '',
+                _init_content, flags=re.IGNORECASE
+            )
             lines.append(_init_content)
         else:
             lines.append(f"-- init_sql not found: {script}")
