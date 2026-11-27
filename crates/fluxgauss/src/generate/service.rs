@@ -263,6 +263,18 @@ pub fn write_service_class(
         w.line("    }");
         w.line("}");
     }
+    if all_body.contains("_xmlConcat(") {
+        w.blank();
+        w.line("private String _xmlConcat(Object... parts) {");
+        w.line("    // XMLCONCAT 语义：跳过 null 段；全 null 时返回 null");
+        w.line("    StringBuilder sb = new StringBuilder();");
+        w.line("    boolean any = false;");
+        w.line("    for (Object p : parts) {");
+        w.line("        if (p != null) { any = true; sb.append(String.valueOf(p)); }");
+        w.line("    }");
+        w.line("    return any ? sb.toString() : null;");
+        w.line("}");
+    }
     if all_body.contains("this.jsonbGet(") {
         w.blank();
         w.line("public Object jsonbGet(String jsonb, Object key) {");
