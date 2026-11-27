@@ -1,0 +1,33 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue143subMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_143_sublink.sql
+public class Issue143subService {
+    private static final Logger log = LoggerFactory.getLogger(Issue143subService.class);
+
+    private final Issue143subMapper issue143subMapper;
+
+    public Issue143subService(Issue143subMapper issue143subMapper) {
+        this.issue143subMapper = issue143subMapper;
+    }
+
+    // Source: pkg_issue143sub.f_any (FUNCTION) — {FIXTURES_ROOT}/issue_143_sublink.sql:10-16
+    public Long fAny(long pValue) {
+        if (_unsupportedScalarSublink("pkg_issue143sub.f_any")) {
+            return Long.valueOf(1);
+        }
+        return Long.valueOf(0);
+    }
+
+    private <T> T _unsupportedScalarSublink(String procId) {
+        // ScalarSublink/InSubquery 子查询谓词暂不支持 — 显式失败而非静默降级（PR #143 review）
+        throw new UnsupportedOperationException("ScalarSublink subquery predicate not supported at " + procId);
+    }
+}

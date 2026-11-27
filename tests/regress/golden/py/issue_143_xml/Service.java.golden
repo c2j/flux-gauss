@@ -1,0 +1,70 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue143XmlMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue143XmlService {
+    private static final Logger log = LoggerFactory.getLogger(Issue143XmlService.class);
+
+    private final Issue143XmlMapper issue143XmlMapper;
+
+    public Issue143XmlService(Issue143XmlMapper issue143XmlMapper) {
+        this.issue143XmlMapper = issue143XmlMapper;
+    }
+
+    private String _xmlConcat(Object... parts) {
+        // XMLCONCAT 语义：跳过 null 段；全 null 时返回 null
+        StringBuilder sb = new StringBuilder();
+        boolean any = false;
+        for (Object p : parts) {
+            if (p != null) { any = true; sb.append(String.valueOf(p)); }
+        }
+        return any ? sb.toString() : null;
+    }
+
+    private String _xmlElement(String alias, Object value) {
+        // XMLFOREST item：<alias>escaped-value</alias>；null 值产生空元素
+        String text = value == null ? "" : _xmlEscape(String.valueOf(value));
+        String name = _xmlEscape(alias);
+        return "<" + name + ">" + text + "</" + name + ">";
+    }
+
+    private String _xmlEscape(String s) {
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace("\"", "&quot;").replace("'", "&apos;");
+    }
+
+    private String _extractValue(String xml, String xpath) {
+        // EXTRACTVALUE 语义：对 xml 应用 xpath 取文本；节点缺失/解析失败返回 null
+        if (xml == null || xpath == null) return null;
+        try {
+            javax.xml.xpath.XPath xp = javax.xml.xpath.XPathFactory.newInstance().newXPath();
+            Object r = xp.evaluate(xpath, new org.xml.sax.InputSource(new java.io.StringReader(xml)), javax.xml.xpath.XPathConstants.STRING);
+            return r == null ? null : r.toString();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+    // Source: pkg_issue143xml.f_xmlforest (FUNCTION) — issue_143_xml.sql:12-17
+    public String fXmlforest(String pValue) {
+        String vXml = null;
+        vXml = String.valueOf(_xmlConcat(_xmlElement("foo", pValue), _xmlElement("bar", "a<b&c")));
+        return vXml;
+    }
+
+    // Source: pkg_issue143xml.f_extractvalue (FUNCTION) — issue_143_xml.sql:21-24
+    public String fExtractvalue(String pXml) {
+        return _extractValue("<foo>abc</foo>", "/foo/text()");
+    }
+
+    // Source: pkg_issue143xml.f_xmlconcat_init (FUNCTION) — issue_143_xml.sql:28-32
+    public String fXmlconcatInit() {
+        String vXml = _xmlConcat("<a/>", "<b/>");
+        return vXml;
+    }
+}

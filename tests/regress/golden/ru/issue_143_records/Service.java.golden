@@ -1,0 +1,45 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue143recMapper;
+import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_143_records.sql
+public class Issue143recService {
+    private static final Logger log = LoggerFactory.getLogger(Issue143recService.class);
+
+    private final Issue143recMapper issue143recMapper;
+
+    public Issue143recService(Issue143recMapper issue143recMapper) {
+        this.issue143recMapper = issue143recMapper;
+    }
+
+    public static class RecParam {
+        public Long pId;
+        public String pName;
+        public Boolean pFlag;
+    }
+
+    // Source: pkg_issue143rec.prc_record_fields (PROCEDURE) — {FIXTURES_ROOT}/issue_143_records.sql:16-24
+    public void prcRecordFields(Map<String, Object> pRec) {
+        Boolean vFlag = false;
+        Long vId = ((Number)(0L)).longValue();
+        String vName = null;
+        vFlag = pRec.getOrDefault("pFlag", pRec.get("p_flag"));
+        vName = String.valueOf(pRec.getOrDefault("pName", pRec.get("p_name")));
+        vId = ((Number) pRec.getOrDefault("pId", pRec.get("p_id"))).longValue();
+    }
+
+    // Source: pkg_issue143rec.prc_collection_count (PROCEDURE) — {FIXTURES_ROOT}/issue_143_records.sql:29-35
+    public void prcCollectionCount() {
+        Long vCnt = ((Number)(0L)).longValue();
+        java.util.List<Object> vNums = new java.util.ArrayList<>();
+        vCnt = Long.valueOf(((java.util.List<?>) vNums).size());
+    }
+}

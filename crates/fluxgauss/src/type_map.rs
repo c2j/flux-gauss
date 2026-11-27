@@ -38,6 +38,10 @@ pub static SQL_TO_JAVA: &[(&str, &str)] = &[
     ("uuid", "String"),
     ("record", "Map<String, Object>"),
     ("exception", "Throwable"),
+    // XML 类型统一以 String 承载（GETSTRINGVAL 语义），与 _xmlConcat/_xmlElement
+    // helper 的 String 返回值一致（PR #143 review，与 Python 侧对齐）。
+    ("xmltype", "String"),
+    ("xml", "String"),
 ];
 
 /// SQL type name → MyBatis JdbcType

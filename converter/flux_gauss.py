@@ -318,6 +318,11 @@ SQL_TO_JAVA = {
     "uuid": "String",
     "record": "Map<String, Object>",
     "exception": "Throwable",
+    # XML 类型统一以 String 承载（GETSTRINGVAL 语义）—— 与 _xmlConcat/_xmlElement
+    # helper 的 String 返回值保持一致，避免 Map<String,Object> 声明与 String
+    # 赋值冲突（PR #143 review）。
+    "xmltype": "String",
+    "xml": "String",
 }
 
 # ── Custom / Package-Qualified Type Aliases ─────────────────────────
@@ -6877,7 +6882,7 @@ def _find_registered_pkg(pkg: str, all_packages: dict):
     return None
 
 
-def _find_target_proc(pkg_name: str, proc_name: str, all_packages: dict, arg_count: int = None, arg_types: list = None):
+def _find_target_proc(pkg_name: str, proc_name: str, all_packages: dict, arg_count: Optional[int] = None, arg_types: Optional[list] = None):
     """Find a ProcedureInfo by package and procedure name. If arg_count is given, prefer overload with matching param count.
 
     多个同 arity 重载时（#verify16），按 (实参类型 → 形参类型) 兼容度评分选最优：
@@ -8789,7 +8794,7 @@ SQL_FUNCTION_MAP = {
     "length": "__EXPR__String.valueOf({args0}).length()",
     # XML 函数（FunctionCall 形式；AST 专用变体见 _expr_to_java 的 Xml* 分支）
     "getstringval": "__EXPR__String.valueOf({args0})",
-    "extractvalue": "__EXPR__String.valueOf({args1})",
+    "extractvalue": "__EXPR___extractValue({args0}, {args1})",
     "xmlparse": "__EXPR__String.valueOf({args0})",
     "xmlconcat": "__HANDLER__",
     "to_char": "__HANDLER__",
@@ -10034,11 +10039,13 @@ def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
         if tgt == "Long":
             if _is_bare_lit:
                 return f"Long.valueOf({expr})"
-            # 修复（#verify16）：非 primitive 分支原先直接发 `{expr}.longValue()` ——
-            # 当 expr 是 Integer 产出表达式（如 indexOf(...)+1，int 原始类型）时
-            # int 无法解引用。裸标识符（Long/Object 变量）保持旧行为；计算表达式
-            # 统一用 Number 包装（int/Integer/Long 都合法）。
-            if re.match(r'^[A-Za-z_$][\w$]*(\.\w+\(\))?$', expr.strip()):
+            # 修复（#verify16 + PR #143 review）：非 primitive 分支原先直接发
+            # `{expr}.longValue()` —— 当 expr 是 Integer 产出表达式（如
+            # indexOf(...)+1，int 原始类型）时 int 无法解引用。仅纯裸标识符
+            # （无任何 . 调用）保持 `.longValue()`；`list.size()` 这类
+            # primitive-returning 方法调用会误判（int 无 longValue()），
+            # 一律走 Number 包装（int/Integer/Long 都合法）。
+            if re.match(r'^[A-Za-z_$][\w$]*$', expr.strip()):
                 return f"{expr.strip()}.longValue()"
             return f"((Number) ({expr})).longValue()"
         if tgt == "Double":
@@ -10386,7 +10393,9 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     field_java = snake_to_camel(field_name)
                     _field_java_type = _resolve_custom_field_type(_param_type, field_name, proc)
                     if _field_java_type and _field_java_type not in ("String", "Object", "Map<String, Object>"):
-                        return f'{var_java}.{field_java}.doubleValue()'
+                        # 仅数值字段 unbox；Boolean/Timestamp/嵌套 RECORD 无 doubleValue()
+                        if _is_numeric_type(_field_java_type) or "BigDecimal" in _field_java_type:
+                            return f'{var_java}.{field_java}.doubleValue()'
                     return f'{var_java}.{field_java}'
                 if len(parts) >= 2 and field_name.upper() == "COUNT":
                     if "List<" in var_type:
@@ -11481,14 +11490,32 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             inner_java = _expr_to_java(inner, proc, all_packages=all_packages)
             return f"String.valueOf({inner_java})"
         elif key == "XmlForest":
+            # XMLFOREST(item [AS alias], ...) — item 是 {"alias": ..., "expr": ...}
+            # dict，不能整体交给 _expr_to_java（dict repr 会泄漏进 Java）。
+            # 每个 item 生成 <alias>escaped-value</alias> 元素（openGauss 5
+            # ground truth：XMLFOREST('abc' AS foo)::text → <foo>abc</foo>）。
             items = val if isinstance(val, list) else list(val or [])
-            parts_java = [_expr_to_java(a, proc, all_packages=all_packages) for a in items]
+            parts_java = []
+            for it in items:
+                if isinstance(it, dict) and ("alias" in it or "expr" in it):
+                    _alias = it.get("alias")
+                    if isinstance(_alias, dict):
+                        _alias = _alias.get("value") or _alias.get("name") or ""
+                    _alias_esc = str(_alias).replace("\\", "\\\\").replace('"', '\\"')
+                    _expr_java = _expr_to_java(it.get("expr", {}), proc, all_packages=all_packages)
+                    parts_java.append(f'_xmlElement("{_alias_esc}", {_expr_java})')
+                else:
+                    parts_java.append(_expr_to_java(it, proc, all_packages=all_packages))
             return f"_xmlConcat({', '.join(parts_java)})" if parts_java else "null"
         elif key == "ScalarSublink":
-            # 标量子链接谓词（v = ANY(SELECT ...) / v IN (SELECT ...)）—
-            # Java 侧无子查询表达能力（历史缺陷：无处理器，dict repr 泄漏）。
-            # 与既有 Subquery 处理一致地降级，但布尔语境必须给出合法字面量。
-            return "/* TODO: subquery predicate (ScalarSublink) — implement via a dedicated mapper query */ false"
+            # 标量子链接谓词（v = ANY(SELECT ...) / v IN (SELECT ...)）——
+            # Java 侧无子查询表达能力。静默降级为常量 false 会让迁移项目
+            # 「可编译但业务结果错误」（PR #143 review），改为生成显式抛出
+            # UnsupportedOperationException 的 helper 调用，并在转换报告
+            # 记 TODO 项。
+            _record_todo("ScalarSublink", proc, "subquery predicate — explicit unsupported throw")
+            _proc_id = f"{proc.package}.{proc.proc_name}" if proc is not None else "unknown"
+            return f'_unsupportedScalarSublink("{_proc_id}")'
         elif key == "FieldAccess":
             # 集合元素/记录字段访问 — ogsql 的专用 AST 节点（历史缺陷：无处理器，
             # dict repr 直接泄漏进 Java 导致编译失败）。
@@ -11517,7 +11544,14 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     if "List<" in coll_type and "Map" in coll_type:
                         return f'{var_java}.get((int)({idx_java}) - 1).get("{field_key}")'
                     if coll_type and "Map" not in coll_type and coll_type != "Object":
-                        # 元素为自定义 RECORD 类型 — 直接字段访问
+                        # 元素为自定义 RECORD 类型 — 保留泛型元素类型直接字段访问。
+                        # raw cast ((java.util.List) var) 会把元素退化为 Object，
+                        # .field 访问编译失败（PR #143 review）；变量声明本身就是
+                        # List<Elem>，.get() 已返回 Elem，无需再强转。
+                        _elem_m = re.search(r'List<\s*([^,>]+)', coll_type)
+                        _elem_type = _elem_m.group(1).strip() if _elem_m else ""
+                        if _elem_type and "Map" not in _elem_type and _elem_type != "Object":
+                            return f'{var_java}.get((int)({idx_java}) - 1).{snake_to_camel(field_name)}'
                         return f'{_elem_base}.{snake_to_camel(field_name)}'
                     # 类型未知 — 经 List 元素 + Map 字段读取
                     return f'((java.util.Map<String, Object>) {_elem_base}).get("{field_key}")'
@@ -11543,7 +11577,10 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     field_java = snake_to_camel(field_name)
                     _ft = _resolve_custom_field_type(_var_type, field_name, proc)
                     if _ft and _ft not in ("String", "Object", "Map<String, Object>"):
-                        return f'{obj_java}.{field_java}.doubleValue()'
+                        # 仅数值字段做 unbox；Boolean/Timestamp/嵌套 RECORD 等
+                        # 非数值字段没有 doubleValue()，直接字段访问（PR #143 review）。
+                        if _is_numeric_type(_ft) or "BigDecimal" in _ft:
+                            return f'{obj_java}.{field_java}.doubleValue()'
                     return f'{obj_java}.{field_java}'
                 return f'{obj_java}.get("{field_key}")'
             return f'{obj_java}.get("{field_key}")'
@@ -11551,7 +11588,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
     return str(expr)
 
 
-def _is_string_comparison(binary_op: dict, proc: ProcedureInfo = None) -> bool:
+def _is_string_comparison(binary_op: dict, proc: Optional[ProcedureInfo] = None) -> bool:
     # Original logic: right side is a string literal
     right = binary_op.get("right", {})
     right_is_numeric_string = False
@@ -12347,7 +12384,7 @@ def _write_mapper_interface(base_path: Path, pkg: PackageInfo):
     imports = set()
     for proc in pkg.procedures:
         for dml in proc.dml_statements:
-            method_sig = _build_mapper_method(proc, dml, imports)
+            method_sig = _build_mapper_method(proc, dml, imports, _pkg_java_package(pkg))
             methods.append(method_sig)
 
     # De-duplicate methods with identical signatures (name + param types, not param names)
@@ -12478,19 +12515,23 @@ def _looks_like_custom_record(java_type: str) -> bool:
     return True
 
 
-def _qualify_record_type(java_type: str, proc: ProcedureInfo, imports: set) -> str:
+def _qualify_record_type(java_type: str, proc: ProcedureInfo, imports: set, java_package: str = "") -> str:
     """自定义 RECORD 类型 → 外层 Service 类限定名（DepositReceipt → DepositUtilService.DepositReceipt）。"""
     if not _looks_like_custom_record(java_type):
         return java_type
     svc = f"{package_to_classname(getattr(proc, 'package', '') or '')}Service"
+    # Service 类所在包必须跟随该源配置的 java_packages 映射，不能硬编码
+    # 全局 BASE_PACKAGE（PR #143 review：com.acme.custom 源生成的 Mapper
+    # 仍 import com.example...service.XXXService → 编译失败）。
+    jp = java_package or BASE_PACKAGE
     try:
-        imports.add(f"import {BASE_PACKAGE}.service.{svc};")
+        imports.add(f"import {jp}.service.{svc};")
     except Exception:
         pass
     return f"{svc}.{java_type}"
 
 
-def _build_mapper_method(proc: ProcedureInfo, dml: DmlStatement, imports: set) -> str:
+def _build_mapper_method(proc: ProcedureInfo, dml: DmlStatement, imports: set, java_package: str = "") -> str:
     method_name = dml.method_id
 
     # FORALL batch: single param accepting the primary array list
@@ -12515,7 +12556,7 @@ def _build_mapper_method(proc: ProcedureInfo, dml: DmlStatement, imports: set) -
             continue
         if dml.is_dynamic and p.java_name not in _sql_refs and p.java_name not in _extra_java_names:
             continue
-        _ptype = _qualify_record_type(p.java_type, proc, imports)
+        _ptype = _qualify_record_type(p.java_type, proc, imports, java_package)
         params.append(f'@Param("{p.java_name}") {_ptype} {p.java_name}')
         _imp = _resolve_import(p.java_type)
         if _imp:
@@ -12524,7 +12565,7 @@ def _build_mapper_method(proc: ProcedureInfo, dml: DmlStatement, imports: set) -
     for java_name, java_type in _dml_used_local_vars(proc, dml):
         # Unwrap AtomicReference<T> → T for mapper parameters
         mapper_type = re.sub(r'^AtomicReference<(.+)>$', r'\1', java_type) if java_type else java_type
-        mapper_type = _qualify_record_type(mapper_type, proc, imports)
+        mapper_type = _qualify_record_type(mapper_type, proc, imports, java_package)
         params.append(f'@Param("{java_name}") {mapper_type} {java_name}')
         _imp = _resolve_import(mapper_type)
         if _imp:
@@ -13606,6 +13647,38 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
         lines.append("            if (p != null) { any = true; sb.append(String.valueOf(p)); }")
         lines.append("        }")
         lines.append("        return any ? sb.toString() : null;")
+        lines.append("    }")
+    if "_xmlElement(" in all_body_text:
+        lines.append("")
+        lines.append("    private String _xmlElement(String alias, Object value) {")
+        lines.append("        // XMLFOREST item：<alias>escaped-value</alias>；null 值产生空元素")
+        lines.append("        String text = value == null ? \"\" : _xmlEscape(String.valueOf(value));")
+        lines.append("        String name = _xmlEscape(alias);")
+        lines.append("        return \"<\" + name + \">\" + text + \"</\" + name + \">\";")
+        lines.append("    }")
+        lines.append("")
+        lines.append("    private String _xmlEscape(String s) {")
+        lines.append("        return s.replace(\"&\", \"&amp;\").replace(\"<\", \"&lt;\").replace(\">\", \"&gt;\")")
+        lines.append("                .replace(\"\\\"\", \"&quot;\").replace(\"'\", \"&apos;\");")
+        lines.append("    }")
+    if "_extractValue(" in all_body_text:
+        lines.append("")
+        lines.append("    private String _extractValue(String xml, String xpath) {")
+        lines.append("        // EXTRACTVALUE 语义：对 xml 应用 xpath 取文本；节点缺失/解析失败返回 null")
+        lines.append("        if (xml == null || xpath == null) return null;")
+        lines.append("        try {")
+        lines.append("            javax.xml.xpath.XPath xp = javax.xml.xpath.XPathFactory.newInstance().newXPath();")
+        lines.append("            Object r = xp.evaluate(xpath, new org.xml.sax.InputSource(new java.io.StringReader(xml)), javax.xml.xpath.XPathConstants.STRING);")
+        lines.append("            return r == null ? null : r.toString();")
+        lines.append("        } catch (Exception e) {")
+        lines.append("            return null;")
+        lines.append("        }")
+        lines.append("    }")
+    if "_unsupportedScalarSublink(" in all_body_text:
+        lines.append("")
+        lines.append("    private <T> T _unsupportedScalarSublink(String procId) {")
+        lines.append("        // ScalarSublink 子查询谓词暂不支持 — 显式失败而非静默降级（PR #143 review）")
+        lines.append("        throw new UnsupportedOperationException(\"ScalarSublink subquery predicate not supported at \" + procId);")
         lines.append("    }")
 
     # Stubs for known SQL functions that bypass _register_missing_overload

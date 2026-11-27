@@ -232,8 +232,23 @@ pub fn write_service_class(
         w.line("}");
     }
 
-    let all_body: String =
-        pkg.procedures.iter().flat_map(|p| p.java_logic_lines.iter()).cloned().collect::<Vec<_>>().join(" ");
+    // PR #143 review: helper detection must cover EVERY generated call site —
+    // declaration initializers (local_var_defaults), package-var defaults and
+    // parameter defaults emit into the class/method body too, so scanning only
+    // java_logic_lines misses initializer-only _xmlConcat/_extractValue calls.
+    let all_body: String = pkg
+        .procedures
+        .iter()
+        .flat_map(|p| {
+            p.java_logic_lines
+                .iter()
+                .cloned()
+                .chain(p.local_var_defaults.values().cloned())
+                .chain(p.parameters.iter().filter_map(|pa| pa.default_value.clone()))
+        })
+        .chain(pkg.package_vars.values().filter_map(|v| v.default_value.clone()))
+        .collect::<Vec<_>>()
+        .join(" ");
     if all_body.contains("this.jsonbArrayLength(") {
         w.blank();
         w.line("public Integer jsonbArrayLength(String jsonb) {");
@@ -273,6 +288,41 @@ pub fn write_service_class(
         w.line("        if (p != null) { any = true; sb.append(String.valueOf(p)); }");
         w.line("    }");
         w.line("    return any ? sb.toString() : null;");
+        w.line("}");
+    }
+    if all_body.contains("_xmlElement(") {
+        w.blank();
+        w.line("private String _xmlElement(String alias, Object value) {");
+        w.line("    // XMLFOREST item：<alias>escaped-value</alias>；null 值产生空元素");
+        w.line("    String text = value == null ? \"\" : _xmlEscape(String.valueOf(value));");
+        w.line("    String name = _xmlEscape(alias);");
+        w.line("    return \"<\" + name + \">\" + text + \"</\" + name + \">\";");
+        w.line("}");
+        w.blank();
+        w.line("private String _xmlEscape(String s) {");
+        w.line("    return s.replace(\"&\", \"&amp;\").replace(\"<\", \"&lt;\").replace(\">\", \"&gt;\")");
+        w.line("            .replace(\"\\\"\", \"&quot;\").replace(\"'\", \"&apos;\");");
+        w.line("}");
+    }
+    if all_body.contains("_unsupportedScalarSublink(") {
+        w.blank();
+        w.line("private <T> T _unsupportedScalarSublink(String procId) {");
+        w.line("    // ScalarSublink/InSubquery 子查询谓词暂不支持 — 显式失败而非静默降级（PR #143 review）");
+        w.line("    throw new UnsupportedOperationException(\"ScalarSublink subquery predicate not supported at \" + procId);");
+        w.line("}");
+    }
+    if all_body.contains("_extractValue(") {
+        w.blank();
+        w.line("private String _extractValue(String xml, String xpath) {");
+        w.line("    // EXTRACTVALUE 语义：对 xml 应用 xpath 取文本；节点缺失/解析失败返回 null");
+        w.line("    if (xml == null || xpath == null) return null;");
+        w.line("    try {");
+        w.line("        javax.xml.xpath.XPath xp = javax.xml.xpath.XPathFactory.newInstance().newXPath();");
+        w.line("        Object r = xp.evaluate(xpath, new org.xml.sax.InputSource(new java.io.StringReader(xml)), javax.xml.xpath.XPathConstants.STRING);");
+        w.line("        return r == null ? null : r.toString();");
+        w.line("    } catch (Exception e) {");
+        w.line("        return null;");
+        w.line("    }");
         w.line("}");
     }
     if all_body.contains("this.jsonbGet(") {
