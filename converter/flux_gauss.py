@@ -2573,6 +2573,20 @@ def _fix_undeclared_call_args(proc: ProcedureInfo):
                 if _v:
                     declared.add(_v)
                     declared.add(snake_to_camel(_v))
+    # Untyped `for (v = …)` loop vars whose registration path skipped
+    # local_vars would be undeclared — register them as Integer locals so
+    # the decl loop emits `Integer v;` at method scope.
+    _java_names = {snake_to_camel(k) for k in proc.local_vars}
+    _java_names.update(p.java_name for p in proc.parameters)
+    for ln in lines:
+        for _fm in re.finditer(r'\bfor\s*\(\s*([a-zA-Z_]\w*)\s*=(?!=)', ln):
+            _fv = _fm.group(1)
+            if _fv not in _java_names and _fv not in declared:
+                _snake = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', _fv).lower()
+                proc.local_vars[_snake] = "Integer"
+                _java_names.add(_fv)
+                declared.add(_fv)
+
     out = []
     for ln in lines:
         try:
@@ -14772,9 +14786,15 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
     hoisted_decls = []
     remaining_lines = []
     _pending_debug = []  # accumulate debug comments that precede a declaration
+    _enum_types = set(re.findall(r'\benum\s+(\w+)', ' '.join(body_lines)))
     for line in body_lines:
         s = line.strip()
-        if re.match(r'^(String|Long|Integer|BigDecimal|java\.math\.BigDecimal|AtomicReference|List<Map<String, Object>>|boolean|int|long|double|float)\s+\w+\s*=', s):
+        # Only hoist column-0 declarations (emitted by the local_vars decl
+        # loop). Indented decls live inside loops/blocks — hoisting them
+        # would duplicate or reorder scoped bindings.
+        if (line == line.lstrip()
+                and s.split(None, 1)[0].split('<')[0].split('.')[-1] not in _enum_types
+                and re.match(r'^(?:[A-Z][\w.$]*(?:<[^;{}]*>)?(?:\[\])?|int|long|short|byte|char|boolean|double|float|var)\s+\w+\s*=(?!=)', s)):
             # Don't hoist mapper query result assignments — they must stay in place (e.g., inside loops)
             if 'mapper.' not in s:
                 # Flush any pending debug comments right before this declaration
