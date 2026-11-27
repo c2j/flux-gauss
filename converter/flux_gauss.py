@@ -2223,39 +2223,34 @@ def _hoist_try_scoped_decls(proc: ProcedureInfo):
                 i += 1
                 continue
             indent = lines[i][:len(lines[i]) - len(lines[i].lstrip())]
-            # 收集 try 体的匹配闭括号
-            depth = 0
-            j = i
+            ind_len = len(indent)
+            # try 体的结束 = 第一个与 try 同缩进、以 '}' 开头的行（`} catch {`
+            # 行花括号配平，旧的深度计数永远等不到 0，body_end 会越过整个
+            # try/catch，导致 catch 引用检测恒为空、提升永不生效 —— #144）。
+            j = i + 1
             body_end = None
             while j < n:
-                depth += lines[j].count("{") - lines[j].count("}")
-                if depth <= 0 and j > i:
+                s = lines[j].strip()
+                ind = len(lines[j]) - len(lines[j].lstrip())
+                if ind == ind_len and s.startswith("}"):
                     body_end = j
                     break
                 j += 1
             if body_end is None:
                 i += 1
                 continue
-            # catch/finally 范围
-            catch_start = None
-            k = body_end + 1
-            tail_depth = 0
-            catch_end = body_end
-            while k < n:
-                s2 = lines[k].strip()
-                if s2.startswith("} catch") or s2.startswith("catch") or s2.startswith("} finally") or s2.startswith("finally"):
-                    catch_start = k
-                if catch_start is not None:
-                    tail_depth += lines[k].count("{") - lines[k].count("}")
-                    if tail_depth < 0:
-                        catch_end = k
-                        break
-                elif s2.startswith("}"):
+            # catch/finally 区间：从 body_end 起，连续同缩进的 '}…'/catch/finally
+            # 行都算 handler 区；遇到同缩进的普通语句即结束。
+            k = body_end
+            while k + 1 < n:
+                s2 = lines[k + 1].strip()
+                ind2 = len(lines[k + 1]) - len(lines[k + 1].lstrip())
+                if (ind2 == ind_len and not s2.startswith("}")
+                        and not s2.startswith("catch") and not s2.startswith("finally")):
                     break
                 k += 1
-            if catch_start is None:
-                i += 1
-                continue
+            catch_end = k
+            tail_text = "\n".join(lines[body_end:catch_end + 1])
             # try 体内的声明行
             decl_re = re.compile(r'^(\s*)([A-Za-z_<][\w.<>, ?\[\]]*\s)([A-Za-z_]\w*)\s*=\s*.+;\s*$')
             body_refs = set()
@@ -2266,7 +2261,7 @@ def _hoist_try_scoped_decls(proc: ProcedureInfo):
             if not body_refs:
                 i += 1
                 continue
-            tail_text = "\n".join(lines[catch_start:catch_end + 1])
+            tail_text = "\n".join(lines[body_end:catch_end + 1])
             hoist_list = []
             for dline in lines[i + 1:body_end]:
                 md = decl_re.match(dline)
@@ -2356,8 +2351,14 @@ def _promote_out_local_vars(proc: ProcedureInfo, all_packages: dict):
                         if 'String' in m_ar.group(1) and not rhs.strip().startswith('"') and rhs.strip() != 'null':
                             rhs = f'String.valueOf({rhs})'
                         line = f'{m_cond.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<>({_wrap_rhs(rhs)});'
-                patched.append(_patch_promoted_var_reads(line, var_java, string_inner=_string_inner,
-                                                          proc=proc, all_packages=all_packages))
+                try:
+                    patched.append(_patch_promoted_var_reads(line, var_java, string_inner=_string_inner,
+                                                              proc=proc, all_packages=all_packages))
+                except Exception:
+                    # A malformed line must not abort patching for the
+                    # remaining lines/vars (the caller swallows the whole
+                    # _promote_out_local_vars exception otherwise).
+                    patched.append(line)
             proc.java_logic_lines = patched
 
 
@@ -4127,6 +4128,10 @@ def _generate_nested_breakout_goto(proc, analysis, body_stmts, all_packages, dml
                         proc.local_vars[variable] = "Integer"
                     low = _expr_to_java(range_data.get("low", {"Literal": {"Integer": 0}}), proc, all_packages=all_packages)
                     high = _expr_to_java(range_data.get("high", {"Literal": {"Integer": 0}}), proc, all_packages=all_packages)
+                    # #144: same int coercion as the non-goto path — a Map.get()
+                    # bound emitted raw gives `int <= Object` operand errors.
+                    low = _coerce_for_int(low)
+                    high = _coerce_for_int(high)
                     reverse = range_data.get("reverse", False)
                     if reverse:
                         proc.java_logic_lines.append(f"for ({var_java} = {high}; {var_java} >= {low}; {var_java}--) {{")
@@ -5459,6 +5464,12 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
         if target_var_type and "Timestamp" in target_var_type and "Timestamp" not in expr:
             if "mapper." in expr or "Mapper." in expr or ".select" in expr:
                 expr = _coerce_type(expr, "Object", target_var_type)
+        # #144: LocalDate[Time] expr → java.sql.Date target (Date vars cannot
+        # hold LocalDate; `LocalDate→Date` was a top verify16 error class).
+        if (target_var_type and ("sql.Date" in target_var_type or target_var_type == "java.util.Date")
+                and ("LocalDate" in expr or "localDate" in expr)
+                and "java.sql.Date" not in expr and "java.util.Date" not in expr):
+            expr = _localdate_to_sql_date(expr)
         _m_numlong = re.match(r'^\(\(Number\)\s*\((.*)\)\)\.longValue\(\)$', expr.strip())
         if target_var_type in ("Long", "long") and _m_numlong and _is_primitive_producing(_m_numlong.group(1)):
             expr = f"(long) ({_m_numlong.group(1)})"
@@ -10576,8 +10587,19 @@ def _extract_month_interval(ast, proc, all_packages):
 
 def _is_temporal_java(java: str, ttype: str) -> bool:
     return ("Timestamp" in ttype or "Timestamp" in java or "java.sql.Date" in java
+            or "LocalDate" in java or "LocalDate" in ttype
             or ttype in ("java.sql.Date", "java.util.Date")
             or java.strip().startswith("new java.sql.Date"))
+
+
+def _localdate_to_sql_date(expr: str) -> str:
+    """`java.time.LocalDate[Time]` expr → `java.sql.Date` for mixed temporal
+    comparisons/assignments (#144)."""
+    e = expr.strip()
+    if e.startswith("java.sql.Date") or e.startswith("new java.sql.Date"):
+        return expr
+    inner = f"({e}).toLocalDate()" if "LocalDateTime" in e else e
+    return f"java.sql.Date.valueOf({inner})"
 
 
 def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_packages: dict = None) -> str:
@@ -10723,7 +10745,16 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             if as_read and proc is not None:
                 for p in proc.parameters:
                     if p.is_out and p.java_name == java_name:
-                        java_name = f"{java_name}.get()"
+                        # REFCURSOR OUT params are dropped from the signature;
+                        # reads see the `{name}Result` list when the cursor was
+                        # opened, else null — never `.get()`.
+                        if p.is_refcursor:
+                            _rv = f"{java_name}Result"
+                            java_name = _rv if any(
+                                m.get("result_var") == _rv
+                                for m in proc.open_cursors.values()) else "null"
+                        else:
+                            java_name = f"{java_name}.get()"
                         break
             return java_name
         elif key == "PlVariable":
@@ -10755,7 +10786,13 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             if as_read and proc is not None:
                 for p in proc.parameters:
                     if p.is_out and p.java_name == java_name:
-                        java_name = f"{java_name}.get()"
+                        if p.is_refcursor:
+                            _rv = f"{java_name}Result"
+                            java_name = _rv if any(
+                                m.get("result_var") == _rv
+                                for m in proc.open_cursors.values()) else "null"
+                        else:
+                            java_name = f"{java_name}.get()"
                         break
             return java_name
         elif key == "Literal":
@@ -10838,7 +10875,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     elif ".get(" in left and not _is_primitive_producing(left):
                         left = f"((Number) ({left} != null ? {left} : 0)).intValue()"
                         _left_is_primitive = True
-                    elif "this." in left or "(" in left:
+                    elif ("this." in left or "(" in left) and not _is_temporal_java(left, left_type):
                         left = f"((Number) ({left} != null ? {left} : 0)).intValue()"
                         _left_is_primitive = True
                 if ".get(" in right and "BigDecimal" in right_type and not _is_primitive_producing(right):
@@ -10855,7 +10892,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     elif ".get(" in right and not _is_primitive_producing(right):
                         right = f"((Number) ({right} != null ? {right} : 0)).intValue()"
                         _right_is_primitive = True
-                    elif "this." in right or "(" in right:
+                    elif ("this." in right or "(" in right) and not _is_temporal_java(right, right_type):
                         right = f"((Number) ({right} != null ? {right} : 0)).intValue()"
                         _right_is_primitive = True
 
@@ -11118,6 +11155,20 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 if _method.startswith("!"):
                     return f"!{right}.{_method[1:]}({left})"
                 return f"{right}.{_method}({left})"
+            # #144: other temporal pairs (LocalDate etc.) have no <= operator —
+            # compare via compareTo, same shape as the String path above.
+            # Mixed LocalDate vs java.util.Date families must be unified first:
+            # Date.compareTo(LocalDate) does not compile.
+            if (_is_temporal_java(left, left_type) and _is_temporal_java(right, right_type)
+                    and op in (">", "<", ">=", "<=")):
+                _l_is_ld = "LocalDate" in left or "LocalDate" in left_type
+                _r_is_ld = "LocalDate" in right or "LocalDate" in right_type
+                if _l_is_ld and not _r_is_ld:
+                    left = _localdate_to_sql_date(left)
+                elif _r_is_ld and not _l_is_ld:
+                    right = _localdate_to_sql_date(right)
+                _rel_cmp = {"<": "< 0", ">": "> 0", "<=": "<= 0", ">=": ">= 0"}
+                return f"{left}.compareTo({right}) {_rel_cmp[op]}"
             if op in ("=", "<>", "!=", "==") and proc is not None:
                 _str_int = _coerce_string_int_compare(val, left, right, proc)
                 if _str_int:
@@ -11160,13 +11211,26 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                             args_str = ", ".join(args_java)
                         return f"java.util.Arrays.asList({args_str})"
                 for p in proc.parameters:
-                    if p.name.lower() == func_name_lower and p.java_type.startswith("List<"):
+                    if p.name.lower() == func_name_lower:
                         idx_expr = args_java[0] if args_java else "0"
-                        return f"{snake_to_camel(func_name_lower)}.get((int)({idx_expr}) - 1)"
+                        _recv = f"{p.java_name}.get()" if p.is_out else p.java_name
+                        if p.java_type.startswith("List<"):
+                            return f"{_recv}.get((int)({idx_expr}) - 1)"
+                        if "Map<" in p.java_type:
+                            # numlist-style Map carrier: elements live under
+                            # string keys "1".."n" alongside "count" (#144).
+                            return f"{_recv}.get(String.valueOf({idx_expr}))"
                 for var_name, var_type in proc.local_vars.items():
-                    if var_name.lower() == func_name_lower and var_type.startswith("List<"):
+                    if var_name.lower() == func_name_lower:
                         idx_expr = args_java[0] if args_java else "0"
-                        return f"{snake_to_camel(func_name_lower)}.get((int)({idx_expr}) - 1)"
+                        _vjava = snake_to_camel(var_name)
+                        if var_type.startswith("AtomicReference<"):
+                            _vjava = f"{_vjava}.get()"
+                            var_type = var_type[len("AtomicReference<"):-1]
+                        if var_type.startswith("List<"):
+                            return f"{_vjava}.get((int)({idx_expr}) - 1)"
+                        if "Map<" in var_type:
+                            return f"{_vjava}.get(String.valueOf({idx_expr}))"
 
             # --- Builtin-based semantic function handling (AST builtin field) ---
             _builtin = val.get("builtin")
