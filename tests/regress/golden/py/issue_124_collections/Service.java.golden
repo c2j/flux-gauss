@@ -29,7 +29,7 @@ public class Issue124CollectionsService {
         Map<String, Object> vNums = new HashMap<>();
         Map<String, Object> vRectab = new HashMap<>();
         java.sql.Date vD = null;
-        vCnt = (long) (0L);
+        vCnt = (vNums.get(String.valueOf(vI)) != null ? (vNums.get(String.valueOf(vI)) instanceof Number ? ((Number) (vNums.get(String.valueOf(vI)))).longValue() : Long.parseLong(String.valueOf(vNums.get(String.valueOf(vI))))) : 0L);
         vCnt = (long) ((vNums.get("count") != null ? (vNums.get("count") instanceof Number ? ((Number) (vNums.get("count"))).longValue() : Long.parseLong(String.valueOf(vNums.get("count")))) : 0L));
         if (/* TODO: implement exists(1) — pkg=v_nums, ret=?, args=[Integer], caller=issue_124_collections.sql:prc_collection_demo */ false) {
             // CALL v_nums.delete(...)
@@ -43,7 +43,7 @@ public class Issue124CollectionsService {
         for (Map<String, Object> _bulkRow : _bulkResult_0) {
             // TODO: BULK COLLECT extraction for vRectab requires manual implementation
         }
-        vD = java.time.LocalDate.now().plusMonths(1);
+        vD = java.sql.Date.valueOf(java.time.LocalDate.now().plusMonths(1));
         vD = java.sql.Date.valueOf(java.time.LocalDate.now().withDayOfMonth(java.time.LocalDate.now().lengthOfMonth()));
         _sqlRowCount = issue124CollectionsMapper.updateCfgTable(pMode, vCnt);
     }
@@ -57,6 +57,6 @@ public class Issue124CollectionsService {
         // CALL v_nums(...)
         // CALL v_rectab(...)
         // CALL v_rectab(...)
-        vCnt = (long) (0L);
+        vCnt = (vNums.get(String.valueOf(vI + 1)) != null ? (vNums.get(String.valueOf(vI + 1)) instanceof Number ? ((Number) (vNums.get(String.valueOf(vI + 1)))).longValue() : Long.parseLong(String.valueOf(vNums.get(String.valueOf(vI + 1))))) : 0L);
     }
 }
