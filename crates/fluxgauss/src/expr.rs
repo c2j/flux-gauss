@@ -1328,7 +1328,8 @@ pub fn take_pending_out_promotions() -> Vec<(String, String)> {
 /// `DEFAULT ''` → `""` on `String`). Issue #136-A/G.
 fn default_padding_for_param(param: &crate::types::Parameter) -> String {
     if param.is_out() {
-        return "new java.util.concurrent.atomic.AtomicReference<>(null)".into();
+        // Explicit type arg: diamond inference fails in arg position (#144).
+        return format!("new java.util.concurrent.atomic.AtomicReference<{}>(null)", param.java_type);
     }
     let null_default = param.default_value.as_ref().is_some_and(|d| d.trim().eq_ignore_ascii_case("null"));
     let eff = if null_default {

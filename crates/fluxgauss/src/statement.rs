@@ -2059,7 +2059,9 @@ fn process_procedure_call(
                         // Pad a missing trailing param (DEFAULT semantics).
                         let param = &tp.parameters[pos];
                         if param.is_out() {
-                            args.push("new AtomicReference<>(null)".to_string());
+                            // Explicit type arg: diamond inference fails when
+                            // the ARG position gives no target type (#144).
+                            args.push(format!("new AtomicReference<{}>(null)", param.java_type));
                         } else if param.java_type == "long" {
                             args.push("0L".into());
                         } else if param.java_type == "int" {
