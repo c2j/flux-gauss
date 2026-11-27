@@ -73,10 +73,14 @@ public class WarpdriverStressTestService {
     // Source: PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator (PROCEDURE) — PKG_WARPDRIVER_STRESS_TEST.sql:138-289
     @Transactional
     public void spMainOrchestrator(String pBizDate, String pMode, AtomicReference<java.math.BigDecimal> pTotalAmt, AtomicReference<Long> pLogId) {
-        java.math.BigDecimal vSum = java.math.BigDecimal.valueOf(0);
+        Map<String, Object> vItemTab = new HashMap<>();
         Integer vIdx = Integer.valueOf(0);
+        Map<String, Object> vCurOrders = new HashMap<>();
+        Map<String, Object> vRec = new HashMap<>();
         String vSavepoint1 = null;
+        Boolean vHasError = false;
         Integer vCleaned = 0;
+        Integer i = 0;
         boolean found = false;
         int _sqlRowCount = 0;
         boolean running = true;
@@ -85,10 +89,7 @@ public class WarpdriverStressTestService {
         List<Map<String, Object>> vCurOrdersResult = null;
         try {
             java.sql.Date vDate = java.sql.Date.valueOf(String.valueOf(pBizDate));
-            Map<String, Object> vItemTab = new HashMap<>();
-            Map<String, Object> vCurOrders = new HashMap<>();
-            Map<String, Object> vRec = new HashMap<>();
-            Boolean vHasError = false;
+            java.math.BigDecimal vSum = java.math.BigDecimal.valueOf(0);
             pTotalAmt.set(null);
             pLogId.set(null);
             java.util.Map<String, Object> _row = null;
@@ -131,7 +132,7 @@ public class WarpdriverStressTestService {
                     case CloseCursor:
                     // cursor v_cur_orders closed
                     if (vIdx > 0) {
-                        for (int i = 1; i <= vIdx; i++) {
+                        for (i = 1; i <= vIdx; i++) {
                             _sqlRowCount = warpdriverStressTestMapper.insertOrderItemSnapshot_1(pBizDate, pMode, vItemTab, i);
                         }
                     }
@@ -360,11 +361,12 @@ public class WarpdriverStressTestService {
         Long vTaskId = 0L;
         String vJobName = null;
         String vSql = null;
+        Integer i = 0;
         int _sqlRowCount = 0;
         try {
             java.util.List<String> vTasks = new java.util.ArrayList<>();
             vTasks = this.stringToArray(pTaskList, ",");
-            for (int i = 1; i <= (vTasks).size(); i++) {
+            for (i = 1; i <= (vTasks).size(); i++) {
                 vTaskId = Long.valueOf(String.valueOf(((java.util.List)(vTasks)).get((int)(i) - 1)));
                 vJobName = String.valueOf(pJobPrefix + vTaskId + "_" + new java.text.SimpleDateFormat("HHmSSSs").format(new java.sql.Timestamp(System.currentTimeMillis())));
                 // Originally: DBE_SCHEDULER job for spGotoCleanupMaster
@@ -418,11 +420,12 @@ public class WarpdriverStressTestService {
         String vArr = pItems;
         String vResult = "[]";
         String vItem = null;
+        Integer vIdx = 0;
         java.math.BigDecimal vNewPrice = java.math.BigDecimal.ZERO;
         if (java.util.Objects.equals(this.jsonbArrayLength(vArr), 0)) {
             return "{\"error\":\"empty_array\"}";
         }
-        for (int vIdx = 0; vIdx <= this.jsonbArrayLength(vArr) - 1; vIdx++) {
+        for (vIdx = 0; vIdx <= this.jsonbArrayLength(vArr) - 1; vIdx++) {
             vItem = vArr;
             vNewPrice = java.math.BigDecimal.valueOf((0)).multiply((java.math.BigDecimal.valueOf(1).subtract(pDiscount)));
             vResult = String.valueOf(vResult + this.jsonbBuildObject("product_id", String.valueOf(0), "original_price", String.valueOf((0)), "discount_rate", String.valueOf(pDiscount), "final_price", String.valueOf((vNewPrice).setScale((int)(2), java.math.RoundingMode.HALF_UP)), "processed_at", String.valueOf(new java.sql.Timestamp(System.currentTimeMillis()))));
@@ -456,13 +459,13 @@ public class WarpdriverStressTestService {
     // Source: PKG_WARPDRIVER_STRESS_TEST.sp_savepoint_hell (PROCEDURE) — PKG_WARPDRIVER_STRESS_TEST.sql:801-863
     @Transactional
     public void spSavepointHell(Long pAccountId, java.math.BigDecimal pAmount, AtomicReference<java.math.BigDecimal> pFinalBal) {
-        java.math.BigDecimal vBalance = java.math.BigDecimal.ZERO;
         String vSp1 = null;
         String vSp2 = null;
         String vSp3 = null;
         String vIns = null;
         int _sqlRowCount = 0;
         try {
+            java.math.BigDecimal vBalance = java.math.BigDecimal.ZERO;
             pFinalBal.set(null);
             vBalance = new java.math.BigDecimal(String.valueOf(warpdriverStressTestMapper.selectAccounts(pAccountId, pAmount)));
             if (vBalance == null) vBalance = java.math.BigDecimal.ZERO;

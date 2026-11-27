@@ -21,6 +21,7 @@ public class Issue75ExceptionInLoopService {
     @Transactional
     public void pIssue75DeadReturn(AtomicReference<String> pOSucceed) {
         String vStepNo = "";
+        Integer i = 0;
         int _sqlRowCount = 0;
         pOSucceed.set(null);
         pOSucceed.set("0");

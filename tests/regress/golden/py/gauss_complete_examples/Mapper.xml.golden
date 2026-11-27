@@ -230,7 +230,6 @@
                             AND t.amount &gt;= :
                             AND t.create_time &gt;= :
                           ORDER BY t.amount DESC
-        <if test="true">:${i}</if>
     </select>
 
     <!-- Source: gauss_complete_examples.sql:586-586 — pkg_cursor_advanced.proc_cursor_dynamic_using.selectProcCursorDynamicUsing_7 -->
@@ -251,7 +250,6 @@
                             AND t.amount &gt;= :
                             AND t.create_time &gt;= :
                           ORDER BY t.amount DESC
-        <if test="true">:${i}</if>
     </select>
 
     <!-- Source: gauss_complete_examples.sql:588-588 — pkg_cursor_advanced.proc_cursor_dynamic_using.selectProcCursorDynamicUsing_8 -->
@@ -272,7 +270,6 @@
                             AND t.amount &gt;= :
                             AND t.create_time &gt;= :
                           ORDER BY t.amount DESC
-        <if test="true">:${i}</if>
     </select>
 
     <!-- Source: gauss_complete_examples.sql:591-591 — pkg_cursor_advanced.proc_cursor_dynamic_using.selectProcCursorDynamicUsing_9 -->
@@ -293,7 +290,6 @@
                             AND t.amount &gt;= :
                             AND t.create_time &gt;= :
                           ORDER BY t.amount DESC
-        <if test="true">:${i}</if>
     </select>
 
     <!-- Source: gauss_complete_examples.sql:594-594 — pkg_cursor_advanced.proc_cursor_dynamic_using.insertAuditLog_2 -->

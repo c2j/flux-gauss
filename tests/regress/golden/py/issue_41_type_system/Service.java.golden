@@ -23,9 +23,9 @@ public class Issue41TypeSystemService {
     // Source: pkg_issue41_types.proc_transfer (PROCEDURE) — issue_41_type_system.sql:64-112
     @Transactional
     public void procTransfer(Long pFromAccount, Long pToAccount, java.math.BigDecimal pAmount, java.sql.Date pTransferDate, Boolean pIsUrgent, AtomicReference<java.math.BigDecimal> pNewBalance, AtomicReference<String> pStatus) {
+        int _sqlRowCount = 0;
         java.math.BigDecimal vFromBalance = java.math.BigDecimal.ZERO;
         java.math.BigDecimal vToBalance = java.math.BigDecimal.ZERO;
-        int _sqlRowCount = 0;
         pNewBalance.set(null);
         pStatus.set(null);
         vFromBalance = new java.math.BigDecimal(String.valueOf(issue41TypeSystemMapper.selectTIssue41Account(pFromAccount, pToAccount, pAmount, pTransferDate, pIsUrgent)));
@@ -49,9 +49,9 @@ public class Issue41TypeSystemService {
     // Source: pkg_issue41_types.proc_withdraw (PROCEDURE) — issue_41_type_system.sql:115-155
     @Transactional
     public void procWithdraw(Long pAccountId, java.math.BigDecimal pAmount, AtomicReference<java.math.BigDecimal> pNewBalance, AtomicReference<String> pStatus) {
-        java.math.BigDecimal vBalance = java.math.BigDecimal.ZERO;
         int _sqlRowCount = 0;
         try {
+            java.math.BigDecimal vBalance = java.math.BigDecimal.ZERO;
             pNewBalance.set(null);
             pStatus.set(null);
             vBalance = new java.math.BigDecimal(String.valueOf(issue41TypeSystemMapper.selectTIssue41Account_2(pAccountId, pAmount)));
@@ -78,11 +78,11 @@ public class Issue41TypeSystemService {
 
     // Source: pkg_issue41_types.proc_validate_account (PROCEDURE) — issue_41_type_system.sql:158-186
     public void procValidateAccount(Long pAccountId, AtomicReference<Boolean> pIsValid, AtomicReference<java.math.BigDecimal> pBalance) {
-        java.math.BigDecimal vBalance = java.math.BigDecimal.ZERO;
+        Throwable eAccountClosed = null;
+        Boolean vActive = false;
         int _sqlRowCount = 0;
         try {
-            Throwable eAccountClosed = null;
-            Boolean vActive = false;
+            java.math.BigDecimal vBalance = java.math.BigDecimal.ZERO;
             pIsValid.set(null);
             pBalance.set(null);
             java.util.Map<String, Object> _row = null;

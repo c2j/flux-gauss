@@ -2560,6 +2560,9 @@ def _fix_undeclared_call_args(proc: ProcedureInfo):
         for rx in _ARG_DECL_RES:
             for m in rx.finditer(ln):
                 declared.add(m.group(1))
+        # lambda parameters (x -> …, (x, y) -> …) are in-scope bindings
+        for _lm in re.finditer(r'(?:\(|\b)([a-zA-Z_]\w*)\s*->', ln):
+            declared.add(_lm.group(1))
     # method names / common literals that are never vars
     declared.update({"this", "super", "null", "true", "false", "new", "return",
                      "found", "currentState", "running", "_smGuard"})

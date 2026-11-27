@@ -22,9 +22,9 @@ public class Issue3435DtoNamingService {
     @Transactional
     public void procCreateOrder(String pCustomerName, String pProductCode, Integer pQuantity, java.math.BigDecimal pUnitPrice, String pCreatedBy, AtomicReference<Long> pOrderId, AtomicReference<java.math.BigDecimal> pTotalAmount, AtomicReference<String> pStatusMsg) {
         String vOrderId = null;
-        java.math.BigDecimal vAmount = java.math.BigDecimal.ZERO;
         int _sqlRowCount = 0;
         try {
+            java.math.BigDecimal vAmount = java.math.BigDecimal.ZERO;
             pOrderId.set(null);
             pTotalAmount.set(null);
             pStatusMsg.set(null);

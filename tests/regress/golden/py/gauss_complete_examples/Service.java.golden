@@ -25,10 +25,10 @@ public class GaussCompleteExamplesService {
     }
     // Source: string_split (FUNCTION) — gauss_complete_examples.sql:5-31
     public List<String> stringSplit(String pString, String pDelimiter) {
+        List<String> vArray = new java.util.ArrayList<>();
         Integer vStart = Integer.valueOf(1);
         Integer vEnd = 0;
         Integer vIdx = Integer.valueOf(1);
-        List<String> vArray = new java.util.ArrayList<>();
         if (pString == null) {
             return vArray;
         }
@@ -66,15 +66,15 @@ public class GaussCompleteExamplesService {
     // Source: pkg_for_in_select.proc_sync_employee_bonus (PROCEDURE) — gauss_complete_examples.sql:75-185
     @Transactional
     public void procSyncEmployeeBonus() {
-        java.math.BigDecimal vTotalBonus = java.math.BigDecimal.valueOf(0);
         Integer vProcessed = Integer.valueOf(0);
         Integer vLogId = 0;
-        java.math.BigDecimal vBonusRate = java.math.BigDecimal.ZERO;
-        java.math.BigDecimal vBonusAmt = java.math.BigDecimal.ZERO;
-        java.math.BigDecimal vMaxBonus = java.math.BigDecimal.ZERO;
         Integer vInsertId = 0;
         int _sqlRowCount = 0;
         try {
+            java.math.BigDecimal vTotalBonus = java.math.BigDecimal.valueOf(0);
+            java.math.BigDecimal vBonusRate = java.math.BigDecimal.ZERO;
+            java.math.BigDecimal vBonusAmt = java.math.BigDecimal.ZERO;
+            java.math.BigDecimal vMaxBonus = java.math.BigDecimal.ZERO;
             java.util.Map<String, Object> _row = null;
             _row = gaussCompleteExamplesMapper.insertBatchLog(vLogId);
             if (_row == null) _row = java.util.Collections.emptyMap();
@@ -136,7 +136,6 @@ public class GaussCompleteExamplesService {
         List<Map<String, Object>> vCursor = new java.util.ArrayList<>();
         Integer vRecId = 0;
         String vRecName = null;
-        java.math.BigDecimal vRecValue = java.math.BigDecimal.ZERO;
         String vRecStatus = null;
         String vSql = null;
         Integer vRowCount = Integer.valueOf(0);
@@ -147,6 +146,7 @@ public class GaussCompleteExamplesService {
         List<Map<String, Object>> vCursorResult = null;
         int _loopGuard1 = 0;
         try {
+            java.math.BigDecimal vRecValue = java.math.BigDecimal.ZERO;
             java.sql.Timestamp vRecTime = null;
             java.sql.Timestamp vStartTime = null;
             java.util.Map<String, Object> _row = null;
@@ -230,11 +230,11 @@ public class GaussCompleteExamplesService {
         Integer vBatchCommit = Integer.valueOf(200);
         Integer vPkId = 0;
         String vStatus = null;
-        java.math.BigDecimal vAmount = java.math.BigDecimal.ZERO;
         String vName = null;
         int _sqlRowCount = 0;
         try {
             java.sql.Timestamp vStartTime = null;
+            java.math.BigDecimal vAmount = java.math.BigDecimal.ZERO;
             java.sql.Timestamp vCreateTime = null;
             vStartTime = new java.sql.Timestamp(System.currentTimeMillis());
             _sqlRowCount = gaussCompleteExamplesMapper.insertAuditLog_1(pTableName, pSelectColumns, pWhereClause, pOrderBy, pProcessType, vSql);
@@ -274,12 +274,13 @@ public class GaussCompleteExamplesService {
     @Transactional
     public void procCursorDynamicUsing(String pTableName, String pStatusList, java.math.BigDecimal pMinAmount, java.sql.Date pStartDate, AtomicReference<List<Map<String, Object>>> pResult) {
         String vSql = null;
+        List<String> vStatusArray = new java.util.ArrayList<>();
         Integer vStatusCount = 0;
         String vInClause = null;
+        Integer i = 0;
         int _sqlRowCount = 0;
         int pResultIdx = 0;
         List<Map<String, Object>> pResultResult = null;
-        List<String> vStatusArray = new java.util.ArrayList<>();
         pResult.set(null);
         vStatusArray = java.util.Arrays.asList(String.valueOf(pStatusList).split(java.util.regex.Pattern.quote(",")));
         vStatusCount = (vStatusArray).size();
@@ -305,10 +306,10 @@ public class GaussCompleteExamplesService {
 
     // Source: pkg_cursor_advanced.func_get_order_cursor (FUNCTION) — gauss_complete_examples.sql:599-623
     public Map<String, Object> funcGetOrderCursor(Integer pCustomerId, java.sql.Date pDateFrom, java.sql.Date pDateTo) {
+        Map<String, Object> vCursor = new HashMap<>();
         String vSql = null;
         int vCursorIdx = 0;
         List<Map<String, Object>> vCursorResult = null;
-        Map<String, Object> vCursor = new HashMap<>();
         vSql = "SELECT\n                    o.order_id,\n                    c.customer_name,\n                    SUM(oi.quantity * oi.unit_price) AS total_amount,\n                    COUNT(DISTINCT oi.item_id) AS item_count,\n                    o.order_status\n                  FROM orders o\n                  JOIN customers c ON o.customer_id = c.customer_id\n                  JOIN order_items oi ON o.order_id = oi.order_id\n                  WHERE o.customer_id = :1\n                    AND o.order_date BETWEEN :2 AND :3\n                  GROUP BY o.order_id, c.customer_name, o.order_status\n                  ORDER BY total_amount DESC";
         vCursorResult = gaussCompleteExamplesMapper.selectFuncGetOrderCursor_10(pCustomerId, pDateFrom, pDateTo);
         vCursorIdx = 0;
@@ -369,7 +370,6 @@ public class GaussCompleteExamplesService {
     public void procEnhanceCursor(List<Map<String, Object>> pInCursor, AtomicReference<List<Map<String, Object>>> pOutCursor) {
         Integer vId = 0;
         String vName = null;
-        java.math.BigDecimal vSalary = java.math.BigDecimal.ZERO;
         Integer vDeptId = 0;
         String vTemp = "tmp_enhanced_" + new java.text.SimpleDateFormat("yyyyMMddHHmSSSs").format(new java.sql.Timestamp(System.currentTimeMillis()));
         boolean found = false;
@@ -379,6 +379,7 @@ public class GaussCompleteExamplesService {
         List<Map<String, Object>> pInCursorResult = null;
         int pOutCursorIdx = 0;
         List<Map<String, Object>> pOutCursorResult = null;
+        java.math.BigDecimal vSalary = java.math.BigDecimal.ZERO;
         java.sql.Date vHireDate = null;
         pOutCursor.set(null);
         java.util.Map<String, Object> _row = null;
@@ -408,16 +409,16 @@ public class GaussCompleteExamplesService {
     public void procConsumeCursor(List<Map<String, Object>> pCursor, Map<String, Object> pMap, AtomicReference<String> pSummary) {
         Integer vId = 0;
         String vName = null;
-        java.math.BigDecimal vSalary = java.math.BigDecimal.ZERO;
         String vLevel = null;
         Integer vEligible = 0;
         Integer vCount = Integer.valueOf(0);
-        java.math.BigDecimal vTotal = java.math.BigDecimal.valueOf(0);
         Integer vSeniorCount = Integer.valueOf(0);
         boolean found = false;
         int _loopGuard1 = 0;
         int pCursorIdx = 0;
         List<Map<String, Object>> pCursorResult = null;
+        java.math.BigDecimal vSalary = java.math.BigDecimal.ZERO;
+        java.math.BigDecimal vTotal = java.math.BigDecimal.valueOf(0);
         pSummary.set(null);
         java.util.Map<String, Object> _row = null;
         while (true) {

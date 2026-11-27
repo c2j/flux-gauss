@@ -22,12 +22,13 @@ public class Issue108CrossPkgCallerService {
         Long vBonus = 0L;
         String vName = null;
         Long vSum = Long.valueOf(0);
+        Integer i = 0;
         vBonus = (long) (0L);
         // CALL prc_get_emp_name(...)
-        for (int i = 1; i <= 10; i++) {
+        for (i = 1; i <= 10; i++) {
             vSum = vSum + i;
         }
-        for (int i = 1; i <= 20; i++) {
+        for (i = 1; i <= 20; i++) {
             vSum = vSum + i;
         }
     }
