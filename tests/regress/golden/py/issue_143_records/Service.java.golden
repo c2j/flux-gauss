@@ -1,0 +1,36 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue143RecordsMapper;
+import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue143RecordsService {
+    private static final Logger log = LoggerFactory.getLogger(Issue143RecordsService.class);
+
+    private final Issue143RecordsMapper issue143RecordsMapper;
+
+    public Issue143RecordsService(Issue143RecordsMapper issue143RecordsMapper) {
+        this.issue143RecordsMapper = issue143RecordsMapper;
+    }
+    // Source: pkg_issue143rec.prc_record_fields (PROCEDURE) — issue_143_records.sql:16-24
+    public void prcRecordFields(RecParam pRec) {
+        String vName = null;
+        Long vId = 0L;
+        Boolean vFlag = false;
+        vFlag = pRec.pFlag;
+        vName = pRec.pName;
+        vId = (long) (pRec.pId.doubleValue());
+    }
+
+    // Source: pkg_issue143rec.prc_collection_count (PROCEDURE) — issue_143_records.sql:29-35
+    public void prcCollectionCount() {
+        Long vCnt = 0L;
+        java.util.List<Long> vNums = new java.util.ArrayList<>();
+        vCnt = (long) (vNums.size());
+    }
+}

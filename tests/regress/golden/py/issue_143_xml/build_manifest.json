@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_143_xml.sql",
+  "package_name": "issue_143_xml",
+  "files": {
+    "Service.java": "cd29cd852df3404a",
+    "Mapper.java": "e10067fbf395018e",
+    "Mapper.xml": "6b3b6dde483fe882",
+    "ServiceTest.java": "88bd1a45c02f5afa"
+  }
+}

@@ -318,6 +318,11 @@ SQL_TO_JAVA = {
     "uuid": "String",
     "record": "Map<String, Object>",
     "exception": "Throwable",
+    # XML 类型统一以 String 承载（GETSTRINGVAL 语义）—— 与 _xmlConcat/_xmlElement
+    # helper 的 String 返回值保持一致，避免 Map<String,Object> 声明与 String
+    # 赋值冲突（PR #143 review）。
+    "xmltype": "String",
+    "xml": "String",
 }
 
 # ── Custom / Package-Qualified Type Aliases ─────────────────────────
@@ -506,6 +511,26 @@ TODO_SUMMARY = []  # Collects (category, proc_id, source_file, detail) for diagn
 _MISSING_OVERLOADS: dict[str, list[tuple[str, list[tuple[str, str]]]]] = {}  # pkg → [(method_name, [(java_type, param_name)])]
 
 
+def _typed_numeric_literal(dv_s: str, java_type: str) -> str:
+    """数值 DEFAULT 字面量 → 形参类型匹配的 Java 字面量（#verify16）。
+
+    `DEFAULT 0` 补齐到 Long 形参时必须发 `0L`（int→Long 无自动加宽）；
+    BigDecimal 形参发 BigDecimal.valueOf；原样发裸 `0` 会导致编译报
+    "int无法转换为java.lang.Long"。
+    """
+    jt = (java_type or "").strip()
+    is_int = dv_s.lstrip("-").isdigit()
+    if jt in ("Long", "long") and is_int:
+        return f"{dv_s}L"
+    if "BigDecimal" in jt:
+        if is_int:
+            return f"java.math.BigDecimal.valueOf({dv_s}L)"
+        return f'new java.math.BigDecimal("{dv_s}")'
+    if jt in ("Double", "double") and not is_int:
+        return f"{dv_s}d"
+    return dv_s
+
+
 def _param_default_java(param) -> str:
     """Java literal for a function parameter's DEFAULT value (used to pad
     call sites that pass fewer args than the target signature)."""
@@ -528,10 +553,10 @@ def _param_default_java(param) -> str:
             # plus standard backslash/quote escaping for the literal.
             return f'"{_escape_java_string(inner.replace("''", "\'"))}"'
         if inner.isdigit() or (inner.startswith("-") and inner[1:].isdigit()):
-            return inner
+            return _typed_numeric_literal(inner, param.java_type)
         return _default_for_type(param.java_type)
     if re.match(r'^-?\d+(\.\d+)?$', dv_s):
-        return dv_s
+        return _typed_numeric_literal(dv_s, param.java_type)
     return _default_for_type(param.java_type)
 
 
@@ -876,6 +901,21 @@ def snake_to_pascal(s: str) -> str:
     """Convert snake_case to PascalCase."""
     result = "".join(p.capitalize() for p in s.lower().split("_"))
     return _java_safe_identifier(result)
+
+
+def _resolve_local_key(proc, name):
+    """PL/SQL 标识符大小写不敏感：按 lower 匹配 proc.local_vars 中声明的键。
+
+    声明为 ``v_stock_kind``、引用为 ``V_STOCK_KIND`` 时，精确匹配会误判为
+    未知变量（历史缺陷：整过程被降级为 Stub）。命中时返回声明键（保持
+    local_vars 原有大小写），未命中原样返回。
+    """
+    if proc is not None and name and name not in proc.local_vars:
+        nl = str(name).lower()
+        for k in proc.local_vars:
+            if str(k).lower() == nl:
+                return k
+    return name
 
 
 def package_to_classname(pkg_name: str) -> str:
@@ -2172,6 +2212,96 @@ def _extract_dml_target_simple(stmt_data: dict) -> str:
 
 # ── DML / Logic Analyzer ──────────────────────────────────────
 
+def _hoist_try_scoped_decls(proc: ProcedureInfo):
+    """修复（#verify16）：变量声明落在 try 块内、而 catch/finally 也引用该变量
+    时，catch 中"找不到符号"。将此类声明提升到 try 语句之前。"""
+    lines = proc.java_logic_lines
+    i = 0
+    n = len(lines)
+    changed = True
+    while changed:
+        changed = False
+        i = 0
+        while i < n:
+            stripped = lines[i].strip()
+            if stripped != "try {" and not stripped.startswith("try {"):
+                i += 1
+                continue
+            indent = lines[i][:len(lines[i]) - len(lines[i].lstrip())]
+            # 收集 try 体的匹配闭括号
+            depth = 0
+            j = i
+            body_end = None
+            while j < n:
+                depth += lines[j].count("{") - lines[j].count("}")
+                if depth <= 0 and j > i:
+                    body_end = j
+                    break
+                j += 1
+            if body_end is None:
+                i += 1
+                continue
+            # catch/finally 范围
+            catch_start = None
+            k = body_end + 1
+            tail_depth = 0
+            catch_end = body_end
+            while k < n:
+                s2 = lines[k].strip()
+                if s2.startswith("} catch") or s2.startswith("catch") or s2.startswith("} finally") or s2.startswith("finally"):
+                    catch_start = k
+                if catch_start is not None:
+                    tail_depth += lines[k].count("{") - lines[k].count("}")
+                    if tail_depth < 0:
+                        catch_end = k
+                        break
+                elif s2.startswith("}"):
+                    break
+                k += 1
+            if catch_start is None:
+                i += 1
+                continue
+            # try 体内的声明行
+            decl_re = re.compile(r'^(\s*)([A-Za-z_<][\w.<>, ?\[\]]*\s)([A-Za-z_]\w*)\s*=\s*.+;\s*$')
+            body_refs = set()
+            for dline in lines[i + 1:body_end]:
+                md = decl_re.match(dline)
+                if md:
+                    body_refs.add(md.group(3))
+            if not body_refs:
+                i += 1
+                continue
+            tail_text = "\n".join(lines[catch_start:catch_end + 1])
+            hoist_list = []
+            for dline in lines[i + 1:body_end]:
+                md = decl_re.match(dline)
+                if not md:
+                    continue
+                var = md.group(3)
+                if re.search(rf'\b{re.escape(var)}\b', tail_text):
+                    hoist_list.append(dline)
+            if hoist_list:
+                hoisted = []
+                hoist_idx = set()
+                for dline in lines[i + 1:body_end]:
+                    if dline in hoist_list:
+                        hoist_idx.add(id(dline))
+                new_body = []
+                for dline in lines[i + 1:body_end]:
+                    if dline in hoist_list:
+                        hoisted.append(dline)
+                    else:
+                        new_body.append(dline)
+                pre = [re.sub(r'^\s+', indent, h, count=1) if not h.startswith(indent) else h for h in hoisted]
+                newlines = lines[:i] + pre + [lines[i]] + new_body + lines[body_end:]
+                proc.java_logic_lines = newlines
+                lines = newlines
+                n = len(newlines)
+                changed = True
+                break
+            i += 1
+
+
 def _promote_out_local_vars(proc: ProcedureInfo, all_packages: dict):
     """Promote local var types to AtomicReference when used as OUT arg holders."""
     if not proc.body:
@@ -2196,15 +2326,41 @@ def _promote_out_local_vars(proc: ProcedureInfo, all_packages: dict):
             var_java = snake_to_camel(orig_name)
             m_ar = re.match(r'^AtomicReference<(.+)>$', new_type)
             _string_inner = bool(m_ar and 'String' in m_ar.group(1))
+
+            def _wrap_rhs(rhs: str) -> str:
+                # 修复（#verify16）：包裹为 AtomicReference<Inner> 时必须把 RHS
+                # 强转到内层类型 —— 否则 `new AtomicReference<>(BigDecimal 表达式)`
+                # 对 AtomicReference<Long> 泛型推断失败，编译报"无法推断类型参数"。
+                if not m_ar:
+                    return rhs
+                inner = m_ar.group(1)
+                _r = rhs.strip()
+                if _r == "null":
+                    return rhs
+                if inner in _r and ("new " in _r or ".valueOf(" in _r or _r.endswith(f'"{_r.strip(chr(34))}"')):
+                    pass  # 已是同型表达式时仍走一次幂等强转也无妨
+                return _coerce_type(rhs, "Object", inner)
+
             patched = []
             for line in proc.java_logic_lines:
                 if m_ar:
                     m_assign = re.match(rf'^(\s*){re.escape(var_java)} = (.*);\s*$', line)
+                    # 修复（#verify16）：复合行（如 `if (x == null) v = expr;`）
+                    # 同样要包裹 —— 此前只匹配裸赋值行，漏改的行以裸值赋给
+                    # AtomicReference 变量，编译报"无法转换"。
+                    m_cond = None
+                    if not m_assign:
+                        m_cond = re.match(rf'^(\s*(?:if|while)\s*\(.+?\)\s+){re.escape(var_java)} = (.*);\s*$', line)
                     if m_assign and not re.match(r'^new (java\.util\.concurrent\.atomic\.)?AtomicReference<>', m_assign.group(2).strip()):
                         rhs = m_assign.group(2)
                         if 'String' in m_ar.group(1) and not rhs.strip().startswith('"') and rhs.strip() != 'null':
                             rhs = f'String.valueOf({rhs})'
-                        line = f'{m_assign.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<>({rhs});'
+                        line = f'{m_assign.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<>({_wrap_rhs(rhs)});'
+                    elif m_cond and not re.match(r'^new (java\.util\.concurrent\.atomic\.)?AtomicReference<>', m_cond.group(2).strip()):
+                        rhs = m_cond.group(2)
+                        if 'String' in m_ar.group(1) and not rhs.strip().startswith('"') and rhs.strip() != 'null':
+                            rhs = f'String.valueOf({rhs})'
+                        line = f'{m_cond.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<>({_wrap_rhs(rhs)});'
                 patched.append(_patch_promoted_var_reads(line, var_java, string_inner=_string_inner,
                                                           proc=proc, all_packages=all_packages))
             proc.java_logic_lines = patched
@@ -4890,6 +5046,10 @@ def _process_return(return_data: dict, proc: ProcedureInfo, all_packages: dict =
                     pass
             if re.search(r'\*/\s*null$', java_expr) and ret_java not in ("Object", "void", ""):
                 java_expr = _type_default(ret_java)
+            # 修复（#verify16）：裸 int 字面量 return 到 Long 函数 —— int 无法
+            # 自动加宽为 Long（实测 `return 0;` 编译报 int→Long）。
+            if ret_java in ("Long", "long") and re.fullmatch(r"-?\d+", java_expr.strip()):
+                java_expr = f"{java_expr.strip()}L"
             if _needs_coercion(_et, ret_java):
                 java_expr = _coerce_type(java_expr, _et, ret_java)
         proc.java_logic_lines.append(f"return {java_expr};")
@@ -4967,6 +5127,7 @@ def _is_primitive_producing(expr: str) -> bool:
     if re.search(r'\s[+\-]\s', s_no_strings) and re.search(r'(\.(doubleValue|longValue|intValue|floatValue|getTime)\(\)|parse(Double|Long|Int|Float)\(|\(\(Number\)|Math\.|' + _PRIMITIVE_METHOD_RE + r')', s_no_strings):
         return True
     return False
+
 
 
 def _next_catch_var(proc) -> str:
@@ -5107,7 +5268,7 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
             elif "mapper." in expr:
                 expr = f"((java.math.BigDecimal) {expr})"
             elif not _is_string_expr(expr):
-                expr = f"new java.math.BigDecimal(String.valueOf({expr}))"
+                expr = f"_toBigDecimal({expr})"
         proc.java_logic_lines.append(f"{target}.set({expr});")
     else:
         if target_var_type and target_var_type.startswith("AtomicReference<"):
@@ -5136,7 +5297,13 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
             expr = f"Integer.valueOf({expr})"
         elif target_var_type == "Map<String, Object>" and not expr.startswith("new HashMap") and not expr.startswith("new java.util.HashMap"):
             if not expr.startswith("(") and "Map" not in expr:
-                expr = f"(Map<String, Object>) {expr}"
+                _e4 = expr.strip()
+                if _e4.startswith("String.valueOf(") or (_e4.startswith('"') and _e4.endswith('"')):
+                    # 修复（#verify16）：String→Map 的强转是编译错误（不可转换类型），
+                    # 实测 XMLPARSE 赋值链。装进单键 Map 以保持载体可编译、数据可流转。
+                    expr = f"new java.util.HashMap<>(java.util.Collections.singletonMap(\"_xml\", String.valueOf({_e4})))"
+                else:
+                    expr = f"(Map<String, Object>) {expr}"
             if "Mapper" in expr or "mapper" in expr:
                 proc.java_logic_lines.append(f"{target} = {expr};")
                 proc.java_logic_lines.append(f"if ({target} == null) {target} = new java.util.HashMap<>();")
@@ -5144,7 +5311,10 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
         elif target_var_type and target_var_type not in ("String", "Integer", "int", "Object", "BigDecimal", "java.math.BigDecimal", "Long", "long", "boolean", "Boolean") and ".get(" in expr and not expr.startswith("("):
             expr = f"({target_var_type}) {expr}"
         elif target_var_type in ("BigDecimal", "java.math.BigDecimal") and "mapper." in expr and "BigDecimal" not in expr:
-            expr = f"new java.math.BigDecimal(String.valueOf({expr}))"
+            # String.valueOf(null) → "null" → BigDecimal パースで NumberFormatException。
+            # null セーフな helper 経由にし、後続の null→ZERO 既定で PL/pgSQL の
+            # NULL 代入セマンティクス（呼出側の既定値）を維持する。
+            expr = f"_toBigDecimal({expr})"
         proc.java_logic_lines.append(f"{target} = {expr};")
         if ("Mapper" in expr or "mapper" in expr) and target_var_type in ("Long", "Integer", "int"):
             _null_default = "0L" if target_var_type == "Long" else "0"
@@ -5251,10 +5421,12 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
                 else:
                     _is_dotted_pkg_var = False
                 if raw_name and proc:
-                    is_local = raw_name in proc.local_vars
-                    is_param = any(p.name.lower() == raw_name.lower() for p in proc.parameters)
-                    is_const = raw_name in _PACKAGE_CONSTANTS
-                    is_pkg_var = raw_name in _PACKAGE_VARIABLES and not is_local
+                    _raw_decl = _resolve_local_key(proc, raw_name)
+                    _rl = raw_name.lower()
+                    is_local = _raw_decl in proc.local_vars
+                    is_param = any(p.name.lower() == _rl for p in proc.parameters)
+                    is_const = any(k.lower() == _rl for k in _PACKAGE_CONSTANTS)
+                    is_pkg_var = any(k.lower() == _rl for k in _PACKAGE_VARIABLES) and not is_local
                     if not is_local and not is_param and not is_const and not is_pkg_var and not _is_dotted_pkg_var:
                         _stub_key = (proc.name, len(proc.parameters))
                         _add_stub_reason(proc, f"赋值目标 '{raw_name}' 不是局部变量/参数/包变量/常量")
@@ -6713,8 +6885,14 @@ def _find_registered_pkg(pkg: str, all_packages: dict):
     return None
 
 
-def _find_target_proc(pkg_name: str, proc_name: str, all_packages: dict, arg_count: int = None):
-    """Find a ProcedureInfo by package and procedure name. If arg_count is given, prefer overload with matching param count."""
+def _find_target_proc(pkg_name: str, proc_name: str, all_packages: dict, arg_count: Optional[int] = None, arg_types: Optional[list] = None):
+    """Find a ProcedureInfo by package and procedure name. If arg_count is given, prefer overload with matching param count.
+
+    多个同 arity 重载时（#verify16），按 (实参类型 → 形参类型) 兼容度评分选最优：
+    实测 prc_auto_send_mail_interface 有 6/9/10/11 参重载，仅按 arity 选中 9 参
+    （String×7 形参）而调用方第 7 参是 Map —— 11 参重载（Map p_i_param_list）
+    才是正确目标。
+    """
     if not all_packages:
         return None
     pkg = all_packages.get(pkg_name)
@@ -6723,10 +6901,51 @@ def _find_target_proc(pkg_name: str, proc_name: str, all_packages: dict, arg_cou
     candidates = [p for p in pkg.procedures if p.proc_name.lower() == proc_name.lower()]
     if not candidates:
         return None
+
+    def _compat_score(p) -> int:
+        if not arg_types:
+            return 0
+        s = 0
+        for i, a in enumerate(arg_types):
+            if i >= len(p.parameters):
+                break
+            pt = p.parameters[i].java_type
+            if not a or a in ("Object", "") or pt in ("Object", "Map<String, Object>", "void"):
+                s += 1
+            elif a == pt:
+                s += 2
+            elif (a in ("Long", "long", "Integer", "int", "Double", "double", "Float", "float", "java.math.BigDecimal")
+                  and pt in ("Long", "long", "Integer", "int", "Double", "double", "Float", "float", "java.math.BigDecimal")):
+                s += 1
+            elif pt == "String" and "AtomicReference" not in a and a != "Map<String, Object>":
+                s += 1
+            elif a.startswith("AtomicReference") and pt.startswith("AtomicReference"):
+                s += 1
+        return s
+
     if arg_count is not None:
+        # 类型兼容度优先（#verify16）：同 arity 候选多个，或存在更高 arity 但
+        # 形参类型与实参更匹配的重载（DEFAULT 尾参补齐）时，按评分选择。
+        if arg_types:
+            _scored = [p for p in candidates if len(p.parameters) >= arg_count]
+            if _scored:
+                _scored.sort(key=lambda p: (-_compat_score(p), len(p.parameters)))
+                if _compat_score(_scored[0]) > 0:
+                    return _scored[0]
         exact = [p for p in candidates if len(p.parameters) == arg_count]
         if exact:
+            if len(exact) > 1 and arg_types:
+                exact.sort(key=lambda p: -_compat_score(p))
             return exact[0]
+        # SQL 调用可省略带 DEFAULT 的尾参（#verify16）：优先选择能容纳全部
+        # 实参的最小重载，配合调用侧的 DEFAULT 补齐逻辑（对齐跨包 Issue-136-G）。
+        _fits = [p for p in candidates if len(p.parameters) >= arg_count]
+        if _fits:
+            if len(_fits) > 1 and arg_types:
+                _fits.sort(key=lambda p: (-_compat_score(p), len(p.parameters)))
+            else:
+                _fits.sort(key=lambda p: len(p.parameters))
+            return _fits[0]
     return candidates[0]
 
 
@@ -6928,7 +7147,7 @@ def _wrap_handler_stmts(stmts, proc, all_packages,
                         elif "mapper." in expr:
                             expr = f"((java.math.BigDecimal) {expr})"
                         elif not _is_string_expr(expr):
-                            expr = f"new java.math.BigDecimal(String.valueOf({expr}))"
+                            expr = f"_toBigDecimal({expr})"
                     _lines.append(f"{indent}{target}.set({expr});")
                 else:
                     if target.startswith("__MAP_PUT__"):
@@ -8576,6 +8795,11 @@ SQL_FUNCTION_MAP = {
     "lower": "String.valueOf({args}).toLowerCase()",
     "trim": "__EXPR__String.valueOf({args0}).trim()",
     "length": "__EXPR__String.valueOf({args0}).length()",
+    # XML 函数（FunctionCall 形式；AST 专用变体见 _expr_to_java 的 Xml* 分支）
+    "getstringval": "__EXPR__String.valueOf({args0})",
+    "extractvalue": "__EXPR___extractValue({args0}, {args1})",
+    "xmlparse": "__EXPR__String.valueOf({args0})",
+    "xmlconcat": "__HANDLER__",
     "to_char": "__HANDLER__",
     "to_number": "Long.valueOf",
     "intervaltonum": "__EXPR__({args0})",
@@ -8887,6 +9111,15 @@ def _sf_group_concat(val, proc, _expr_to_java_fn):
     return f"/* TODO: GROUP_CONCAT requires manual translation */ String.join(\", \", java.util.Collections.emptyList())"
 
 
+def _sf_xmlconcat(val, proc, _expr_to_java_fn):
+    """XMLCONCAT(a, b, ...) — FunctionCall 形式的空安全拼接（与 XmlConcat AST 分支共用 _xmlConcat）。"""
+    args = val.get("args", []) if isinstance(val, dict) else []
+    args_java = [_expr_to_java_fn(a, proc) for a in args]
+    if not args_java:
+        return "null"
+    return f"_xmlConcat({', '.join(args_java)})"
+
+
 SPECIAL_FUNCTION_MAP = {
     "substr": _sf_substr,
     "substring": _sf_substr,
@@ -8899,6 +9132,7 @@ SPECIAL_FUNCTION_MAP = {
     "current_time": _sf_current_timestamp,
     "group_concat": _sf_group_concat,
     "interval": _sf_interval,
+    "xmlconcat": _sf_xmlconcat,
 }
 
 
@@ -9274,7 +9508,10 @@ def _handle_function(func_name, args_java, proc):
 
     elif func_name == "lpad":
         if len(args_java) >= 3:
-            return f"String.format(\"%\" + ({args_java[1]}) + \"s\", {args_java[0]}).replace(\" \", {args_java[2]})"
+            _pad_java = args_java[2]
+            if not _pad_java.strip().startswith('"'):
+                _pad_java = f"String.valueOf({_pad_java})"
+            return f"String.format(\"%\" + ({args_java[1]}) + \"s\", {args_java[0]}).replace(\" \", {_pad_java})"
         elif len(args_java) == 2:
             return f"String.format(\"%\" + ({args_java[1]}) + \"s\", {args_java[0]}).replace(\" \", \" \")"
         return args_java[0] if args_java else '""'
@@ -9546,6 +9783,16 @@ def _coerce_java_arg(a_java: str, target_type: str) -> str:
     # BigDecimal target with numeric literal
     if "BigDecimal" in target_type and _is_numeric_literal_expr(a_java):
         return f"java.math.BigDecimal.valueOf({a_java})"
+    # String 表达式传给 Map 形参（#verify16 实测 instLog 明细参数）：
+    # Java 无 String→Map 转换，装进单键 Map 保持可编译、数据可流转。
+    if "Map<String, Object>" in target_type and (a_java.startswith("String.valueOf(") or (
+            a_java.startswith('"') and a_java.endswith('"'))):
+        return f'new java.util.HashMap<>(java.util.Collections.singletonMap("_msg", {a_java}))'
+    # 裸 int 字面量传给 Long 形参 —— Java 不会 int→Long 自动加宽（#verify16，
+    # 实测：fnc_com_get_marketrate(..., 1) 对 Long p_i_par_kind 编译报
+    # "int无法转换为java.lang.Long"）。
+    if target_type in ("long", "Long") and re.fullmatch(r"-?\d+", a_java.strip()):
+        return f"{a_java.strip()}L"
     # Numeric literal to String parameter
     if target_type == "String" and _is_numeric_literal_expr(a_java):
         return f"String.valueOf({a_java})"
@@ -9697,6 +9944,34 @@ def _expr_is_timestamp_producing(expr: str) -> bool:
     return False
 
 
+def _top_call_is_value_method(expr: str) -> bool:
+    """顶层调用是否为 .xxxValue() 原始值方法（#verify16）。
+
+    只有这种情况才真正无需 Object→具体类型强转。原 _is_primitive_producing
+    的 rstrip 尾锚会把「最后一个实参以 .longValue() 结尾」的外层调用
+    （this.fnc(..., ((Number) v).longValue())）误判为 primitive，导致
+    Object→BigDecimal/String 强转被跳过、生成代码编译失败。
+    """
+    s = (expr or "").strip()
+    if not s.endswith(")"):
+        return False
+    depth = 0
+    top_open = -1
+    for i in range(len(s) - 1, -1, -1):
+        if s[i] == ')':
+            depth += 1
+        elif s[i] == '(':
+            depth -= 1
+            if depth == 0:
+                top_open = i
+                break
+    if top_open < 0:
+        return False
+    head = s[:top_open]
+    m = re.search(r'\.(intValue|longValue|doubleValue|floatValue)$', head)
+    return bool(m)
+
+
 def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
     """Coerce a Java expression from source_type to target_type.
 
@@ -9714,8 +9989,11 @@ def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
         src0 = _normalize_type(source_type)
         tgt0 = _normalize_type(target_type)
         _e0 = expr.strip()
-        if _is_primitive_producing(_e0):
-            # Primitives can't be null — skip the Object null-guard ternary.
+        if _is_primitive_producing(_e0) and _top_call_is_value_method(_e0):
+            # 顶层是 .xxxValue() 值方法 —— 真 primitive，无需强转。
+            # （仅 _is_primitive_producing 不够：其 rstrip 尾锚会把
+            #  this.fnc(..., ((Number) v).longValue()) 这类「末实参为原始值」
+            #  的外层调用误判，跳过本应发生的强转 → 编译失败。）
             return expr
         if src0 == "Object" and tgt0 == "String" and _e0 != "null":
             return f"String.valueOf({expr})"
@@ -9724,7 +10002,11 @@ def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
         if src0 == "Object" and tgt0 == "Long" and _e0 != "null":
             return f"({expr} != null ? ({expr} instanceof Number ? ((Number) ({expr})).longValue() : Long.parseLong(String.valueOf({expr}))) : 0L)"
         if src0 == "Object" and tgt0 == "java.math.BigDecimal" and _e0 != "null":
-            return f"new java.math.BigDecimal(String.valueOf({expr}))"
+            # String.valueOf(null) → "null" はパース不能。null セーフな
+            # _toBigDecimal helper 経由にする（service クラスに出力される式のみが対象）。
+            return f"_toBigDecimal({expr})"
+        if src0 == "Object" and tgt0 in ("Boolean", "boolean") and _e0 != "null":
+            return f"java.util.Objects.equals({expr}, true)"
         return expr
 
     src = _normalize_type(source_type)
@@ -9762,7 +10044,15 @@ def _coerce_type(expr: str, source_type: str, target_type: str) -> str:
         if tgt == "Long":
             if _is_bare_lit:
                 return f"Long.valueOf({expr})"
-            return f"((Number) ({expr})).longValue()" if _is_primitive_producing(expr) else f"{expr}.longValue()"
+            # 修复（#verify16 + PR #143 review）：非 primitive 分支原先直接发
+            # `{expr}.longValue()` —— 当 expr 是 Integer 产出表达式（如
+            # indexOf(...)+1，int 原始类型）时 int 无法解引用。仅纯裸标识符
+            # （无任何 . 调用）保持 `.longValue()`；`list.size()` 这类
+            # primitive-returning 方法调用会误判（int 无 longValue()），
+            # 一律走 Number 包装（int/Integer/Long 都合法）。
+            if re.match(r'^[A-Za-z_$][\w$]*$', expr.strip()):
+                return f"{expr.strip()}.longValue()"
+            return f"((Number) ({expr})).longValue()"
         if tgt == "Double":
             if _is_bare_lit:
                 return f"Double.valueOf({expr})"
@@ -10095,6 +10385,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                         return f"this.{snake_to_camel(_field_candidate)}"
                 var_name_raw = parts[0]
                 field_name = parts[-1]
+                var_name_raw = _resolve_local_key(proc, var_name_raw)
                 var_java = snake_to_camel(var_name_raw)
                 var_type = proc.local_vars.get(var_name_raw, "")
                 _param_type = ""
@@ -10107,7 +10398,9 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     field_java = snake_to_camel(field_name)
                     _field_java_type = _resolve_custom_field_type(_param_type, field_name, proc)
                     if _field_java_type and _field_java_type not in ("String", "Object", "Map<String, Object>"):
-                        return f'{var_java}.{field_java}.doubleValue()'
+                        # 仅数值字段 unbox；Boolean/Timestamp/嵌套 RECORD 无 doubleValue()
+                        if _is_numeric_type(_field_java_type) or "BigDecimal" in _field_java_type:
+                            return f'{var_java}.{field_java}.doubleValue()'
                     return f'{var_java}.{field_java}'
                 if len(parts) >= 2 and field_name.upper() == "COUNT":
                     if "List<" in var_type:
@@ -10133,10 +10426,10 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     return raw_get
             java_name = snake_to_camel(name)
             if proc is not None and name:
-                _is_local = name in proc.local_vars
+                _is_local = _resolve_local_key(proc, name) in proc.local_vars
                 _is_param = any(p.name.lower() == name.lower() for p in proc.parameters)
-                _is_const = name in _PACKAGE_CONSTANTS
-                _is_pkg_var = name in _PACKAGE_VARIABLES and not _is_local
+                _is_const = name.lower() in {k.lower() for k in _PACKAGE_CONSTANTS}
+                _is_pkg_var = name.lower() in {k.lower() for k in _PACKAGE_VARIABLES} and not _is_local
                 if not _is_local and not _is_param and not _is_const and not _is_pkg_var:
                     # PL/pgSQL allows calling functions with zero arguments without parentheses.
                     # The ogsql parser represents these as ColumnRef instead of FunctionCall.
@@ -10194,10 +10487,10 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 return "java.sql.Timestamp.valueOf(java.time.LocalDateTime.now())"
             java_name = snake_to_camel(name)
             if proc is not None and name:
-                _is_local = name in proc.local_vars
+                _is_local = _resolve_local_key(proc, name) in proc.local_vars
                 _is_param = any(p.name.lower() == name.lower() for p in proc.parameters)
-                _is_const = name in _PACKAGE_CONSTANTS
-                _is_pkg_var = name in _PACKAGE_VARIABLES and not _is_local
+                _is_const = name.lower() in {k.lower() for k in _PACKAGE_CONSTANTS}
+                _is_pkg_var = name.lower() in {k.lower() for k in _PACKAGE_VARIABLES} and not _is_local
                 if not _is_local and not _is_param and not _is_const and not _is_pkg_var:
                     _record_todo("unknown-plvariable", proc, f"PlVariable '{name}' 未识别为局部变量/参数")
                 if _is_pkg_var:
@@ -10803,12 +11096,13 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                         _actual_target_pkg = None
                         raw_args = val.get("args", [])
                         if not _exists_elsewhere:
-                            _actual_target = _find_target_proc(_resolved_pkg, self_call_func, all_packages, arg_count=len(raw_args))
+                            _call_arg_types2 = [_infer_expr_type(_ra, proc) for _ra in raw_args]
+                            _actual_target = _find_target_proc(_resolved_pkg, self_call_func, all_packages, arg_count=len(raw_args), arg_types=_call_arg_types2)
                             if _actual_target:
                                 _actual_target_pkg = _resolved_pkg
                         if not _actual_target:
                             for _apk in (all_packages or {}):
-                                _actual_target = _find_target_proc(_apk, self_call_func, all_packages, arg_count=len(raw_args))
+                                _actual_target = _find_target_proc(_apk, self_call_func, all_packages, arg_count=len(raw_args), arg_types=_call_arg_types2 if not _exists_elsewhere else None)
                                 if _actual_target:
                                     _actual_target_pkg = _apk
                                     break
@@ -11012,6 +11306,10 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                         method = "matches"
                         arg = pat.replace("%", ".*").replace("_", ".")
                     prefix = "!" if negated else ""
+                    # 修复（#verify16）：inner 为 Map.get() 结果（Object）时不能直接
+                    # 调 String 方法 —— 包装 String.valueOf。
+                    if ".get(" in inner:
+                        inner = f"String.valueOf({inner})"
                     return f"{prefix}{inner}.{method}(\"{arg}\")"
             pattern_java = _expr_to_java(pattern_expr, proc, all_packages=all_packages)
             prefix = "!" if negated else ""
@@ -11182,11 +11480,120 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             elif func == "nextval":
                 return f"/* NEXTVAL: {seq_name} */ null"
             return f"/* SequenceValue: {func} {seq_name} */ null"
+        elif key == "XmlConcat":
+            # XMLCONCAT(e1, e2, ...) — dedicated ogsql AST variant (not a FunctionCall).
+            # Java side: null-skipping String concatenation via the _xmlConcat helper.
+            arg_list = val if isinstance(val, list) else list(val or [])
+            args_java = [_expr_to_java(a, proc, all_packages=all_packages) for a in arg_list]
+            if not args_java:
+                return "null"
+            return f"_xmlConcat({', '.join(args_java)})"
+        elif key == "XmlParse":
+            # XMLPARSE(CONTENT|DOCUMENT e [ WELLFORMED ]) — value is used as text
+            # (GETSTRINGVAL semantics), so emit the inner expression as String.
+            inner = val.get("expr", {}) if isinstance(val, dict) else {}
+            inner_java = _expr_to_java(inner, proc, all_packages=all_packages)
+            return f"String.valueOf({inner_java})"
+        elif key == "XmlForest":
+            # XMLFOREST(item [AS alias], ...) — item 是 {"alias": ..., "expr": ...}
+            # dict，不能整体交给 _expr_to_java（dict repr 会泄漏进 Java）。
+            # 每个 item 生成 <alias>escaped-value</alias> 元素（openGauss 5
+            # ground truth：XMLFOREST('abc' AS foo)::text → <foo>abc</foo>）。
+            items = val if isinstance(val, list) else list(val or [])
+            parts_java = []
+            for it in items:
+                if isinstance(it, dict) and ("alias" in it or "expr" in it):
+                    _alias = it.get("alias")
+                    if isinstance(_alias, dict):
+                        _alias = _alias.get("value") or _alias.get("name") or ""
+                    _alias_esc = str(_alias).replace("\\", "\\\\").replace('"', '\\"')
+                    _expr_java = _expr_to_java(it.get("expr", {}), proc, all_packages=all_packages)
+                    parts_java.append(f'_xmlElement("{_alias_esc}", {_expr_java})')
+                else:
+                    parts_java.append(_expr_to_java(it, proc, all_packages=all_packages))
+            return f"_xmlConcat({', '.join(parts_java)})" if parts_java else "null"
+        elif key == "ScalarSublink":
+            # 标量子链接谓词（v = ANY(SELECT ...) / v IN (SELECT ...)）——
+            # Java 侧无子查询表达能力。静默降级为常量 false 会让迁移项目
+            # 「可编译但业务结果错误」（PR #143 review），改为生成显式抛出
+            # UnsupportedOperationException 的 helper 调用，并在转换报告
+            # 记 TODO 项。
+            _record_todo("ScalarSublink", proc, "subquery predicate — explicit unsupported throw")
+            _proc_id = f"{proc.package}.{proc.proc_name}" if proc is not None else "unknown"
+            return f'_unsupportedScalarSublink("{_proc_id}")'
+        elif key == "FieldAccess":
+            # 集合元素/记录字段访问 — ogsql 的专用 AST 节点（历史缺陷：无处理器，
+            # dict repr 直接泄漏进 Java 导致编译失败）。
+            # 形态 (a)：r_coll(i).field — 解析器把索引表达式包装成
+            #   FieldAccess{object: FunctionCall{name:[coll], args:[idx]}, field}
+            # 形态 (b)：rec.field — object 是 PlVariable/ColumnRef 等普通表达式。
+            field_name = val.get("field", "")
+            field_key = str(field_name).lower()
+            obj = val.get("object", {}) or {}
+            if isinstance(obj, dict) and "FunctionCall" in obj:
+                _fc = obj.get("FunctionCall", {}) or {}
+                _fname_parts = _fc.get("name", []) or []
+                _fc_args = _fc.get("args", []) or []
+                if len(_fname_parts) == 1 and len(_fc_args) == 1:
+                    coll_raw = _fname_parts[0]
+                    coll = _resolve_local_key(proc, coll_raw) if proc is not None else coll_raw
+                    var_java = snake_to_camel(coll)
+                    idx_java = _expr_to_java(_fc_args[0], proc, all_packages=all_packages)
+                    coll_type = (proc.local_vars.get(coll, "") if proc is not None else "")
+                    if proc is not None:
+                        for pp in proc.parameters:
+                            if pp.name.lower() == str(coll_raw).lower():
+                                coll_type = coll_type or pp.java_type
+                                break
+                    _elem_base = f'((java.util.List)({var_java})).get((int)({idx_java}) - 1)'
+                    if "List<" in coll_type and "Map" in coll_type:
+                        return f'{var_java}.get((int)({idx_java}) - 1).get("{field_key}")'
+                    if coll_type and "Map" not in coll_type and coll_type != "Object":
+                        # 元素为自定义 RECORD 类型 — 保留泛型元素类型直接字段访问。
+                        # raw cast ((java.util.List) var) 会把元素退化为 Object，
+                        # .field 访问编译失败（PR #143 review）；变量声明本身就是
+                        # List<Elem>，.get() 已返回 Elem，无需再强转。
+                        _elem_m = re.search(r'List<\s*([^,>]+)', coll_type)
+                        _elem_type = _elem_m.group(1).strip() if _elem_m else ""
+                        if _elem_type and "Map" not in _elem_type and _elem_type != "Object":
+                            return f'{var_java}.get((int)({idx_java}) - 1).{snake_to_camel(field_name)}'
+                        return f'{_elem_base}.{snake_to_camel(field_name)}'
+                    # 类型未知 — 经 List 元素 + Map 字段读取
+                    return f'((java.util.Map<String, Object>) {_elem_base}).get("{field_key}")'
+            obj_java = _expr_to_java(obj, proc, all_packages=all_packages)
+            _ob = obj
+            while isinstance(_ob, dict) and "Parenthesized" in _ob:
+                _ob = _ob.get("Parenthesized", {})
+            _base_name = None
+            if isinstance(_ob, dict):
+                for _tk in ("PlVariable", "ColumnRef"):
+                    if _tk in _ob:
+                        _parts = _ob[_tk] if isinstance(_ob[_tk], list) else [_ob[_tk]]
+                        _base_name = _parts[0] if _parts else None
+                        break
+            if _base_name and proc is not None:
+                _decl = _resolve_local_key(proc, _base_name)
+                _var_type = proc.local_vars.get(_decl, "")
+                for pp in proc.parameters:
+                    if pp.name.lower() == str(_base_name).lower():
+                        _var_type = _var_type or pp.java_type
+                        break
+                if _var_type and "Map" not in _var_type and _var_type != "Object":
+                    field_java = snake_to_camel(field_name)
+                    _ft = _resolve_custom_field_type(_var_type, field_name, proc)
+                    if _ft and _ft not in ("String", "Object", "Map<String, Object>"):
+                        # 仅数值字段做 unbox；Boolean/Timestamp/嵌套 RECORD 等
+                        # 非数值字段没有 doubleValue()，直接字段访问（PR #143 review）。
+                        if _is_numeric_type(_ft) or "BigDecimal" in _ft:
+                            return f'{obj_java}.{field_java}.doubleValue()'
+                    return f'{obj_java}.{field_java}'
+                return f'{obj_java}.get("{field_key}")'
+            return f'{obj_java}.get("{field_key}")'
 
     return str(expr)
 
 
-def _is_string_comparison(binary_op: dict, proc: ProcedureInfo = None) -> bool:
+def _is_string_comparison(binary_op: dict, proc: Optional[ProcedureInfo] = None) -> bool:
     # Original logic: right side is a string literal
     right = binary_op.get("right", {})
     right_is_numeric_string = False
@@ -11332,7 +11739,10 @@ def _literal_to_java(lit) -> str:
     if isinstance(lit, dict):
         for key, val in lit.items():
             if key == "String":
-                escaped = val.replace("\\", "\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+                # 修复（#verify16）：原为 val.replace("\\", "\\") —— 无效自替换，
+                # SQL 字面量中的反斜杠（如正则 '-?\.[0-9]+'）进入 Java 字符串后
+                # 成为非法转义序列（'\.'）。必须翻倍为 '\\\\'。
+                escaped = val.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
                 return f'"{escaped}"'
             elif key == "Integer":
                 _int_val = int(val)
@@ -11355,20 +11765,38 @@ def _literal_to_java(lit) -> str:
 def _cleanup_java_expr(result: str) -> str:
     """Post-process: de-nest String.valueOf, constant-fold Integer.parseInt, unwrap string literals."""
     # De-nest String.valueOf(String.valueOf(x)) → String.valueOf(x)
+    # 修复（#verify16）：配平扫描必须从替换点开始，且需跳过字符串字面量。
+    # 原实现从整个字符串开头找第一个 depth==0 的 ')' —— 当模式出现在较长
+    # 表达式中部时会删除属于其他分组的右括号，导致生成的 Java 括号失衡。
     while "String.valueOf(String.valueOf(" in result:
-        result = result.replace("String.valueOf(String.valueOf(", "String.valueOf(")
-        paren_depth = 0
+        _pos = result.find("String.valueOf(String.valueOf(")
+        _head = len("String.valueOf(")
+        result = result[:_pos] + "String.valueOf(" + result[_pos + _head + _head:]
+        paren_depth = 1  # 折叠后的 String.valueOf( 自身开括号已计入
         remove_pos = None
-        for i, ch in enumerate(result):
-            if ch == '(':
-                paren_depth += 1
-            elif ch == ')':
-                paren_depth -= 1
-                if paren_depth == 0:
-                    remove_pos = i
-                    break
-        if remove_pos is not None:
-            result = result[:remove_pos] + result[remove_pos + 1:]
+        in_str = False
+        esc = False
+        i = _pos + _head
+        while i < len(result):
+            ch = result[i]
+            if esc:
+                esc = False
+            elif ch == '\\':
+                esc = True
+            elif ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == '(':
+                    paren_depth += 1
+                elif ch == ')':
+                    paren_depth -= 1
+                    if paren_depth == 0:
+                        remove_pos = i
+                        break
+            i += 1
+        if remove_pos is None:
+            break
+        result = result[:remove_pos] + result[remove_pos + 1:]
 
     # Integer.parseInt(String.valueOf(200)) → 200
     result = re.sub(
@@ -11961,10 +12389,13 @@ def _write_mapper_interface(base_path: Path, pkg: PackageInfo):
     imports = set()
     for proc in pkg.procedures:
         for dml in proc.dml_statements:
-            method_sig = _build_mapper_method(proc, dml, imports)
+            method_sig = _build_mapper_method(proc, dml, imports, _pkg_java_package(pkg))
             methods.append(method_sig)
 
     # De-duplicate methods with identical signatures (name + param types, not param names)
+    # 修复（#verify16）：Java 接口不允许仅返回类型不同的重载 —— 归一化时必须
+    # 去掉返回类型，否则 `Map<String,Object> f(...)` 与 `Object f(...)` 都会被
+    # 保留，编译报"已在接口中定义了方法"。
     sig_map = {}
     deduped = []
     for m in methods:
@@ -11974,10 +12405,12 @@ def _write_mapper_interface(base_path: Path, pkg: PackageInfo):
             sig_line = [l for l in sig.split('\n') if l.strip() and not l.strip().startswith('//')][-1]
         norm = re.sub(r'@Param\("[^"]*"\)\s*', '', sig_line)
         norm = re.sub(r'\b([\w.]+(?:<[^>]+>)?)\s+(\w+)([,)])', r'\1 \3', norm)
-        if norm in sig_map:
+        # 去掉返回类型：只按 (方法名, 参数类型列表) 判重
+        norm_for_key = re.sub(r'^[A-Za-z_<][\w.<>, ?\[\]]*?\s+(?=\w+\()', '', norm)
+        if norm_for_key in sig_map:
             deduped.append(f"    // [DUPLICATE] {sig_line.strip()}")
         else:
-            sig_map[norm] = True
+            sig_map[norm_for_key] = True
             deduped.append(m)
     methods = deduped
 
@@ -11991,6 +12424,44 @@ def _write_mapper_interface(base_path: Path, pkg: PackageInfo):
         elif return_type == "Integer":
             methods.append(f"{return_type} {method_name}(@Param(\"jsonb\") String jsonb);")
             imports.add("import org.apache.ibatis.annotations.Param;")
+
+    # 最终二次去重（#verify16）：按 (方法名, 参数类型列表) 严格判重。Java 接口
+    # 不允许仅返回类型不同的重载 —— 首轮归一化判重对个别签名形态会漏网
+    # （实测 InOutManagementMapper：Map<String,Object> 与 Object 两个同名方法
+    # 同时保留，编译报"已在接口中定义了方法"）。
+    _final_seen = set()
+
+    def _final_key(sig_line: str):
+        s = re.sub(r'@Param\("[^"]*"\)\s*', '', sig_line.strip())
+        m_name = re.match(r'^[\w.<>, ?\[\]]*?\b(\w+)\s*\((.*)\)\s*;', s)
+        if not m_name:
+            return None
+        name = m_name.group(1)
+        params = m_name.group(2)
+        types = []
+        for part in params.split(','):
+            part = part.strip()
+            if not part:
+                continue
+            # "Type name" / "Type" → 取类型段（去泛型空格差异）
+            toks = part.rsplit(' ', 1)
+            t = toks[0].strip()
+            types.append(re.sub(r'\s+', '', t))
+        return f"{name}({','.join(types)})"
+
+    _final_deduped = []
+    for m in methods:
+        _live = [l for l in m.split('\n') if l.strip() and not l.strip().startswith('//')]
+        _key = _final_key(_live[-1]) if _live else None
+        if _key is None:
+            _final_deduped.append(m)
+            continue
+        if _key in _final_seen:
+            _final_deduped.append(f"    // [DUPLICATE-FINAL] {_live[-1].strip()}")
+        else:
+            _final_seen.add(_key)
+            _final_deduped.append(m)
+    methods = _final_deduped
 
     imports_str = "\n".join(sorted(imports)) + "\n" if imports else ""
     methods_str = "\n".join(methods)
@@ -12032,7 +12503,40 @@ def _dml_used_local_vars(proc: ProcedureInfo, dml: DmlStatement) -> list:
     return used
 
 
-def _build_mapper_method(proc: ProcedureInfo, dml: DmlStatement, imports: set) -> str:
+def _looks_like_custom_record(java_type: str) -> bool:
+    """裸 CamelCase 标识符且非任何已知 Java 类型 → 包内自定义 RECORD 类型。
+
+    这类类型以 Service 嵌套静态类的形式生成（如 DepositUtilService.DepositReceipt），
+    Mapper 接口引用时必须限定，否则编译报"找不到符号"。
+    """
+    jt = (java_type or "").strip()
+    if not re.fullmatch(r"[A-Z][A-Za-z0-9_]*", jt):
+        return False
+    if jt in {"String", "Long", "Integer", "Double", "BigDecimal", "Object",
+              "Boolean", "Timestamp", "Date", "Character", "Short", "Float"}:
+        return False
+    if jt.startswith(("java.", "AtomicReference", "List", "Map", "Optional")):
+        return False
+    return True
+
+
+def _qualify_record_type(java_type: str, proc: ProcedureInfo, imports: set, java_package: str = "") -> str:
+    """自定义 RECORD 类型 → 外层 Service 类限定名（DepositReceipt → DepositUtilService.DepositReceipt）。"""
+    if not _looks_like_custom_record(java_type):
+        return java_type
+    svc = f"{package_to_classname(getattr(proc, 'package', '') or '')}Service"
+    # Service 类所在包必须跟随该源配置的 java_packages 映射，不能硬编码
+    # 全局 BASE_PACKAGE（PR #143 review：com.acme.custom 源生成的 Mapper
+    # 仍 import com.example...service.XXXService → 编译失败）。
+    jp = java_package or BASE_PACKAGE
+    try:
+        imports.add(f"import {jp}.service.{svc};")
+    except Exception:
+        pass
+    return f"{svc}.{java_type}"
+
+
+def _build_mapper_method(proc: ProcedureInfo, dml: DmlStatement, imports: set, java_package: str = "") -> str:
     method_name = dml.method_id
 
     # FORALL batch: single param accepting the primary array list
@@ -12057,7 +12561,8 @@ def _build_mapper_method(proc: ProcedureInfo, dml: DmlStatement, imports: set) -
             continue
         if dml.is_dynamic and p.java_name not in _sql_refs and p.java_name not in _extra_java_names:
             continue
-        params.append(f'@Param("{p.java_name}") {p.java_type} {p.java_name}')
+        _ptype = _qualify_record_type(p.java_type, proc, imports, java_package)
+        params.append(f'@Param("{p.java_name}") {_ptype} {p.java_name}')
         _imp = _resolve_import(p.java_type)
         if _imp:
             imports.add(_imp)
@@ -12065,6 +12570,7 @@ def _build_mapper_method(proc: ProcedureInfo, dml: DmlStatement, imports: set) -
     for java_name, java_type in _dml_used_local_vars(proc, dml):
         # Unwrap AtomicReference<T> → T for mapper parameters
         mapper_type = re.sub(r'^AtomicReference<(.+)>$', r'\1', java_type) if java_type else java_type
+        mapper_type = _qualify_record_type(mapper_type, proc, imports, java_package)
         params.append(f'@Param("{java_name}") {mapper_type} {java_name}')
         _imp = _resolve_import(mapper_type)
         if _imp:
@@ -12649,6 +13155,28 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
         filter_map = ", ".join(f"{f['param']} -> {f['column']}" for f in dml.optional_filters)
         filter_line = f'<!-- Optional filters: {filter_map}. Consider using <if test="..."> in MyBatis -->'
 
+    # PL/pgSQL 配列参照 `v_arr(i)` はパラメータ変換で `#{arr}(#{i})` という
+    # 不正な MyBatis 構文になる。#{arr[i-1]} は MetaObject が index を
+    # 数値リテラルとして解釈して失敗するため、OGNL 評価される <bind> で
+    # 要素を取り出してから #{bind名} で参照する
+    # （SQL 側は 1 始まり、Java List/Map は 0 始まり）。
+    _arr_binds: dict = {}
+    def _arr_idx_repl(m):
+        _key = (m.group(1), m.group(2))
+        if _key not in _arr_binds:
+            _arr_binds[_key] = f"_b{len(_arr_binds)}"
+        return f"#{{{_arr_binds[_key]}}}"
+    sql = re.sub(
+        r'#\{(\w+)[^}]*\}\s*\(#\{(\w+)[^}]*\}\)',
+        _arr_idx_repl,
+        sql,
+    )
+    if _arr_binds:
+        _bind_xml = "\n".join(
+            f'<bind name="{_bn}" value="{_arr}[{_idx} - 1]"/>'
+            for (_arr, _idx), _bn in _arr_binds.items()
+        )
+        sql = _bind_xml + "\n" + sql
     formatted_sql = "\n".join(f"    {line}" for line in sql.split("\n"))
 
     xml_parts = []
@@ -12919,6 +13447,15 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
             if default_expr:
                 all_body_text += default_expr + " "
     for proc in pkg.procedures:
+        # 修复（#verify16）：数值返回函数中的裸 int 字面量 return —— int 无法
+        # 自动加宽为 Long（实测 fnc_get_limited_num `return 0;`）。
+        if proc.is_function and proc.return_type:
+            _ret_java = sql_type_to_java(proc.return_type)
+            if _ret_java in ("Long", "long"):
+                proc.java_logic_lines = [
+                    re.sub(r'^(\s*)return (-?\d+)\s*;\s*$', r'\1return \2L;', ln)
+                    for ln in proc.java_logic_lines
+                ]
         all_body_text += " ".join(proc.java_logic_lines) + " "
         for vn, vt in proc.local_vars.items():
             all_body_text += vt + " "
@@ -13126,6 +13663,58 @@ def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: 
         lines.append("        int end = Math.min(str.length(), start + l);")
         lines.append("        if (start > end) start = end;")
         lines.append("        return str.substring(start, end);")
+        lines.append("    }")
+    if "_xmlConcat(" in all_body_text:
+        lines.append("")
+        lines.append("    private String _xmlConcat(Object... parts) {")
+        lines.append("        // XMLCONCAT 语义：跳过 null 段；全 null 时返回 null")
+        lines.append("        StringBuilder sb = new StringBuilder();")
+        lines.append("        boolean any = false;")
+        lines.append("        for (Object p : parts) {")
+        lines.append("            if (p != null) { any = true; sb.append(String.valueOf(p)); }")
+        lines.append("        }")
+        lines.append("        return any ? sb.toString() : null;")
+        lines.append("    }")
+    if "_xmlElement(" in all_body_text:
+        lines.append("")
+        lines.append("    private String _xmlElement(String alias, Object value) {")
+        lines.append("        // XMLFOREST item：<alias>escaped-value</alias>；null 值产生空元素")
+        lines.append("        String text = value == null ? \"\" : _xmlEscape(String.valueOf(value));")
+        lines.append("        String name = _xmlEscape(alias);")
+        lines.append("        return \"<\" + name + \">\" + text + \"</\" + name + \">\";")
+        lines.append("    }")
+        lines.append("")
+        lines.append("    private String _xmlEscape(String s) {")
+        lines.append("        return s.replace(\"&\", \"&amp;\").replace(\"<\", \"&lt;\").replace(\">\", \"&gt;\")")
+        lines.append("                .replace(\"\\\"\", \"&quot;\").replace(\"'\", \"&apos;\");")
+        lines.append("    }")
+    if "_extractValue(" in all_body_text:
+        lines.append("")
+        lines.append("    private String _extractValue(String xml, String xpath) {")
+        lines.append("        // EXTRACTVALUE 语义：对 xml 应用 xpath 取文本；节点缺失/解析失败返回 null")
+        lines.append("        if (xml == null || xpath == null) return null;")
+        lines.append("        try {")
+        lines.append("            javax.xml.xpath.XPath xp = javax.xml.xpath.XPathFactory.newInstance().newXPath();")
+        lines.append("            Object r = xp.evaluate(xpath, new org.xml.sax.InputSource(new java.io.StringReader(xml)), javax.xml.xpath.XPathConstants.STRING);")
+        lines.append("            return r == null ? null : r.toString();")
+        lines.append("        } catch (Exception e) {")
+        lines.append("            return null;")
+        lines.append("        }")
+        lines.append("    }")
+    if "_unsupportedScalarSublink(" in all_body_text:
+        lines.append("")
+        lines.append("    private <T> T _unsupportedScalarSublink(String procId) {")
+        lines.append("        // ScalarSublink 子查询谓词暂不支持 — 显式失败而非静默降级（PR #143 review）")
+        lines.append("        throw new UnsupportedOperationException(\"ScalarSublink subquery predicate not supported at \" + procId);")
+        lines.append("    }")
+    if "_toBigDecimal(" in all_body_text:
+        lines.append("")
+        lines.append("    private java.math.BigDecimal _toBigDecimal(Object v) {")
+        lines.append("        // mapper スカラー結果 → BigDecimal。null は null のまま返す")
+        lines.append("        // （String.valueOf(null)=\"null\" のパースクラッシュを防ぐ）")
+        lines.append("        if (v == null) return null;")
+        lines.append("        if (v instanceof java.math.BigDecimal) return (java.math.BigDecimal) v;")
+        lines.append("        return new java.math.BigDecimal(String.valueOf(v));")
         lines.append("    }")
 
     # Stubs for known SQL functions that bypass _register_missing_overload
@@ -13583,6 +14172,14 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                     inner = proc.local_var_defaults.get(var_name)
                     if inner and "String" in var_type and not inner.startswith('"') and inner != "null":
                         inner = f"String.valueOf({inner})"
+                    # 修复（#verify16）：内层类型与默认值不一致时强转
+                    # （实测 AtomicReference<Long> vFlag = new AR<>("") —— 泛型推断失败）
+                    if inner and inner != "null":
+                        import re as _re
+                        m_ar2 = _re.match(r'^AtomicReference<(.+)>$', var_type)
+                        _inner_t = m_ar2.group(1) if m_ar2 else ""
+                        if _inner_t and "String" not in _inner_t and (inner.startswith('"') or inner == "''" or inner == '""'):
+                            inner = _default_for_type(_inner_t)
                     default_val = f"new AtomicReference<>({inner})" if inner else _default_for_type(var_type)
                 elif var_name in proc.local_var_defaults and _is_numeric_default(default_val, var_type):
                     default_val = _wrap_default_for_type(default_val, var_type)
@@ -16105,6 +16702,32 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
     for _ct in _child_tables:
         if _ct not in _fk_deps:
             _fk_deps[_ct] = {'employees', 'departments', 'products', 'orders', 'customers'}
+
+    # init_sql 内の ALTER TABLE ... ADD COLUMN を schema_map に事前注入する。
+    # openGauss は ADD COLUMN IF NOT EXISTS を解さず、@Sql(ISOLATED) は
+    # スクリプト全体を単一 Tx で実行するため、1 文のエラーで全 DDL が
+    # 巻き戻る。列を CREATE TABLE に織り込み、ALTER 文自体は出力しない。
+    _init_sql_files = itest_cfg.get("init_sql", [])
+    if isinstance(_init_sql_files, str):
+        _init_sql_files = [_init_sql_files]
+    for _script in _init_sql_files:
+        if not os.path.isfile(_script):
+            continue
+        try:
+            with open(_script, 'r', encoding='utf-8', errors='replace') as _f:
+                _raw_init = _f.read()
+        except OSError:
+            continue
+        for _am in re.finditer(
+            r'ALTER\s+TABLE\s+"?([A-Za-z_]\w*)"?\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?"?([A-Za-z_]\w*)"?\s+([^;]+);',
+            _raw_init, re.IGNORECASE
+        ):
+            _at, _ac, _aty = _am.group(1), _am.group(2), _am.group(3).strip()
+            _skey = next((k for k in schema_map if k.lower() == _at.lower()), _at)
+            schema_map.setdefault(_skey, {})
+            if not any(c.lower() == _ac.lower() for c in schema_map[_skey]):
+                schema_map[_skey][_ac] = _aty
+
     _sorted_tables = list(schema_map.keys())
     _sorted_tables.sort(key=lambda t: len(_fk_deps.get(t.lower(), set())), reverse=True)
 
@@ -16197,12 +16820,15 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
                 inner = m.group(0)
                 alters = re.findall(r'ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)\s+(.+?);', inner, re.IGNORECASE | re.DOTALL)
                 if alters:
-                    return " ".join(f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {c} {ty};" for t, c, ty in alters)
+                    # openGauss-lite 不支持 ADD COLUMN IF NOT EXISTS（语法错误）；
+                    # itest-schema.sql 由 @Sql CONTINUE_ON_ERROR 逐方法执行，
+                    # 重复列报错会被忽略，plain ADD COLUMN 即可幂等。
+                    return " ".join(f"ALTER TABLE {t} ADD COLUMN {c} {ty};" for t, c, ty in alters)
                 return ""
             _init_content = re.sub(r'DO\s*\$\$.*?\$\$;', _convert_do_to_direct, _init_content, flags=re.DOTALL | re.IGNORECASE)
             _init_content = re.sub(
-                r'^(\s*ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+)(?!IF\s+NOT\s+EXISTS)(.+;)\s*$',
-                lambda m: m.group(1).strip() + " IF NOT EXISTS " + m.group(2).strip(),
+                r'^(\s*ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+)(.+;)\s*$',
+                lambda m: m.group(1).strip() + " " + m.group(2).strip(),
                 _init_content, flags=re.MULTILINE | re.IGNORECASE
             )
             _init_content = re.sub(
@@ -16212,6 +16838,13 @@ def _itest_write_schema_sql(base_path: Path, packages: list, itest_cfg: dict):
             )
             for _pi, _ps in enumerate(_protected):
                 _init_content = _init_content.replace(f"__IPROT_{_pi}__", _ps)
+            # ALTER TABLE ... ADD COLUMN は schema_map へ事前注入済みのため
+            # 出力しない（openGauss 非対応構文・単一 Tx での冪等性のため）。
+            _init_content = re.sub(
+                r'ALTER\s+TABLE\s+"?[A-Za-z_]\w*"?\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?"?[A-Za-z_]\w*"?\s+[^;]*;',
+                '',
+                _init_content, flags=re.IGNORECASE
+            )
             lines.append(_init_content)
         else:
             lines.append(f"-- init_sql not found: {script}")
@@ -18154,6 +18787,7 @@ def _run_mcp_server():
                 for proc in pkg.procedures:
                     try:
                         _promote_out_local_vars(proc, all_package_names)
+                        _hoist_try_scoped_decls(proc)
                     except Exception:
                         pass
 
@@ -18662,6 +19296,10 @@ def main():
     for pkg, proc in all_procs:
         try:
             _promote_out_local_vars(proc, all_package_names)
+        except Exception:
+            pass
+        try:
+            _hoist_try_scoped_decls(proc)
         except Exception:
             pass
 

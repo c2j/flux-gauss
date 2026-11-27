@@ -49,7 +49,8 @@
 
     <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:267-267 — PKG_WARPDRIVER_STRESS_TEST.sp_main_orchestrator.insertOrderItemSnapshot_1 -->
     <insert id="insertOrderItemSnapshot_1">
-        insert into order_item_snapshot (log_id, item_data, created_at) values (#{pLogId, jdbcType=BIGINT, javaType=Long}, to_jsonb(#{vItemTab}(#{i, jdbcType=INTEGER, javaType=Integer})), current_timestamp)
+        <bind name="_b0" value="vItemTab[i - 1]"/>
+        insert into order_item_snapshot (log_id, item_data, created_at) values (#{pLogId, jdbcType=BIGINT, javaType=Long}, to_jsonb(#{_b0}), current_timestamp)
     </insert>
 
     <!-- Source: PKG_WARPDRIVER_STRESS_TEST.sql:306-306 — PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master.insertDistributedLocks -->

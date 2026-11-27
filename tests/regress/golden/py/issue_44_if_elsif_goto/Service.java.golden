@@ -17,6 +17,14 @@ public class Issue44IfElsifGotoService {
     public Issue44IfElsifGotoService(Issue44IfElsifGotoMapper issue44IfElsifGotoMapper) {
         this.issue44IfElsifGotoMapper = issue44IfElsifGotoMapper;
     }
+
+    private java.math.BigDecimal _toBigDecimal(Object v) {
+        // mapper スカラー結果 → BigDecimal。null は null のまま返す
+        // （String.valueOf(null)="null" のパースクラッシュを防ぐ）
+        if (v == null) return null;
+        if (v instanceof java.math.BigDecimal) return (java.math.BigDecimal) v;
+        return new java.math.BigDecimal(String.valueOf(v));
+    }
     // Source: pkg_issue44_bugs.proc_dynamic_sql_if_else (PROCEDURE) — issue_44_if_elsif_goto.sql:56-95
     public void procDynamicSqlIfElse(String pStatus, String pDate, AtomicReference<String> pResult) {
         String vSql = null;
@@ -86,7 +94,7 @@ public class Issue44IfElsifGotoService {
                 vSql = vSql + " AND order_name LIKE '%" + pSubType + "%'";
             }
         }
-        vAmount = new java.math.BigDecimal(String.valueOf(issue44IfElsifGotoMapper.selectTIssue44OrdersSumAmount(pType, pSubType)));
+        vAmount = _toBigDecimal(issue44IfElsifGotoMapper.selectTIssue44OrdersSumAmount(pType, pSubType));
         if (vAmount == null) vAmount = java.math.BigDecimal.ZERO;
         if (vAmount.compareTo(java.math.BigDecimal.valueOf(0)) > 0) {
             pResult.set("AMOUNT: " + vAmount);

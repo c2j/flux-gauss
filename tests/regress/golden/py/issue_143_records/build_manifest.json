@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_143_records.sql",
+  "package_name": "issue_143_records",
+  "files": {
+    "Service.java": "7b5775d367022d83",
+    "Mapper.java": "1819b86bb6ceb9a1",
+    "Mapper.xml": "9e9be68876d7aa41",
+    "ServiceTest.java": "c04405e6141388e4"
+  }
+}

@@ -26,6 +26,14 @@ public class WarpdriverStressTestService {
         this.warpdriverStressTestMapper = warpdriverStressTestMapper;
     }
 
+    private java.math.BigDecimal _toBigDecimal(Object v) {
+        // mapper スカラー結果 → BigDecimal。null は null のまま返す
+        // （String.valueOf(null)="null" のパースクラッシュを防ぐ）
+        if (v == null) return null;
+        if (v instanceof java.math.BigDecimal) return (java.math.BigDecimal) v;
+        return new java.math.BigDecimal(String.valueOf(v));
+    }
+
     public Long nextval(String seqName) {
         return warpdriverStressTestMapper.selectNextval(seqName);
     }
@@ -135,7 +143,7 @@ public class WarpdriverStressTestService {
                             _sqlRowCount = warpdriverStressTestMapper.insertOrderItemSnapshot_1(pBizDate, pMode, vItemTab, i);
                         }
                     }
-                    pTotalAmt.set(new java.math.BigDecimal(String.valueOf(vSum)));
+                    pTotalAmt.set(_toBigDecimal(vSum));
                     if (!vHasError) {
                         // COMMIT — auto-committed by Spring @Transactional boundary
                     } else {
@@ -464,7 +472,7 @@ public class WarpdriverStressTestService {
         int _sqlRowCount = 0;
         try {
             pFinalBal.set(null);
-            vBalance = new java.math.BigDecimal(String.valueOf(warpdriverStressTestMapper.selectAccounts(pAccountId, pAmount)));
+            vBalance = _toBigDecimal(warpdriverStressTestMapper.selectAccounts(pAccountId, pAmount));
             if (vBalance == null) vBalance = java.math.BigDecimal.ZERO;
             vSp1 = "sp_pre_" + pAccountId;
             // SAVEPOINT vSp1 — use TransactionAspectSupport.currentTransactionStatus().createSavepoint() if needed
@@ -476,7 +484,7 @@ public class WarpdriverStressTestService {
                 // ROLLBACK TO SAVEPOINT vSp1 — use TransactionAspectSupport.currentTransactionStatus().rollbackToSavepoint() if needed
                 _sqlRowCount = warpdriverStressTestMapper.updateAccounts_2(pAccountId, pAmount);
                 _sqlRowCount = warpdriverStressTestMapper.insertRiskEvents(pAccountId, pAmount);
-                pFinalBal.set(new java.math.BigDecimal(String.valueOf(vBalance)));
+                pFinalBal.set(_toBigDecimal(vBalance));
                 // COMMIT — auto-committed by Spring @Transactional boundary
                 return;
             }

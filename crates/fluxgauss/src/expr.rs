@@ -938,6 +938,16 @@ pub(crate) fn coerce_for_type(expr: &str, target_type: Option<&str>, proc: &Proc
         Some(t) if (t == "Long" || t == "long") && trimmed.contains("BigDecimal") => {
             format!("({}).longValue()", trimmed)
         }
+        // #verify16: RHS is a BigDecimal-TYPED variable whose NAME doesn't
+        // mention "BigDecimal" (e.g. `v_last_price`) — the contains() rule
+        // above misses it and the raw BigDecimal leaks into a Long slot.
+        Some(t)
+            if (t == "Long" || t == "long")
+                && !trimmed.contains('(')
+                && resolve_var_java_type(trimmed, proc).is_some_and(|s| s.contains("BigDecimal")) =>
+        {
+            format!("({}).longValue()", trimmed)
+        }
         Some(t)
             if (t == "Long" || t == "long")
                 && (trimmed.contains(" * ")
@@ -1112,7 +1122,19 @@ pub(crate) fn coerce_arg_to_type(arg: &str, target_type: &str, proc: &ProcedureI
         return "null".to_string();
     }
 
-    // Unwrap AtomicReference OUT params when passed as regular-type args
+    // Unwrap AtomicReference OUT params when passed as regular-type args.
+    // #verify16: when the TARGET param is itself AtomicReference<X>, the caller
+    // must pass the CARRIER through untouched (both sides are OUT slots) —
+    // unwrapping it to `.get()` yields a String into an AtomicReference slot.
+    if target_type.starts_with("AtomicReference<")
+        && (is_out_param(trimmed, proc)
+            || proc
+                .out_local_vars
+                .iter()
+                .any(|(k, _)| k.to_lowercase().replace("_", "") == trimmed.to_lowercase().replace("_", "")))
+    {
+        return trimmed.to_string();
+    }
     if is_out_param(trimmed, proc)
         || proc
             .out_local_vars
@@ -1121,6 +1143,21 @@ pub(crate) fn coerce_arg_to_type(arg: &str, target_type: &str, proc: &ProcedureI
     {
         // OUT param / promoted local — pass .get() value, then coerce further
         return coerce_arg_to_type(&format!("{}.get()", trimmed), target_type, proc);
+    }
+
+    // #verify16: plain value passed to an AtomicReference<X> arg — wrap a
+    // temporary carrier so the call compiles (write-back to the caller's
+    // variable is intentionally dropped; flagged for review).
+    if target_type.starts_with("AtomicReference<") && !trimmed.contains("AtomicReference") {
+        let inner = target_type.trim_start_matches("AtomicReference<").trim_end_matches('>').trim().to_string();
+        let wrapped = if inner == "String" && !trimmed.starts_with('"') && trimmed != "null" {
+            format!("String.valueOf({})", trimmed)
+        } else if inner.contains("Long") && trimmed.contains("BigDecimal") {
+            format!("({}).longValue()", trimmed)
+        } else {
+            trimmed.to_string()
+        };
+        return format!("new java.util.concurrent.atomic.AtomicReference<>({})", wrapped);
     }
 
     // Optional<Integer>-or-null producers (array_position/array_length):
@@ -1533,6 +1570,14 @@ fn expr_to_java_impl(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> St
         }
         Expr::Exists(_) => "/* EXISTS */ true".into(),
         Expr::Subquery(_) => "null".into(),
+        // PR #143 review (Python parity): subquery predicates must fail
+        // loudly at runtime instead of degrading to a legal-but-wrong
+        // literal. Emits a call to the service's _unsupportedScalarSublink
+        // helper, which throws UnsupportedOperationException.
+        Expr::ScalarSublink { .. } | Expr::InSubquery { .. } => {
+            let proc_id = format!("{}.{}", proc.package, proc.proc_name);
+            format!("_unsupportedScalarSublink({})", java_string_literal(&proc_id))
+        }
         Expr::QualifiedStar(_) => "null".into(),
         Expr::Parameter(_n) => "null".to_string(),
         Expr::MyBatisParam(p) => format!("#{{{}}}", p),
@@ -1667,6 +1712,37 @@ fn expr_to_java_impl(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> St
                 "java.sql.Timestamp.valueOf({}.toInstant().atZone(java.time.ZoneId.of({})).toLocalDateTime())",
                 inner_ts, zone_java
             )
+        }
+        // XML expressions — dedicated ogsql AST variants (not FunctionCall).
+        // Java side: GETSTRINGVAL semantics, i.e. the XML value as text.
+        // (#verify16) previously these fell into `_ => "null"` and silently
+        // dropped the expression.
+        Expr::XmlConcat(exprs) => {
+            if exprs.is_empty() {
+                return "null".into();
+            }
+            let jargs: Vec<String> = exprs.iter().map(|e| expr_to_java(e, proc)).collect();
+            format!("_xmlConcat({})", jargs.join(", "))
+        }
+        Expr::XmlParse { expr, .. } => format!("String.valueOf({})", expr_to_java(expr, proc)),
+        Expr::XmlForest(items) => {
+            if items.is_empty() {
+                return "null".into();
+            }
+            // PR #143 review: XmlContent carries {expr, alias}; the alias
+            // becomes the element name (<foo>abc</foo> per openGauss 5
+            // ground truth). Items without an alias degrade to the raw
+            // value (previous behaviour).
+            let parts: Vec<String> = items
+                .iter()
+                .map(|c| match &c.alias {
+                    Some(alias) => {
+                        format!("_xmlElement({}, {})", java_string_literal(alias.as_str()), expr_to_java(&c.expr, proc))
+                    }
+                    None => expr_to_java(&c.expr, proc),
+                })
+                .collect();
+            format!("_xmlConcat({})", parts.join(", "))
         }
         _ => "null".into(),
     }
@@ -3527,6 +3603,19 @@ fn function_call_to_java(name: &str, args: &[ogsql_parser::ast::Expr], proc: &Pr
             format!("({} != null ? {} : {})", arg0, true_val, else_val)
         }
         "UPPER" => format!("String.valueOf({}).toUpperCase()", jargs.first().map(|s| s.as_str()).unwrap_or("\"\"")),
+        // XML functions in FunctionCall form (#verify16): GETSTRINGVAL semantics —
+        // value as text; XMLCONCAT routes through the service's _xmlConcat helper.
+        "GETSTRINGVAL" => format!("String.valueOf({})", jargs.first().map(|s| s.as_str()).unwrap_or("null")),
+        "XMLPARSE" => format!("String.valueOf({})", jargs.first().map(|s| s.as_str()).unwrap_or("null")),
+        // PR #143 review: EXTRACTVALUE(xml, xpath) must evaluate the XPath
+        // against the XML argument — previously it returned the XPath string
+        // itself (jargs[1]). Routes through the service's _extractValue helper.
+        "EXTRACTVALUE" => format!(
+            "_extractValue({}, {})",
+            jargs.first().map(|s| s.as_str()).unwrap_or("null"),
+            jargs.get(1).map(|s| s.as_str()).unwrap_or("null")
+        ),
+        "XMLCONCAT" if !jargs.is_empty() => format!("_xmlConcat({})", jargs.join(", ")),
         // #112: `quote_literal(x)` must not degrade to a TOBEFIX null placeholder
         // (callers concat it into SQL strings — a null NPEs at runtime).
         "QUOTE_LITERAL" => format!(

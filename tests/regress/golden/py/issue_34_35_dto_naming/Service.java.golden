@@ -18,6 +18,14 @@ public class Issue3435DtoNamingService {
     public Issue3435DtoNamingService(Issue3435DtoNamingMapper issue3435DtoNamingMapper) {
         this.issue3435DtoNamingMapper = issue3435DtoNamingMapper;
     }
+
+    private java.math.BigDecimal _toBigDecimal(Object v) {
+        // mapper スカラー結果 → BigDecimal。null は null のまま返す
+        // （String.valueOf(null)="null" のパースクラッシュを防ぐ）
+        if (v == null) return null;
+        if (v instanceof java.math.BigDecimal) return (java.math.BigDecimal) v;
+        return new java.math.BigDecimal(String.valueOf(v));
+    }
     // Source: pkg_issue34_order.proc_create_order (PROCEDURE) — issue_34_35_dto_naming.sql:71-114
     @Transactional
     public void procCreateOrder(String pCustomerName, String pProductCode, Integer pQuantity, java.math.BigDecimal pUnitPrice, String pCreatedBy, AtomicReference<Long> pOrderId, AtomicReference<java.math.BigDecimal> pTotalAmount, AtomicReference<String> pStatusMsg) {
@@ -33,7 +41,7 @@ public class Issue3435DtoNamingService {
             _sqlRowCount = issue3435DtoNamingMapper.insertTIssue34Order(pCustomerName, pProductCode, pQuantity, pUnitPrice, pCreatedBy, vOrderId, vAmount);
             _sqlRowCount = issue3435DtoNamingMapper.insertTIssue34OrderLog(pCustomerName, pProductCode, pQuantity, pUnitPrice, pCreatedBy, vOrderId);
             pOrderId.set(Long.parseLong(vOrderId));
-            pTotalAmount.set(new java.math.BigDecimal(String.valueOf(vAmount)));
+            pTotalAmount.set(_toBigDecimal(vAmount));
             pStatusMsg.set("Order created successfully");
         } catch (Exception e) { // EXCEPTION handlers — src: issue_34_35_dto_naming.sql:71
             pStatusMsg.set("Error: " + e.getMessage());

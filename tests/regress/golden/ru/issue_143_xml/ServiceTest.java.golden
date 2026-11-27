@@ -1,0 +1,46 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue143xmlMapper;
+import com.example.demo.service.Issue143xmlService;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_143_xml.sql
+class Issue143xmlServiceTest {
+
+    @Mock
+    private Issue143xmlMapper issue143xmlMapper;
+
+    @InjectMocks
+    private Issue143xmlService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_fXmlforest_success() {
+        String pValue = "test_p_value";
+        var result = service.fXmlforest(pValue);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_fExtractvalue_success() {
+        String pXml = "test_p_xml";
+        var result = service.fExtractvalue(pXml);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_fXmlconcatInit_success() {
+        var result = service.fXmlconcatInit();
+    }
+}

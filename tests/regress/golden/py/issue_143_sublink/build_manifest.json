@@ -1,0 +1,11 @@
+{
+  "engine": "python",
+  "fixture": "issue_143_sublink.sql",
+  "package_name": "issue_143_sublink",
+  "files": {
+    "Service.java": "dd5db40312f2580b",
+    "Mapper.java": "055206ab087fbeec",
+    "Mapper.xml": "0a816277281caf09",
+    "ServiceTest.java": "b86f6cf9d7b8040b"
+  }
+}
