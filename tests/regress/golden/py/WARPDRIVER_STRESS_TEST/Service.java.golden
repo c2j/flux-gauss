@@ -139,7 +139,7 @@ public class WarpdriverStressTestService {
                     if (!vHasError) {
                         // COMMIT — auto-committed by Spring @Transactional boundary
                     } else {
-                        try { TransactionAspectSupport.currentTransactionStatus().setRollbackOnly(); } catch (NoTransactionException e) { /* no active transaction */ }
+                        try { TransactionAspectSupport.currentTransactionStatus().setRollbackOnly(); } catch (NoTransactionException e4) { /* no active transaction */ }
                     }
                     // CALL sp_autonomous_audit(...)
                     running = false;
@@ -149,12 +149,12 @@ public class WarpdriverStressTestService {
                     break;
                 }
             }
-        } catch (Exception e3) { // EXCEPTION handlers — src: PKG_WARPDRIVER_STRESS_TEST.sql:138
+        } catch (Exception e5) { // EXCEPTION handlers — src: PKG_WARPDRIVER_STRESS_TEST.sql:138
             // Rollback
             pTotalAmt.set(java.math.BigDecimal.valueOf(-1));
-            /* TODO: gLastErrorCode() */ null = e3.getMessage();
+            /* TODO: gLastErrorCode() */ null = e5.getMessage();
             // CALL sp_autonomous_audit(...)
-            throw new BusinessException(e3.getMessage());
+            throw new BusinessException(e5.getMessage());
         }
     }
 

@@ -2447,12 +2447,185 @@ def _strip_get_for_cross_pkg_out_args(line: str, var_java: str, proc: ProcedureI
     return line[: m.start(3)] + new_args_str + line[m.end(3):]
 
 
+def _carrier_inner(java_type: str):
+    """`AtomicReference<T>` → `T`, else None. Parameter.java_type is always
+    the INNER type; carriers only appear in local_vars / generated code."""
+    m = re.match(r'^AtomicReference<(.+)>$', (java_type or "").strip())
+    return m.group(1) if m else None
+
+
+def _fresh_out_tmp(proc) -> str:
+    n = getattr(proc, "_out_tmp_counter", 0) + 1
+    proc._out_tmp_counter = n
+    return f"__out_arg{n}"
+
+
+def _plan_out_arg(arg_ast, arg_java: str, proc: ProcedureInfo, target_inner: str):
+    """OUT-carrier decision matrix (#144): for an OUT/INOUT-position argument
+    decide transit | temp-carrier wrap | temp-carrier + writeback.
+
+    Returns ``(arg_expr, pre_lines, post_lines)`` — pre_lines declare any temp
+    carrier before the call, post_lines write the callee's OUT value back into
+    the caller's variable after it.
+    """
+    arg_var = (_extract_var_name(arg_ast) or "").lower()
+    # Caller OUT param → already an AtomicReference<inner> carrier.
+    for p in proc.parameters:
+        if p.is_out and p.name.lower() == arg_var:
+            if p.java_type == target_inner:
+                return arg_java, [], []
+            tmp = _fresh_out_tmp(proc)
+            pre = [f"java.util.concurrent.atomic.AtomicReference<{target_inner}> {tmp} = new java.util.concurrent.atomic.AtomicReference<>();"]
+            post = [f"{arg_java}.set({_coerce_type(f'{tmp}.get()', target_inner, p.java_type)});"]
+            return tmp, pre, post
+    # Caller IN param → plain value; wrap a temp carrier and write the result
+    # back into the (assignable) parameter variable.
+    for p in proc.parameters:
+        if not p.is_out and p.name.lower() == arg_var:
+            tmp = _fresh_out_tmp(proc)
+            pre = [f"java.util.concurrent.atomic.AtomicReference<{target_inner}> {tmp} = new java.util.concurrent.atomic.AtomicReference<>({_coerce_type(arg_java, p.java_type, target_inner)});"]
+            post = [f"{p.java_name} = {_coerce_type(f'{tmp}.get()', target_inner, p.java_type)};"]
+            return tmp, pre, post
+    # Local var → _check_call_out_promotions promotes it to a carrier whose
+    # inner type IS the target's, so plain transit is correct.
+    if arg_var and _resolve_local_key(proc, arg_var) in proc.local_vars:
+        return arg_java, [], []
+    # Literal / expression / package var → wrap a temp carrier; the callee's
+    # OUT write has no caller variable to land in.
+    src_t = _infer_expr_type(arg_ast, proc)
+    wrapped = _coerce_type(arg_java, src_t, target_inner)
+    return f"new java.util.concurrent.atomic.AtomicReference<>({wrapped})", [], []
+
+
+def _call_arg_spans(line: str, open_paren: int):
+    """Yield (start, end) spans of top-level comma-separated args inside the
+    parens starting at open_paren. Handles nested parens/brackets/strings."""
+    depth = 0
+    seg_start = open_paren + 1
+    i = open_paren
+    in_str = None
+    while i < len(line):
+        c = line[i]
+        if in_str:
+            if c == "\\":
+                i += 2
+                continue
+            if c == in_str:
+                in_str = None
+        elif c in "\"'":
+            in_str = c
+        elif c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+            if depth == 0:
+                if line[seg_start:i].strip():
+                    yield seg_start, i
+                return
+        elif c == "," and depth == 1:
+            yield seg_start, i
+            seg_start = i + 1
+        i += 1
+
+
+def _call_out_positions(recv: str, method: str, arg_count: int, proc: ProcedureInfo,
+                        all_packages: dict):
+    """Return set of OUT/INOUT arg indices for `recv.method(...)`, or None when
+    the target signature cannot be resolved."""
+    pkg = all_packages.get(proc.package) if all_packages else None
+    if pkg is None and all_packages and proc.package:
+        # Package keys may differ in case from proc.package (call sites
+        # compare .lower()) — fall back to a case-insensitive lookup.
+        for _k, _v in all_packages.items():
+            _kl = _k.lower()
+            if _kl == proc.package.lower() or _kl.endswith("." + proc.package.lower()) \
+                    or proc.package.lower().endswith("." + _kl):
+                pkg = _v
+                break
+    cands = []
+    if recv == "this":
+        if pkg:
+            cands = [p for p in pkg.procedures
+                     if p.proc_name.lower() == method.lower()]
+    elif recv.endswith("Mapper"):
+        # Mapper calls never carry OUT carriers — every position is IN.
+        return set()
+    else:
+        # svcN.method → target package not recoverable here; stay conservative.
+        return None
+    if not cands:
+        return None
+    # Prefer exact-arity match; otherwise union is unsafe → only use positions
+    # that are OUT in EVERY candidate.
+    exact = [p for p in cands
+             if sum(1 for x in p.parameters) == arg_count]
+    pool = exact or cands
+    common = None
+    for p in pool:
+        outs = {i for i, tp in enumerate(p.parameters) if tp.is_out}
+        common = outs if common is None else (common & outs)
+    return common or set()
+
+
+def _fix_call_arg_carriers(line: str, var_java: str, proc: ProcedureInfo,
+                           all_packages: dict) -> str:
+    """Rewrite bare `var_java` occurrences inside `recv.method(args)` calls:
+    keep the AtomicReference carrier at OUT/INOUT positions, emit `.get()` at
+    IN positions. Non-call occurrences are left for the generic pass."""
+    if not all_packages or proc is None:
+        return line
+    out = line
+    # Process right-to-left so earlier offsets stay valid.
+    matches = list(re.finditer(r'\b((?:this|svc\w*|\w+Mapper)\.(\w+))\s*\(', out))
+    for m in reversed(matches):
+        recv, method = m.group(1).split(".", 1)
+        recv = recv.rsplit(".", 1)[-1] if "." in recv else recv
+        open_paren = m.end() - 1
+        spans = list(_call_arg_spans(out, open_paren))
+        if not spans:
+            continue
+        outs = _call_out_positions(recv, method, len(spans), proc, all_packages)
+        if outs is None:
+            continue
+        # Rebuild args: for each position, rewrite bare var occurrences.
+        args = [out[s:e] for s, e in spans]
+        changed = False
+        for idx, arg in enumerate(args):
+            bare = re.search(rf'(?<![\w.]){re.escape(var_java)}\b(?!\s*\.get\b)', arg)
+            if not bare:
+                continue
+            if idx in outs:
+                # OUT position: carrier — strip any stray .get() on the var.
+                new_arg = re.sub(rf'\b{re.escape(var_java)}\.get\(\)', var_java, arg)
+            else:
+                # IN position: dereference the carrier.
+                new_arg = re.sub(
+                    rf'(?<![\w.]){re.escape(var_java)}\b(?!\s*\.get\b)(?!\s*\()',
+                    f'{var_java}.get()', arg)
+            if new_arg != arg:
+                args[idx] = new_arg
+                changed = True
+        if not changed:
+            continue
+        close_paren = spans[-1][1]
+        new_call = ", ".join(args)
+        out = out[:open_paren + 1] + new_call + out[close_paren:]
+    return out
+
+
 def _patch_promoted_var_reads(line: str, var_java: str, string_inner: bool = False,
                               proc: ProcedureInfo = None, all_packages: dict = None) -> str:
     import re
     # Remove .get() from promoted vars passed as OUT args to method/mapper calls
     if f'{var_java}.get()' in line and (re.search(rf'\bthis\.\w+\(', line) or 'Mapper.' in line):
         line = line.replace(f'{var_java}.get()', var_java)
+    # Position-aware carrier handling inside call argument lists (#144):
+    # a promoted var is a carrier ONLY at OUT/INOUT target positions; at IN
+    # positions it must be dereferenced. Runs after the blanket strip so the
+    # per-position decision wins. The old blanket `this.`/`Mapper.` skip left
+    # carriers in IN positions (compile errors).
+    if proc is not None:
+        line = _fix_call_arg_carriers(line, var_java, proc, all_packages)
     patterns_to_skip = [
         rf'\b{re.escape(var_java)}\s*=',
         rf'\b{re.escape(var_java)}\.set\s*\(',
@@ -3323,7 +3496,10 @@ def _process_statement(stmt: dict, proc: ProcedureInfo, all_packages: dict, dml_
             if proc.is_autonomous:
                 proc.java_logic_lines.append("// ROLLBACK — auto-rolled-back by @Transactional(propagation = REQUIRES_NEW) on exception")
             else:
-                proc.java_logic_lines.append("try { TransactionAspectSupport.currentTransactionStatus().setRollbackOnly(); } catch (NoTransactionException e) { /* no active transaction */ }")
+                # Unique catch var (#144): a hardcoded `e` collides with an
+                # enclosing `catch (Exception e)` — Java forbids redeclaring
+                # a local in an overlapping scope.
+                proc.java_logic_lines.append(f"try {{ TransactionAspectSupport.currentTransactionStatus().setRollbackOnly(); }} catch (NoTransactionException {_next_catch_var(proc)}) {{ /* no active transaction */ }}")
                 proc.imports.add("import org.springframework.transaction.NoTransactionException;")
                 proc.imports.add("import org.springframework.transaction.interceptor.TransactionAspectSupport;")
         elif stmt_type == "ProcedureCall":
@@ -5183,6 +5359,10 @@ def _emit_dml_with_rowcount(proc: ProcedureInfo, mapper_expr: str, indent: str =
 
 def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
     out_param_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out}
+    # REFCURSOR OUT params are dropped from the signature; writes land on the
+    # `{name}Result` list variable instead of a carrier `.set()`.
+    refcursor_out_names = {snake_to_camel(p.name) for p in proc.parameters
+                           if p.is_out and p.is_refcursor}
     out_string_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out and p.java_type == "String"}
     out_long_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out and p.java_type == "Long"}
     out_integer_names = {snake_to_camel(p.name) for p in proc.parameters if p.is_out and p.java_type == "Integer"}
@@ -5232,6 +5412,8 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
             proc.java_logic_lines.append(f"{var_java}.put(\"{field_key}\", {expr});")
         else:
             proc.java_logic_lines.append(f"{var_java}.put(\"{field_key}\", {expr});")
+    elif target in refcursor_out_names:
+        proc.java_logic_lines.append(f"{target}Result = {expr};")
     elif target in out_param_names:
         if target in out_string_names and not _is_string_expr(expr):
             expr = f"String.valueOf({expr})"
@@ -5454,7 +5636,7 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
                         for i, a in enumerate(raw_args):
                             a_java = _expr_to_java(a, proc, all_packages=all_packages)
                             if target_proc and i < len(target_proc.parameters):
-                                a_java = _coerce_java_arg(a_java, target_proc.parameters[i].java_type)
+                                a_java = _coerce_java_arg(a_java, target_proc.parameters[i].java_type, _infer_expr_type(a, proc))
                             args_java.append(a_java)
                         args = ", ".join(args_java)
                         if matched_pkg.lower() == proc.package.lower():
@@ -5863,7 +6045,7 @@ def _process_perform(perform_data: dict, proc: ProcedureInfo, all_packages: dict
                         else:
                             a_java = _expr_to_java(a, proc, as_read=True)
                         if target_proc_info and i < len(target_proc_info.parameters):
-                            a_java = _coerce_java_arg(a_java, target_proc_info.parameters[i].java_type)
+                            a_java = _coerce_java_arg(a_java, target_proc_info.parameters[i].java_type, _infer_expr_type(a, proc))
                         resolved_perform_args.append(a_java)
                     args = ", ".join(resolved_perform_args)
                     if matched_pkg.lower() == proc.package.lower():
@@ -7041,11 +7223,20 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
         if target_proc_info:
             target_out_indices = {i for i, p in enumerate(target_proc_info.parameters) if p.is_out}
         resolved_args = []
+        _pre_call_lines: list = []
+        _post_call_lines: list = []
         for i, a in enumerate(args):
             if target_proc_info and i in target_out_indices:
-                # OUT/INOUT args pass the caller's AtomicReference itself — never dereferenced
+                # OUT/INOUT args go through the carrier decision matrix (#144):
+                # transit on inner-type match, temp carrier + writeback on
+                # mismatch, typed wrap for plain values — never a bare
+                # dereference.
+                _tp = target_proc_info.parameters[i]
                 raw_java = _expr_to_java(a, proc, as_read=False)
-                resolved_args.append(raw_java)
+                _expr, _pre, _post = _plan_out_arg(a, raw_java, proc, _tp.java_type)
+                resolved_args.append(_expr)
+                _pre_call_lines.extend(_pre)
+                _post_call_lines.extend(_post)
             else:
                 a_java = _expr_to_java(a, proc, as_read=True)
                 if target_proc_info and i < len(target_proc_info.parameters):
@@ -7060,13 +7251,14 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
                             if a_java_type in ("long", "Long", "int", "Integer", "double", "Double", "float", "Float", "java.math.BigDecimal"):
                                 a_java = f"String.valueOf({a_java})"
                     else:
-                        a_java = _coerce_java_arg(a_java, tptype)
+                        a_java = _coerce_java_arg(a_java, tptype, _infer_expr_type(a, proc))
                 resolved_args.append(a_java)
         if target_proc_info:
             while len(resolved_args) < len(target_proc_info.parameters):
                 _pad = target_proc_info.parameters[len(resolved_args)]
                 if _pad.is_out:
-                    resolved_args.append("new java.util.concurrent.atomic.AtomicReference<>(null)")
+                    # Typed carrier — diamond inference cannot type `<>(null)`.
+                    resolved_args.append(f"new java.util.concurrent.atomic.AtomicReference<{_pad.java_type}>(null)")
                 else:
                     resolved_args.append("null")
         args_java = ", ".join(resolved_args)
@@ -7090,7 +7282,9 @@ def _process_procedure_call(call_data: dict, proc: ProcedureInfo, all_packages: 
         if not is_self_call:
             proc.service_calls.append(ServiceCall(svc_name, method, [], package_name=matched_pkg))
         call_target = f"this.{method}" if is_self_call else f"{svc_name}.{method}"
+        proc.java_logic_lines.extend(_pre_call_lines)
         proc.java_logic_lines.append(f"{call_target}({args_java});")
+        proc.java_logic_lines.extend(_post_call_lines)
     else:
         full_name = ".".join(func_name_parts)
         UNRESOLVED_CALLS.append(UnresolvedCall(
@@ -7120,7 +7314,12 @@ def _wrap_handler_stmts(stmts, proc, all_packages,
                 errm_repl = "__SQLERRM__" if in_catch else '""'
                 expr = re.sub(r'\bsqlerrm\b', errm_repl, expr, flags=re.IGNORECASE)
                 expr = re.sub(r'\bsqlcode\b', 'String.valueOf(-1)', expr, flags=re.IGNORECASE)
-                if target in out_java_names:
+                # REFCURSOR OUT params are dropped from the signature; their
+                # value lives in the `{name}Result` list — never emit `.set()`.
+                if target in {snake_to_camel(p.name) for p in proc.parameters
+                              if p.is_out and p.is_refcursor}:
+                    _lines.append(f"{indent}{target}Result = {expr};")
+                elif target in out_java_names:
                     if target in out_string_names and not _is_string_expr(expr):
                         expr = f"String.valueOf({expr})"
                     elif target in out_long_names and _is_string_expr(expr) and not _is_long_expr(expr):
@@ -7264,10 +7463,15 @@ def _wrap_handler_stmts(stmts, proc, all_packages,
                         if target_proc_info:
                             _target_out_indices = {i for i, p in enumerate(target_proc_info.parameters) if p.is_out}
                         _resolved = []
+                        _pre_call, _post_call = [], []
                         for i, a in enumerate(call_args):
                             if target_proc_info and i in _target_out_indices:
+                                _tp = target_proc_info.parameters[i]
                                 raw_java = _expr_to_java(a, proc, as_read=False)
-                                _resolved.append(raw_java)
+                                _expr, _pre, _post = _plan_out_arg(a, raw_java, proc, _tp.java_type)
+                                _resolved.append(_expr)
+                                _pre_call.extend(f"{indent}{l}" for l in _pre)
+                                _post_call.extend(f"{indent}{l}" for l in _post)
                             else:
                                 a_java = _expr_to_java(a, proc, as_read=True)
                                 if target_proc_info and i < len(target_proc_info.parameters):
@@ -7286,14 +7490,16 @@ def _wrap_handler_stmts(stmts, proc, all_packages,
                                             elif a_java_type == "Object" and re.match(r'^[a-zA-Z_]\w*$', a_java):
                                                 a_java = f"String.valueOf({a_java})"
                                     else:
-                                        a_java = _coerce_java_arg(a_java, tptype)
+                                        a_java = _coerce_java_arg(a_java, tptype, _infer_expr_type(a, proc))
                                 _resolved.append(a_java)
                         args_java = ", ".join(_resolved)
                         is_self_call = (matched.lower() == proc.package.lower())
                         if not is_self_call:
                             proc.service_calls.append(ServiceCall(svc_name, method, [], package_name=matched))
                         call_target = f"this.{method}" if is_self_call else f"{svc_name}.{method}"
+                        _lines.extend(_pre_call)
                         _lines.append(f"{indent}{call_target}({args_java});")
+                        _lines.extend(_post_call)
                     else:
                         full_name = ".".join(func_name_parts)
                         _lines.append(f"{indent}// CALL {full_name}(...)")
@@ -7399,23 +7605,68 @@ def _wrap_try_catch(body_lines: list, handlers: list, proc: ProcedureInfo, all_p
         result = body_lines
 
     resolved = []
-    in_catch = False
-    catch_var = "e"
+    # Scope-aware marker resolution (#144): `__SQLERRM__` is only meaningful
+    # inside a catch handler, where it must name THAT catch's variable. The
+    # old flat `in_catch` latch never reset, so a marker in a try body that
+    # followed a nested `} catch` resolved to the inner (out-of-scope)
+    # variable — e.g. `e3.getMessage()` inside the outer try → 找不到符号.
+    # Track a stack of try/catch frames instead: `try {` pushes, a
+    # `} catch (Exception var) {` line swaps the top frame for a catch
+    # frame carrying `var`, and every other `{`/`}` pushes/pops an "other"
+    # frame so if/for/while braces stay balanced.
+    _frames = []  # each: "try" | "other" | ("catch", varname)
+
+    def _innermost_catch():
+        # Nearest enclosing try/catch frame wins: "other" frames (if/for/…)
+        # are transparent, but a nested `try` shadows an outer catch —
+        # sqlerrm inside a nested try body is not the outer catch's error.
+        for _f in reversed(_frames):
+            if _f == "try":
+                return None
+            if isinstance(_f, tuple):
+                return _f
+        return None
+
     for line in result:
-        _cm = re.match(r'\s*}\s*catch\s*\(\s*[\w.]+\s+(\w+)\s*\)', line)
-        if _cm:
-            in_catch = True
-            catch_var = _cm.group(1)
+        _in_catch = _innermost_catch()
         if "__SQLERRM__" in line:
-            replacement = f"{catch_var}.getMessage()" if in_catch else '""'
+            replacement = f"{_in_catch[1]}.getMessage()" if _in_catch else '""'
             line = line.replace("__SQLERRM__", replacement)
         if "__SQLCODE__" in line:
-            replacement = "String.valueOf(-1)" if in_catch else "\"00000\""
+            replacement = "String.valueOf(-1)" if _in_catch else "\"00000\""
             line = line.replace("__SQLCODE__", replacement)
         if "__SQLSTATE__" in line:
-            replacement = "\"00000\"" if in_catch else "\"00000\""
+            replacement = "\"00000\"" if _in_catch else "\"00000\""
             line = line.replace("__SQLSTATE__", replacement)
         resolved.append(line)
+
+        # Update the frame stack from this line's structural tokens, in
+        # order: `try {`, `} catch (…) {`, `} finally {`, then bare braces.
+        _struct = re.finditer(
+            r'try\s*\{|\}\s*catch\s*\([^)]*?\b(\w+)\s*\)\s*\{|\}\s*finally\s*\{|[{}]',
+            line,
+        )
+        for _m in _struct:
+            _tok = _m.group(0)
+            if _tok.rstrip().endswith("catch") or "catch" in _tok:
+                # `} catch (Exception var) {` — the `}` closes the try
+                # frame, the catch frame opens in its place.
+                if _frames and _frames[-1] == "try":
+                    _frames.pop()
+                elif _frames:
+                    _frames.pop()
+                _frames.append(("catch", _m.group(1)))
+            elif _tok.rstrip().endswith("finally") or "finally" in _tok:
+                if _frames:
+                    _frames.pop()
+                _frames.append("other")
+            elif _tok.strip() == "try {" or _tok.rstrip().endswith("try {") or re.match(r'try\s*\{', _tok):
+                _frames.append("try")
+            elif _tok == "{":
+                _frames.append("other")
+            elif _tok == "}":
+                if _frames:
+                    _frames.pop()
 
     return _merge_duplicate_catches(resolved)
 
@@ -9739,13 +9990,15 @@ def _coerce_for_int(expr: str) -> str:
     return expr
 
 
-def _coerce_java_arg(a_java: str, target_type: str) -> str:
+def _coerce_java_arg(a_java: str, target_type: str, source_type: str = None) -> str:
     """Coerce a Java argument expression to match the target parameter type.
 
     Handles edge cases where PL/pgSQL implicit type coercion needs explicit Java conversion:
     - Empty string ``\"\"`` passed to numeric parameters → zero value (0L, 0, etc.)
     - Numeric literal passed to BigDecimal parameter → BigDecimal.valueOf()
     - Map.get() result to typed parameter → cast expression
+    - String-typed source → numeric target → parse* (#144: `(Number)` cast on a
+      String is a compile error; the source type must travel with the arg).
     """
     # Empty string '' in PL/pgSQL passed to a numeric/boolean parameter.
     # _coerce_java_arg returns zero-values (0L, 0, BigDecimal.ZERO, etc.) for function call args
@@ -9801,6 +10054,24 @@ def _coerce_java_arg(a_java: str, target_type: str) -> str:
         if target_type == "java.sql.Date":
             return f"({a_java} instanceof java.sql.Timestamp ? new java.sql.Date(((java.sql.Timestamp) {a_java}).getTime()) : (java.sql.Date) {a_java})"
         return f"({target_type}) {a_java}"
+    # String-typed source → numeric target: `(Number) stringExpr` does not
+    # compile, so parse explicitly (#144 — type carried from _infer_expr_type).
+    if source_type == "String" and (
+        target_type in ("long", "Long", "int", "Integer", "double", "Double", "float", "Float")
+        or "BigDecimal" in target_type
+    ):
+        # Null-safe: PL/pgSQL NULL must reach the param as null, not NPE.
+        _sv = f"String.valueOf({a_java})"
+        if target_type in ("long", "Long"):
+            return f"({a_java} == null ? null : Long.parseLong({_sv}))"
+        if target_type in ("int", "Integer"):
+            return f"({a_java} == null ? null : Integer.parseInt({_sv}))"
+        if "BigDecimal" in target_type:
+            return f"({a_java} == null ? null : new java.math.BigDecimal({_sv}))"
+        if target_type in ("double", "Double"):
+            return f"({a_java} == null ? null : Double.parseDouble({_sv}))"
+        if target_type in ("float", "Float"):
+            return f"({a_java} == null ? null : Float.parseFloat({_sv}))"
     if target_type == "String":
         if "BigDecimal" in a_java or re.search(r'\b\w*[Bb]ig[Dd]ecimal\w*\b', a_java):
             return f"{a_java}.toString()"
@@ -11028,7 +11299,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                                             if raw_java in out_param_java_names:
                                                 wrapped_args.append(raw_java)
                                                 continue
-                                        wrapped_args.append(_coerce_java_arg(a_java, target_proc.parameters[i].java_type))
+                                        wrapped_args.append(_coerce_java_arg(a_java, target_proc.parameters[i].java_type, _infer_expr_type(raw_args[i] if i < len(raw_args) else {}, proc)))
                                     else:
                                         wrapped_args.append(a_java)
                                 svc_name = f"{package_to_classname(matched).lower()}Service"
@@ -11062,7 +11333,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                                     if raw_java in out_param_java_names:
                                         wrapped_args.append(raw_java)
                                         continue
-                                wrapped_args.append(_coerce_java_arg(a_java, target_proc.parameters[i].java_type))
+                                wrapped_args.append(_coerce_java_arg(a_java, target_proc.parameters[i].java_type, _infer_expr_type(raw_args[i] if i < len(raw_args) else {}, proc)))
                             else:
                                 wrapped_args.append(a_java)
                         return f"this.{method}({', '.join(wrapped_args)})"
@@ -11112,7 +11383,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                                 if _actual_target and i < len(_actual_target.parameters) and _actual_target.parameters[i].is_out:
                                     wrapped_args.append(a_java)
                                 else:
-                                    wrapped_args.append(_coerce_java_arg(a_java, arg_types[i]))
+                                    wrapped_args.append(_coerce_java_arg(a_java, arg_types[i], _infer_expr_type(raw_args[i] if i < len(raw_args) else {}, proc)))
                             else:
                                 wrapped_args.append(a_java)
                         # Pad missing trailing args with the target's DEFAULTs
@@ -11149,7 +11420,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                                     wrapped_args = []
                                     for i, a_java in enumerate(args_java):
                                         if i < len(_cp.parameters):
-                                            a_java = _coerce_java_arg(a_java, _cp.parameters[i].java_type)
+                                            a_java = _coerce_java_arg(a_java, _cp.parameters[i].java_type, _infer_expr_type(val.get("args", [])[i] if i < len(val.get("args", [])) else {}, proc))
                                         wrapped_args.append(a_java)
                                     return f"this.{method}({', '.join(wrapped_args)})"
                                 svc_name = f"{package_to_classname(_cpk).lower()}Service"
@@ -11157,7 +11428,7 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                                 wrapped_args = []
                                 for i, a_java in enumerate(args_java):
                                     if i < len(_cp.parameters):
-                                        a_java = _coerce_java_arg(a_java, _cp.parameters[i].java_type)
+                                        a_java = _coerce_java_arg(a_java, _cp.parameters[i].java_type, _infer_expr_type(val.get("args", [])[i] if i < len(val.get("args", [])) else {}, proc))
                                     wrapped_args.append(a_java)
                                 return f"{svc_name}.{method}({', '.join(wrapped_args)})"
                 _record_unsupported(func_name, proc)
@@ -14071,6 +14342,21 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                         _inner_t = m_ar2.group(1) if m_ar2 else ""
                         if _inner_t and "String" not in _inner_t and (inner.startswith('"') or inner == "''" or inner == '""'):
                             inner = _default_for_type(_inner_t)
+                        # #144: coerce non-literal defaults too — e.g. a NUMBER
+                        # var promoted to AtomicReference<Long> kept
+                        # `BigDecimal.valueOf(0)` and broke diamond inference.
+                        elif (_inner_t and _inner_t not in ("String", "Object")
+                              and re.fullmatch(r'-?\d+(\.\d+)?[fFdD]?', inner)):
+                            inner = _typed_numeric_literal(inner, _inner_t)
+                        elif (_inner_t and inner != _default_for_type(_inner_t)
+                              and not re.fullmatch(r'-?\d+(\.\d+)?[fFdDlL]?', inner)):
+                            _src_guess = ("java.math.BigDecimal" if "BigDecimal" in inner
+                                          else "Long" if "Long.valueOf" in inner or re.search(r'\d+L\b', inner)
+                                          else "Integer" if "Integer.valueOf" in inner
+                                          else "Object")
+                            _coerced = _coerce_type(inner, _src_guess, _inner_t)
+                            if _coerced != inner:
+                                inner = _coerced
                     default_val = f"new AtomicReference<>({inner})" if inner else _default_for_type(var_type)
                 elif var_name in proc.local_var_defaults and _is_numeric_default(default_val, var_type):
                     default_val = _wrap_default_for_type(default_val, var_type)
