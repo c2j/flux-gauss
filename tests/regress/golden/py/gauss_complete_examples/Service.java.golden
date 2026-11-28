@@ -146,9 +146,9 @@ public class GaussCompleteExamplesService {
         int vCursorIdx = 0;
         List<Map<String, Object>> vCursorResult = null;
         int _loopGuard1 = 0;
+        java.sql.Timestamp vRecTime = null;
+        java.sql.Timestamp vStartTime = null;
         try {
-            java.sql.Timestamp vRecTime = null;
-            java.sql.Timestamp vStartTime = null;
             java.util.Map<String, Object> _row = null;
             vStartTime = new java.sql.Timestamp(System.currentTimeMillis());
             _sqlRowCount = gaussCompleteExamplesMapper.insertAuditLog(pTableName, pWhereClause, pOrderBy, vSql);
@@ -233,9 +233,9 @@ public class GaussCompleteExamplesService {
         java.math.BigDecimal vAmount = java.math.BigDecimal.ZERO;
         String vName = null;
         int _sqlRowCount = 0;
+        java.sql.Timestamp vStartTime = null;
+        java.sql.Timestamp vCreateTime = null;
         try {
-            java.sql.Timestamp vStartTime = null;
-            java.sql.Timestamp vCreateTime = null;
             vStartTime = new java.sql.Timestamp(System.currentTimeMillis());
             _sqlRowCount = gaussCompleteExamplesMapper.insertAuditLog_1(pTableName, pSelectColumns, pWhereClause, pOrderBy, pProcessType, vSql);
             List<Map<String, Object>> vRecList = gaussCompleteExamplesMapper.selectProcDynamicForProcessing_5(pTableName, pSelectColumns, pWhereClause, pOrderBy, pProcessType);

@@ -1,0 +1,49 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144CrossblockDeclMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue144CrossblockDeclService {
+    private static final Logger log = LoggerFactory.getLogger(Issue144CrossblockDeclService.class);
+
+    private final Issue144CrossblockDeclMapper issue144CrossblockDeclMapper;
+
+    public Issue144CrossblockDeclService(Issue144CrossblockDeclMapper issue144CrossblockDeclMapper) {
+        this.issue144CrossblockDeclMapper = issue144CrossblockDeclMapper;
+    }
+    // Source: pkg_issue144xb_helper.helper (PROCEDURE) — issue_144_crossblock_decl.sql:7-16
+    public void helper(Long pIIn, AtomicReference<String> pOOut, AtomicReference<Long> pOFlag) {
+        pOOut.set(null);
+        pOFlag.set(null);
+        if (pIIn.compareTo(Long.valueOf(0)) > 0) {
+            pOOut.set("ok");
+            pOFlag.set(Long.valueOf(1));
+        } else {
+            pOOut.set("empty");
+            pOFlag.set(Long.valueOf(0));
+        }
+    }
+
+    // Source: pkg_issue144xb.prc_xblock (PROCEDURE) — issue_144_crossblock_decl.sql:34-51
+    public void prcXblock(Long pIId, String pOMsg) {
+        String vRetmsg = null;
+        Long vFlag = 0L;
+        try {
+            vRetmsg = null;
+            vFlag = Long.valueOf(0);
+            if (pIId.compareTo(Long.valueOf(0)) > 0) {
+                // CALL pkg_issue144xb_helper.helper(...)
+            }
+            // CALL pkg_issue144xb_helper.helper(...)
+            pOMsg = vRetmsg;
+        } catch (Exception e) { // EXCEPTION handlers — src: issue_144_crossblock_decl.sql:34
+            pOMsg = vRetmsg;
+        }
+    }
+}

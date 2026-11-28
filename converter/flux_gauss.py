@@ -2212,6 +2212,133 @@ def _extract_dml_target_simple(stmt_data: dict) -> str:
 
 # ── DML / Logic Analyzer ──────────────────────────────────────
 
+def _hoist_cross_block_decls(proc: ProcedureInfo):
+    """兼容包装：对 proc.java_logic_lines 原地应用跨块声明提升。"""
+    proc.java_logic_lines = _hoist_cross_block_lines(proc.java_logic_lines)
+
+
+def _hoist_cross_block_lines(lines: list) -> list:
+    """Issue #144 batch1a：块内声明被兄弟块/EXCEPTION 分支引用 → "找不到符号"。
+
+    PL/SQL 的声明段本就是方法级；生成的 Java 把声明织进了 try/if 子块，
+    PL/SQL 的兄弟 BEGIN 块转成兄弟 try 后引用失效。对「无依赖 rhs」的声明
+    （new ... / null / 字面量）做作用域分析：存在块外引用时提升到方法体首层。
+    字符级花括号配平（跳过字符串字面量）。返回处理后的列表。
+    """
+    n = len(lines)
+    if n == 0:
+        return lines
+
+    # ── 1) 每行起止深度（跳过字符串） ──
+    depths = [0] * (n + 1)
+    d = 0
+    for i, ln in enumerate(lines):
+        depths[i] = d
+        in_str = False
+        esc = False
+        for ch in ln:
+            if esc:
+                esc = False
+                continue
+            if ch == "\\":
+                esc = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == "{":
+                d += 1
+            elif ch == "}":
+                d -= 1
+    depths[n] = d
+
+    # ── 2) 识别「无依赖 rhs」声明行 ──
+    decl_re = re.compile(
+        r"^(\s*)((?:AtomicReference|java\.util\.concurrent\.atomic\.AtomicReference|Map|HashMap|List|ArrayList|String|StringBuilder|Long|Integer|Double|BigDecimal|java\.math\.BigDecimal|java\.sql\.(?:Date|Timestamp)|int|long|double|boolean|Boolean|Object)"
+        r"(?:<[^;=]*>)?)\s+(\w+)\s*=\s*(.+);\s*$"
+    )
+    rhs_safe_re = re.compile(
+        r"^(new\s+[\w.]+(?:<[^;(]*>)?\s*\((?:[^()]|\([^()]*\))*\)|null|BigDecimal\.ZERO|java\.math\.BigDecimal\.ZERO|[\-\d.]+[LdDfF]?|\"(?:[^\"\\]|\\.)*\"|true|false)\s*(?:\.\w+\(\))*$"
+    )
+    decls = []  # (idx, var, rhs, decl_indent, decl_block_depth)
+    for i, ln in enumerate(lines):
+        s = ln.strip()
+        if not s or s.startswith("//") or s.startswith("for (") or s.startswith("for("):
+            continue
+        m = decl_re.match(ln)
+        if not m:
+            continue
+        if not rhs_safe_re.match(m.group(4).strip()):
+            continue
+        # for/while 头部里的匹配不是声明（缩进深度即块深度）
+        decls.append((i, m.group(3), m.group(4), m.group(1), depths[i]))
+
+    if not decls:
+        return lines
+
+    # ── 3) 找「块外引用」的声明 ──
+    to_hoist = {}  # var -> decl tuple
+    for idx, var, rhs, indent, block_depth in decls:
+        # 声明行的"块深度"：声明所在块的深度 = depths[idx]（行起始深度）。
+        # 声明语句自身的 { 不改变块深度（rhs 已判定无裸 {）。
+        escaped = False
+        opened_after_decl = depths[idx]
+        for j in range(idx + 1, n):
+            ln = lines[j]
+            s = ln.strip()
+            # 引用检测（跳过注释行；字符串内的出现由逐字符扫描规避）
+            if s and not s.startswith("//") and re.search(rf"\b{re.escape(var)}\b", s):
+                # 当前深度已低于声明块深度 → 块外引用
+                if depths[j] < opened_after_decl + 1 and depths[j] <= opened_after_decl:
+                    to_hoist[var] = (idx, var, rhs, indent)
+                    break
+            # 逐字符更新深度（含字符串感知）
+            in_str = False
+            esc = False
+            for ch in ln:
+                if esc:
+                    esc = False
+                    continue
+                if ch == "\\":
+                    esc = True
+                    continue
+                if ch == '"':
+                    in_str = not in_str
+                    continue
+                if in_str:
+                    continue
+                if ch == "{":
+                    opened_after_decl += 1
+                elif ch == "}":
+                    opened_after_decl -= 1
+
+    if not to_hoist:
+        return lines
+
+    # ── 4) 提升到方法体首层：第一个语句行之前 ──
+    first_stmt = 0
+    for i, ln in enumerate(lines):
+        s = ln.strip()
+        if s and not s.startswith("//"):
+            first_stmt = i
+            break
+    base_indent = lines[first_stmt][: len(lines[first_stmt]) - len(lines[first_stmt].lstrip())]
+
+    hoist_lines = []
+    for var, (idx, _v, rhs, _ind) in sorted(to_hoist.items(), key=lambda kv: kv[1][0]):
+        # 声明类型从原行提取
+        m = decl_re.match(lines[idx])
+        hoist_lines.append(f"{base_indent}{m.group(2)} {var} = {m.group(4)};")
+    # 从原位置移除（倒序删除避免索引位移）
+    remove_idx = sorted({t[0] for t in to_hoist.values()}, reverse=True)
+    for idx in remove_idx:
+        del lines[idx]
+    lines[first_stmt:first_stmt] = hoist_lines
+    return lines
+
+
 def _hoist_try_scoped_decls(proc: ProcedureInfo):
     """修复（#verify16）：变量声明落在 try 块内、而 catch/finally 也引用该变量
     时，catch 中"找不到符号"。将此类声明提升到 try 语句之前。"""
@@ -14807,6 +14934,9 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
     if exception_block:
         handlers = exception_block.get("handlers", [])
         body_lines = _wrap_try_catch(body_lines, handlers, proc, all_packages)
+
+    # Issue #144 batch1a: try/兄弟块形态在 wrap 后才成型，跨块声明提升在此做
+    body_lines = _hoist_cross_block_lines(body_lines)
 
     body_lines = hoisted_decls + body_lines
 

@@ -27,8 +27,8 @@ public class Issue124CollectionsService {
         java.math.BigDecimal vAmt = java.math.BigDecimal.ZERO;
         int _sqlRowCount = 0;
         Map<String, Object> vNums = new HashMap<>();
-        Map<String, Object> vRectab = new HashMap<>();
         java.sql.Date vD = null;
+        Map<String, Object> vRectab = new HashMap<>();
         vCnt = (vNums.get(String.valueOf(vI)) != null ? (vNums.get(String.valueOf(vI)) instanceof Number ? ((Number) (vNums.get(String.valueOf(vI)))).longValue() : Long.parseLong(String.valueOf(vNums.get(String.valueOf(vI))))) : 0L);
         vCnt = (long) ((vNums.get("count") != null ? (vNums.get("count") instanceof Number ? ((Number) (vNums.get("count"))).longValue() : Long.parseLong(String.valueOf(vNums.get("count")))) : 0L));
         if (/* TODO: implement exists(1) — pkg=v_nums, ret=?, args=[Integer], caller=issue_124_collections.sql:prc_collection_demo */ false) {

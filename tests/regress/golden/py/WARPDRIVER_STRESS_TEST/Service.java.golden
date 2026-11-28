@@ -91,12 +91,12 @@ public class WarpdriverStressTestService {
         int _smGuard = 0;
         int vCurOrdersIdx = 0;
         List<Map<String, Object>> vCurOrdersResult = null;
+        Map<String, Object> vItemTab = new HashMap<>();
+        Map<String, Object> vRec = new HashMap<>();
+        Boolean vHasError = false;
         try {
             java.sql.Date vDate = java.sql.Date.valueOf(String.valueOf(pBizDate));
-            Map<String, Object> vItemTab = new HashMap<>();
             Map<String, Object> vCurOrders = new HashMap<>();
-            Map<String, Object> vRec = new HashMap<>();
-            Boolean vHasError = false;
             pTotalAmt.set(null);
             pLogId.set(null);
             java.util.Map<String, Object> _row = null;

@@ -1,0 +1,45 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144CrossblockDeclMapper;
+import com.example.demo.service.Issue144CrossblockDeclService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class Issue144CrossblockDeclServiceTest {
+
+    @Mock
+    private Issue144CrossblockDeclMapper issue144CrossblockDeclMapper;
+
+    @InjectMocks
+    private Issue144CrossblockDeclService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_helper_success() {
+        Long pIIn = 100L;
+        AtomicReference<String> pOOut = new AtomicReference<>(null);
+        AtomicReference<Long> pOFlag = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
+        service.helper(pIIn, pOOut, pOFlag);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_prcXblock_success() {
+        Long pIId = 1L;
+        String pOMsg = "test_pOMsg";
+        var _rowTmpl = new java.util.HashMap<String,Object>();
+        service.prcXblock(pIId, pOMsg);
+    }
+}

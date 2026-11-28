@@ -88,9 +88,9 @@ public class Issue41TypeSystemService {
     public void procValidateAccount(Long pAccountId, AtomicReference<Boolean> pIsValid, AtomicReference<java.math.BigDecimal> pBalance) {
         java.math.BigDecimal vBalance = java.math.BigDecimal.ZERO;
         int _sqlRowCount = 0;
+        Boolean vActive = false;
         try {
             Throwable eAccountClosed = null;
-            Boolean vActive = false;
             pIsValid.set(null);
             pBalance.set(null);
             java.util.Map<String, Object> _row = null;
