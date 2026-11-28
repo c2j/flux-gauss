@@ -300,6 +300,10 @@ pub struct ProcedureInfo {
     pub for_loop_counter: usize,
     pub plain_loop_counter: usize,
     pub catch_counter: usize,
+    /// Monotonic counter for `_outTmpN` typed temp carriers emitted when a
+    /// statement-level CALL's OUT arg carrier inner type mismatches the
+    /// callee's OUT param inner type (issue #144 batch4b).
+    pub call_out_tmp_counter: usize,
 
     /// Numeric-range FOR loop counters auto-created by the statement handler
     /// (NOT declared in the SQL). A real SQL-declared var is absent from this
@@ -391,6 +395,7 @@ impl ProcedureInfo {
             for_loop_counter: 0,
             plain_loop_counter: 0,
             catch_counter: 0,
+            call_out_tmp_counter: 0,
             range_loop_counters: HashSet::new(),
             active_range_fors: Vec::new(),
             range_for_save_counter: 0,

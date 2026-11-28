@@ -658,6 +658,240 @@ pub fn collect_tobefix_warnings(pkg: &PackageInfo, ctx: &mut AnalysisContext) {
     }
 }
 
+// ── Issue #144 batch4b: statement-level CALL OUT carrier post-pass ──
+//
+// Python `_fix_call_arg_carriers` 对偶。Statement CALL args are emitted while
+// a promoted local's carrier inner type is still provisional — a LATER OUT
+// use rewrites `out_local_vars` ("last promotion wins"), so an earlier call
+// site can end up passing `AtomicReference<Old>` into an
+// `AtomicReference<New>` parameter (javac: incompatible types). This pass
+// runs after all statements are processed, when every carrier's FINAL inner
+// type is known, and rewrites each mismatching bare-carrier OUT arg into a
+// typed `_outTmpN` carrier plus a post-call writeback.
+
+/// Split a call's argument list into top-level argument byte ranges,
+/// skipping nested parens, string literals, and `//` / `/* */` comments so
+/// TODO-comment commas cannot shift OUT positions (Python
+/// `_call_arg_spans` 对偶).
+fn call_arg_spans(args_src: &str) -> Vec<(usize, usize)> {
+    let b = args_src.as_bytes();
+    let mut spans = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    let mut i = 0usize;
+    while i < b.len() {
+        match b[i] {
+            b'/' if i + 1 < b.len() && b[i + 1] == b'*' => {
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(b.len());
+            }
+            b'/' if i + 1 < b.len() && b[i + 1] == b'/' => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'\'' | b'"' => {
+                let q = b[i];
+                i += 1;
+                while i < b.len() && b[i] != q {
+                    i += if b[i] == b'\\' { 2 } else { 1 };
+                }
+                i += 1;
+            }
+            b'(' => {
+                depth += 1;
+                i += 1;
+            }
+            b')' => {
+                depth = depth.saturating_sub(1);
+                i += 1;
+            }
+            b',' if depth == 0 => {
+                spans.push((start, i));
+                i += 1;
+                start = i;
+            }
+            _ => i += 1,
+        }
+    }
+    if args_src.trim().is_empty() {
+        return spans;
+    }
+    spans.push((start, b.len()));
+    spans
+}
+
+fn is_bare_java_ident(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Strip a possible `AtomicReference<...>` wrapper, returning the inner type.
+fn carrier_inner(ty: &str) -> &str {
+    ty.strip_prefix("AtomicReference<")
+        .or_else(|| ty.strip_prefix("atomicreference<"))
+        .and_then(|s| s.strip_suffix('>'))
+        .unwrap_or(ty)
+}
+
+pub fn fix_call_arg_carriers(proc: &mut ProcedureInfo, summaries: &HashMap<String, crate::types::PackageSummary>) {
+    if proc.out_local_vars.is_empty() && !proc.parameters.iter().any(|p| p.is_out()) {
+        return;
+    }
+    // Service-variable name → summary, mirroring the call-site derivation in
+    // statement.rs (`package_to_classname` + lowercase first char + "Service").
+    let mut svc_to_summary: HashMap<String, &crate::types::PackageSummary> = HashMap::new();
+    for (key, summary) in summaries.iter() {
+        let cn = crate::naming::package_to_classname(key);
+        let mut c = cn.chars();
+        let svc = match c.next() {
+            Some(f) => f.to_ascii_lowercase().to_string() + c.as_str(),
+            None => String::new(),
+        };
+        svc_to_summary.insert(format!("{}Service", svc), summary);
+    }
+    let self_summary = summaries
+        .get(&proc.package)
+        .or_else(|| {
+            let lower = proc.package.to_lowercase();
+            summaries.iter().find(|(k, _)| k.to_lowercase() == lower).map(|(_, v)| v)
+        })
+        .cloned();
+
+    static CALL_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"^(\s*)(?:(this)|([A-Za-z_]\w*))\.([A-Za-z_]\w*)\((.*)\);\s*$").unwrap()
+    });
+
+    let camel = crate::naming::snake_to_camel;
+    // Final carrier inner per bare identifier (camelCase): promoted locals
+    // from `out_local_vars`, the caller's own OUT params from `parameters`.
+    let mut carrier_inners: HashMap<String, String> = HashMap::new();
+    for (k, t) in &proc.out_local_vars {
+        carrier_inners.insert(camel(k), carrier_inner(t).to_string());
+    }
+    for p in &proc.parameters {
+        if p.is_out() {
+            carrier_inners.insert(camel(&p.name), carrier_inner(&p.java_type).to_string());
+        }
+    }
+
+    let lines = std::mem::take(&mut proc.java_logic_lines);
+    let mut out_lines: Vec<String> = Vec::with_capacity(lines.len());
+    for line in lines {
+        let Some(cap) = CALL_RE.captures(&line) else {
+            out_lines.push(line);
+            continue;
+        };
+        let indent = cap[1].to_string();
+        let is_this = cap.get(2).is_some();
+        let recv = cap.get(3).map(|m| m.as_str()).unwrap_or("");
+        let method = cap[4].to_string();
+        let args_src = cap[5].to_string();
+        let args_start = cap.get(5).unwrap().start();
+
+        let summary = if is_this { self_summary.as_ref() } else { svc_to_summary.get(recv).copied() };
+        let Some(summary) = summary else {
+            out_lines.push(line);
+            continue;
+        };
+        // Overload pick mirroring statement.rs: exact emitted-arity match,
+        // then smallest arity >= args, else widest.
+        // Emitted lines carry the Java method name (`helperNum`) while
+        // `proc_name` is the SQL spelling (`helper_num`) — match via the same
+        // `java_method_name` transform the call site used.
+        let mut matches: Vec<&crate::types::ProcedureSummary> =
+            summary.procedures.iter().filter(|p| crate::naming::java_method_name(&p.proc_name) == method).collect();
+        matches.sort_by_key(|p| p.parameters.len());
+        let emitted_count =
+            |p: &crate::types::ProcedureSummary| p.parameters.iter().filter(|pp| !pp.dropped_from_signature()).count();
+        let spans = call_arg_spans(&args_src);
+        let arg_count = spans.len();
+        let target = matches
+            .iter()
+            .find(|p| emitted_count(p) == arg_count)
+            .or_else(|| matches.iter().filter(|p| emitted_count(p) >= arg_count).min_by_key(|p| emitted_count(p)))
+            .or_else(|| matches.iter().max_by_key(|p| emitted_count(p)))
+            .copied();
+        let Some(tp) = target else {
+            out_lines.push(line);
+            continue;
+        };
+        let emitted_params: Vec<&crate::types::Parameter> =
+            tp.parameters.iter().filter(|p| !p.dropped_from_signature()).collect();
+
+        // Collect (span, arg_text, callee_inner) needing a typed temp carrier.
+        let mut fixes: Vec<(usize, usize, String, String)> = Vec::new();
+        for (i, &(s, e)) in spans.iter().enumerate() {
+            let arg_text = args_src[s..e].trim();
+            if !is_bare_java_ident(arg_text) {
+                continue;
+            }
+            let Some(param) = emitted_params.get(i) else { continue };
+            if !param.is_out() {
+                continue;
+            }
+            let Some(ci_inner) = carrier_inners.get(arg_text) else { continue };
+            if ci_inner.is_empty() || *ci_inner == param.java_type {
+                continue;
+            }
+            // Keep the span's surrounding whitespace; replace only the
+            // trimmed identifier.
+            let seg = &args_src[s..e];
+            let lead = seg.len() - seg.trim_start().len();
+            fixes.push((s + lead, s + lead + arg_text.len(), arg_text.to_string(), param.java_type.clone()));
+        }
+        if fixes.is_empty() {
+            out_lines.push(line);
+            continue;
+        }
+
+        // Rebuild the call line with `_outTmpN` placeholders.
+        let mut new_args = args_src.clone();
+        let mut delta = 0isize;
+        let mut pre_lines: Vec<String> = Vec::new();
+        let mut post_lines: Vec<String> = Vec::new();
+        for (s, e, arg_text, callee_inner) in fixes {
+            proc.call_out_tmp_counter += 1;
+            let tmp = format!("_outTmp{}", proc.call_out_tmp_counter);
+            let inner_expr = crate::expr::coerce_arg_to_type(&format!("{}.get()", arg_text), &callee_inner, proc);
+            pre_lines.push(format!(
+                "{}java.util.concurrent.atomic.AtomicReference<{}> {} = new java.util.concurrent.atomic.AtomicReference<>({});",
+                indent, callee_inner, tmp, inner_expr
+            ));
+            let Some(ci_inner) = carrier_inners.get(&arg_text) else { continue };
+            post_lines.push(format!(
+                "{}{}.set({});",
+                indent,
+                arg_text,
+                crate::expr::coerce_arg_to_type(&format!("{}.get()", tmp), ci_inner, proc)
+            ));
+            let tmp_start = (s as isize + delta) as usize;
+            let tmp_end = (e as isize + delta) as usize;
+            new_args.replace_range(tmp_start..tmp_end, &tmp);
+            delta += tmp.len() as isize - (e - s) as isize;
+        }
+        let mut new_line = String::with_capacity(line.len() + 16);
+        new_line.push_str(&line[..args_start]);
+        new_line.push_str(&new_args);
+        new_line.push_str(&line[args_start + args_src.len()..]);
+        for pl in pre_lines {
+            out_lines.push(pl);
+        }
+        out_lines.push(new_line);
+        for pl in post_lines {
+            out_lines.push(pl);
+        }
+    }
+    proc.java_logic_lines = out_lines;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
