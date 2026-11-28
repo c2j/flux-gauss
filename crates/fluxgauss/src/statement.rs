@@ -2041,28 +2041,6 @@ fn process_procedure_call(
                         if param.is_out() {
                             let arg_trimmed = arg.trim();
                             if !arg_trimmed.contains('.') && !arg_trimmed.contains('(') {
-                                // Capture the caller's ACTUAL wrapper type
-                                // before the out_local_vars insert below
-                                // overwrites it with the callee's target type —
-                                // otherwise the AtomicReference<T> mismatch
-                                // check can never fire for promoted locals.
-                                let caller_inner_pre = proc
-                                    .parameters
-                                    .iter()
-                                    .find(|p| p.is_out() && crate::naming::snake_to_camel(&p.name) == arg_trimmed)
-                                    .map(|p| p.java_type.clone())
-                                    .or_else(|| {
-                                        proc.out_local_vars
-                                            .iter()
-                                            .find(|(k, _)| crate::naming::snake_to_camel(k) == arg_trimmed)
-                                            .map(|(_, t)| t.clone())
-                                    })
-                                    .or_else(|| {
-                                        proc.local_vars
-                                            .iter()
-                                            .find(|(k, _)| crate::naming::snake_to_camel(k) == arg_trimmed)
-                                            .map(|(_, t)| t.clone())
-                                    });
                                 for vname in proc.local_vars.keys() {
                                     let vname_camel = crate::naming::snake_to_camel(vname);
                                     if vname_camel == arg_trimmed {
@@ -2070,31 +2048,12 @@ fn process_procedure_call(
                                         break;
                                     }
                                 }
-                                // AtomicReference<T> generics are invariant: a
-                                // caller OUT var typed AtomicReference<Long>
-                                // cannot feed a callee OUT param typed
-                                // AtomicReference<String> (and vice versa).
-                                // Rewrap with the coerced .get() value.
-                                if let Some(ci) = caller_inner_pre {
-                                    // local_vars may store the full
-                                    // `AtomicReference<T>` form — compare the
-                                    // INNER type against the callee's inner
-                                    // `target_type`.
-                                    let ci_inner = ci
-                                        .strip_prefix("AtomicReference<")
-                                        .or_else(|| ci.strip_prefix("atomicreference<"))
-                                        .and_then(|s| s.strip_suffix('>'))
-                                        .unwrap_or(&ci)
-                                        .to_string();
-                                    if !ci_inner.is_empty() && ci_inner != *target_type {
-                                        let inner = crate::expr::coerce_arg_to_type(
-                                            &format!("{}.get()", arg_trimmed),
-                                            target_type,
-                                            proc,
-                                        );
-                                        arg = format!("new AtomicReference<>({})", inner);
-                                    }
-                                }
+                                // Issue #144 batch4b: the carrier inner type
+                                // is only final after ALL calls are
+                                // processed ("last promotion wins"), so the
+                                // AR<T> mismatch fix runs as a post-pass
+                                // (`analyze::fix_call_arg_carriers`) over the
+                                // emitted lines — not here.
                             }
                         } else {
                             let arg_trimmed = arg.trim();

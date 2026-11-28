@@ -872,6 +872,11 @@ fn phase2_analyze(
             }
         }
         for proc in &mut pkg.procedures {
+            // Issue #144 batch4b: fix statement-CALL OUT carrier inner-type
+            // mismatches now that every promoted local's FINAL inner type is
+            // known (must precede promote_out_local_vars' assignment rewrite
+            // so `_outTmpN` writebacks stay `.set(...)` form).
+            crate::analyze::fix_call_arg_carriers(proc, &proc_summaries);
             crate::analyze::promote_out_local_vars(proc);
         }
         crate::analyze::discover_cross_service_refs(pkg, &all_pkg_names);

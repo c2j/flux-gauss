@@ -38,8 +38,10 @@ public class Issue144StmtCallOutService {
         AtomicReference<String> vOut2 = new AtomicReference<>(null);
         this.helperProc(vIn, "a", vOut);
         this.helperProc(vIn, "b", vOut2);
-        this.helperNum(Long.valueOf(vCnt), vNum);
-        this.helperProc(vIn, "c", new AtomicReference<>(String.valueOf(vNum.get())));
+        java.util.concurrent.atomic.AtomicReference<Long> _outTmp1 = new java.util.concurrent.atomic.AtomicReference<>(Long.parseLong(String.valueOf(vNum.get())));
+        this.helperNum(Long.valueOf(vCnt), _outTmp1);
+        vNum.set(String.valueOf(_outTmp1.get()));
+        this.helperProc(vIn, "c", vNum);
         this.helperProc(vIn, /* TOBEFIX: unresolved fn some_unknown_udf(vIn, vIn) - pkg=?, caller={FIXTURES_ROOT}/issue_144_stmt_call_out.sql:prc_stmt_call_out */ null, vOut2);
         vCnt = vCnt + 1;
     }

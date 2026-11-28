@@ -1158,4 +1158,55 @@ fn issue_144_defect_family_shapes() {
             svc
         );
     }
+
+    // ── batch4b 语句级 CALL OUT 载体矩阵（issue_144_stmt_call_out，Python efc4cf9 对齐）──
+    // OUT 载体内层类型以最终提升结果为准（last promotion wins）：内层不匹配的
+    // OUT 实参必须走「类型化 _outTmpN 载体 + 调用后回写」，匹配的直接传裸载体；
+    // TODO 注释内的逗号不得移动 OUT 位；EXCEPTION 处理器内的调用同样适用
+    // .get()/裸载体规则。
+    {
+        let gen = conv("issue_144_stmt_call_out.sql");
+        let svc = gen.files.get("Service.java").expect("Service.java");
+        assert!(
+            svc.contains("java.util.concurrent.atomic.AtomicReference<Long> _outTmp1"),
+            "batch4b: AR<String> var into AR<Long> OUT param needs typed temp carrier:\n{}",
+            svc
+        );
+        assert!(
+            svc.contains("this.helperNum(Long.valueOf(vCnt), _outTmp1);"),
+            "batch4b: mismatching OUT arg must pass the typed temp carrier:\n{}",
+            svc
+        );
+        assert!(
+            svc.contains("vNum.set(String.valueOf(_outTmp1.get()));"),
+            "batch4b: temp carrier result must be written back into the promoted var:\n{}",
+            svc
+        );
+        assert!(
+            svc.contains("this.helperProc(vIn, \"c\", vNum);"),
+            "batch4b: inner-type-matching OUT arg must pass the bare carrier (no anonymous wrap):\n{}",
+            svc
+        );
+        assert!(
+            !svc.contains("new AtomicReference<>(String.valueOf(vNum.get()))"),
+            "batch4b: anonymous carrier wrap at OUT position silently drops the OUT value:\n{}",
+            svc
+        );
+        let udf_call = svc.lines().find(|l| l.contains("some_unknown_udf")).expect("batch4b: unresolved-udf call line");
+        assert!(
+            udf_call.trim_end().ends_with("vOut2);"),
+            "batch4b: TODO-comment commas must not shift the OUT arg position:\n{}",
+            udf_call
+        );
+        assert!(
+            svc.contains("this.helperProc(String.valueOf(vOut.get()), \"e\", vOut);"),
+            "batch4b: handler-emitted call must .get() the IN-position carrier and keep the OUT carrier bare:\n{}",
+            svc
+        );
+        assert!(
+            svc.contains("vOut.set(\"fb\");"),
+            "batch4b: bare assignment to a promoted carrier must re-wrap as .set():\n{}",
+            svc
+        );
+    }
 }
