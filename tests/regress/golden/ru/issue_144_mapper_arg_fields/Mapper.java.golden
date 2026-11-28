@@ -1,0 +1,26 @@
+// ===== FILE: Issue144mpHelperMapper.java =====
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue144mpHelperMapper {
+
+    // No direct DML operations for pkg_issue144mp_helper
+}
+
+// ===== FILE: Issue144mpMapper.java =====
+package com.example.demo.mapper;
+
+import java.util.List;
+import java.util.Map;
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue144mpMapper {
+
+    // {FIXTURES_ROOT}/issue_144_mapper_arg_fields.sql:34 — pkg_issue144mp.prc_model_loop
+    List<Map<String, Object>> selectPrcModelLoop(@Param("pIOperationNo") String pIOperationNo);
+    // {FIXTURES_ROOT}/issue_144_mapper_arg_fields.sql:34 — pkg_issue144mp.prc_model_loop
+    Map<String, Object> selectPrcModelLoop_1(@Param("pIOperationNo") String pIOperationNo, @Param("vTableName") Object vTableName, @Param("vSqlDiff") Object vSqlDiff);
+}

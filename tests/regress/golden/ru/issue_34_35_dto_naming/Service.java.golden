@@ -25,9 +25,9 @@ public class Issue34OrderService {
     @Transactional
     public void procCreateOrder(String pCustomerName, String pProductCode, int pQuantity, java.math.BigDecimal pUnitPrice, String pCreatedBy, AtomicReference<Long> pOrderId, AtomicReference<java.math.BigDecimal> pTotalAmount, AtomicReference<String> pStatusMsg) {
         java.math.BigDecimal vAmount = java.math.BigDecimal.ZERO;
-        Long vOrderId = ((Number)(0L)).longValue();
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
+        Long vOrderId = ((Number)(0L)).longValue();
         try {
             { Object _val = issue34OrderMapper.selectTIssue34Order(pCustomerName,  pProductCode,  pQuantity,  pUnitPrice,  pCreatedBy); if (_val != null) vOrderId = (_val instanceof Number ? ((Number)_val).longValue() : Long.parseLong(String.valueOf(_val))); }
             vAmount = java.math.BigDecimal.valueOf(pQuantity).multiply(pUnitPrice);

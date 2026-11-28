@@ -22,12 +22,12 @@ public class Issue44NestedExcService {
     public void procNestedExceptionBlocks() {
         String vConfig = null;
         Integer vCount = 0;
-        String vDate = String.valueOf(new java.text.SimpleDateFormat("yyyyMMdd").format(new java.sql.Timestamp(System.currentTimeMillis())));
         String vFlag = null;
         String vFlag2 = null;
         String vMsg = null;
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
+        String vDate = String.valueOf(new java.text.SimpleDateFormat("yyyyMMdd").format(new java.sql.Timestamp(System.currentTimeMillis())));
         try {
             vFlag = "0";
             vMsg = "success";

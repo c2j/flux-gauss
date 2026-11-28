@@ -20,10 +20,10 @@ public class Issue108CrossPkgCallerService {
 
     // Source: prc_call_cross_pkg (PROCEDURE) — {FIXTURES_ROOT}/issue_108_cross_pkg_caller.sql:1-17
     public void prcCallCrossPkg(String pIDate) {
+        Long vSum = 0L;
         Long vBonus = ((Number)(0L)).longValue();
         Long vDeclBonus = /* TOBEFIX: unresolved fn fn_calc_bonus(12000, 0.10, 2) - pkg=?, caller={FIXTURES_ROOT}/issue_108_cross_pkg_caller.sql:prc_call_cross_pkg */ 0L;
         String vName = null;
-        Long vSum = 0L;
         vBonus = /* TOBEFIX: unresolved fn fn_calc_bonus(15000, 0.15, 3) - pkg=?, caller={FIXTURES_ROOT}/issue_108_cross_pkg_caller.sql:prc_call_cross_pkg */ 0L;
         // CALL prc_get_emp_name(1002, vName)
         for (int i = 1; i <= 10; i++) {

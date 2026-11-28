@@ -1,0 +1,21 @@
+// ===== FILE: Issue144litHelperMapper.xml =====
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.Issue144litHelperMapper">
+
+
+</mapper>
+
+// ===== FILE: Issue144litMapper.xml =====
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.Issue144litMapper">
+
+    <!-- Source: {FIXTURES_ROOT}/issue_144_literal_mask.sql:13-32 — pkg_issue144lit.prc_decode_lit.selectPrcDecodeLit -->
+    <select id="selectPrcDecodeLit" parameterType="string" resultType="java.util.LinkedHashMap">
+        (SELECT t.table_name, CASE WHEN t.data_group = 'B' THEN t.table_name || '_HIS' WHEN t.data_group = 'S' THEN t.table_name || '_HIS' ELSE coalesce(t.his_table_name, CASE WHEN #{pIUsage, jdbcType=VARCHAR, javaType=String} = 'M' THEN t.table_name ELSE t.table_name END) END his_table_name FROM par_issue144_lit t WHERE t.operation_no = #{pIOperationNo, jdbcType=VARCHAR, javaType=String} AND (t.data_group = #{pIDataGroup, jdbcType=VARCHAR, javaType=String} OR #{pIDataGroup, jdbcType=VARCHAR, javaType=String} IS NULL))
+    </select>
+
+</mapper>

@@ -21,9 +21,9 @@ public class Issue72Service {
 
     // Source: pkg_issue72.prc_type_wall (PROCEDURE) — {FIXTURES_ROOT}/issue_72_string_to_number.sql:8-19
     public void prcTypeWall(String pIDate, AtomicReference<String> pOSucceed) {
+        String vFlag = null;
         Long vAmt = ((Number)(0L)).longValue();
         Long vCount = ((Number)(0L)).longValue();
-        String vFlag = null;
         vFlag = "1";
         vCount = Long.parseLong(String.valueOf(vFlag));
         vAmt = ((Number)(Double.parseDouble(String.valueOf(vFlag)) * 0.5)).longValue();
@@ -34,9 +34,9 @@ public class Issue72Service {
 
     // Source: pkg_issue72.prc_str_method_wall (PROCEDURE) — {FIXTURES_ROOT}/issue_72_string_to_number.sql:21-32
     public void prcStrMethodWall(String pIn, AtomicReference<String> pOSucceed) {
+        String vStr = null;
         Long vLen = ((Number)(0L)).longValue();
         Long vNext = ((Number)(0L)).longValue();
-        String vStr = null;
         vStr = "abc";
         vLen = Long.valueOf(pIn.length());
         vNext = Long.parseLong(String.valueOf(vStr.length() + 1));

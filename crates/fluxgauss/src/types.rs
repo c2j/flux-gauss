@@ -330,6 +330,19 @@ pub struct ProcedureInfo {
     /// Used to detect de-facto constants: package vars never written here are treated as read-only.
     pub written_package_vars: HashSet<String>,
 
+    /// Issue #144 batch1b/batch2 (Python parity): record-field placeholder
+    /// registry for dynamic SQL. `s.diff_column` inside a concat fragment
+    /// becomes the `#{s_diff_column}` placeholder; the maps below bind that
+    /// placeholder to the Java value expression (`s.get("diff_column")`) and
+    /// to its record root (`s`) so loop-scope filtering can tell which
+    /// fragments are only valid inside a cursor FOR body.
+    pub dot_access_exprs: HashMap<String, String>,
+    pub dot_access_roots: HashMap<String, String>,
+    /// Cursor/FOR-record loop variable names (lowercased) — the Python
+    /// engine's `_loop_vars`. Populated when a `for (Map<String, Object> v : …)`
+    /// header is emitted; persists for the whole procedure like Python.
+    pub loop_vars: HashSet<String>,
+
     /// procedure_filter selection: "target" | "closure" | "excluded" | "" (#120)
     pub selection: String,
 }
@@ -389,6 +402,9 @@ impl ProcedureInfo {
             inline_comments: Vec::new(),
             local_var_source_lines: HashMap::new(),
             written_package_vars: HashSet::new(),
+            dot_access_exprs: HashMap::new(),
+            dot_access_roots: HashMap::new(),
+            loop_vars: HashSet::new(),
             selection: String::new(),
         }
     }

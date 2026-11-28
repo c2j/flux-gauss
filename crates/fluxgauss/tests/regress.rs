@@ -935,3 +935,182 @@ fn issue_121_schema_qualified_filter_entry_selects_proc() {
     assert_eq!(pkg.procedures[0].proc_name, "proc_s");
     assert_eq!(pkg.procedures[0].selection, "target");
 }
+
+/// Issue #144 Rust-sync: 六个缺陷族的形态断言（对照 Python 批次
+/// 047b23c / a9640e5 / ca45793 / 5a628ab 的 acceptance_shape）。
+/// 断言生成产物形态，不做 golden 快照。
+#[test]
+fn issue_144_defect_family_shapes() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let fixtures = manifest_dir.join(FIXTURES_REL);
+    let conv = |name: &str| {
+        let sql = fixtures.join(name);
+        let tmp = tempfile::tempdir().expect("tempdir");
+        run_conversion(&sql, &tmp.path().join("dest"))
+    };
+
+    // ── batch1a 跨块声明提升（issue_144_crossblock_decl）──
+    // OUT-carrier AtomicReference 声明必须在方法体首层，try 内只有赋值，
+    // catch 分支引用合法（无重复声明）。
+    {
+        let gen = conv("issue_144_crossblock_decl.sql");
+        let svc = gen.files.get("Service.java").expect("Service.java");
+        assert!(
+            svc.contains("AtomicReference<String> vRetmsg = new AtomicReference<>(null);"),
+            "batch1a: vRetmsg AtomicReference decl must exist:\n{}",
+            svc
+        );
+        assert_eq!(
+            svc.matches("AtomicReference<String> vRetmsg =").count(),
+            1,
+            "batch1a: vRetmsg must be declared exactly once (hoisted, not re-declared in try):\n{}",
+            svc
+        );
+        assert!(svc.contains("} catch (Exception __e1) {"), "batch1a: exception branch must be present:\n{}", svc);
+    }
+
+    // ── batch1b 动态 SQL 记录字段（issue_144_mapper_arg_fields）──
+    // Rust 侧对应机制：游标 FOR 记录字段经 getOrDefault 提取为运行期字符串，
+    // 直接进 concat 模板的 s.field 走 #{s_field} + s.get("field")（见
+    // statement.rs flatten_concat_inner）。fixture 断言：记录字段提取存在、
+    // mapper 调用实参全部是已声明局部变量、接口参数与实参个数一致。
+    {
+        let gen = conv("issue_144_mapper_arg_fields.sql");
+        let svc = gen.files.get("Service.java").expect("Service.java");
+        let mapper_java = gen.files.get("Mapper.java").expect("Mapper.java");
+        let mapper_xml = gen.files.get("Mapper.xml").expect("Mapper.xml");
+        assert!(
+            svc.contains("s.getOrDefault(\"tableName\", s.get(\"table_name\"))"),
+            "batch1b: cursor record field must extract via s.get(...):\n{}",
+            svc
+        );
+        assert!(
+            svc.contains("for (Map<String, Object> s : sList)"),
+            "batch1b: cursor FOR var must be Map<String, Object>:\n{}",
+            svc
+        );
+        let call_line =
+            svc.lines().find(|l| l.contains("selectPrcModelLoop_1(")).expect("batch1b: selectPrcModelLoop_1 call");
+        for bad in ["diffColumn", "diffValue", "tableName"] {
+            assert!(
+                !call_line.contains(&format!(" {}", bad)),
+                "batch1b: call must not reference undeclared field local `{}`: {}",
+                bad,
+                call_line
+            );
+        }
+        assert!(
+            mapper_java.contains("@Param(\"vTableName\")"),
+            "batch1b: mapper interface must declare vTableName param:\n{}",
+            mapper_java
+        );
+        assert!(
+            mapper_xml.contains("${vTableName}") && mapper_xml.contains("${vSqlDiff}"),
+            "batch1b: dynamic SQL template must use ${{}} identifier placeholders:\n{}",
+            mapper_xml
+        );
+    }
+
+    // ── batch2a SQL 字面量掩码（issue_144_literal_mask）──
+    // 'S'/'B' 字面量必须原样保留；不得出现名为 s 的幽灵 mapper 参数。
+    {
+        let gen = conv("issue_144_literal_mask.sql");
+        let mapper_java = gen.files.get("Mapper.java").expect("Mapper.java");
+        let mapper_xml = gen.files.get("Mapper.xml").expect("Mapper.xml");
+        assert!(
+            mapper_xml.contains("'S'") && mapper_xml.contains("'B'"),
+            "batch2a: SQL literals must survive param conversion:\n{}",
+            mapper_xml
+        );
+        assert!(
+            !mapper_xml.contains("#{s}") && !mapper_xml.contains("${s}"),
+            "batch2a: literal 'S' must not become a placeholder:\n{}",
+            mapper_xml
+        );
+        assert!(
+            !mapper_java.contains("@Param(\"s\")"),
+            "batch2a: no phantom `s` mapper param allowed:\n{}",
+            mapper_java
+        );
+        let sig = mapper_java
+            .lines()
+            .find(|l| l.contains("selectPrcDecodeLit("))
+            .expect("batch2a: selectPrcDecodeLit signature");
+        assert_eq!(
+            sig.matches("@Param(").count(),
+            3,
+            "batch2a: selectPrcDecodeLit must have exactly 3 params:\n{}",
+            sig
+        );
+    }
+
+    // ── batch2b 循环记录字段片段过滤 + batch2c 占位符口径（issue_144_chain_loop_field）──
+    // j.column_name 拼接只在 j 循环体内；insert mapper 调用实参不得含 j.get(...)；
+    // ${vColumns} 标识符占位符与 @Param("vColumns") 一一对应。
+    {
+        let gen = conv("issue_144_chain_loop_field.sql");
+        let svc = gen.files.get("Service.java").expect("Service.java");
+        let mapper_java = gen.files.get("Mapper.java").expect("Mapper.java");
+        let mapper_xml = gen.files.get("Mapper.xml").expect("Mapper.xml");
+        let insert_call = svc
+            .lines()
+            .find(|l| l.contains("insertPrcMoveCols(") && l.contains("vColumns"))
+            .expect("batch2b: insertPrcMoveCols call with vColumns");
+        assert!(
+            !insert_call.contains("j.get") && !insert_call.contains("j."),
+            "batch2b: insert call must not leak loop record j outside its loop:\n{}",
+            insert_call
+        );
+        assert!(
+            svc.contains("j.getOrDefault(\"columnName\", j.get(\"column_name\"))"),
+            "batch2b: j.column_name concat must stay inside the j loop:\n{}",
+            svc
+        );
+        assert!(
+            mapper_xml.contains("${vColumns}"),
+            "batch2b: template must keep ${{vColumns}} value placeholder:\n{}",
+            mapper_xml
+        );
+        assert!(
+            mapper_java.contains("@Param(\"vColumns\")"),
+            "batch2c: ${{vColumns}} placeholder needs matching @Param:\n{}",
+            mapper_java
+        );
+        let insert_sig = mapper_java
+            .lines()
+            .find(|l| l.contains("insertPrcMoveCols("))
+            .expect("batch2c: insertPrcMoveCols signature");
+        assert!(
+            insert_sig.contains("@Param(\"vTargetTable\")") && insert_sig.contains("@Param(\"vColumns\")"),
+            "batch2c: ${{}} identifier placeholders must have @Param counterparts:\n{}",
+            insert_sig
+        );
+    }
+
+    // ── batch3 命名游标 FOR 循环变量注册 Map（issue_144_cursor_for_fields）──
+    // r_date.field 必须生成 rDate.get("field") 取值，无 TODO null 退化。
+    {
+        let gen = conv("issue_144_cursor_for_fields.sql");
+        let svc = gen.files.get("Service.java").expect("Service.java");
+        assert!(
+            svc.contains("for (Map<String, Object> rDate : rDateList)"),
+            "batch3: cursor FOR var must be declared Map<String, Object>:\n{}",
+            svc
+        );
+        assert!(
+            svc.contains("rDate.get(\"withdrawal_date\")"),
+            "batch3: r_date.withdrawal_date must lower to rDate.get(...):\n{}",
+            svc
+        );
+        assert!(
+            svc.contains("rDate.get(\"cap_date\")"),
+            "batch3: r_date.cap_date must lower to rDate.get(...):\n{}",
+            svc
+        );
+        assert!(
+            !svc.contains("TODO: withdrawalDate()") && !svc.contains("TODO: capDate()"),
+            "batch3: record field access must not degrade to TODO null:\n{}",
+            svc
+        );
+    }
+}

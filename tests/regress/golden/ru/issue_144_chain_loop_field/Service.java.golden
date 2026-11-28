@@ -1,0 +1,58 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144colsMapper;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_144_chain_loop_field.sql
+public class Issue144colsService {
+    private static final Logger log = LoggerFactory.getLogger(Issue144colsService.class);
+
+    private final Issue144colsMapper issue144colsMapper;
+
+    public Issue144colsService(Issue144colsMapper issue144colsMapper) {
+        this.issue144colsMapper = issue144colsMapper;
+    }
+
+    // Source: pkg_issue144cols.prc_move_cols (PROCEDURE) — {FIXTURES_ROOT}/issue_144_chain_loop_field.sql:21-61
+    @Transactional
+    public void prcMoveCols(long pIInstNum, String pIDataDate, AtomicReference<String> pORetcode, AtomicReference<String> pORetmsg) {
+        String vColumns = "";
+        String vDiffColumn = null;
+        String vDiffValue = null;
+        String vSourceTable = null;
+        String vSql = null;
+        String vSqlDiff = null;
+        String vTargetTable = null;
+        Long vCnt = 0L;
+        if ((vSourceTable == null || vTargetTable == null)) {
+            pORetcode.set("0");
+            return;
+        }
+        if (vDiffColumn != null) {
+            vSqlDiff = String.valueOf(String.valueOf(String.valueOf(String.valueOf(" AND ").concat(String.valueOf(vDiffColumn))).concat(String.valueOf("= '"))).concat(String.valueOf(vDiffValue))).concat(String.valueOf("'"));
+        } else {
+            vSqlDiff = "";
+        }
+        // for j in query: (SELECT t.column_name AS column_name                     FROM v_my_tab_columns_144 t                    WHERE t.table_name = v_source_table                      AND t.column_name NOT IN ('USAGE'))
+        List<Map<String, Object>> jList = issue144colsMapper.selectPrcMoveCols(pIInstNum,  pIDataDate,  vSourceTable);
+        if (jList == null) jList = new ArrayList<>();
+        for (Map<String, Object> j : jList) {
+            vColumns = String.valueOf(String.valueOf(vColumns).concat(String.valueOf(","))).concat(String.valueOf(j.getOrDefault("columnName", j.get("column_name"))));
+        }
+        vColumns = String.valueOf(vColumns).substring(Math.min(String.valueOf(vColumns).length(), Math.max(0, (2) - 1)));
+        vSql = String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf("insert into ").concat(String.valueOf(vTargetTable))).concat(String.valueOf("("))).concat(String.valueOf(vColumns))).concat(String.valueOf(") select "))).concat(String.valueOf(vColumns))).concat(String.valueOf(" from "))).concat(String.valueOf(vSourceTable))).concat(String.valueOf(" where INST_NUM = :1 AND INST_DATA_DATE = :2"))).concat(String.valueOf(vSqlDiff));
+        issue144colsMapper.insertPrcMoveCols(pIInstNum,  pIDataDate,  vTargetTable,  vColumns,  vSourceTable,  vSqlDiff);
+        pORetcode.set("0");
+        pORetmsg.set("ok");
+    }
+}

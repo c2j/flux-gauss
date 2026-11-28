@@ -1,0 +1,21 @@
+// ===== FILE: Issue144xbHelperMapper.java =====
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue144xbHelperMapper {
+
+    // No direct DML operations for pkg_issue144xb_helper
+}
+
+// ===== FILE: Issue144xbMapper.java =====
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue144xbMapper {
+
+    // No direct DML operations for pkg_issue144xb
+}

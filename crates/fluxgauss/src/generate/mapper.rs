@@ -37,6 +37,90 @@ static RETURNING_INTO_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLoc
 static DOLLAR_PARAM_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 static PG_CAST_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 
+/// Issue #144 batch2a：把字符串字面量/注释/引号标识符替换为 `\x00<idx>\x00`
+/// 哨兵。参数名替换用 `\b` 词边界正则，`'S'` 字面量里的 S 会被误换成
+/// `#{s}`（SQL 损坏 + 幽灵 mapper 参数）。返回 (masked_sql, spans)；
+/// 扫描类调用方只用 masked 串即可，转换类调用方出口用
+/// [`restore_sql_literals`] 还原。Python `_mask_sql_literals` 对偶。
+pub(crate) fn mask_sql_literals(sql: &str) -> (String, Vec<String>) {
+    let chars: Vec<char> = sql.chars().collect();
+    let n = chars.len();
+    let mut spans: Vec<String> = Vec::new();
+    let mut out = String::with_capacity(sql.len());
+    let mut i = 0usize;
+    while i < n {
+        let ch = chars[i];
+        // (span_start, span_end) 半开区间；None 表示普通字符
+        let span: Option<(usize, usize)> = if ch == '\'' {
+            let mut j = i + 1;
+            let mut terminated = false;
+            while j < n {
+                if chars[j] == '\'' {
+                    if j + 1 < n && chars[j + 1] == '\'' {
+                        j += 2;
+                        continue;
+                    }
+                    terminated = true;
+                    break;
+                }
+                j += 1;
+            }
+            Some((i, if terminated { j + 1 } else { n }))
+        } else if ch == '-' && i + 1 < n && chars[i + 1] == '-' {
+            let mut j = i;
+            while j < n && chars[j] != '\n' {
+                j += 1;
+            }
+            Some((i, j))
+        } else if ch == '/' && i + 1 < n && chars[i + 1] == '*' {
+            let mut j = i + 2;
+            let mut end = n;
+            while j + 1 < n {
+                if chars[j] == '*' && chars[j + 1] == '/' {
+                    end = j + 2;
+                    break;
+                }
+                j += 1;
+            }
+            Some((i, end))
+        } else if ch == '"' {
+            let mut j = i + 1;
+            let mut found = false;
+            while j < n {
+                if chars[j] == '"' {
+                    found = true;
+                    break;
+                }
+                j += 1;
+            }
+            Some((i, if found { j + 1 } else { n }))
+        } else {
+            None
+        };
+        match span {
+            Some((start, end)) => {
+                spans.push(chars[start..end].iter().collect());
+                out.push_str(&format!("\x00{}\x00", spans.len() - 1));
+                i = end.max(start + 1);
+            }
+            None => {
+                out.push(ch);
+                i += 1;
+            }
+        }
+    }
+    (out, spans)
+}
+
+/// [`mask_sql_literals`] 的逆操作：把 `\x00<idx>\x00` 哨兵还原为原文。
+pub(crate) fn restore_sql_literals(sql: &str, spans: &[String]) -> String {
+    let mut s = sql.to_string();
+    for (idx, frag) in spans.iter().enumerate() {
+        s = s.replace(&format!("\x00{}\x00", idx), frag);
+    }
+    s
+}
+
 /// Issue #128: every `#{name}`/`${name}` placeholder in a mapper statement
 /// must have a matching `@Param("name")` on the interface method — MyBatis
 /// binds case-sensitively, so a mismatch surfaces only as a runtime
@@ -420,9 +504,12 @@ pub(crate) fn extract_local_var_refs(
     param_java_names: &std::collections::HashSet<String>,
     out_local_vars: &std::collections::HashMap<String, String>,
 ) -> Vec<(String, String)> {
+    // Issue #144 batch2a：字面量/注释里的标识符不算本地变量引用
+    // （'S' 字面量曾让游标记录 s 被误加为幽灵 mapper 参数）。
+    let (masked_sql, _spans) = mask_sql_literals(sql_text);
     let mut result = Vec::new();
     let re = IDENTIFIER_RE.get_or_init(|| regex::Regex::new(r"\b([a-zA-Z_]\w*)\b").unwrap());
-    for caps in re.captures_iter(sql_text) {
+    for caps in re.captures_iter(&masked_sql) {
         let word = caps.get(1).unwrap().as_str();
         let lower = word.to_lowercase();
         if matches!(
@@ -1607,7 +1694,9 @@ fn convert_params_to_mybatis(
     local_vars: &std::collections::HashMap<String, String>,
     package_vars: &std::collections::HashMap<String, crate::types::VarInfo>,
 ) -> String {
-    let result = sql.to_string();
+    // Issue #144 batch2a：先掩码字面量/注释，参数名替换不再命中 'S' 这类
+    // 字面量内容；出口统一还原。
+    let (result, lit_spans) = mask_sql_literals(sql);
 
     let alias_col_re =
         DOT_ACCESS_RE.get_or_init(|| regex::Regex::new(r"(?i)\b([a-zA-Z_]\w*)\s*\.\s*([a-zA-Z_]\w*)").unwrap());
@@ -1745,7 +1834,7 @@ fn convert_params_to_mybatis(
         s = s.replace(&format!("__ALIASPROT_{}__", idx), original);
     }
 
-    s
+    restore_sql_literals(&s, &lit_spans)
 }
 
 fn expand_rowtype_insert(sql: &str) -> String {

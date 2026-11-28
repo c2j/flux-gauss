@@ -21,8 +21,8 @@ public class Issue72bService {
 
     // Source: pkg_issue72b.prc_math_wall (PROCEDURE) — {FIXTURES_ROOT}/issue_72b_math_string_args.sql:7-16
     public void prcMathWall(AtomicReference<String> pOSucceed) {
-        Long vAbs = ((Number)(0L)).longValue();
         String vFlag = null;
+        Long vAbs = ((Number)(0L)).longValue();
         Long vRnd = ((Number)(0L)).longValue();
         vFlag = "-5";
         vAbs = ((Number)(Math.abs(Double.parseDouble(String.valueOf(vFlag))))).longValue();

@@ -1,0 +1,73 @@
+// ===== FILE: Issue144mpHelperServiceTest.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144mpHelperMapper;
+import com.example.demo.service.Issue144mpHelperService;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_144_mapper_arg_fields.sql
+class Issue144mpHelperServiceTest {
+
+    @Mock
+    private Issue144mpHelperMapper issue144mpHelperMapper;
+
+    @InjectMocks
+    private Issue144mpHelperService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_genXml_success() {
+        String pITable = "test_p_i_table";
+        String pIDiffCol = "test_p_i_diff_col";
+        String pIDiffVal = "test_p_i_diff_val";
+        service.genXml(pITable, pIDiffCol, pIDiffVal);
+    }
+}
+
+// ===== FILE: Issue144mpServiceTest.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144mpMapper;
+import com.example.demo.service.Issue144mpService;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_144_mapper_arg_fields.sql
+class Issue144mpServiceTest {
+
+    @Mock
+    private Issue144mpMapper issue144mpMapper;
+
+    @InjectMocks
+    private Issue144mpService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_prcModelLoop_success() {
+        String pIOperationNo = "test_p_i_operation_no";
+        { var m = new java.util.HashMap<String,Object>(); m.put("tableName", "test"); m.put("diffColumn", 1L); m.put("diffValue", 1L); when(issue144mpMapper.selectPrcModelLoop((String) any())).thenReturn(java.util.List.of(m)); }
+        { var m = new java.util.HashMap<String,Object>(); m.put("diffColumn", 1L); m.put("diffValue", 1L); m.put("tableName", "test"); when(issue144mpMapper.selectPrcModelLoop_1((String) any(), (Object) any(), (Object) any())).thenReturn(m); }
+        service.prcModelLoop(pIOperationNo);
+    }
+}

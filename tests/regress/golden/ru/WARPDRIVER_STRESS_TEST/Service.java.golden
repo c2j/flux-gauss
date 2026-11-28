@@ -66,27 +66,27 @@ public class WarpdriverStressTestService {
     @Transactional
     public void spMainOrchestrator(String pBizDate, String pMode, AtomicReference<java.math.BigDecimal> pTotalAmt, AtomicReference<Long> pLogId) {
         Integer vCleaned = 0;
-        java.util.List<Object> vCurOrders = new java.util.ArrayList<>();
-        java.sql.Date vDate = java.sql.Date.valueOf(java.time.LocalDate.parse(String.valueOf(pBizDate), java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd][yyyy-M-d]")));
         Boolean vHasError = false;
         Integer vIdx = 0;
-        java.util.List<Map<String, Object>> vItemTab = new java.util.ArrayList<>();
         Map<String, Object> vRec = new HashMap<>();
         String vSavepoint1 = null;
         java.math.BigDecimal vSum = java.math.BigDecimal.ZERO;
         List<Map<String, Object>> vCurOrdersResult = null;
         int vCurOrdersIdx = 0;
-        Object v_cur_orders = null;
         boolean found = false;
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
         int __ROWCOUNT__ = 0;
+        boolean running = true;
+        int _smGuard = 0;
+        java.util.List<Object> vCurOrders = new java.util.ArrayList<>();
+        java.sql.Date vDate = java.sql.Date.valueOf(java.time.LocalDate.parse(String.valueOf(pBizDate), java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd][yyyy-M-d]")));
+        java.util.List<Map<String, Object>> vItemTab = new java.util.ArrayList<>();
+        Object v_cur_orders = null;
         try {
             // State machine generated from GOTO labels
             enum SpMainOrchestratorState { FetchLoop, ErrorHandler, CloseCursor }
             SpMainOrchestratorState currentState = SpMainOrchestratorState.FetchLoop;
-            boolean running = true;
-            int _smGuard = 0;
             while (running && _smGuard++ < 10000) {
                 gSessionCounter = gSessionCounter + 1;
                 pLogId.set(Long.parseLong(String.valueOf(this.nextval("seq_log_master"))));
@@ -194,13 +194,13 @@ public class WarpdriverStressTestService {
     // Source: PKG_WARPDRIVER_STRESS_TEST.sp_goto_cleanup_master (PROCEDURE) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:294-351
     @Transactional
     public void spGotoCleanupMaster(long pOrderId, AtomicReference<String> pResult) {
-        Long vConnId = ((Number)(0L)).longValue();
         String vLockKey = null;
         java.math.BigDecimal vTempAmt = java.math.BigDecimal.ZERO;
         boolean found = false;
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
         int __ROWCOUNT__ = 0;
+        Long vConnId = ((Number)(0L)).longValue();
         try {
             try {
                 vLockKey = String.valueOf("LOCK_ORDER_").concat(String.valueOf(pOrderId));
@@ -260,9 +260,9 @@ public class WarpdriverStressTestService {
 
     // Source: PKG_WARPDRIVER_STRESS_TEST.sp_goto_skip_logic (PROCEDURE) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:397-437
     public void spGotoSkipLogic(String pReportType, String pBizDate, AtomicReference<String> pContent) {
-        java.sql.Date vDate = java.sql.Date.valueOf(java.time.LocalDate.parse(String.valueOf(pBizDate), java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd][yyyy-M-d]")));
         String vDetail = "";
         String vHeader = null;
+        java.sql.Date vDate = java.sql.Date.valueOf(java.time.LocalDate.parse(String.valueOf(pBizDate), java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd][yyyy-M-d]")));
         vHeader = String.valueOf(String.valueOf(String.valueOf("=== 清算报告 (").concat(String.valueOf(pBizDate))).concat(String.valueOf(") ==="))).concat(String.valueOf(String.valueOf((char)(10))));
         if (!(java.util.Objects.equals(String.valueOf(pReportType).toUpperCase(), "SUMMARY"))) {
             // for rec in query: (       SELECT region_code,              COUNT(*) AS cnt,              SUM(settle_amount) AS amt,              AVG(fee_rate) AS avg_fee       FROM settlement       WHERE settle_date = v_date       GROUP BY region_code       HAVING COUNT(*) > 10       ORDER BY amt DESC     )
@@ -337,11 +337,11 @@ public class WarpdriverStressTestService {
         Integer vMaxRetry = 3;
         Integer vRetry = 0;
         String vState = "INIT";
+        boolean running = true;
+        int _smGuard = 0;
         // State machine generated from GOTO labels
         enum SpGotoStateMachineState { StateInit, StatePending, StatePaid, StateShipped, StateRefunding, StateCheck, StateDone }
         SpGotoStateMachineState currentState = SpGotoStateMachineState.StateInit;
-        boolean running = true;
-        int _smGuard = 0;
         while (running && _smGuard++ < 10000) {
             switch (currentState) {
                 case StateInit:
@@ -469,20 +469,20 @@ public class WarpdriverStressTestService {
     // Source: PKG_WARPDRIVER_STRESS_TEST.fn_recursive_tree_cleanup (FUNCTION) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:697-725
     @Transactional
     public Integer fnRecursiveTreeCleanup(long pParentId, int pDepth) {
-        Long vChildId = ((Number)(0L)).longValue();
         Integer vCount = 0;
         List<Map<String, Object>> vCurResult = null;
         int vCurIdx = 0;
+        boolean found = false;
+        int _loopGuard1 = 0;
+        Long vChildId = ((Number)(0L)).longValue();
         Object vCur = null;
         Object v_cur = null;
-        boolean found = false;
         if (pDepth > 10) {
             return 0;
         }
         vCurResult = warpdriverStressTestMapper.selectFnRecursiveTreeCleanup(pParentId,  pDepth);
         if (vCurResult == null) vCurResult = new java.util.ArrayList<>();
         vCurIdx = 0;
-        int _loopGuard1 = 0;
         while (true) {
             if (++_loopGuard1 > 1000) { break; }
             found = vCurIdx < vCurResult.size();
@@ -503,10 +503,10 @@ public class WarpdriverStressTestService {
 
     // Source: PKG_WARPDRIVER_STRESS_TEST.fn_array_jsonb_processor (FUNCTION) — {FIXTURES_ROOT}/PKG_WARPDRIVER_STRESS_TEST.sql:730-764
     public String fnArrayJsonbProcessor(String pItems, java.math.BigDecimal pDiscount) {
-        String vArr = String.valueOf(pItems);
         Integer vIdx = 0;
         String vItem = null;
         java.math.BigDecimal vNewPrice = java.math.BigDecimal.ZERO;
+        String vArr = String.valueOf(pItems);
         String vResult = String.valueOf("[]");
         if (java.util.Objects.equals(this.jsonbArrayLength(vArr), 0)) {
             return String.valueOf("{\"error\":\"empty_array\"}");
