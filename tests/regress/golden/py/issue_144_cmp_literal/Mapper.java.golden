@@ -1,0 +1,13 @@
+        package com.example.demo.mapper;
+
+        import java.util.List;
+import java.util.Map;
+
+        import org.apache.ibatis.annotations.*;
+
+        @Mapper
+        public interface Issue144CmpLiteralMapper {
+
+                // issue_144_cmp_literal.sql:20 — pkg_issue144cmp.prc_cmp_literal
+        List<Map<String, Object>> selectPrcCmpLiteral();
+        }
