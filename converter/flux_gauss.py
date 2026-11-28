@@ -11621,6 +11621,12 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
 
                     def _bd_operand(x, x_type):
                         if "BigDecimal" in x_type or "BigDecimal" in x:
+                            # #144 batch4e: record BigDecimal 字段访问统一
+                            # .doubleValue() 解箱（PR #143），.add()/.subtract()
+                            # 需要 BigDecimal 实参 —— 经 String.valueOf 回箱。
+                            if (".doubleValue()" in x and "BigDecimal.valueOf" not in x
+                                    and "new java.math.BigDecimal" not in x):
+                                return f"new java.math.BigDecimal(String.valueOf({x}))"
                             return x
                         if _is_numeric_literal_expr(x):
                             return f"java.math.BigDecimal.valueOf({x})"
@@ -11700,14 +11706,28 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
             if op == "-" and (_is_ts_left or _is_ts_right) and not (_is_ts_left and _is_ts_right):
                 # Timestamp minus a non-timestamp (interval/days value) → epoch arithmetic
                 _ts_side, _other = (left, right) if _is_ts_left else (right, left)
-                _other_d = f"((Number) ({_other} != null ? {_other} : 0L)).longValue()" if ".get(" in _other else f"((Number) ({_other})).longValue()"
+                _other_type = right_type if _is_ts_left else left_type
+                # #144 batch4e: VARCHAR2 天数操作数走数值解析（Oracle 隐式转换）；
+                # ((Number)(String)) 强转在 Java 不成立。
+                if _other_type == "String":
+                    _other_d = f"({_other} != null ? Long.parseLong(String.valueOf({_other})) : 0L)"
+                elif ".get(" in _other:
+                    _other_d = f"((Number) ({_other} != null ? {_other} : 0L)).longValue()"
+                else:
+                    _other_d = f"((Number) ({_other})).longValue()"
                 # M1-minor (#114 review #1): `number - timestamp` was flipped to `+`
                 # (ts on the right side); both operand orders must subtract.
                 return f"new java.sql.Timestamp({_ts_side}.getTime() - {_other_d} * 86400000L)"
-            if op == "+" and _is_ts_left and right_type in ("Long", "long", "Integer", "int", "Double", "double", "Float", "float", "java.math.BigDecimal", "BigDecimal"):
-                return f"new java.sql.Date({left}.getTime() + ((Number) ({right})).longValue() * 86400000L)"
-            if op == "+" and _is_ts_right and left_type in ("Long", "long", "Integer", "int", "Double", "double", "Float", "float", "java.math.BigDecimal", "BigDecimal"):
-                return f"new java.sql.Date({right}.getTime() + ((Number) ({left})).longValue() * 86400000L)"
+            _TS_DAY_TYPES = ("Long", "long", "Integer", "int", "Double", "double",
+                             "Float", "float", "java.math.BigDecimal", "BigDecimal", "String")
+            if op == "+" and _is_ts_left and right_type in _TS_DAY_TYPES:
+                _rd = (f"({right} != null ? Long.parseLong(String.valueOf({right})) : 0L)"
+                       if right_type == "String" else f"((Number) ({right})).longValue()")
+                return f"new java.sql.Date({left}.getTime() + {_rd} * 86400000L)"
+            if op == "+" and _is_ts_right and left_type in _TS_DAY_TYPES:
+                _ld = (f"({left} != null ? Long.parseLong(String.valueOf({left})) : 0L)"
+                       if left_type == "String" else f"((Number) ({left})).longValue()")
+                return f"new java.sql.Date({right}.getTime() + {_ld} * 86400000L)"
             if op == "=" and _is_string_comparison(val, proc):
                 # Ensure the non-.get() operand is the caller to avoid NPE on null Map.get()
                 if ".get(" in right and ".get(" not in left:

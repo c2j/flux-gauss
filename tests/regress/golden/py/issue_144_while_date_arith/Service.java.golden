@@ -1,0 +1,64 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144WhileDateArithMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue144WhileDateArithService {
+    private static final Logger log = LoggerFactory.getLogger(Issue144WhileDateArithService.class);
+
+    private final Issue144WhileDateArithMapper issue144WhileDateArithMapper;
+
+    public Issue144WhileDateArithService(Issue144WhileDateArithMapper issue144WhileDateArithMapper) {
+        this.issue144WhileDateArithMapper = issue144WhileDateArithMapper;
+    }
+
+    private java.sql.Date _parseDate(String fmt, String str) {
+        try {
+            return new java.sql.Date(new java.text.SimpleDateFormat(fmt).parse(str).getTime());
+        } catch (java.text.ParseException e) {
+            try {
+                return java.sql.Date.valueOf(java.time.LocalDate.parse(str.trim().split(" ")[0], java.time.format.DateTimeFormatter.ofPattern("[yyyy-MM-dd][yyyyMMdd]")));
+            } catch (Exception e2) {
+                return java.sql.Date.valueOf("2024-01-01");
+            }
+        }
+    }
+    // Source: issue_144_while_date_arith.get_section_begin_date (FUNCTION) — issue_144_while_date_arith.sql:27-61
+    public String getSectionBeginDate(String pIStartDate, String pIEndDate, String pISettleFrequency, String pISettleFreqCount) {
+        String vStartDate = pIStartDate;
+        java.sql.Date vSectionStartDay = null;
+        if (pIStartDate.compareTo(pIEndDate) > 0) {
+            return "0";
+        } else {
+            if (java.util.Objects.equals(pISettleFrequency, "5")) {
+                vSectionStartDay = _parseDate("yyyyMMdd", String.valueOf(pIStartDate));
+                while (vSectionStartDay.compareTo(new java.sql.Timestamp(_parseDate("yyyyMMdd", String.valueOf(pIEndDate)).getTime() - ((Number) (7)).longValue() * 86400000L)) <= 0) {
+                    vSectionStartDay = new java.sql.Date(vSectionStartDay.getTime() + ((Number) (7)).longValue() * 86400000L);
+                }
+            } else if (java.util.Objects.equals(pISettleFrequency, "6")) {
+                vSectionStartDay = _parseDate("yyyyMMdd", String.valueOf(pIStartDate));
+                while (vSectionStartDay.compareTo(new java.sql.Timestamp(_parseDate("yyyyMMdd", String.valueOf(pIEndDate)).getTime() - (pISettleFreqCount != null ? Long.parseLong(String.valueOf(pISettleFreqCount)) : 0L) * 86400000L)) <= 0) {
+                    vSectionStartDay = new java.sql.Date(vSectionStartDay.getTime() + (pISettleFreqCount != null ? Long.parseLong(String.valueOf(pISettleFreqCount)) : 0L) * 86400000L);
+                }
+            } else {
+                return pIStartDate;
+            }
+            return new java.text.SimpleDateFormat("yyyyMMdd").format(vSectionStartDay);
+        }
+        return "";
+    }
+
+    // Source: issue_144_while_date_arith.prc_interest_by_amount (PROCEDURE) — issue_144_while_date_arith.sql:63-75
+    public void prcInterestByAmount(DepositReceipt pIDepositReceipt, String pIAmount, AtomicReference<Long> pOAccrualValue) {
+        Long vTmp = 0L;
+        pOAccrualValue.set(null);
+        vTmp = ((Number) ((new java.math.BigDecimal(String.valueOf(pIAmount)).divide((new java.math.BigDecimal(String.valueOf(pIDepositReceipt.amount.doubleValue())).add(new java.math.BigDecimal(String.valueOf((Double.valueOf(pIDepositReceipt.drawAmount.doubleValue()) != null ? Double.valueOf(pIDepositReceipt.drawAmount.doubleValue()) : 0)))))).multiply(java.math.BigDecimal.valueOf(2))).setScale((int)(2), java.math.RoundingMode.HALF_UP))).longValue();
+        pOAccrualValue.set(((Number) vTmp).longValue());
+    }
+}
