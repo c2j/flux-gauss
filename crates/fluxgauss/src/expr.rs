@@ -3019,6 +3019,11 @@ fn binary_op_to_java(
             if is_nullish_java_expr(strip_outer_parens(&l)) || is_nullish_java_expr(strip_outer_parens(&r)) {
                 return null_comparison_result(&l, &r);
             }
+            // Issue #144 batch4a: numeric-vs-String `=` → numeric comparison
+            // (Python `_num_str_equality_fix` 对偶).
+            if let Some((nl, nr)) = num_str_equality_fix(&l, &r, left, right, proc) {
+                return format!("{} == {}", nl, nr);
+            }
             let l_kind = boxed_num_kind(&l, proc);
             let r_kind = boxed_num_kind(&r, proc);
             // Boxed numeric vs numeric literal: Objects.equals compares Java
@@ -3060,6 +3065,10 @@ fn binary_op_to_java(
             // `IF p != NULL` run unconditionally; wrong).
             if is_nullish_java_expr(strip_outer_parens(&l)) || is_nullish_java_expr(strip_outer_parens(&r)) {
                 return null_comparison_result(&l, &r);
+            }
+            // Issue #144 batch4a: numeric-vs-String `<>` → numeric comparison.
+            if let Some((nl, nr)) = num_str_equality_fix(&l, &r, left, right, proc) {
+                return format!("{} != {}", nl, nr);
             }
             let l_kind = boxed_num_kind(&l, proc);
             let r_kind = boxed_num_kind(&r, proc);
@@ -4727,6 +4736,261 @@ fn boxed_literal(lit: &str, kind: BoxedNum) -> Option<String> {
             }
         }
     }
+}
+
+// ── Issue #144 batch4a: numeric-vs-String equality ──
+// Python `_num_str_equality_fix`/`_num_str_literal_java` parity: when one
+// side of `=`/`<>` renders as a numeric value (`.longValue()/.intValue()/
+// .doubleValue()` tail, or a record-field read whose name heuristic resolves
+// numeric — `_java_type_from_field_name` 对偶) and the other side is a String
+// literal or String-typed expression, the String side is re-rendered
+// numerically (literal → numeric literal / `Xxx.parseXxx`, ≈ ORA-01722 on
+// non-numeric). Without this, `Objects.equals(mapField, "4801040001")`
+// compares Long vs String and is always false — diverging from Oracle's
+// implicit numeric conversion.
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum NumStrKind {
+    Long,
+    Int,
+    Double,
+}
+
+impl NumStrKind {
+    fn parse_fn(self) -> &'static str {
+        match self {
+            NumStrKind::Long => "Long.parseLong",
+            NumStrKind::Int => "Integer.parseInt",
+            NumStrKind::Double => "Double.parseDouble",
+        }
+    }
+    fn null_default(self) -> &'static str {
+        match self {
+            NumStrKind::Long => "0L",
+            NumStrKind::Int => "0",
+            NumStrKind::Double => "0.0d",
+        }
+    }
+    fn value_fn(self) -> &'static str {
+        match self {
+            NumStrKind::Long => "longValue",
+            NumStrKind::Int => "intValue",
+            NumStrKind::Double => "doubleValue",
+        }
+    }
+}
+
+/// Detect a rendered expr ending in `.longValue()/.intValue()/.doubleValue()`,
+/// tolerating the `typed_rowtype_field` ternary's extra closing parens.
+fn num_str_kind_tail(expr: &str) -> Option<NumStrKind> {
+    let t = expr.trim();
+    for (suffix, kind) in
+        [(".longValue()", NumStrKind::Long), (".intValue()", NumStrKind::Int), (".doubleValue()", NumStrKind::Double)]
+    {
+        let mut rest = t;
+        loop {
+            if rest.ends_with(suffix) {
+                return Some(kind);
+            }
+            match rest.strip_suffix(')') {
+                Some(s) => rest = s.trim_end(),
+                None => break,
+            }
+        }
+    }
+    None
+}
+
+/// `(base, field)` for `base.field` / `a.b.c` operand ASTs (Python
+/// `_infer_expr_type` multi-part ColumnRef 对偶).
+fn num_str_field_parts(expr: &ogsql_parser::ast::Expr) -> Option<(String, String)> {
+    match expr {
+        ogsql_parser::ast::Expr::FieldAccess { object, field } => match object.as_ref() {
+            ogsql_parser::ast::Expr::PlVariable(n) | ogsql_parser::ast::Expr::ColumnRef(n) => {
+                Some((n.join("."), field.clone()))
+            }
+            _ => None,
+        },
+        ogsql_parser::ast::Expr::PlVariable(n) | ogsql_parser::ast::Expr::ColumnRef(n) if n.len() >= 2 => {
+            Some((n[0].as_str().to_string(), n[n.len() - 1].as_str().to_string()))
+        }
+        _ => None,
+    }
+}
+
+/// The record/map base must be Map/Object-typed, a cursor/loop record var, or
+/// undeclared (Python applies the name heuristic to undeclared bases too).
+fn num_str_map_like_base(base: &str, proc: &ProcedureInfo) -> bool {
+    let bl = base.to_lowercase();
+    if proc.loop_vars.contains(&bl) {
+        return true;
+    }
+    let map_or_object = |t: &str| t.contains("Map") || t == "Object" || t.is_empty();
+    if let Some(t) = proc.local_vars.get(&bl) {
+        return map_or_object(t);
+    }
+    let bl_norm = bl.replace('_', "");
+    for (vn, vt) in &proc.local_vars {
+        if vn.to_lowercase().replace('_', "") == bl_norm {
+            return map_or_object(vt);
+        }
+    }
+    for p in &proc.parameters {
+        if p.name.eq_ignore_ascii_case(base) {
+            return map_or_object(&p.java_type);
+        }
+    }
+    true
+}
+
+/// Python `_java_type_from_field_name` 对偶 — name heuristics only; BigDecimal
+/// / Timestamp / unmatched fields return None (Python routes those through
+/// compareTo / string semantics, out of this fix's scope).
+fn num_str_field_kind(field: &str) -> Option<NumStrKind> {
+    let col = field.to_lowercase();
+    const STR_SUBS: [&str; 13] =
+        ["name", "txt", "text", "info", "desc", "msg", "remark", "comment", "label", "status", "code", "type", "flag"];
+    if STR_SUBS.iter().any(|s| col.contains(s)) {
+        return None;
+    }
+    let is_long = col == "id"
+        || col.ends_with("_id")
+        || col.ends_with("_ids")
+        || col == "no"
+        || col.ends_with("_no")
+        || col.contains("_seq");
+    if is_long {
+        return Some(NumStrKind::Long);
+    }
+    const BD_SUBS: [&str; 7] = ["amount", "balance", "price", "qty", "quantity", "total", "salary"];
+    if BD_SUBS.iter().any(|s| col.contains(s)) {
+        return None;
+    }
+    if ["count", "cnt", "num"].iter().any(|s| col.contains(s)) {
+        return Some(NumStrKind::Int);
+    }
+    if ["date", "time", "stamp"].iter().any(|s| col.contains(s)) {
+        return None;
+    }
+    None
+}
+
+/// Null-safe primitive numeric render: `((Number) (e != null ? e : 0L)).longValue()`.
+/// Used both for raw `.get/.getOrDefault` Object reads and for the nullable
+/// `(x == null ? null : ((Number) x).longValue())` ternary form (which yields
+/// `Long` — `== lit` on it would unbox-NPE, so it is normalized here).
+fn num_str_nullable_wrap(expr: &str, kind: NumStrKind) -> String {
+    format!("((Number) ({} != null ? {} : {})).{}()", expr, expr, kind.null_default(), kind.value_fn())
+}
+
+/// Resolve one comparison operand to `(kind, java_expr)` when it is numeric in
+/// the batch4a sense: a `.longValue()/.intValue()/.doubleValue()` tail, or a
+/// record/map field read whose name heuristic is numeric.
+fn num_str_numeric_operand(
+    rendered: &str,
+    ast: &ogsql_parser::ast::Expr,
+    proc: &ProcedureInfo,
+) -> Option<(NumStrKind, String)> {
+    let t = rendered.trim();
+    if t.is_empty() || t == "null" || t.contains("/* TOBEFIX") {
+        return None;
+    }
+    // Optional/map-unwrap forms and parse calls already produce primitives or
+    // non-Number types — leave them to the existing comparison paths.
+    if t.contains("Optional.ofNullable") || t.contains(".orElse(") {
+        return None;
+    }
+    if let Some(kind) = num_str_kind_tail(t) {
+        if !t.contains("? null :") {
+            // Already primitive-producing (`((Number) x).longValue()` etc.).
+            return Some((kind, t.to_string()));
+        }
+        // Nullable ternary yields a boxed Long/Integer — normalize to a
+        // primitive so `== literal` cannot unbox-NPE.
+        return Some((kind, num_str_nullable_wrap(t, kind)));
+    }
+    let (base, field) = num_str_field_parts(ast)?;
+    if !num_str_map_like_base(&base, proc) {
+        return None;
+    }
+    let kind = num_str_field_kind(&field)?;
+    if !(t.contains(".get(") || t.contains("getOrDefault(")) {
+        return None;
+    }
+    Some((kind, num_str_nullable_wrap(t, kind)))
+}
+
+/// Python `_num_str_literal_java` 对偶 — render a SQL string-literal payload
+/// as a Java numeric literal for `kind`; None when not numeric (caller falls
+/// back to `Xxx.parseXxx`, ≈ ORA-01722 at runtime).
+fn num_str_literal_java(text: &str, kind: NumStrKind) -> Option<String> {
+    let t = text.trim();
+    if t.is_empty() {
+        return None;
+    }
+    if let Ok(n) = t.parse::<i64>() {
+        return Some(match kind {
+            NumStrKind::Long => format!("{}L", n),
+            NumStrKind::Int => {
+                if (i32::MIN as i64..=i32::MAX as i64).contains(&n) {
+                    n.to_string()
+                } else {
+                    format!("{}L", n)
+                }
+            }
+            NumStrKind::Double => format!("{}.0d", n),
+        });
+    }
+    if let Ok(f) = t.parse::<f64>() {
+        if !f.is_finite() {
+            return None;
+        }
+        let mut s = t.to_string();
+        if s.starts_with('.') {
+            s = format!("0{}", s);
+        }
+        if s.ends_with('.') {
+            s.push('0');
+        }
+        return Some(format!("{}d", s));
+    }
+    None
+}
+
+/// Adapt the String side of a numeric-vs-String `=`/`<>`: literal → numeric
+/// literal (or parseXxx fallback), String-typed expr → `Xxx.parseXxx(expr)`.
+fn num_str_adapt_side(rendered: &str, kind: NumStrKind, proc: &ProcedureInfo) -> Option<String> {
+    let t = rendered.trim();
+    if t.len() >= 2 && t.starts_with('"') && t.ends_with('"') {
+        let payload = &t[1..t.len() - 1];
+        return Some(num_str_literal_java(payload, kind).unwrap_or_else(|| format!("{}({})", kind.parse_fn(), t)));
+    }
+    if t != "null" && !t.contains("parse") && looks_string_expr(t, proc) {
+        return Some(format!("{}({})", kind.parse_fn(), t));
+    }
+    None
+}
+
+/// Python `_num_str_equality_fix` 对偶. Returns adapted `(left, right)` when
+/// exactly one side is numeric-kind and the other is a String literal/expr.
+fn num_str_equality_fix(
+    l: &str,
+    r: &str,
+    left: &ogsql_parser::ast::Expr,
+    right: &ogsql_parser::ast::Expr,
+    proc: &ProcedureInfo,
+) -> Option<(String, String)> {
+    if let Some((kind, num)) = num_str_numeric_operand(r, right, proc) {
+        if let Some(ad) = num_str_adapt_side(l, kind, proc) {
+            return Some((ad, num));
+        }
+    }
+    if let Some((kind, num)) = num_str_numeric_operand(l, left, proc) {
+        if let Some(ad) = num_str_adapt_side(r, kind, proc) {
+            return Some((num, ad));
+        }
+    }
+    None
 }
 
 fn type_cast_to_java(expr: &ogsql_parser::ast::Expr, type_name: &str, proc: &ProcedureInfo) -> String {

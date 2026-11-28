@@ -1113,4 +1113,49 @@ fn issue_144_defect_family_shapes() {
             svc
         );
     }
+
+    // ── batch4a 数值自适应（issue_144_cmp_literal，Python 126d40a 对齐）──
+    // 记录字段（名称启发式判数值）vs 字符串字面量/变量必须生成数值比较；
+    // 禁止 Objects.equals(mapField, "...") 形态（Long vs String 恒 false，
+    // 且前导零业务编码下与 Oracle NUMBER 比较语义分歧）。
+    {
+        let gen = conv("issue_144_cmp_literal.sql");
+        let svc = gen.files.get("Service.java").expect("Service.java");
+        assert!(
+            svc.contains(".longValue() == 4801040001L"),
+            "batch4a: operation_no = '4801040001' must be numeric long comparison:\n{}",
+            svc
+        );
+        assert!(
+            svc.contains(".longValue() != 888L"),
+            "batch4a: operation_no <> '888' must be numeric long comparison:\n{}",
+            svc
+        );
+        assert!(
+            svc.contains("777L ==") && svc.contains(".longValue()"),
+            "batch4a: '777' = operation_no must put numeric literal on the left:\n{}",
+            svc
+        );
+        assert!(
+            svc.contains(".intValue() == 42"),
+            "batch4a: batch_cnt = '42' must be numeric int comparison:\n{}",
+            svc
+        );
+        assert!(
+            svc.contains("Long.parseLong(vSuccResult) ==") && svc.contains("Integer.parseInt(vSuccResult) !="),
+            "batch4a: String var vs numeric record field must wrap Xxx.parseXxx:\n{}",
+            svc
+        );
+        assert!(
+            !svc.contains("Objects.equals(rInfo.getOrDefault(\"operationNo\"")
+                && !svc.contains("Objects.equals(rInfo.getOrDefault(\"batchCnt\""),
+            "batch4a: no Objects.equals string-compare on numeric record fields:\n{}",
+            svc
+        );
+        assert!(
+            !svc.contains("== \"4801040001\"") && !svc.contains("== \"888\"") && !svc.contains("== \"42\""),
+            "batch4a: string literals must not remain as == operands:\n{}",
+            svc
+        );
+    }
 }

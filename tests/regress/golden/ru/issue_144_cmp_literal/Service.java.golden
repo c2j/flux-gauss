@@ -31,22 +31,22 @@ public class Issue144cmpService {
         List<Map<String, Object>> rInfoList = issue144cmpMapper.selectPrcCmpLiteral();
         if (rInfoList == null) rInfoList = new ArrayList<>();
         for (Map<String, Object> rInfo : rInfoList) {
-            if (java.util.Objects.equals(rInfo.getOrDefault("operationNo", rInfo.get("operation_no")), "4801040001")) {
+            if (((Number) (rInfo.getOrDefault("operationNo", rInfo.get("operation_no")) != null ? rInfo.getOrDefault("operationNo", rInfo.get("operation_no")) : 0L)).longValue() == 4801040001L) {
                 vCnt = vCnt + 1;
             }
-            if (!java.util.Objects.equals(rInfo.getOrDefault("operationNo", rInfo.get("operation_no")), "888")) {
+            if (((Number) (rInfo.getOrDefault("operationNo", rInfo.get("operation_no")) != null ? rInfo.getOrDefault("operationNo", rInfo.get("operation_no")) : 0L)).longValue() != 888L) {
                 vCnt = vCnt + 2;
             }
-            if (java.util.Objects.equals("777", rInfo.getOrDefault("operationNo", rInfo.get("operation_no")))) {
+            if (777L == ((Number) (rInfo.getOrDefault("operationNo", rInfo.get("operation_no")) != null ? rInfo.getOrDefault("operationNo", rInfo.get("operation_no")) : 0L)).longValue()) {
                 vCnt = vCnt + 4;
             }
-            if (java.util.Objects.equals(rInfo.getOrDefault("batchCnt", rInfo.get("batch_cnt")), "42")) {
+            if (((Number) (rInfo.getOrDefault("batchCnt", rInfo.get("batch_cnt")) != null ? rInfo.getOrDefault("batchCnt", rInfo.get("batch_cnt")) : 0)).intValue() == 42) {
                 vCnt = vCnt + 8;
             }
-            if (java.util.Objects.equals(vSuccResult, rInfo.getOrDefault("operationNo", rInfo.get("operation_no")))) {
+            if (Long.parseLong(vSuccResult) == ((Number) (rInfo.getOrDefault("operationNo", rInfo.get("operation_no")) != null ? rInfo.getOrDefault("operationNo", rInfo.get("operation_no")) : 0L)).longValue()) {
                 vCnt = vCnt + 16;
             }
-            if (!java.util.Objects.equals(vSuccResult, rInfo.getOrDefault("batchCnt", rInfo.get("batch_cnt")))) {
+            if (Integer.parseInt(vSuccResult) != ((Number) (rInfo.getOrDefault("batchCnt", rInfo.get("batch_cnt")) != null ? rInfo.getOrDefault("batchCnt", rInfo.get("batch_cnt")) : 0)).intValue()) {
                 vCnt = vCnt + 32;
             }
         }
