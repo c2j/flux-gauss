@@ -1,0 +1,56 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144ComparetoNumMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue144ComparetoNumService {
+    private static final Logger log = LoggerFactory.getLogger(Issue144ComparetoNumService.class);
+
+    private final Issue144ComparetoNumMapper issue144ComparetoNumMapper;
+
+    public Issue144ComparetoNumService(Issue144ComparetoNumMapper issue144ComparetoNumMapper) {
+        this.issue144ComparetoNumMapper = issue144ComparetoNumMapper;
+    }
+    // Source: issue_144_compareto_num.prc_compareto_num (PROCEDURE) — issue_144_compareto_num.sql:12-58
+    public void prcComparetoNum() {
+        java.math.BigDecimal vBd = java.math.BigDecimal.ZERO;
+        Long vNum = 0L;
+        String vTxt = null;
+        Boolean vFlag = false;
+        vBd = java.math.BigDecimal.valueOf(1.5d);
+        vNum = Long.valueOf(2);
+        vTxt = "10";
+        if (vBd.compareTo(new java.math.BigDecimal("2.5")) > 0) {
+            vFlag = true;
+        }
+        if (new java.math.BigDecimal("0.5").compareTo(vBd) < 0) {
+            vFlag = true;
+        }
+        if (vBd.compareTo(new java.math.BigDecimal(vTxt)) >= 0) {
+            vFlag = true;
+        }
+        if (Long.parseLong(vTxt) > vNum) {
+            vFlag = true;
+        }
+        if (vNum < Long.parseLong(vTxt)) {
+            vFlag = true;
+        }
+        if (Long.parseLong(vTxt) == vNum) {
+            vFlag = true;
+        }
+        if (vNum != Long.parseLong(vTxt)) {
+            vFlag = true;
+        }
+        if (new java.math.BigDecimal(vTxt).compareTo(new java.math.BigDecimal("3")) >= 0) {
+            vFlag = true;
+        }
+        if (new java.math.BigDecimal("7").compareTo(new java.math.BigDecimal(vNum)) < 0) {
+            vFlag = true;
+        }
+    }
+}

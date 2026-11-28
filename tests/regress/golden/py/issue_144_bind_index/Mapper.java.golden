@@ -1,0 +1,14 @@
+package com.example.demo.mapper;
+
+import java.util.Map;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue144BindIndexMapper {
+
+        // issue_144_bind_index.sql:13 — issue_144_bind_index.prc_bind_index
+Map<String, Object> selectPrcBindIndex(@Param("pSeqno") String pSeqno);
+// issue_144_bind_index.sql:13 — issue_144_bind_index.prc_bind_index
+Map<String, Object> selectPrcBindIndex_1(@Param("pSeqno") String pSeqno, @Param("pFundId") String pFundId);
+}

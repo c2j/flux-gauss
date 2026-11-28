@@ -2452,7 +2452,7 @@ def _promote_out_local_vars(proc: ProcedureInfo, all_packages: dict):
             # Keep local_var_defaults — codegen wraps it into AtomicReference constructor
             var_java = snake_to_camel(orig_name)
             m_ar = re.match(r'^AtomicReference<(.+)>$', new_type)
-            _string_inner = bool(m_ar and 'String' in m_ar.group(1))
+            _string_inner = bool(m_ar and _inner_type_is_string(m_ar.group(1)))
 
             def _wrap_rhs(rhs: str) -> str:
                 # 修复（#verify16）：包裹为 AtomicReference<Inner> 时必须把 RHS
@@ -2464,6 +2464,9 @@ def _promote_out_local_vars(proc: ProcedureInfo, all_packages: dict):
                 _r = rhs.strip()
                 if _r == "null":
                     return rhs
+                if "TODO: implement" in rhs:
+                    # TODO-stub 类型保真（#144 batch4c）：裸 null 进菱形推断会失败
+                    return _todo_stub_typed(rhs, inner)
                 if inner in _r and ("new " in _r or ".valueOf(" in _r or _r.endswith(f'"{_r.strip(chr(34))}"')):
                     pass  # 已是同型表达式时仍走一次幂等强转也无妨
                 return _coerce_type(rhs, "Object", inner)
@@ -2480,12 +2483,12 @@ def _promote_out_local_vars(proc: ProcedureInfo, all_packages: dict):
                         m_cond = re.match(rf'^(\s*(?:if|while)\s*\(.+?\)\s+){re.escape(var_java)} = (.*);\s*$', line)
                     if m_assign and not re.match(r'^new (java\.util\.concurrent\.atomic\.)?AtomicReference<>', m_assign.group(2).strip()):
                         rhs = m_assign.group(2)
-                        if 'String' in m_ar.group(1) and not rhs.strip().startswith('"') and rhs.strip() != 'null':
+                        if _inner_type_is_string(m_ar.group(1)) and not rhs.strip().startswith('"') and rhs.strip() != 'null':
                             rhs = f'String.valueOf({rhs})'
                         line = f'{m_assign.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<>({_wrap_rhs(rhs)});'
                     elif m_cond and not re.match(r'^new (java\.util\.concurrent\.atomic\.)?AtomicReference<>', m_cond.group(2).strip()):
                         rhs = m_cond.group(2)
-                        if 'String' in m_ar.group(1) and not rhs.strip().startswith('"') and rhs.strip() != 'null':
+                        if _inner_type_is_string(m_ar.group(1)) and not rhs.strip().startswith('"') and rhs.strip() != 'null':
                             rhs = f'String.valueOf({rhs})'
                         line = f'{m_cond.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<>({_wrap_rhs(rhs)});'
                 try:
@@ -2592,6 +2595,40 @@ def _carrier_inner(java_type: str):
     return m.group(1) if m else None
 
 
+def _inner_type_is_string(inner_type: str) -> bool:
+    """True when the carrier/decl inner type is String-ish. Substring match on
+    "String" alone false-positives on `Map<String, Object>` (#144 batch4c)."""
+    t = (inner_type or "").strip()
+    return "String" in t and "<" not in t
+
+
+def _todo_stub_typed(expr: str, inner_type: str) -> str:
+    """TODO-stub 类型保真（#144 batch4c）：未解析函数渲染为
+    `/* TODO: implement f() — ... */ null`，裸 null 在 AtomicReference<>
+    菱形推断下无法定型（Map/List 内层尤其致命）。按目标内层类型把结尾的
+    null 换成类型保真的空值，保留 TODO 注释本体。"""
+    t = (inner_type or "").strip()
+    if not t:
+        return expr
+    if _inner_type_is_string(t):
+        # String 内层：裸 null 同样无法驱动菱形推断，沿用 String.valueOf 包裹
+        return expr if expr.lstrip().startswith("String.valueOf(") else f"String.valueOf({expr})"
+    if t.startswith(("Map<", "java.util.Map")):
+        stub = "new java.util.HashMap<>()"
+    elif t.startswith(("List<", "java.util.List", "java.util.ArrayList", "Set<", "java.util.Set")):
+        stub = ("new java.util.HashSet<>()" if t.startswith(("Set<", "java.util.Set"))
+                else "new java.util.ArrayList<>()")
+    elif t in ("long", "int", "double", "float", "boolean", "char", "byte", "short"):
+        return expr
+    elif t != "Object":
+        stub = f"({t}) null"
+    else:
+        return expr
+    if expr.rstrip().endswith("null"):
+        return re.sub(r'null\s*$', stub, expr)
+    return f"{expr} {stub}"
+
+
 def _fresh_out_tmp(proc) -> str:
     n = getattr(proc, "_out_tmp_counter", 0) + 1
     proc._out_tmp_counter = n
@@ -2651,10 +2688,11 @@ def _plan_out_arg(arg_ast, arg_java: str, proc: ProcedureInfo, target_inner: str
     if arg_var and _resolve_local_key(proc, arg_var) in proc.local_vars:
         return arg_java, [], []
     # Literal / expression / package var → wrap a temp carrier; the callee's
-    # OUT write has no caller variable to land in.
+    # OUT write has no caller variable to land in. Explicit type argument —
+    # a bare `null`/TODO-stub arg cannot drive diamond inference (#144 batch4c).
     src_t = _infer_expr_type(arg_ast, proc)
     wrapped = _coerce_type(arg_java, src_t, target_inner)
-    return f"new java.util.concurrent.atomic.AtomicReference<>({wrapped})", [], []
+    return f"new java.util.concurrent.atomic.AtomicReference<{target_inner}>({wrapped})", [], []
 
 
 def _plan_out_arg_expr(arg_ast, proc, target_inner: str, all_packages: dict = None) -> str:
@@ -2903,6 +2941,8 @@ def _wrap_ar_local_assign(line: str, var_java: str, ar_type: str) -> str:
         _r = rhs.strip()
         if _r == "null":
             return rhs
+        if "TODO: implement" in rhs:
+            return _todo_stub_typed(rhs, inner)
         return _coerce_type(rhs, "Object", inner)
 
     m_assign = re.match(rf'^(\s*){re.escape(var_java)} = (.*);\s*$', line)
@@ -2911,12 +2951,12 @@ def _wrap_ar_local_assign(line: str, var_java: str, ar_type: str) -> str:
         m_cond = re.match(rf'^(\s*(?:if|while)\s*\(.+?\)\s+){re.escape(var_java)} = (.*);\s*$', line)
     if m_assign and not re.match(r'^new (java\.util\.concurrent\.atomic\.)?AtomicReference<>', m_assign.group(2).strip()):
         rhs = m_assign.group(2)
-        if 'String' in inner and not rhs.strip().startswith('"') and rhs.strip() != 'null':
+        if _inner_type_is_string(inner) and not rhs.strip().startswith('"') and rhs.strip() != 'null':
             rhs = f'String.valueOf({rhs})'
         return f'{m_assign.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<>({_wrap_rhs(rhs)});'
     if m_cond and not re.match(r'^new (java\.util\.concurrent\.atomic\.)?AtomicReference<>', m_cond.group(2).strip()):
         rhs = m_cond.group(2)
-        if 'String' in inner and not rhs.strip().startswith('"') and rhs.strip() != 'null':
+        if _inner_type_is_string(inner) and not rhs.strip().startswith('"') and rhs.strip() != 'null':
             rhs = f'String.valueOf({rhs})'
         return f'{m_cond.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<>({_wrap_rhs(rhs)});'
     return line
@@ -5771,7 +5811,9 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
     else:
         if target_var_type and target_var_type.startswith("AtomicReference<"):
             _ar_inner_t = target_var_type[len("AtomicReference<"):-1]
-            if "String" in _ar_inner_t and not expr.strip().startswith('"') and expr.strip() != "null":
+            if "TODO: implement" in expr:
+                expr = _todo_stub_typed(expr, _ar_inner_t)
+            elif _inner_type_is_string(_ar_inner_t) and not expr.strip().startswith('"') and expr.strip() != "null":
                 expr = f"String.valueOf({expr})"
             proc.java_logic_lines.append(f"{target} = new java.util.concurrent.atomic.AtomicReference<>({expr});")
             return
@@ -6434,6 +6476,10 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
     _loop_var_restored = variable not in proc.local_vars
     if _loop_var_restored:
         proc.local_vars[variable] = "Integer"
+        # #144 batch4d: 标量 FOR range 变量 —— `':' || n` 拼接产出的是
+        # 位置绑定文本（:1、:2…），n 是构造期文本而非运行期 mapper 参数
+        proc._for_range_vars = getattr(proc, '_for_range_vars', set())
+        proc._for_range_vars.add(variable)
 
     _dml_count_before = len(proc.dml_statements)
 
@@ -6858,6 +6904,11 @@ def _apply_using_args_to_sql(sql_text: str, using_arg_names: list, proc: Procedu
             placeholder = f'#{{{java_name}}}'
         sql_text = re.sub(
             rf':\s*{pos}(?!\d)',
+            placeholder,
+            sql_text
+        )
+        sql_text = re.sub(
+            rf'\${pos}(?!\d)',
             placeholder,
             sql_text
         )
@@ -8668,6 +8719,42 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
         param_args = _build_param_args_from_template(proc, template_params, extra, sql_text, getattr(proc, "_dot_access_exprs", None))
         dynamic_conditions = _collect_dynamic_conditions(proc, var_name)
         if dynamic_conditions:
+            # #144 batch4d：concat-chain 片段里的位置绑定标记同样要落到
+            # USING 参数（基础模板已替换，片段此前原样漏进 <if>）。
+            # 字面 :N 是绝对位置；$k 是片段内相对序号，按基础模板已用
+            # 绑定数 + 前序片段累计做偏移，还原 EXECUTE 时的 :N 语义。
+            def _uph_for(pos_idx: int) -> str | None:
+                if pos_idx < 1 or pos_idx > len(using_args) or not isinstance(using_args[pos_idx - 1], dict):
+                    return None
+                _uan = _extract_var_name_from_expr(using_args[pos_idx - 1].get("argument", {}))
+                if not _uan:
+                    return None
+                _ujn = snake_to_camel(_uan)
+                _ujdbc = _uja = None
+                for _p in proc.parameters:
+                    if _p.name.lower() == _uan.lower():
+                        _ujdbc = sql_type_to_jdbc(_p.sql_type)
+                        _uja = _p.java_type
+                        break
+                if not _ujdbc and _uan in proc.local_vars:
+                    _uja = proc.local_vars[_uan]
+                    _ujdbc = java_type_to_jdbc(_uja)
+                return (f'#{{{_ujn}, jdbcType={_ujdbc}, javaType={_uja}}}'
+                        if _ujdbc and _uja else f'#{{{_ujn}}}')
+
+            _bind_off = max((int(m) for m in re.findall(r'\$(\d+)', sql_template)), default=0)
+            for _dc in dynamic_conditions:
+                for _pos, _uarg in enumerate(using_args, 1):
+                    _uph = _uph_for(_pos)
+                    if _uph:
+                        _dc.sql_fragment = re.sub(rf':\s*{_pos}(?!\d)', _uph, _dc.sql_fragment)
+                _marks = sorted({int(m) for m in re.findall(r'\$(\d+)', _dc.sql_fragment)})
+                for _k in _marks:
+                    _uph = _uph_for(_bind_off + _k)
+                    if _uph:
+                        _dc.sql_fragment = re.sub(rf'\${_k}(?!\d)', _uph, _dc.sql_fragment)
+                if _marks:
+                    _bind_off += max(_marks)
             _dc_refs = set()
             for dc in dynamic_conditions:
                 _dc_refs.update(re.findall(r'[#\$]\{(\w+)', dc.sql_fragment))
@@ -8998,8 +9085,15 @@ def _reconstruct_sql_from_concat(expr: dict, proc: ProcedureInfo):
     return (sql_template, param_list)
 
 
-def _flatten_concat(expr: dict, parts: list, param_list: list, proc: ProcedureInfo):
-    """Recursively flatten BinaryOp(||) into template parts."""
+def _flatten_concat(expr: dict, parts: list, param_list: list, proc: ProcedureInfo, _bind_seq: list | None = None):
+    """Recursively flatten BinaryOp(||) into template parts.
+
+    `_bind_seq` 是单次顶层展平内的位置绑定序号计数（`:'' || <for-var>`
+    构造文本 → `$1`/`$2`…，由 USING 位置替换消费）；递归共享、顶层各自
+    从 1 开始，保证同一表达式重复展平结果确定（concat-chain 去重依赖）。
+    """
+    if _bind_seq is None:
+        _bind_seq = [0]
     if not isinstance(expr, dict):
         return
 
@@ -9009,8 +9103,8 @@ def _flatten_concat(expr: dict, parts: list, param_list: list, proc: ProcedureIn
                 proc._inline_unquote_next = False
             op = val.get("op", "")
             if op == "||":
-                _flatten_concat(val.get("left", {}), parts, param_list, proc)
-                _flatten_concat(val.get("right", {}), parts, param_list, proc)
+                _flatten_concat(val.get("left", {}), parts, param_list, proc, _bind_seq)
+                _flatten_concat(val.get("right", {}), parts, param_list, proc, _bind_seq)
             else:
                 parts.append(f" {_java_op_symbol(op)} ")
         elif key == "Literal":
@@ -9057,6 +9151,23 @@ def _flatten_concat(expr: dict, parts: list, param_list: list, proc: ProcedureIn
                     proc._inline_unquote_next = True
                 else:
                     java_name = snake_to_camel(var_name)
+                    _prev = parts[-1].rstrip() if parts else ""
+                    # 前导字面量须以 ':' 结尾且冒号前有 SQL 内容（`= :`、`IN (:`
+                    # 形态）；孤立的 ':' 字面量（IN 子句构造器 ':' || i）不算——
+                    # 那种变量整体作为 #{param} 值传递，不是模板绑定记号。
+                    _is_bind_prefix = (_prev.endswith(":")
+                                       and bool(_prev[:-1].strip())
+                                       and var_name in getattr(proc, "_for_range_vars", set()))
+                    if _is_bind_prefix:
+                        # #144 batch4d：' = :' || <for-range-var> 是位置绑定索引
+                        # 构造文本（产出 :1、:2…），绑定值由 USING 侧提供；
+                        # 不能落成 ${n}/#{n} 参数——n 的作用域在循环内，
+                        # EXECUTE 调用点在循环外（javac 找不到符号）。
+                        # 前导 ':' 随 $k 一起被 USING 位置替换消费。
+                        _bind_seq[0] += 1
+                        parts[-1] = parts[-1].rstrip()[:-1]
+                        parts.append(f"${_bind_seq[0]}")
+                        continue
                     is_identifier = _is_identifier_context(parts)
                     if is_identifier:
                         parts.append(f"${{{java_name}}}")
@@ -11348,6 +11459,13 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 is_bd = "BigDecimal" in left_type or "BigDecimal" in right_type
                 is_str = left_type == "String" or right_type == "String"
 
+                # #144 batch4d: String 表达式（变量/函数/非数字字面量）×
+                # 非 BigDecimal 数值 —— is_str 的 compareTo 与 Long 分支的
+                # parseLong().compareTo() 都产生不成立形态，统一数值强转直比。
+                _str_num_cmp = _str_expr_num_compare(left, right, left_type, right_type, val, op)
+                if _str_num_cmp is not None:
+                    return _str_num_cmp
+
                 if is_bd and op in (">", "<", ">=", "<=", "=", "<>"):
                     cmp_map = {"<": "<", ">": ">", "<=": "<=", ">=": ">=", "=": "==", "<>": "!="}
                     if _is_numeric_literal(val.get("right")) and "BigDecimal" not in right:
@@ -11358,6 +11476,14 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     if "Integer" in right_type or right_type == "int":
                         if "BigDecimal" not in right:
                             right = f"java.math.BigDecimal.valueOf({right})"
+                    # #144 batch4d: String 侧 → BigDecimal（compareTo 不收
+                    # String 实参；数字/非数字字面量统一走 new BigDecimal）
+                    if left_type == "String":
+                        _ls = f"String.valueOf({left})" if ".get(" in left else left
+                        left = _coerce_type(_ls, "String", "java.math.BigDecimal")
+                    if right_type == "String":
+                        _rs = f"String.valueOf({right})" if ".get(" in right else right
+                        right = _coerce_type(_rs, "String", "java.math.BigDecimal")
                     return f"{left}.compareTo({right}) {cmp_map[op]} 0"
 
                 if is_str and not is_bd and op in (">", "<", ">=", "<="):
@@ -12481,6 +12607,62 @@ def _boxed_literal(java_expr: str, kind: str) -> str | None:
     if int(body) <= 2147483647:
         return f"{sign}{body}"
     return None
+
+
+_STR_NUM_TYPES = {"Integer", "int", "Long", "long", "Double", "double", "Float", "float"}
+
+
+def _str_expr_num_compare(left: str, right: str, left_type: str, right_type: str,
+                          val: dict, op: str) -> str | None:
+    """String 表达式 × 非 BigDecimal 数值类型的比较（#144 batch4d）。
+
+    is_str 分支对 >/< 系产出 `{left}.compareTo({right})`——String.compareTo(Long)
+    不成立；Long 分支对 String 左值产出 `Long.parseLong(x).compareTo(...)`——
+    primitive 解引用错误。此处把 String 侧 _coerce_type 成数值后按操作符直比
+    （int/long/double 原始值与装箱类型互相拆箱合法）。
+
+    豁免（维持既有输出/golden）：
+    - BigDecimal 参与 → 走 is_bd 分支的 compareTo 形态；
+    - String 侧为【数字内容】字面量 → is_str 的 BigDecimal/parseDouble 路径；
+    - 数值侧为数值字面量 → is_str 的 parseDouble 路径。
+    """
+    if op not in (">", "<", ">=", "<=", "=", "<>", "!="):
+        return None
+    if left_type == right_type:
+        return None
+    if "BigDecimal" in left_type or "BigDecimal" in right_type:
+        return None
+    if left_type == "String":
+        str_side, num_side = "left", "right"
+    elif right_type == "String":
+        str_side, num_side = "right", "left"
+    else:
+        return None
+    num_type = right_type if str_side == "left" else left_type
+    if num_type not in _STR_NUM_TYPES:
+        return None
+    str_ast = val.get(str_side)
+    if isinstance(str_ast, dict) and "Literal" in str_ast:
+        _lit = str_ast["Literal"]
+        if isinstance(_lit, dict) and "String" in _lit:
+            try:
+                float(_lit["String"])
+                return None  # 数字字符串字面量 → 既有 BigDecimal 路径
+            except (ValueError, TypeError):
+                pass
+    if _is_numeric_literal(val.get(num_side)):
+        return None
+    str_expr = left if str_side == "left" else right
+    num_expr = right if str_side == "left" else left
+    if ".get(" in str_expr:
+        str_expr = f"String.valueOf({str_expr})"
+    boxed = {"int": "Integer", "long": "Long", "double": "Double",
+             "float": "Float"}.get(num_type, num_type)
+    str_num = _coerce_type(str_expr, "String", boxed)
+    l2, r2 = (str_num, num_expr) if str_side == "left" else (num_expr, str_num)
+    cmp_map = {"<": "<", ">": ">", "<=": "<=", ">=": ">=", "=": "==",
+               "<>": "!=", "!=": "!="}
+    return f"{l2} {cmp_map[op]} {r2}"
 
 
 def _boxed_num_compare(left: str, right: str, left_type: str, right_type: str, *, negated: bool) -> str | None:
@@ -14068,6 +14250,8 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
             frag = dc.sql_fragment.strip()
             if frag == "," or frag == ", ":
                 return False
+            if re.search(r'\$\d+', frag):
+                return False
             for lv in local_var_names:
                 if re.search(rf'#\{{{lv}\b', frag) or re.search(rf'\$\{{{lv}\b', frag):
                     return False
@@ -14092,7 +14276,7 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
                 has_local_var = any(
                     re.search(rf'[#\$]\{{{lv}\b', where_text)
                     for lv in local_var_names
-                )
+                ) or bool(re.search(r'\$\d+', where_text))
                 if not has_local_var:
                     _cond = dc.condition_expr
                     _cond_refs_local = any(
@@ -15083,32 +15267,37 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                 default_val = proc.local_var_defaults.get(var_name, _default_for_type(var_type))
                 if var_type.startswith("AtomicReference<"):
                     inner = proc.local_var_defaults.get(var_name)
-                    if inner and "String" in var_type and not inner.startswith('"') and inner != "null":
-                        inner = f"String.valueOf({inner})"
-                    # 修复（#verify16）：内层类型与默认值不一致时强转
-                    # （实测 AtomicReference<Long> vFlag = new AR<>("") —— 泛型推断失败）
-                    if inner and inner != "null":
-                        import re as _re
-                        m_ar2 = _re.match(r'^AtomicReference<(.+)>$', var_type)
-                        _inner_t = m_ar2.group(1) if m_ar2 else ""
-                        if _inner_t and "String" not in _inner_t and (inner.startswith('"') or inner == "''" or inner == '""'):
-                            inner = _default_for_type(_inner_t)
-                        # #144: coerce non-literal defaults too — e.g. a NUMBER
-                        # var promoted to AtomicReference<Long> kept
-                        # `BigDecimal.valueOf(0)` and broke diamond inference.
-                        elif (_inner_t and _inner_t not in ("String", "Object")
-                              and re.fullmatch(r'-?\d+(\.\d+)?[fFdD]?', inner)):
-                            inner = _typed_numeric_literal(inner, _inner_t)
-                        elif (_inner_t and inner != _default_for_type(_inner_t)
-                              and not re.fullmatch(r'-?\d+(\.\d+)?[fFdDlL]?', inner)):
-                            _src_guess = ("java.math.BigDecimal" if "BigDecimal" in inner
-                                          else "Long" if "Long.valueOf" in inner or re.search(r'\d+L\b', inner)
-                                          else "Integer" if "Integer.valueOf" in inner
-                                          else "Object")
-                            _coerced = _coerce_type(inner, _src_guess, _inner_t)
-                            if _coerced != inner:
-                                inner = _coerced
-                    default_val = f"new AtomicReference<>({inner})" if inner else _default_for_type(var_type)
+                    _m_ar_t = re.match(r'^AtomicReference<(.+)>$', var_type)
+                    _inner_t = (_m_ar_t.group(1).strip() if _m_ar_t else "")
+                    if inner and "TODO: implement" in inner:
+                        # TODO-stub 类型保真（#144 batch4c）：菱形推断需要
+                        # 内层类型的空值，裸 null / String.valueOf(null) 都会失败
+                        inner = _todo_stub_typed(inner, _inner_t)
+                        default_val = f"new AtomicReference<>({inner})"
+                    else:
+                        if inner and _inner_type_is_string(_inner_t) and not inner.startswith('"') and inner != "null":
+                            inner = f"String.valueOf({inner})"
+                        # 修复（#verify16）：内层类型与默认值不一致时强转
+                        # （实测 AtomicReference<Long> vFlag = new AR<>("") —— 泛型推断失败）
+                        if inner and inner != "null":
+                            if _inner_t and not _inner_type_is_string(_inner_t) and (inner.startswith('"') or inner == "''" or inner == '""'):
+                                inner = _default_for_type(_inner_t)
+                            # #144: coerce non-literal defaults too — e.g. a NUMBER
+                            # var promoted to AtomicReference<Long> kept
+                            # `BigDecimal.valueOf(0)` and broke diamond inference.
+                            elif (_inner_t and _inner_t not in ("String", "Object")
+                                  and re.fullmatch(r'-?\d+(\.\d+)?[fFdD]?', inner)):
+                                inner = _typed_numeric_literal(inner, _inner_t)
+                            elif (_inner_t and inner != _default_for_type(_inner_t)
+                                  and not re.fullmatch(r'-?\d+(\.\d+)?[fFdDlL]?', inner)):
+                                _src_guess = ("java.math.BigDecimal" if "BigDecimal" in inner
+                                              else "Long" if "Long.valueOf" in inner or re.search(r'\d+L\b', inner)
+                                              else "Integer" if "Integer.valueOf" in inner
+                                              else "Object")
+                                _coerced = _coerce_type(inner, _src_guess, _inner_t)
+                                if _coerced != inner:
+                                    inner = _coerced
+                        default_val = f"new AtomicReference<>({inner})" if inner else _default_for_type(var_type)
                 elif var_name in proc.local_var_defaults and _is_numeric_default(default_val, var_type):
                     default_val = _wrap_default_for_type(default_val, var_type)
                 # Fix: empty string literal '' assigned to numeric type (e.g. BigDecimal)
@@ -15117,6 +15306,13 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                     default_val = _default_for_type(var_type)
                 if var_type.startswith("java.util.List") and default_val in ('"{}"', "'{}'"):
                     default_val = _default_for_type(var_type)
+                # TODO-stub 类型保真（#144 batch4c）：Map/List 声明目标的
+                # 未解析函数 stub 渲染为对应空容器而非裸 null
+                if (not var_type.startswith("AtomicReference")
+                        and "TODO: implement" in default_val
+                        and ("Map<" in var_type or "List<" in var_type
+                             or var_type.startswith(("Map", "List", "java.util.Map", "java.util.List")))):
+                    default_val = _todo_stub_typed(default_val, var_type)
                 if DEBUG_MODE:
                     src_path = proc._source_path or proc.source_file
                     decl_line = proc.local_var_source_lines.get(var_name, 0)
@@ -15303,7 +15499,7 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
             _line = _wrap_ar_local_assign(_line, snake_to_camel(_avn), str(_avt))
             _rep.extend(_patch_promoted_var_reads(
                 _line, snake_to_camel(_avn),
-                string_inner=("String" in _inner),
+                string_inner=_inner_type_is_string(_inner),
                 proc=proc, all_packages=all_packages))
         body_lines = _rep
 

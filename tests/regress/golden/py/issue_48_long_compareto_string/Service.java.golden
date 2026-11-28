@@ -69,7 +69,7 @@ public class Issue48LongComparetoStringService {
     // Source: pkg_issue48_compare.proc_compare_level (PROCEDURE) — issue_48_long_compareto_string.sql:122-135
     public void procCompareLevel(java.math.BigDecimal pLevel, String pThreshold, AtomicReference<String> pResult) {
         pResult.set(null);
-        if (pLevel.compareTo(pThreshold) >= 0) {
+        if (pLevel.compareTo(new java.math.BigDecimal(pThreshold)) >= 0) {
             pResult.set("ABOVE");
         } else if (pLevel.compareTo(java.math.BigDecimal.valueOf(0)) > 0) {
             pResult.set("POSITIVE");
