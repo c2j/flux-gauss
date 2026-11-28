@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.Issue144BindIndexMapper">
+
+    <!-- Source: issue_144_bind_index.sql:32-32 — issue_144_bind_index.prc_bind_index.selectPrcBindIndex -->
+    <select id="selectPrcBindIndex" parameterType="string" resultType="java.util.LinkedHashMap">
+        SELECT xmlforest(:element_name) FROM src_t WHERE 'pk_id' = #{pSeqno, jdbcType=VARCHAR, javaType=String}
+    </select>
+
+    <!-- Source: issue_144_bind_index.sql:34-34 — issue_144_bind_index.prc_bind_index.selectPrcBindIndex_1 -->
+    <select id="selectPrcBindIndex_1" parameterType="string" resultType="java.util.LinkedHashMap">
+        SELECT xmlforest(:element_name) FROM src_t WHERE 'pk_id' = #{pSeqno, jdbcType=VARCHAR, javaType=String}
+        <if test="true">AND 'pk_id' = #{pFundId, jdbcType=VARCHAR, javaType=String}</if>
+    </select>
+
+</mapper>

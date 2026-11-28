@@ -6476,6 +6476,10 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
     _loop_var_restored = variable not in proc.local_vars
     if _loop_var_restored:
         proc.local_vars[variable] = "Integer"
+        # #144 batch4d: 标量 FOR range 变量 —— `':' || n` 拼接产出的是
+        # 位置绑定文本（:1、:2…），n 是构造期文本而非运行期 mapper 参数
+        proc._for_range_vars = getattr(proc, '_for_range_vars', set())
+        proc._for_range_vars.add(variable)
 
     _dml_count_before = len(proc.dml_statements)
 
@@ -6900,6 +6904,11 @@ def _apply_using_args_to_sql(sql_text: str, using_arg_names: list, proc: Procedu
             placeholder = f'#{{{java_name}}}'
         sql_text = re.sub(
             rf':\s*{pos}(?!\d)',
+            placeholder,
+            sql_text
+        )
+        sql_text = re.sub(
+            rf'\${pos}(?!\d)',
             placeholder,
             sql_text
         )
@@ -8710,6 +8719,42 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
         param_args = _build_param_args_from_template(proc, template_params, extra, sql_text, getattr(proc, "_dot_access_exprs", None))
         dynamic_conditions = _collect_dynamic_conditions(proc, var_name)
         if dynamic_conditions:
+            # #144 batch4d：concat-chain 片段里的位置绑定标记同样要落到
+            # USING 参数（基础模板已替换，片段此前原样漏进 <if>）。
+            # 字面 :N 是绝对位置；$k 是片段内相对序号，按基础模板已用
+            # 绑定数 + 前序片段累计做偏移，还原 EXECUTE 时的 :N 语义。
+            def _uph_for(pos_idx: int) -> str | None:
+                if pos_idx < 1 or pos_idx > len(using_args) or not isinstance(using_args[pos_idx - 1], dict):
+                    return None
+                _uan = _extract_var_name_from_expr(using_args[pos_idx - 1].get("argument", {}))
+                if not _uan:
+                    return None
+                _ujn = snake_to_camel(_uan)
+                _ujdbc = _uja = None
+                for _p in proc.parameters:
+                    if _p.name.lower() == _uan.lower():
+                        _ujdbc = sql_type_to_jdbc(_p.sql_type)
+                        _uja = _p.java_type
+                        break
+                if not _ujdbc and _uan in proc.local_vars:
+                    _uja = proc.local_vars[_uan]
+                    _ujdbc = java_type_to_jdbc(_uja)
+                return (f'#{{{_ujn}, jdbcType={_ujdbc}, javaType={_uja}}}'
+                        if _ujdbc and _uja else f'#{{{_ujn}}}')
+
+            _bind_off = max((int(m) for m in re.findall(r'\$(\d+)', sql_template)), default=0)
+            for _dc in dynamic_conditions:
+                for _pos, _uarg in enumerate(using_args, 1):
+                    _uph = _uph_for(_pos)
+                    if _uph:
+                        _dc.sql_fragment = re.sub(rf':\s*{_pos}(?!\d)', _uph, _dc.sql_fragment)
+                _marks = sorted({int(m) for m in re.findall(r'\$(\d+)', _dc.sql_fragment)})
+                for _k in _marks:
+                    _uph = _uph_for(_bind_off + _k)
+                    if _uph:
+                        _dc.sql_fragment = re.sub(rf'\${_k}(?!\d)', _uph, _dc.sql_fragment)
+                if _marks:
+                    _bind_off += max(_marks)
             _dc_refs = set()
             for dc in dynamic_conditions:
                 _dc_refs.update(re.findall(r'[#\$]\{(\w+)', dc.sql_fragment))
@@ -9040,8 +9085,15 @@ def _reconstruct_sql_from_concat(expr: dict, proc: ProcedureInfo):
     return (sql_template, param_list)
 
 
-def _flatten_concat(expr: dict, parts: list, param_list: list, proc: ProcedureInfo):
-    """Recursively flatten BinaryOp(||) into template parts."""
+def _flatten_concat(expr: dict, parts: list, param_list: list, proc: ProcedureInfo, _bind_seq: list | None = None):
+    """Recursively flatten BinaryOp(||) into template parts.
+
+    `_bind_seq` 是单次顶层展平内的位置绑定序号计数（`:'' || <for-var>`
+    构造文本 → `$1`/`$2`…，由 USING 位置替换消费）；递归共享、顶层各自
+    从 1 开始，保证同一表达式重复展平结果确定（concat-chain 去重依赖）。
+    """
+    if _bind_seq is None:
+        _bind_seq = [0]
     if not isinstance(expr, dict):
         return
 
@@ -9051,8 +9103,8 @@ def _flatten_concat(expr: dict, parts: list, param_list: list, proc: ProcedureIn
                 proc._inline_unquote_next = False
             op = val.get("op", "")
             if op == "||":
-                _flatten_concat(val.get("left", {}), parts, param_list, proc)
-                _flatten_concat(val.get("right", {}), parts, param_list, proc)
+                _flatten_concat(val.get("left", {}), parts, param_list, proc, _bind_seq)
+                _flatten_concat(val.get("right", {}), parts, param_list, proc, _bind_seq)
             else:
                 parts.append(f" {_java_op_symbol(op)} ")
         elif key == "Literal":
@@ -9099,6 +9151,23 @@ def _flatten_concat(expr: dict, parts: list, param_list: list, proc: ProcedureIn
                     proc._inline_unquote_next = True
                 else:
                     java_name = snake_to_camel(var_name)
+                    _prev = parts[-1].rstrip() if parts else ""
+                    # 前导字面量须以 ':' 结尾且冒号前有 SQL 内容（`= :`、`IN (:`
+                    # 形态）；孤立的 ':' 字面量（IN 子句构造器 ':' || i）不算——
+                    # 那种变量整体作为 #{param} 值传递，不是模板绑定记号。
+                    _is_bind_prefix = (_prev.endswith(":")
+                                       and bool(_prev[:-1].strip())
+                                       and var_name in getattr(proc, "_for_range_vars", set()))
+                    if _is_bind_prefix:
+                        # #144 batch4d：' = :' || <for-range-var> 是位置绑定索引
+                        # 构造文本（产出 :1、:2…），绑定值由 USING 侧提供；
+                        # 不能落成 ${n}/#{n} 参数——n 的作用域在循环内，
+                        # EXECUTE 调用点在循环外（javac 找不到符号）。
+                        # 前导 ':' 随 $k 一起被 USING 位置替换消费。
+                        _bind_seq[0] += 1
+                        parts[-1] = parts[-1].rstrip()[:-1]
+                        parts.append(f"${_bind_seq[0]}")
+                        continue
                     is_identifier = _is_identifier_context(parts)
                     if is_identifier:
                         parts.append(f"${{{java_name}}}")
@@ -11390,6 +11459,13 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                 is_bd = "BigDecimal" in left_type or "BigDecimal" in right_type
                 is_str = left_type == "String" or right_type == "String"
 
+                # #144 batch4d: String 表达式（变量/函数/非数字字面量）×
+                # 非 BigDecimal 数值 —— is_str 的 compareTo 与 Long 分支的
+                # parseLong().compareTo() 都产生不成立形态，统一数值强转直比。
+                _str_num_cmp = _str_expr_num_compare(left, right, left_type, right_type, val, op)
+                if _str_num_cmp is not None:
+                    return _str_num_cmp
+
                 if is_bd and op in (">", "<", ">=", "<=", "=", "<>"):
                     cmp_map = {"<": "<", ">": ">", "<=": "<=", ">=": ">=", "=": "==", "<>": "!="}
                     if _is_numeric_literal(val.get("right")) and "BigDecimal" not in right:
@@ -11400,6 +11476,14 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
                     if "Integer" in right_type or right_type == "int":
                         if "BigDecimal" not in right:
                             right = f"java.math.BigDecimal.valueOf({right})"
+                    # #144 batch4d: String 侧 → BigDecimal（compareTo 不收
+                    # String 实参；数字/非数字字面量统一走 new BigDecimal）
+                    if left_type == "String":
+                        _ls = f"String.valueOf({left})" if ".get(" in left else left
+                        left = _coerce_type(_ls, "String", "java.math.BigDecimal")
+                    if right_type == "String":
+                        _rs = f"String.valueOf({right})" if ".get(" in right else right
+                        right = _coerce_type(_rs, "String", "java.math.BigDecimal")
                     return f"{left}.compareTo({right}) {cmp_map[op]} 0"
 
                 if is_str and not is_bd and op in (">", "<", ">=", "<="):
@@ -12523,6 +12607,62 @@ def _boxed_literal(java_expr: str, kind: str) -> str | None:
     if int(body) <= 2147483647:
         return f"{sign}{body}"
     return None
+
+
+_STR_NUM_TYPES = {"Integer", "int", "Long", "long", "Double", "double", "Float", "float"}
+
+
+def _str_expr_num_compare(left: str, right: str, left_type: str, right_type: str,
+                          val: dict, op: str) -> str | None:
+    """String 表达式 × 非 BigDecimal 数值类型的比较（#144 batch4d）。
+
+    is_str 分支对 >/< 系产出 `{left}.compareTo({right})`——String.compareTo(Long)
+    不成立；Long 分支对 String 左值产出 `Long.parseLong(x).compareTo(...)`——
+    primitive 解引用错误。此处把 String 侧 _coerce_type 成数值后按操作符直比
+    （int/long/double 原始值与装箱类型互相拆箱合法）。
+
+    豁免（维持既有输出/golden）：
+    - BigDecimal 参与 → 走 is_bd 分支的 compareTo 形态；
+    - String 侧为【数字内容】字面量 → is_str 的 BigDecimal/parseDouble 路径；
+    - 数值侧为数值字面量 → is_str 的 parseDouble 路径。
+    """
+    if op not in (">", "<", ">=", "<=", "=", "<>", "!="):
+        return None
+    if left_type == right_type:
+        return None
+    if "BigDecimal" in left_type or "BigDecimal" in right_type:
+        return None
+    if left_type == "String":
+        str_side, num_side = "left", "right"
+    elif right_type == "String":
+        str_side, num_side = "right", "left"
+    else:
+        return None
+    num_type = right_type if str_side == "left" else left_type
+    if num_type not in _STR_NUM_TYPES:
+        return None
+    str_ast = val.get(str_side)
+    if isinstance(str_ast, dict) and "Literal" in str_ast:
+        _lit = str_ast["Literal"]
+        if isinstance(_lit, dict) and "String" in _lit:
+            try:
+                float(_lit["String"])
+                return None  # 数字字符串字面量 → 既有 BigDecimal 路径
+            except (ValueError, TypeError):
+                pass
+    if _is_numeric_literal(val.get(num_side)):
+        return None
+    str_expr = left if str_side == "left" else right
+    num_expr = right if str_side == "left" else left
+    if ".get(" in str_expr:
+        str_expr = f"String.valueOf({str_expr})"
+    boxed = {"int": "Integer", "long": "Long", "double": "Double",
+             "float": "Float"}.get(num_type, num_type)
+    str_num = _coerce_type(str_expr, "String", boxed)
+    l2, r2 = (str_num, num_expr) if str_side == "left" else (num_expr, str_num)
+    cmp_map = {"<": "<", ">": ">", "<=": "<=", ">=": ">=", "=": "==",
+               "<>": "!=", "!=": "!="}
+    return f"{l2} {cmp_map[op]} {r2}"
 
 
 def _boxed_num_compare(left: str, right: str, left_type: str, right_type: str, *, negated: bool) -> str | None:
@@ -14110,6 +14250,8 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
             frag = dc.sql_fragment.strip()
             if frag == "," or frag == ", ":
                 return False
+            if re.search(r'\$\d+', frag):
+                return False
             for lv in local_var_names:
                 if re.search(rf'#\{{{lv}\b', frag) or re.search(rf'\$\{{{lv}\b', frag):
                     return False
@@ -14134,7 +14276,7 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
                 has_local_var = any(
                     re.search(rf'[#\$]\{{{lv}\b', where_text)
                     for lv in local_var_names
-                )
+                ) or bool(re.search(r'\$\d+', where_text))
                 if not has_local_var:
                     _cond = dc.condition_expr
                     _cond_refs_local = any(
