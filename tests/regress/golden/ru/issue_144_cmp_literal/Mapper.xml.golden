@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.Issue144cmpMapper">
+
+    <!-- Source: {FIXTURES_ROOT}/issue_144_cmp_literal.sql:20-47 — pkg_issue144cmp.prc_cmp_literal.selectPrcCmpLiteral -->
+    <select id="selectPrcCmpLiteral" resultType="java.util.LinkedHashMap">
+        SELECT t.operation_no, t.batch_cnt FROM dat_invest_in_out_144 t
+    </select>
+
+</mapper>

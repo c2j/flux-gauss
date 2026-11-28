@@ -1,0 +1,54 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144cmpMapper;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_144_cmp_literal.sql
+public class Issue144cmpService {
+    private static final Logger log = LoggerFactory.getLogger(Issue144cmpService.class);
+
+    private final Issue144cmpMapper issue144cmpMapper;
+
+    public Issue144cmpService(Issue144cmpMapper issue144cmpMapper) {
+        this.issue144cmpMapper = issue144cmpMapper;
+    }
+
+    // Source: pkg_issue144cmp.prc_cmp_literal (PROCEDURE) — {FIXTURES_ROOT}/issue_144_cmp_literal.sql:20-47
+    public void prcCmpLiteral() {
+        Long vCnt = 0L;
+        String vSuccResult = null;
+        Object cInfo = null;
+        // for rInfo in cursor c_info
+        List<Map<String, Object>> rInfoList = issue144cmpMapper.selectPrcCmpLiteral();
+        if (rInfoList == null) rInfoList = new ArrayList<>();
+        for (Map<String, Object> rInfo : rInfoList) {
+            if (java.util.Objects.equals(rInfo.getOrDefault("operationNo", rInfo.get("operation_no")), "4801040001")) {
+                vCnt = vCnt + 1;
+            }
+            if (!java.util.Objects.equals(rInfo.getOrDefault("operationNo", rInfo.get("operation_no")), "888")) {
+                vCnt = vCnt + 2;
+            }
+            if (java.util.Objects.equals("777", rInfo.getOrDefault("operationNo", rInfo.get("operation_no")))) {
+                vCnt = vCnt + 4;
+            }
+            if (java.util.Objects.equals(rInfo.getOrDefault("batchCnt", rInfo.get("batch_cnt")), "42")) {
+                vCnt = vCnt + 8;
+            }
+            if (java.util.Objects.equals(vSuccResult, rInfo.getOrDefault("operationNo", rInfo.get("operation_no")))) {
+                vCnt = vCnt + 16;
+            }
+            if (!java.util.Objects.equals(vSuccResult, rInfo.getOrDefault("batchCnt", rInfo.get("batch_cnt")))) {
+                vCnt = vCnt + 32;
+            }
+        }
+    }
+}

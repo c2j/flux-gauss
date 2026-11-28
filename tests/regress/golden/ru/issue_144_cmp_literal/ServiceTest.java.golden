@@ -1,0 +1,33 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144cmpMapper;
+import com.example.demo.service.Issue144cmpService;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_144_cmp_literal.sql
+class Issue144cmpServiceTest {
+
+    @Mock
+    private Issue144cmpMapper issue144cmpMapper;
+
+    @InjectMocks
+    private Issue144cmpService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_prcCmpLiteral_success() {
+        { var m = new java.util.HashMap<String,Object>(); m.put("operationNo", 1L); m.put("batchCnt", 1L); when(issue144cmpMapper.selectPrcCmpLiteral()).thenReturn(java.util.List.of(m)); }
+        service.prcCmpLiteral();
+    }
+}
