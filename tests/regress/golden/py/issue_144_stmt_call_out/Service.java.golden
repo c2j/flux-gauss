@@ -1,0 +1,58 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144StmtCallOutMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue144StmtCallOutService {
+    private static final Logger log = LoggerFactory.getLogger(Issue144StmtCallOutService.class);
+
+    private final Issue144StmtCallOutMapper issue144StmtCallOutMapper;
+
+    public Issue144StmtCallOutService(Issue144StmtCallOutMapper issue144StmtCallOutMapper) {
+        this.issue144StmtCallOutMapper = issue144StmtCallOutMapper;
+    }
+    // Source: issue_144_stmt_call_out.helper_proc (PROCEDURE) — issue_144_stmt_call_out.sql:19-22
+    public void helperProc(String pA, String pB, AtomicReference<String> pOut) {
+        pOut.set(null);
+        pOut.set(String.valueOf(pA + "_" + pB));
+    }
+
+    // Source: issue_144_stmt_call_out.helper_num (PROCEDURE) — issue_144_stmt_call_out.sql:24-27
+    public void helperNum(Long pN, AtomicReference<Long> pOut) {
+        pOut.set(null);
+        pOut.set(((Number) pN * 2).longValue());
+    }
+
+    // Source: issue_144_stmt_call_out.prc_stmt_call_out (PROCEDURE) — issue_144_stmt_call_out.sql:29-49
+    public void prcStmtCallOut() {
+        String vOut = null;
+        String vOut2 = null;
+        Long vNum = 0L;
+        String vIn = "x";
+        Long vCnt = Long.valueOf(0);
+        this.helperProc(vIn, "a", vOut);
+        this.helperProc(vIn, "b", vOut2);
+        this.helperNum(((Number) (vCnt)).longValue(), vNum);
+        this.helperProc(vIn, "c", vNum);
+        this.helperProc(vIn, /* TODO: implement some_unknown_udf(vIn, vIn) — pkg=?, ret=?, args=[String, String], caller=issue_144_stmt_call_out.sql:prc_stmt_call_out */ null, vOut2);
+        vCnt = vCnt + 1;
+    }
+
+    // Source: issue_144_stmt_call_out.prc_stmt_call_out_handler (PROCEDURE) — issue_144_stmt_call_out.sql:51-62
+    public void prcStmtCallOutHandler() {
+        String vOut = null;
+        String vIn = "x";
+        try {
+            this.helperProc(vIn, "h", vOut);
+        } catch (Exception e) { // EXCEPTION handlers — src: issue_144_stmt_call_out.sql:51
+            this.helperProc(vOut, "e", vOut);
+            vOut = "fb";
+        }
+    }
+}

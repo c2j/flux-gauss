@@ -2489,8 +2489,8 @@ def _promote_out_local_vars(proc: ProcedureInfo, all_packages: dict):
                             rhs = f'String.valueOf({rhs})'
                         line = f'{m_cond.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<>({_wrap_rhs(rhs)});'
                 try:
-                    patched.append(_patch_promoted_var_reads(line, var_java, string_inner=_string_inner,
-                                                              proc=proc, all_packages=all_packages))
+                    patched.extend(_patch_promoted_var_reads(line, var_java, string_inner=_string_inner,
+                                                             proc=proc, all_packages=all_packages))
                 except Exception:
                     # A malformed line must not abort patching for the
                     # remaining lines/vars (the caller swallows the whole
@@ -2674,19 +2674,37 @@ def _plan_out_arg_expr(arg_ast, proc, target_inner: str, all_packages: dict = No
 
 def _call_arg_spans(line: str, open_paren: int):
     """Yield (start, end) spans of top-level comma-separated args inside the
-    parens starting at open_paren. Handles nested parens/brackets/strings."""
+    parens starting at open_paren. Handles nested parens/brackets/strings and
+    skips /* */ and // comments — generated TODO comments contain commas that
+    must not split argument positions (#144 batch4b)."""
     depth = 0
     seg_start = open_paren + 1
     i = open_paren
     in_str = None
+    in_block_comment = False
     while i < len(line):
         c = line[i]
+        if in_block_comment:
+            if c == "*" and i + 1 < len(line) and line[i + 1] == "/":
+                in_block_comment = False
+                i += 2
+                continue
+            i += 1
+            continue
         if in_str:
             if c == "\\":
                 i += 2
                 continue
             if c == in_str:
                 in_str = None
+        elif c == "/" and i + 1 < len(line) and line[i + 1] == "*":
+            in_block_comment = True
+            i += 2
+            continue
+        elif c == "/" and i + 1 < len(line) and line[i + 1] == "/":
+            # Line comment swallows the rest of the line — the closing paren
+            # (if any) is commented out, so no complete arg list exists.
+            return
         elif c in "\"'":
             in_str = c
         elif c in "([{":
@@ -2705,8 +2723,11 @@ def _call_arg_spans(line: str, open_paren: int):
 
 def _call_out_positions(recv: str, method: str, arg_count: int, proc: ProcedureInfo,
                         all_packages: dict):
-    """Return set of OUT/INOUT arg indices for `recv.method(...)`, or None when
-    the target signature cannot be resolved."""
+    """Return ``(outs, types)`` for `recv.method(...)`, or None when the target
+    signature cannot be resolved. ``outs`` is the set of OUT/INOUT arg indices;
+    ``types[i]`` is the callee's inner java_type at an OUT position (None when
+    ambiguous or not OUT) — used for carrier inner-type mismatch detection
+    (#144 batch4b)."""
     pkg = all_packages.get(proc.package) if all_packages else None
     if pkg is None and all_packages and proc.package:
         # Package keys may differ in case from proc.package (call sites
@@ -2725,7 +2746,7 @@ def _call_out_positions(recv: str, method: str, arg_count: int, proc: ProcedureI
                      if p.proc_name.lower().replace("_", "") == _m]
     elif recv.endswith("Mapper"):
         # Mapper calls never carry OUT carriers — every position is IN.
-        return set()
+        return set(), [None] * arg_count
     else:
         # xxxService.method → resolve the target package via the proc's
         # recorded cross-package service calls (#144).
@@ -2764,7 +2785,7 @@ def _call_out_positions(recv: str, method: str, arg_count: int, proc: ProcedureI
         # this.-call target not resolvable (helper stubs like instrb, or a
         # package lookup miss): IN positions dominate — dereference carriers
         # rather than leaving AtomicReference where String is expected (#144).
-        return set()
+        return set(), [None] * arg_count
     # Prefer exact-arity match; otherwise union is unsafe → only use positions
     # that are OUT in EVERY candidate.
     exact = [p for p in cands
@@ -2774,17 +2795,38 @@ def _call_out_positions(recv: str, method: str, arg_count: int, proc: ProcedureI
     for p in pool:
         outs = {i for i, tp in enumerate(p.parameters) if tp.is_out}
         common = outs if common is None else (common & outs)
-    return common or set()
+    common = common or set()
+    types: list = [None] * arg_count
+    for i in common:
+        _ts = {p.parameters[i].java_type for p in pool
+               if i < len(p.parameters) and p.parameters[i].is_out}
+        if len(_ts) == 1:
+            types[i] = next(iter(_ts))
+    return common, types
 
 
 def _fix_call_arg_carriers(line: str, var_java: str, proc: ProcedureInfo,
-                           all_packages: dict) -> str:
+                           all_packages: dict):
     """Rewrite bare `var_java` occurrences inside `recv.method(args)` calls:
     keep the AtomicReference carrier at OUT/INOUT positions, emit `.get()` at
-    IN positions. Non-call occurrences are left for the generic pass."""
+    IN positions. Non-call occurrences are left for the generic pass.
+
+    Returns ``(line, pre_lines, post_lines)`` — when the carrier's inner type
+    differs from the callee's OUT param type, a typed temp carrier is declared
+    before the call and written back after it (#144 batch4b)."""
     if not all_packages or proc is None:
-        return line
+        return line, [], []
     out = line
+    # Inner type of this var's AtomicReference carrier (None when unknown).
+    carrier_inner = None
+    for _vn, _vt in (proc.local_vars or {}).items():
+        if snake_to_camel(_vn) == var_java:
+            carrier_inner = _carrier_inner(str(_vt))
+            if carrier_inner is not None:
+                break
+    pre_lines: list = []
+    post_lines: list = []
+    _call_prepost: list = []
     # Process right-to-left so earlier offsets stay valid.
     matches = list(re.finditer(r'\b((?:this|svc\w*|\w+Mapper|\w+Service)\.(\w+))\s*\(', out))
     for m in reversed(matches):
@@ -2794,9 +2836,10 @@ def _fix_call_arg_carriers(line: str, var_java: str, proc: ProcedureInfo,
         spans = list(_call_arg_spans(out, open_paren))
         if not spans:
             continue
-        outs = _call_out_positions(recv, method, len(spans), proc, all_packages)
-        if outs is None:
+        res = _call_out_positions(recv, method, len(spans), proc, all_packages)
+        if res is None:
             continue
+        outs, types = res
         # Rebuild args: for each position, rewrite bare var occurrences.
         args = [out[s:e] for s, e in spans]
         changed = False
@@ -2807,6 +2850,23 @@ def _fix_call_arg_carriers(line: str, var_java: str, proc: ProcedureInfo,
             if not re.search(rf'(?<![\w.]){re.escape(var_java)}\b', arg):
                 continue
             if idx in outs:
+                target_inner = types[idx] if types else None
+                if (arg.strip() in (var_java, f"{var_java}.get()")
+                        and carrier_inner and target_inner
+                        and target_inner != carrier_inner):
+                    # Carrier inner ≠ callee OUT inner: transit a typed temp
+                    # carrier and write the result back into the var.
+                    tmp = _fresh_out_tmp(proc)
+                    _call_prepost.append((
+                        m.start(),
+                        [f"java.util.concurrent.atomic.AtomicReference<{target_inner}> {tmp} = "
+                         f"new java.util.concurrent.atomic.AtomicReference<>("
+                         f"{_coerce_type(f'{var_java}.get()', carrier_inner, target_inner)});"],
+                        [f"{var_java}.set({_coerce_type(f'{tmp}.get()', target_inner, carrier_inner)});"],
+                    ))
+                    args[idx] = tmp
+                    changed = True
+                    continue
                 # OUT position: carrier — strip any stray .get() on the var.
                 new_arg = re.sub(rf'\b{re.escape(var_java)}\.get\(\)', var_java, arg)
             else:
@@ -2822,12 +2882,55 @@ def _fix_call_arg_carriers(line: str, var_java: str, proc: ProcedureInfo,
         close_paren = spans[-1][1]
         new_call = ", ".join(args)
         out = out[:open_paren + 1] + new_call + out[close_paren:]
-    return out
+    for _, _pre, _post in sorted(_call_prepost, key=lambda t: t[0]):
+        pre_lines.extend(_pre)
+        post_lines.extend(_post)
+    return out, pre_lines, post_lines
+
+
+def _wrap_ar_local_assign(line: str, var_java: str, ar_type: str) -> str:
+    """Wrap a bare `var = expr;` (or `if/while (...) var = expr;`) RHS into
+    `new AtomicReference<>(...)` when the local was promoted to a carrier —
+    mirrors the Phase-2.5 assignment patch so lines emitted later by
+    _wrap_try_catch (exception handlers) get the same treatment (#144 batch4b).
+    """
+    m_ar = re.match(r'^AtomicReference<(.+)>$', (ar_type or "").strip())
+    if not m_ar:
+        return line
+    inner = m_ar.group(1)
+
+    def _wrap_rhs(rhs: str) -> str:
+        _r = rhs.strip()
+        if _r == "null":
+            return rhs
+        return _coerce_type(rhs, "Object", inner)
+
+    m_assign = re.match(rf'^(\s*){re.escape(var_java)} = (.*);\s*$', line)
+    m_cond = None
+    if not m_assign:
+        m_cond = re.match(rf'^(\s*(?:if|while)\s*\(.+?\)\s+){re.escape(var_java)} = (.*);\s*$', line)
+    if m_assign and not re.match(r'^new (java\.util\.concurrent\.atomic\.)?AtomicReference<>', m_assign.group(2).strip()):
+        rhs = m_assign.group(2)
+        if 'String' in inner and not rhs.strip().startswith('"') and rhs.strip() != 'null':
+            rhs = f'String.valueOf({rhs})'
+        return f'{m_assign.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<>({_wrap_rhs(rhs)});'
+    if m_cond and not re.match(r'^new (java\.util\.concurrent\.atomic\.)?AtomicReference<>', m_cond.group(2).strip()):
+        rhs = m_cond.group(2)
+        if 'String' in inner and not rhs.strip().startswith('"') and rhs.strip() != 'null':
+            rhs = f'String.valueOf({rhs})'
+        return f'{m_cond.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<>({_wrap_rhs(rhs)});'
+    return line
 
 
 def _patch_promoted_var_reads(line: str, var_java: str, string_inner: bool = False,
-                              proc: ProcedureInfo = None, all_packages: dict = None) -> str:
+                              proc: ProcedureInfo = None, all_packages: dict = None) -> list:
+    """Return the rewritten line(s): ``[pre..., line, post...]``. Pre/post
+    carry any temp-carrier declarations/writebacks emitted by
+    `_fix_call_arg_carriers` for OUT inner-type mismatches (#144 batch4b)."""
     import re
+    _indent = line[:len(line) - len(line.lstrip())]
+    _pre_lines: list = []
+    _post_lines: list = []
     # Remove .get() from promoted vars passed as OUT args to method/mapper calls
     if f'{var_java}.get()' in line and (re.search(rf'\bthis\.\w+\(', line) or 'Mapper.' in line):
         line = line.replace(f'{var_java}.get()', var_java)
@@ -2837,7 +2940,7 @@ def _patch_promoted_var_reads(line: str, var_java: str, string_inner: bool = Fal
     # per-position decision wins. The old blanket `this.`/`Mapper.` skip left
     # carriers in IN positions (compile errors).
     if proc is not None:
-        line = _fix_call_arg_carriers(line, var_java, proc, all_packages)
+        line, _pre_lines, _post_lines = _fix_call_arg_carriers(line, var_java, proc, all_packages)
     patterns_to_skip = [
         rf'\b{re.escape(var_java)}\s*=',
         rf'\b{re.escape(var_java)}\.set\s*\(',
@@ -2848,9 +2951,9 @@ def _patch_promoted_var_reads(line: str, var_java: str, string_inner: bool = Fal
     ]
     for pat in patterns_to_skip:
         if re.search(pat, line):
-            return line
+            return [_indent + l for l in _pre_lines] + [line] + [_indent + l for l in _post_lines]
     line = re.sub(
-        rf'(?<!\.)(?<!\w){re.escape(var_java)}\b(?!\s*=)(?!\s*\.set)(?!\s*\()',
+        rf'(?<!\.)(?<!\w){re.escape(var_java)}\b(?!\s*=)(?!\s*\.set)(?!\s*\.get\b)(?!\s*\()',
         f'{var_java}.get()',
         line,
     )
@@ -2871,7 +2974,7 @@ def _patch_promoted_var_reads(line: str, var_java: str, string_inner: bool = Fal
         line = line.replace(f'((Number) {_vget})', f'Double.parseDouble(String.valueOf({_vget}))')
         line = re.sub(rf'(?<![\w.)]){re.escape(_vget)}\s*([*/+\-])', rf'Double.parseDouble(String.valueOf({_vget})) \1', line)
         line = re.sub(rf'([*/+\-])\s*{re.escape(_vget)}', rf'\1 Double.parseDouble(String.valueOf({_vget}))', line)
-    return line
+    return [_indent + l for l in _pre_lines] + [line] + [_indent + l for l in _post_lines]
 
 
 def _extract_var_name(expr) -> str:
@@ -15184,6 +15287,25 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
 
     # Issue #144 batch1a: try/兄弟块形态在 wrap 后才成型，跨块声明提升在此做
     body_lines = _hoist_cross_block_lines(body_lines)
+
+    # Issue #144 batch4b: exception-handler statements are emitted by
+    # _wrap_try_catch during generation — AFTER _promote_out_local_vars already
+    # patched proc.java_logic_lines — so promoted carriers inside handler calls
+    # never received the position-aware .get()/carrier rewrite. Re-run the
+    # patch over the final body; it is idempotent for already-patched lines.
+    _ar_locals = [(vn, vt) for vn, vt in proc.local_vars.items()
+                  if "AtomicReference<" in str(vt)]
+    for _avn, _avt in _ar_locals:
+        _m_ar = re.match(r'^AtomicReference<(.+)>$', str(_avt).strip())
+        _inner = _m_ar.group(1) if _m_ar else ""
+        _rep: list = []
+        for _line in body_lines:
+            _line = _wrap_ar_local_assign(_line, snake_to_camel(_avn), str(_avt))
+            _rep.extend(_patch_promoted_var_reads(
+                _line, snake_to_camel(_avn),
+                string_inner=("String" in _inner),
+                proc=proc, all_packages=all_packages))
+        body_lines = _rep
 
     body_lines = hoisted_decls + body_lines
 
