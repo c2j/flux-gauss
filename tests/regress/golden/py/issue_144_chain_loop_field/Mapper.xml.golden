@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.Issue144ChainLoopFieldMapper">
+
+    <!-- Source: issue_144_chain_loop_field.sql:45-45 — pkg_issue144cols.prc_move_cols.selectPrcMoveCols -->
+    <select id="selectPrcMoveCols" resultType="java.util.LinkedHashMap">
+        select t.column_name AS column_name
+        from v_my_tab_columns_144 AS t
+        where t.table_name = #{vSourceTable, jdbcType=VARCHAR, javaType=String}
+          AND t.column_name not in ('USAGE')
+    </select>
+
+    <!-- Source: issue_144_chain_loop_field.sql:58-58 — pkg_issue144cols.prc_move_cols.insertPrcMoveCols -->
+    <insert id="insertPrcMoveCols">
+        insert into ${vTargetTable} (${vColumns}) select ${vColumns} from ${vSourceTable} where INST_NUM = #{pIInstNum, jdbcType=NUMERIC, javaType=Long} AND INST_DATA_DATE = ' AND '::#{pIDataDate, jdbcType=VARCHAR, javaType=String} || #{vDiffColumn, jdbcType=VARCHAR, javaType=String} || '= '' || #{vDiffValue, jdbcType=VARCHAR, javaType=String} || '''
+    </insert>
+
+</mapper>

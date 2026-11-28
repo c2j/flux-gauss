@@ -1,0 +1,38 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144LiteralMaskMapper;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue144LiteralMaskService {
+    private static final Logger log = LoggerFactory.getLogger(Issue144LiteralMaskService.class);
+
+    private final Issue144LiteralMaskMapper issue144LiteralMaskMapper;
+
+    public Issue144LiteralMaskService(Issue144LiteralMaskMapper issue144LiteralMaskMapper) {
+        this.issue144LiteralMaskMapper = issue144LiteralMaskMapper;
+    }
+    // Source: pkg_issue144lit.prc_decode_lit (PROCEDURE) — issue_144_literal_mask.sql:13-32
+    public void prcDecodeLit(String pIOperationNo, String pIUsage, String pIDataGroup) {
+        String vTableName = null;
+        List<Map<String, Object>> sList = issue144LiteralMaskMapper.selectPrcDecodeLit(pIOperationNo, pIUsage, pIDataGroup);
+        for (Map<String, Object> s : sList) {
+            vTableName = String.valueOf(s.get("table_name"));
+            if (vTableName != null) {
+                // CALL pkg_issue144lit_helper.gen_xml(...)
+            }
+        }
+    }
+
+    // Source: pkg_issue144lit_helper.gen_xml (PROCEDURE) — issue_144_literal_mask.sql:42-45
+    public void genXml(String pITable) {
+        // Auto-generated from stored procedure
+    }
+}

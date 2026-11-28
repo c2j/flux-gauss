@@ -1,0 +1,13 @@
+        package com.example.demo.mapper;
+
+        import java.util.List;
+import java.util.Map;
+
+        import org.apache.ibatis.annotations.*;
+
+        @Mapper
+        public interface Issue144LiteralMaskMapper {
+
+                // issue_144_literal_mask.sql:13 — pkg_issue144lit.prc_decode_lit
+        List<Map<String, Object>> selectPrcDecodeLit(@Param("pIOperationNo") String pIOperationNo, @Param("pIUsage") String pIUsage, @Param("pIDataGroup") String pIDataGroup);
+        }

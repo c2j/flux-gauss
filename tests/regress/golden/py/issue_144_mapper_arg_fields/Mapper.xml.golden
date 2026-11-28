@@ -15,11 +15,11 @@
     </select>
 
     <!-- Source: issue_144_mapper_arg_fields.sql:53-53 — pkg_issue144mp.prc_model_loop.selectPrcModelLoop_1 -->
-    <select id="selectPrcModelLoop_1" parameterType="string" resultType="java.util.LinkedHashMap">
+    <select id="selectPrcModelLoop_1" resultType="java.util.LinkedHashMap">
         SELECT
           xmlforest(: element_name)
-        FROM #{s_table_name}
-        WHERE SEQ_NO = : seq_no ' AND ' || #{s_diff_column} || '= '' || #{s_diff_value} || '''
+        FROM ${vTableName}
+        WHERE SEQ_NO = : seq_no${vSqlDiff}
                 LIMIT 1
     </select>
 

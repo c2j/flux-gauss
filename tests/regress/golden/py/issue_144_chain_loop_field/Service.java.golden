@@ -1,0 +1,70 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144ChainLoopFieldMapper;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue144ChainLoopFieldService {
+    private static final Logger log = LoggerFactory.getLogger(Issue144ChainLoopFieldService.class);
+
+    private final Issue144ChainLoopFieldMapper issue144ChainLoopFieldMapper;
+
+    public Issue144ChainLoopFieldService(Issue144ChainLoopFieldMapper issue144ChainLoopFieldMapper) {
+        this.issue144ChainLoopFieldMapper = issue144ChainLoopFieldMapper;
+    }
+
+    private String _substr(String str, Object pos) {
+        return _substr(str, pos, str.length());
+    }
+
+    private String _substr(String str, Object pos, Object len) {
+        if (str == null) str = "";
+        int p = (pos instanceof Number) ? ((Number) pos).intValue() : Integer.parseInt(String.valueOf(pos));
+        int l = (len instanceof Number) ? ((Number) len).intValue() : Integer.parseInt(String.valueOf(len));
+        int start = Math.max(0, p - 1);
+        int end = Math.min(str.length(), start + l);
+        if (start > end) start = end;
+        return str.substring(start, end);
+    }
+    // Source: pkg_issue144cols.prc_move_cols (PROCEDURE) — issue_144_chain_loop_field.sql:21-61
+    @Transactional
+    public void prcMoveCols(Long pIInstNum, String pIDataDate, AtomicReference<String> pORetcode, AtomicReference<String> pORetmsg) {
+        String vSourceTable = null;
+        String vTargetTable = null;
+        String vColumns = "";
+        String vSql = null;
+        String vSqlDiff = null;
+        String vDiffColumn = null;
+        String vDiffValue = null;
+        Long vCnt = Long.valueOf(0);
+        int _sqlRowCount = 0;
+        pORetcode.set(null);
+        pORetmsg.set(null);
+        if (vSourceTable == null || vTargetTable == null) {
+            pORetcode.set("0");
+            return;
+        }
+        if (vDiffColumn != null) {
+            vSqlDiff = " AND " + vDiffColumn + "= '" + vDiffValue + "'";
+        } else {
+            vSqlDiff = "";
+        }
+        List<Map<String, Object>> jList = issue144ChainLoopFieldMapper.selectPrcMoveCols(pIInstNum, pIDataDate, vSourceTable);
+        for (Map<String, Object> j : jList) {
+            vColumns = String.valueOf(String.valueOf(vColumns + ",").concat(String.valueOf(j.get("column_name"))));
+        }
+        vColumns = _substr(String.valueOf(vColumns), (2));
+        vSql = "insert into " + vTargetTable + "(" + vColumns + ") select " + vColumns + " from " + vSourceTable + " where INST_NUM = :1 AND INST_DATA_DATE = :2" + vSqlDiff;
+        _sqlRowCount = issue144ChainLoopFieldMapper.insertPrcMoveCols(pIInstNum, pIDataDate, vSourceTable, vTargetTable, vColumns, vDiffColumn, vDiffValue);
+        pORetcode.set("0");
+        pORetmsg.set("ok");
+    }
+}

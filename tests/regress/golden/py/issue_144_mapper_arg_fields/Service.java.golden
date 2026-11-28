@@ -40,7 +40,7 @@ public class Issue144MapperArgFieldsService {
             }
             if (vTableName != null) {
                 vSql = "SELECT xmlforest(:element_name) FROM " + vTableName + " WHERE SEQ_NO = :seq_no" + vSqlDiff;
-                issue144MapperArgFieldsMapper.selectPrcModelLoop_1(s.get("table_name"), s.get("diff_column"), s.get("diff_value"));
+                issue144MapperArgFieldsMapper.selectPrcModelLoop_1(vTableName, vSqlDiff);
                 vCnt = vCnt + 1;
             }
         }

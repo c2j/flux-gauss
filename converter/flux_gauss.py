@@ -1080,6 +1080,11 @@ class ProcedureInfo:
     _raw_return_types: list = field(default_factory=list)  # Pre-coercion return expr types for reconciliation
     _dynamic_sql_build_stmts: dict = field(default_factory=dict)  # {stmt_body_idx: var_name}
     local_var_source_lines: dict = field(default_factory=dict)  # var_name -> SQL source line number
+    # Issue #144 batch1b/batch2：记录字段占位符登记（动态注入，mypy 显式声明）
+    _dot_access_exprs: dict = field(default_factory=dict)  # placeholder -> Java 取值表达式（s.get("col")）
+    _dot_access_roots: dict = field(default_factory=dict)  # placeholder -> 记录变量名（s）
+    _loop_vars: set = field(default_factory=set)           # 游标 FOR 循环变量名
+    _active_loop_vars: list = field(default_factory=list)  # 活跃嵌套循环变量栈
 
 
 @dataclass
@@ -5905,7 +5910,11 @@ def _process_assignment(assign_data: dict, proc: ProcedureInfo, all_packages: di
                             if ref_var != var_name and ref_var in proc.sql_concat_chain:
                                 if var_name not in proc.sql_concat_chain:
                                     proc.sql_concat_chain[var_name] = []
-                                proc.sql_concat_chain[var_name].extend(proc.sql_concat_chain[ref_var])
+                                for _entry in proc.sql_concat_chain[ref_var]:
+                                    if _frag_refs_loop_record(_entry[1], proc):
+                                        # 批次2b：循环记录字段片段不外拖（值占位符已覆盖）
+                                        continue
+                                    proc.sql_concat_chain[var_name].append(_entry)
                         build_map = getattr(proc, '_dynamic_sql_build_stmts', {})
                         stmt_idx = getattr(proc, '_current_stmt_idx', -1)
                         if stmt_idx >= 0:
@@ -8469,7 +8478,6 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
 
     dynamic_template = proc.dynamic_sql_templates.get(var_name) if var_name else None
     concat_chain = proc.sql_concat_chain.get(var_name, []) if var_name else []
-
     if dynamic_template and not sql_text:
         sql_template, template_params = dynamic_template
         sql_text = sql_template
@@ -8917,6 +8925,19 @@ def _flatten_concat(expr: dict, parts: list, param_list: list, proc: ProcedureIn
             if var_name:
                 if var_name in proc.sql_expr_vars:
                     inline_sql, inline_params = _inline_sql_expr(proc.sql_expr_vars[var_name], proc)
+                    if _frag_refs_loop_record(inline_sql, proc):
+                        # Issue #144 batch2b：该变量的拼接链在循环体内引用了循环记录
+                        # 字段（j.column_name）；模板只需值占位符，展开会把循环变量
+                        # 越界引用拖进循环外的 mapper 调用（找不到符号）。
+                        java_name = snake_to_camel(var_name)
+                        is_identifier = _is_identifier_context(parts)
+                        if is_identifier:
+                            parts.append(f"${{{java_name}}}")
+                        else:
+                            parts.append(f"#{{{java_name}}}")
+                        param_list.append((java_name, is_identifier))
+                        proc._inline_unquote_next = True
+                        continue
                     if parts and parts[-1].rstrip().endswith("'"):
                         last = parts[-1].rstrip()
                         parts[-1] = last[:-1].rstrip()
@@ -9065,8 +9086,33 @@ def _record_field_placeholder(parts: list, proc: ProcedureInfo) -> str:
     placeholder = f"{root}_{field}"
     if not hasattr(proc, "_dot_access_exprs"):
         proc._dot_access_exprs = {}
+    if not hasattr(proc, "_dot_access_roots"):
+        proc._dot_access_roots = {}
     proc._dot_access_exprs[placeholder] = f'{snake_to_camel(root)}.get("{field}")'
+    proc._dot_access_roots[placeholder] = root
     return placeholder
+
+
+def _frag_refs_loop_record(frag: str, proc: ProcedureInfo) -> bool:
+    """片段是否引用了循环记录字段占位符（j_column_name ← j.column_name）。
+
+    Issue #144 batch2b：这类片段只在对应循环体内有效；concat-chain 合并把它
+    拖进循环外的模板会在调用点生成循环变量越界引用（找不到符号）。
+    """
+    dot_roots = getattr(proc, "_dot_access_roots", {})
+    if not dot_roots:
+        return False
+    loop_vars = getattr(proc, "_loop_vars", set())
+    frag = frag or ""
+    # ① 注册过的占位符（#{j_column_name}）
+    for ph in re.findall(r'[#\$]\{(\w+)', frag):
+        if ph in dot_roots and dot_roots[ph] in loop_vars:
+            return True
+    # ② 点号形态（${j.columnName} / #{j.columnName}）
+    for root in re.findall(r'[#\$]\{(\w+)\.\w+', frag):
+        if root in loop_vars:
+            return True
+    return False
 
 
 def _append_dot_access_params(proc: ProcedureInfo, sql_text: str, extra: list) -> list:
@@ -12631,6 +12677,7 @@ def _build_param_args_from_template(proc: ProcedureInfo, template_params: list, 
 def _sql_local_var_names(proc: ProcedureInfo, sql_text: str, is_select: bool = False) -> list:
     if not sql_text:
         return []
+    sql_text, _restore_lits_sv = _mask_sql_literals(sql_text)
     scan_sql = sql_text
     # Strip SELECT ... INTO variable (PL/pgSQL), but not INSERT INTO table
     if is_select:
@@ -12642,7 +12689,10 @@ def _sql_local_var_names(proc: ProcedureInfo, sql_text: str, is_select: bool = F
             else:
                 scan_sql = sql_text[:into_match.start()]
     param_names_lower = {p.name.lower() for p in proc.parameters if not p.is_out}
-    mybatis_placeholders = set(re.findall(r'#\{(\w+)', sql_text))
+    # Issue #144 batch2：占位符同时含 #{} 与 ${}（标识符上下文），与
+    # _dml_used_local_vars 的 [#\$]\{ 口径保持一致，否则 mapper 接口与
+    # 调用实参个数不一致（"无法将...应用到给定类型"）。
+    mybatis_placeholders = set(re.findall(r'[#\$]\{(\w+)', sql_text))
     result = []
     for var_name in proc.local_vars:
         if var_name.lower() in param_names_lower:
@@ -13101,6 +13151,7 @@ def _write_mapper_interface(base_path: Path, pkg: PackageInfo):
 def _dml_used_local_vars(proc: ProcedureInfo, dml: DmlStatement) -> list:
     sql_raw = dml.sql_text or ""
     mybatis_placeholders = set(re.findall(r'[#\$]\{(\w+)', sql_raw))
+    sql_raw, _restore_lits_dv = _mask_sql_literals(sql_raw)
     forall_elem_names = {name for name, _ in dml.extra_params} if dml.extra_params else set()
     used = []
     param_names_lower = {p.name.lower() for p in proc.parameters if not p.is_out}
@@ -13929,6 +13980,62 @@ def _build_mapper_statement(proc: ProcedureInfo, dml: DmlStatement) -> str:
     return "\n".join(xml_parts)
 
 
+def _mask_sql_literals(sql: str):
+    """把字符串字面量/注释/引号标识符替换为 \x00<idx>\x00 哨兵。
+
+    Issue #144 batch2a：参数名替换用 \b 词边界正则，`'S'` 字面量里的 S
+    会被误换成 #{s}（SQL 损坏 + 幽灵 mapper 参数）。返回 (masked, restore)。
+    """
+    spans = []
+    out = []
+    i = 0
+    n = len(sql)
+    while i < n:
+        ch = sql[i]
+        if ch == "'":
+            j = i + 1
+            while j < n:
+                if sql[j] == "'":
+                    if j + 1 < n and sql[j + 1] == "'":
+                        j += 2
+                        continue
+                    break
+                j += 1
+            j = min(j, n - 1)
+            spans.append(sql[i:j + 1])
+            out.append(f"\x00{len(spans) - 1}\x00")
+            i = j + 1
+        elif ch == "-" and sql[i:i + 2] == "--":
+            j = sql.find("\n", i)
+            j = n if j == -1 else j
+            spans.append(sql[i:j])
+            out.append(f"\x00{len(spans) - 1}\x00")
+            i = j
+        elif ch == "/" and sql[i:i + 2] == "/*":
+            j = sql.find("*/", i + 2)
+            j = n if j == -1 else j + 2
+            spans.append(sql[i:j])
+            out.append(f"\x00{len(spans) - 1}\x00")
+            i = j
+        elif ch == '"':
+            j = sql.find('"', i + 1)
+            j = n if j == -1 else j
+            spans.append(sql[i:j + 1])
+            out.append(f"\x00{len(spans) - 1}\x00")
+            i = j + 1
+        else:
+            out.append(ch)
+            i += 1
+    masked = "".join(out)
+
+    def restore(s: str) -> str:
+        for idx, frag in enumerate(spans):
+            s = s.replace(f"\x00{idx}\x00", frag)
+        return s
+
+    return masked, restore
+
+
 def _convert_params_to_mybatis(sql: str, params: list, local_vars: dict = None) -> str:
     """Convert SQL parameter references to MyBatis #{{paramName}} syntax with optional jdbcType/javaType.
 
@@ -13942,6 +14049,8 @@ def _convert_params_to_mybatis(sql: str, params: list, local_vars: dict = None) 
     if local_vars:
         for var_name in local_vars:
             all_names[var_name] = snake_to_camel(var_name)
+
+    sql, _restore_lits = _mask_sql_literals(sql)
 
     composite_pattern = None
     if all_names:
@@ -13991,7 +14100,7 @@ def _convert_params_to_mybatis(sql: str, params: list, local_vars: dict = None) 
     sql = re.sub(r'(\S+)\s*::\s*(NUMERIC|DECIMAL|VARCHAR2?|CHAR|BPCHAR)\s*\(([^)]+)\)', r'CAST(\1 AS \2(\3))', sql, flags=re.IGNORECASE)
     sql = re.sub(r'(#[\w, ={}]+})\s+(?:DATE|TIMESTAMP|INTEGER|BIGINT|VARCHAR|TEXT|BOOLEAN|NUMERIC|DECIMAL|FLOAT|DOUBLE|REAL|SMALLINT|BYTEA|JSONB|JSON|UUID)\b', r'\1', sql, flags=re.IGNORECASE)
     sql = re.sub(r':\s+(\d+)', lambda m: f'#{{param{m.group(1)}}}', sql)
-    return sql
+    return _restore_lits(sql)
 
 
 def _write_service_class(base_path: Path, pkg: PackageInfo, service_injections: dict, all_packages: dict = None):

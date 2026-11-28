@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.Issue144LiteralMaskMapper">
+
+    <!-- Source: issue_144_literal_mask.sql:18-18 — pkg_issue144lit.prc_decode_lit.selectPrcDecodeLit -->
+    <select id="selectPrcDecodeLit" parameterType="string" resultType="java.util.LinkedHashMap">
+        select
+          t.table_name,
+          decode(t.data_group, 'B', t.table_name || '_HIS', 'S', t.table_name || '_HIS', nvl(t.his_table_name, decode(#{pIUsage, jdbcType=VARCHAR, javaType=String}, 'M', t.table_name, t.table_name))) AS his_table_name
+        from par_issue144_lit AS t
+        where t.operation_no = #{pIOperationNo, jdbcType=VARCHAR, javaType=String}
+          AND (t.data_group = #{pIDataGroup, jdbcType=VARCHAR, javaType=String} OR #{pIDataGroup, jdbcType=VARCHAR, javaType=String} IS null)
+    </select>
+
+</mapper>

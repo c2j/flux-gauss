@@ -1,0 +1,15 @@
+        package com.example.demo.mapper;
+
+        import java.util.List;
+import java.util.Map;
+
+        import org.apache.ibatis.annotations.*;
+
+        @Mapper
+        public interface Issue144ChainLoopFieldMapper {
+
+                // issue_144_chain_loop_field.sql:21 — pkg_issue144cols.prc_move_cols
+        List<Map<String, Object>> selectPrcMoveCols(@Param("pIInstNum") Long pIInstNum, @Param("pIDataDate") String pIDataDate, @Param("vSourceTable") String vSourceTable);
+        // issue_144_chain_loop_field.sql:21 — pkg_issue144cols.prc_move_cols
+        int insertPrcMoveCols(@Param("pIInstNum") Long pIInstNum, @Param("pIDataDate") String pIDataDate, @Param("vSourceTable") String vSourceTable, @Param("vTargetTable") String vTargetTable, @Param("vColumns") String vColumns, @Param("vDiffColumn") String vDiffColumn, @Param("vDiffValue") String vDiffValue);
+        }

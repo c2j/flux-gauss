@@ -1,0 +1,45 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144LiteralMaskMapper;
+import com.example.demo.service.Issue144LiteralMaskService;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class Issue144LiteralMaskServiceTest {
+
+    @Mock
+    private Issue144LiteralMaskMapper issue144LiteralMaskMapper;
+
+    @InjectMocks
+    private Issue144LiteralMaskService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_prcDecodeLit_success() {
+        String pIOperationNo = "test_pIOperationNo";
+        String pIUsage = "test_pIUsage";
+        String pIDataGroup = "test_pIDataGroup";
+        var _rowTmpl = new java.util.HashMap<String,Object>(); _rowTmpl.put("table_name", "test");
+        { var m = new java.util.HashMap<String,Object>(); m.put("table_name", "test"); m.put("his_table_name", "test"); m.putAll(_rowTmpl); when(issue144LiteralMaskMapper.selectPrcDecodeLit(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        service.prcDecodeLit(pIOperationNo, pIUsage, pIDataGroup);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_genXml_success() {
+        String pITable = "test_pITable";
+        var _rowTmpl = new java.util.HashMap<String,Object>(); _rowTmpl.put("table_name", "test");
+        { var m = new java.util.HashMap<String,Object>(); m.put("table_name", "test"); m.put("his_table_name", "test"); m.putAll(_rowTmpl); when(issue144LiteralMaskMapper.selectPrcDecodeLit(any(), any(), any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        service.genXml(pITable);
+    }
+}
