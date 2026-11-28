@@ -29,8 +29,8 @@ public class Issue143recService {
     // Source: pkg_issue143rec.prc_record_fields (PROCEDURE) — {FIXTURES_ROOT}/issue_143_records.sql:16-24
     public void prcRecordFields(Map<String, Object> pRec) {
         Boolean vFlag = false;
-        Long vId = ((Number)(0L)).longValue();
         String vName = null;
+        Long vId = ((Number)(0L)).longValue();
         vFlag = pRec.getOrDefault("pFlag", pRec.get("p_flag"));
         vName = String.valueOf(pRec.getOrDefault("pName", pRec.get("p_name")));
         vId = ((Number) pRec.getOrDefault("pId", pRec.get("p_id"))).longValue();

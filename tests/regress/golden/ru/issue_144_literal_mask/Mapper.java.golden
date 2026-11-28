@@ -1,0 +1,24 @@
+// ===== FILE: Issue144litHelperMapper.java =====
+package com.example.demo.mapper;
+
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue144litHelperMapper {
+
+    // No direct DML operations for pkg_issue144lit_helper
+}
+
+// ===== FILE: Issue144litMapper.java =====
+package com.example.demo.mapper;
+
+import java.util.List;
+import java.util.Map;
+import org.apache.ibatis.annotations.*;
+
+@Mapper
+public interface Issue144litMapper {
+
+    // {FIXTURES_ROOT}/issue_144_literal_mask.sql:13 — pkg_issue144lit.prc_decode_lit
+    List<Map<String, Object>> selectPrcDecodeLit(@Param("pIOperationNo") String pIOperationNo, @Param("pIUsage") String pIUsage, @Param("pIDataGroup") String pIDataGroup);
+}

@@ -30,9 +30,9 @@ public class CollTypesService {
     @Transactional
     public void prcCollectionDemo(String pMode) {
         java.math.BigDecimal vAmt = java.math.BigDecimal.ZERO;
-        Long vCnt = ((Number)(0L)).longValue();
         java.sql.Date vD = null;
         Long vI = 1L;
+        Long vCnt = ((Number)(0L)).longValue();
         java.util.List<Long> vNums = new java.util.ArrayList<>();
         java.util.List<Map<String, Object>> vRectab = new java.util.ArrayList<>();
         vCnt = ((vI) >= 1 && (vI) <= (vNums).size() ? vNums.get((int)(long)(vI) - 1) : null);

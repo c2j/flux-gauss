@@ -1,0 +1,34 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144cfMapper;
+import com.example.demo.service.Issue144cfService;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_144_cursor_for_fields.sql
+class Issue144cfServiceTest {
+
+    @Mock
+    private Issue144cfMapper issue144cfMapper;
+
+    @InjectMocks
+    private Issue144cfService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_prcCursorFields_success() {
+        String pInFundCode = "test_p_in_fund_code";
+        { var m = new java.util.HashMap<String,Object>(); m.put("capDate", java.sql.Date.valueOf("2024-01-01")); m.put("maturityDate", java.sql.Date.valueOf("2024-01-01")); m.put("withdrawalDate", java.sql.Date.valueOf("2024-01-01")); m.put("lastWithdrawalDate", java.sql.Date.valueOf("2024-01-01")); m.put("submitDate", java.sql.Date.valueOf("2024-01-01")); when(issue144cfMapper.selectPrcCursorFields((String) any())).thenReturn(java.util.List.of(m)); }
+        service.prcCursorFields(pInFundCode);
+    }
+}

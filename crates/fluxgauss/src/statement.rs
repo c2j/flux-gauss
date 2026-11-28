@@ -651,10 +651,79 @@ fn extract_assignment_target_name(target: &ogsql_parser::ast::Expr) -> Option<St
     }
 }
 
+/// `s.diff_column` 形态：root 是游标 FOR 循环记录变量或 Map 类型局部变量
+/// （生成 Java 为 Map）。Python `_is_record_field_ref` 的对偶实现。
+fn is_record_field_ref(root: &str, proc: &ProcedureInfo) -> bool {
+    let root_lower = root.to_lowercase();
+    if proc.loop_vars.contains(&root_lower) {
+        return true;
+    }
+    proc.local_vars.get(&root_lower).is_some_and(|t| t.starts_with("Map<"))
+}
+
+/// 记录字段引用 → MyBatis 占位符名 `root_field`，并登记 Java 取值表达式
+/// （`s.get("diff_column")`）。Issue #144 batch1b：动态 SQL 片段里的
+/// `s.diff_column`（游标 FOR 记录字段）此前退化为裸 `diffColumn` 占位符，
+/// 调用点生成不存在的局部变量实参。Python `_record_field_placeholder` 对偶。
+fn record_field_placeholder(root: &str, field: &str, proc: &mut ProcedureInfo) -> String {
+    let placeholder = format!("{}_{}", root, field);
+    proc.dot_access_exprs.insert(placeholder.clone(), format!("{}.get(\"{}\")", snake_to_camel(root), field));
+    proc.dot_access_roots.insert(placeholder.clone(), root.to_string());
+    placeholder
+}
+
+/// 片段是否引用了循环记录字段占位符（`#{j_column_name}` ← `j.column_name`）。
+/// Issue #144 batch2b：这类片段只在对应循环体内有效；concat-chain 合并把它
+/// 拖进循环外的模板会在调用点生成循环变量越界引用。Python `_frag_refs_loop_record` 对偶。
+fn frag_refs_loop_record(frag: &str, proc: &ProcedureInfo) -> bool {
+    if proc.dot_access_roots.is_empty() {
+        return false;
+    }
+    let placeholder_re = regex::Regex::new(r"[#\$]\{(\w+)").unwrap();
+    for caps in placeholder_re.captures_iter(frag) {
+        let ph = &caps[1];
+        if let Some(root) = proc.dot_access_roots.get(ph) {
+            if proc.loop_vars.contains(&root.to_lowercase()) {
+                return true;
+            }
+        }
+    }
+    let dotted_re = regex::Regex::new(r"[#\$]\{(\w+)\.\w+").unwrap();
+    for caps in dotted_re.captures_iter(frag) {
+        if proc.loop_vars.contains(&caps[1].to_lowercase()) {
+            return true;
+        }
+    }
+    false
+}
+
+/// 把 SQL 文本（模板 + 动态条件片段）中出现的记录字段占位符补进
+/// extra_params（类型 Object）。Python `_append_dot_access_params` 对偶 —
+/// Rust 的 concat-chain 片段不合并进模板文本，因此除模板本身外还要扫描
+/// dynamic_conditions 的 sql_fragment。
+fn append_dot_access_params(proc: &ProcedureInfo, texts: &[&str], extra: &mut Vec<(String, String)>) {
+    if proc.dot_access_exprs.is_empty() {
+        return;
+    }
+    let placeholder_re = regex::Regex::new(r"[#\$]\{(\w+)").unwrap();
+    let mut refs: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for text in texts {
+        for caps in placeholder_re.captures_iter(text) {
+            refs.insert(caps[1].to_string());
+        }
+    }
+    let seen: std::collections::HashSet<String> = extra.iter().map(|(n, _)| n.clone()).collect();
+    for ph in proc.dot_access_exprs.keys() {
+        if refs.contains(ph) && !seen.contains(ph) {
+            extra.push((ph.clone(), "Object".to_string()));
+        }
+    }
+}
+
 /// Flatten a BinaryOp(||) concatenation tree into a SQL template with placeholders.
 /// Returns (sql_template, [(java_name, is_identifier), ...]) or None if the expression
 /// is not a recognizable SQL concatenation pattern.
-fn flatten_concat(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> Option<(String, Vec<(String, bool)>)> {
+fn flatten_concat(expr: &ogsql_parser::ast::Expr, proc: &mut ProcedureInfo) -> Option<(String, Vec<(String, bool)>)> {
     let mut parts: Vec<String> = Vec::new();
     let mut params: Vec<(String, bool)> = Vec::new();
     flatten_concat_inner(expr, proc, &mut parts, &mut params);
@@ -685,7 +754,7 @@ fn flatten_concat(expr: &ogsql_parser::ast::Expr, proc: &ProcedureInfo) -> Optio
 fn detect_sql_concat_append(
     target_name: &str,
     expression: &ogsql_parser::ast::Expr,
-    proc: &ProcedureInfo,
+    proc: &mut ProcedureInfo,
 ) -> Option<(String, String, String)> {
     use ogsql_parser::ast::Expr;
     if let Expr::BinaryOp { left, op, .. } = expression {
@@ -725,7 +794,7 @@ fn extract_leftmost_var_from_concat(expr: &ogsql_parser::ast::Expr) -> String {
 fn flatten_suffix_after_var(
     expr: &ogsql_parser::ast::Expr,
     var_name: &str,
-    proc: &ProcedureInfo,
+    proc: &mut ProcedureInfo,
     parts: &mut Vec<String>,
     params: &mut Vec<(String, bool)>,
 ) -> bool {
@@ -842,7 +911,7 @@ fn collect_extra_params_from_template(proc: &ProcedureInfo, var_name: &str) -> V
 
 fn flatten_concat_inner(
     expr: &ogsql_parser::ast::Expr,
-    proc: &ProcedureInfo,
+    proc: &mut ProcedureInfo,
     parts: &mut Vec<String>,
     params: &mut Vec<(String, bool)>,
 ) {
@@ -860,6 +929,28 @@ fn flatten_concat_inner(
         }
         Expr::Literal(Literal::Float(f)) => {
             parts.push(f.clone());
+        }
+        Expr::PlVariable(name) | Expr::ColumnRef(name) if name.len() >= 2 => {
+            // Issue #144 batch1b: `s.diff_column`（游标 FOR 记录字段）→
+            // `#{s_diff_column}` 占位符 + `s.get("diff_column")` 实参，
+            // 而不是退化为裸 `diffColumn`（不存在的局部变量）。
+            let root = ident_string(&name[0]);
+            if is_record_field_ref(&root, proc) {
+                let field = name[1..].iter().map(ident_string).collect::<Vec<_>>().join("_");
+                let placeholder = record_field_placeholder(&root, &field, proc);
+                parts.push(format!("#{{{}}}", placeholder));
+                params.push((placeholder, false));
+                return;
+            }
+            let var_name = ident_string(&name[name.len() - 1]);
+            let java_name = crate::naming::snake_to_camel(&var_name);
+            let is_identifier = parts.last().map(|last| !last.trim_end().ends_with('\'')).unwrap_or(true);
+            if is_identifier {
+                parts.push(format!("${{{}}}", java_name));
+            } else {
+                parts.push(format!("#{{{}}}", java_name));
+            }
+            params.push((java_name, is_identifier));
         }
         Expr::PlVariable(name) | Expr::ColumnRef(name) if !name.is_empty() => {
             let var_name = ident_string(&name[name.len() - 1]);
@@ -948,6 +1039,13 @@ fn handle_resolved_execute_sql(
 
         let dynamic_conditions = collect_dynamic_conditions(proc, var_name);
         let base_sql = resolve_dynamic_sql_text(proc, var_name).unwrap_or_default();
+
+        // Issue #144 batch1b: 记录字段占位符（#{s_diff_column}）可能来自
+        // concat_vars 之外的链式片段 —— 扫描模板与条件片段补 extra_params。
+        let frag_texts: Vec<&str> = dynamic_conditions.iter().map(|dc| dc.sql_fragment.as_str()).collect();
+        let mut scan_texts: Vec<&str> = vec![clean_sql.as_str()];
+        scan_texts.extend(frag_texts);
+        append_dot_access_params(proc, &scan_texts, &mut extra_params);
 
         proc.dml_statements.push(DmlStatement {
             sql_type: dml_type,
@@ -2660,10 +2758,13 @@ pub fn process_statement(
                 if let Some((target_name, sql_fragment, clause_type)) =
                     detect_sql_concat_append(&var_name, expression, proc)
                 {
-                    let chain = proc.sql_concat_chain.entry(target_name).or_default();
-                    let already_exists = chain.iter().any(|(_, f, _)| f == &sql_fragment);
-                    if !already_exists {
-                        chain.push(("true".to_string(), sql_fragment, clause_type));
+                    // Issue #144 batch2b: 循环记录字段片段不外拖（值占位符已覆盖）
+                    if !frag_refs_loop_record(&sql_fragment, proc) {
+                        let chain = proc.sql_concat_chain.entry(target_name).or_default();
+                        let already_exists = chain.iter().any(|(_, f, _)| f == &sql_fragment);
+                        if !already_exists {
+                            chain.push(("true".to_string(), sql_fragment, clause_type));
+                        }
                     }
                 }
             }
@@ -2831,10 +2932,13 @@ pub fn process_statement(
                             if let Some((target_name, sql_fragment, clause_type)) =
                                 detect_sql_concat_append(&var_name, expression, proc)
                             {
-                                let chain = proc.sql_concat_chain.entry(target_name).or_default();
-                                let already_exists = chain.iter().any(|(_, f, _)| f == &sql_fragment);
-                                if !already_exists {
-                                    chain.push((cond.clone(), sql_fragment, clause_type));
+                                // Issue #144 batch2b: 同上 —— 循环记录字段片段不外拖
+                                if !frag_refs_loop_record(&sql_fragment, proc) {
+                                    let chain = proc.sql_concat_chain.entry(target_name).or_default();
+                                    let already_exists = chain.iter().any(|(_, f, _)| f == &sql_fragment);
+                                    if !already_exists {
+                                        chain.push((cond.clone(), sql_fragment, clause_type));
+                                    }
                                 }
                             } else {
                                 all_concat = false;
@@ -3112,6 +3216,10 @@ pub fn process_statement(
                     push_logic_line(proc, format!("// for {} in query: {}", var, clean_sql));
                     proc.local_vars.insert(for_stmt.node.variable.to_lowercase(), "Map<String, Object>".into());
                     proc.local_var_defaults.remove(&for_stmt.node.variable);
+                    // Issue #144 batch3/batch1b: 循环记录变量注册为 Map 并登记
+                    // loop_vars，循环体内 r_date.xxx / s.diff_column 才能走
+                    // 记录字段分支（Python `_loop_vars` 对偶）。
+                    proc.loop_vars.insert(for_stmt.node.variable.to_lowercase());
                     proc.imports.insert("import java.util.List;".to_string());
                     proc.imports.insert("import java.util.Map;".to_string());
                     proc.imports.insert("import java.util.ArrayList;".to_string());
@@ -3152,6 +3260,7 @@ pub fn process_statement(
                     push_logic_line(proc, format!("// for {} in cursor {}", var, cursor_java));
                     proc.local_vars.insert(for_stmt.node.variable.to_lowercase(), "Map<String, Object>".into());
                     proc.local_var_defaults.remove(&for_stmt.node.variable);
+                    proc.loop_vars.insert(for_stmt.node.variable.to_lowercase());
                     proc.imports.insert("import java.util.List;".to_string());
                     proc.imports.insert("import java.util.Map;".to_string());
                     proc.imports.insert("import java.util.ArrayList;".to_string());

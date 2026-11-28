@@ -1,0 +1,40 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144colsMapper;
+import com.example.demo.service.Issue144colsService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_144_chain_loop_field.sql
+class Issue144colsServiceTest {
+
+    @Mock
+    private Issue144colsMapper issue144colsMapper;
+
+    @InjectMocks
+    private Issue144colsService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_prcMoveCols_success() {
+        Long pIInstNum = 100L;
+        String pIDataDate = "20240101";
+        AtomicReference<String> pORetcodeRef = new AtomicReference<>(null);
+        AtomicReference<String> pORetmsgRef = new AtomicReference<>(null);
+        { var m = new java.util.HashMap<String,Object>(); m.put("columnName", "test"); when(issue144colsMapper.selectPrcMoveCols((Long) any(), (String) any(), (String) any())).thenReturn(java.util.List.of(m)); }
+        when(issue144colsMapper.insertPrcMoveCols((Long) any(), (String) any(), (Object) any(), (Object) any(), (Object) any(), (Object) any())).thenReturn(1);
+        service.prcMoveCols(pIInstNum, pIDataDate, pORetcodeRef, pORetmsgRef);
+        verify(issue144colsMapper, atLeast(0)).insertPrcMoveCols((Long) any(), (String) any(), (Object) any(), (Object) any(), (Object) any(), (Object) any());
+    }
+}

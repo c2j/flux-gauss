@@ -86,11 +86,11 @@ public class Issue41TypesService {
 
     // Source: pkg_issue41_types.proc_validate_account (PROCEDURE) — {FIXTURES_ROOT}/issue_41_type_system.sql:158-186
     public void procValidateAccount(long pAccountId, AtomicReference<Boolean> pIsValid, AtomicReference<java.math.BigDecimal> pBalance) {
-        Throwable eAccountClosed = null;
         Boolean vActive = false;
         java.math.BigDecimal vBalance = java.math.BigDecimal.ZERO;
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
+        Throwable eAccountClosed = null;
         try {
             Object _row_obj = issue41TypesMapper.selectTIssue41Account_3(pAccountId); Map<String, Object> _row = (_row_obj instanceof java.util.Map) ? (java.util.Map<String, Object>) _row_obj : null;
             if (_row != null) {

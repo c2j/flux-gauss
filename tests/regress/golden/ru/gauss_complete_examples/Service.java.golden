@@ -175,10 +175,10 @@ public class CursorLifecycleService {
         Integer vId = 0;
         String vName = null;
         java.math.BigDecimal vSalary = java.math.BigDecimal.ZERO;
-        String vTemp = String.valueOf("tmp_enhanced_").concat(String.valueOf(new java.text.SimpleDateFormat("yyyyMMddHHmSSSs").format(new java.sql.Timestamp(System.currentTimeMillis()))));
         boolean found = false;
-        // SQL: CREATE TEMP TABLE ${vTemp} (             employee_id INTEGER, employee_name VARCHAR2(100), salary NUMERIC(18,2),             department_id INTEGER, hire_date DATE,             years_of_service NUMERIC(5,2), salary_level VARCHAR2(20), bonus_eligible INTEGER         )
         int _loopGuard1 = 0;
+        String vTemp = String.valueOf("tmp_enhanced_").concat(String.valueOf(new java.text.SimpleDateFormat("yyyyMMddHHmSSSs").format(new java.sql.Timestamp(System.currentTimeMillis()))));
+        // SQL: CREATE TEMP TABLE ${vTemp} (             employee_id INTEGER, employee_name VARCHAR2(100), salary NUMERIC(18,2),             department_id INTEGER, hire_date DATE,             years_of_service NUMERIC(5,2), salary_level VARCHAR2(20), bonus_eligible INTEGER         )
         while (true) {
             if (++_loopGuard1 > 1000) { break; }
             found = false; // FETCH pInCursor — cursor not materialized
@@ -192,15 +192,15 @@ public class CursorLifecycleService {
     // Source: pkg_cursor_lifecycle.proc_consume_cursor (PROCEDURE) — {FIXTURES_ROOT}/gauss_complete_examples.sql:751-783
     public void procConsumeCursor(Object pCursor, AtomicReference<Object> pMap, AtomicReference<String> pSummary) {
         Integer vCount = 0;
-        Integer vEligible = 0;
-        Integer vId = 0;
         String vLevel = null;
-        String vName = null;
         java.math.BigDecimal vSalary = java.math.BigDecimal.ZERO;
         Integer vSeniorCount = 0;
         java.math.BigDecimal vTotal = java.math.BigDecimal.ZERO;
         boolean found = false;
         int _loopGuard1 = 0;
+        Integer vEligible = 0;
+        Integer vId = 0;
+        String vName = null;
         while (true) {
             if (++_loopGuard1 > 1000) { break; }
             // CALL map_object.ad_item(pMap.get(), /* TOBEFIX: unresolved name Date(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ null, /* TOBEFIX: unresolved name func_get_frame_date(no args) - pkg=?, caller={FIXTURES_ROOT}/gauss_complete_examples.sql:proc_consume_cursor */ null)
@@ -226,7 +226,7 @@ public class CursorLifecycleService {
         AtomicReference<Object> vResult = new AtomicReference<>(null);
         this.procGetRawCursor(pDeptId, vCursor1);
         this.procEnhanceCursor(vCursor1.get(), vCursor2);
-        this.procConsumeCursor(vCursor2.get(), new AtomicReference<>(vResult.get()), new AtomicReference<>(null));
+        this.procConsumeCursor(vCursor2.get(), new AtomicReference<>(vResult.get()), new AtomicReference<String>(null));
         // CALL DBE_OUTPUT.PRINT_LINE(String.valueOf("Pipeline result: ").concat(String.valueOf(vResult.get())))
     }
 }
@@ -474,10 +474,11 @@ public class OpenCursorService {
         java.sql.Timestamp vStartTime = null;
         List<Map<String, Object>> vCursorResult = null;
         int vCursorIdx = 0;
-        Object v_cursor = null;
         boolean found = false;
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
+        int _loopGuard1 = 0;
+        Object v_cursor = null;
         try {
             vStartTime = new java.sql.Timestamp(System.currentTimeMillis());
             vSql = String.valueOf("SELECT id, name, amount, status, create_time FROM ").concat(String.valueOf(pTableName));
@@ -485,7 +486,6 @@ public class OpenCursorService {
             vCursorResult = openCursorMapper.selectProcProcessDynamicQuery(pTableName,  pWhereClause,  pOrderBy);
             if (vCursorResult == null) vCursorResult = new java.util.ArrayList<>();
             vCursorIdx = 0;
-            int _loopGuard1 = 0;
             while (true) {
                 if (++_loopGuard1 > 1000) { break; }
                 found = vCursorIdx < vCursorResult.size();

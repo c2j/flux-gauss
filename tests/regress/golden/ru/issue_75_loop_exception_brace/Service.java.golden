@@ -26,9 +26,9 @@ public class Issue75Service {
     // Source: pkg_issue75.proc_nested_block_body_fails (PROCEDURE) — {FIXTURES_ROOT}/issue_75_loop_exception_brace.sql:14-27
     public void procNestedBlockBodyFails(AtomicReference<String> pResult) {
         String vTmp = null;
-        Object cInner = null;
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
+        Object cInner = null;
         try {
             // for r2 in cursor c_inner
             List<Map<String, Object>> r2List = issue75Mapper.selectProcNestedBlockBodyFails();
@@ -47,10 +47,10 @@ public class Issue75Service {
     // Source: pkg_issue75.proc_loop_exc_handler (PROCEDURE) — {FIXTURES_ROOT}/issue_75_loop_exception_brace.sql:29-46
     public void procLoopExcHandler(AtomicReference<String> pResult) {
         String vTmp = null;
-        Object cInner = null;
-        Object cOuter = null;
         String __SQLERRM__ = "";
         int __SQLCODE__ = 0;
+        Object cInner = null;
+        Object cOuter = null;
         // for rec in cursor c_outer
         List<Map<String, Object>> recList = issue75Mapper.selectProcLoopExcHandler();
         if (recList == null) recList = new ArrayList<>();

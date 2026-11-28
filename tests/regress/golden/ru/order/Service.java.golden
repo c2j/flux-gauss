@@ -31,8 +31,8 @@ public class OrderService {
     // Source: pkg_order.cancel_order (PROCEDURE) — {FIXTURES_ROOT}/pkg_order.sql:14-29
     @Transactional
     public void cancelOrder(long pOrderId) {
-        Long vProductId = ((Number)(0L)).longValue();
         Integer vQty = 0;
+        Long vProductId = ((Number)(0L)).longValue();
         Object _row_obj = orderMapper.selectTOrders(pOrderId,  vProductId,  vQty); Map<String, Object> _row = (_row_obj instanceof java.util.Map) ? (java.util.Map<String, Object>) _row_obj : null;
         if (_row != null) {
             vProductId = (_row.get("v_product_id") instanceof Number ? ((Number) _row.get("v_product_id")).longValue() : 0L);

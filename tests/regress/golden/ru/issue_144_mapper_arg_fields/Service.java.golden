@@ -1,0 +1,76 @@
+// ===== FILE: Issue144mpHelperService.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144mpHelperMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_144_mapper_arg_fields.sql
+public class Issue144mpHelperService {
+    private static final Logger log = LoggerFactory.getLogger(Issue144mpHelperService.class);
+
+    private final Issue144mpHelperMapper issue144mpHelperMapper;
+
+    public Issue144mpHelperService(Issue144mpHelperMapper issue144mpHelperMapper) {
+        this.issue144mpHelperMapper = issue144mpHelperMapper;
+    }
+
+    // Source: pkg_issue144mp_helper.gen_xml (PROCEDURE) — {FIXTURES_ROOT}/issue_144_mapper_arg_fields.sql:15-18
+    public void genXml(String pITable, String pIDiffCol, String pIDiffVal) {
+        // Auto-generated from stored procedure
+    }
+}
+
+// ===== FILE: Issue144mpService.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144mpMapper;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_144_mapper_arg_fields.sql
+public class Issue144mpService {
+    private static final Logger log = LoggerFactory.getLogger(Issue144mpService.class);
+
+    private final Issue144mpMapper issue144mpMapper;
+
+    public Issue144mpService(Issue144mpMapper issue144mpMapper) {
+        this.issue144mpMapper = issue144mpMapper;
+    }
+
+    // Source: pkg_issue144mp.prc_model_loop (PROCEDURE) — {FIXTURES_ROOT}/issue_144_mapper_arg_fields.sql:34-57
+    public void prcModelLoop(String pIOperationNo) {
+        Long vCnt = 0L;
+        String vSql = null;
+        String vSqlDiff = null;
+        String vTableName = null;
+        // for s in query: (SELECT table_name, diff_column, diff_value                     FROM par_issue144_model t                    WHERE t.operation_no = p_i_operation_no                    ORDER BY t.forest_no)
+        List<Map<String, Object>> sList = issue144mpMapper.selectPrcModelLoop(pIOperationNo);
+        if (sList == null) sList = new ArrayList<>();
+        for (Map<String, Object> s : sList) {
+            vTableName = String.valueOf(s.getOrDefault("tableName", s.get("table_name")));
+            if (s.getOrDefault("diffColumn", s.get("diff_column")) != null) {
+                vSqlDiff = String.valueOf(String.valueOf(String.valueOf(String.valueOf(" AND ").concat(String.valueOf(s.getOrDefault("diffColumn", s.get("diff_column"))))).concat(String.valueOf("= '"))).concat(String.valueOf(s.getOrDefault("diffValue", s.get("diff_value"))))).concat(String.valueOf("'"));
+            } else {
+                vSqlDiff = "";
+            }
+            if (vTableName != null) {
+                vSql = String.valueOf(String.valueOf(String.valueOf("SELECT xmlforest(:element_name) FROM ").concat(String.valueOf(vTableName))).concat(String.valueOf(" WHERE SEQ_NO = :seq_no"))).concat(String.valueOf(vSqlDiff));
+                issue144mpMapper.selectPrcModelLoop_1(pIOperationNo,  vTableName,  vSqlDiff);
+                vCnt = vCnt + 1;
+            }
+        }
+    }
+}

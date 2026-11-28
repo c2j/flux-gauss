@@ -1,0 +1,69 @@
+// ===== FILE: Issue144litHelperService.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144litHelperMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_144_literal_mask.sql
+public class Issue144litHelperService {
+    private static final Logger log = LoggerFactory.getLogger(Issue144litHelperService.class);
+
+    private final Issue144litHelperMapper issue144litHelperMapper;
+
+    public Issue144litHelperService(Issue144litHelperMapper issue144litHelperMapper) {
+        this.issue144litHelperMapper = issue144litHelperMapper;
+    }
+
+    // Source: pkg_issue144lit_helper.gen_xml (PROCEDURE) — {FIXTURES_ROOT}/issue_144_literal_mask.sql:42-45
+    public void genXml(String pITable) {
+        // Auto-generated from stored procedure
+    }
+}
+
+// ===== FILE: Issue144litService.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144litMapper;
+import com.example.demo.service.Issue144litHelperService;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_144_literal_mask.sql
+public class Issue144litService {
+    private static final Logger log = LoggerFactory.getLogger(Issue144litService.class);
+
+    private final Issue144litMapper issue144litMapper;
+    private final Issue144litHelperService issue144litHelperService;
+
+    public Issue144litService(Issue144litMapper issue144litMapper, Issue144litHelperService issue144litHelperService) {
+        this.issue144litMapper = issue144litMapper;
+        this.issue144litHelperService = issue144litHelperService;
+    }
+
+    // Source: pkg_issue144lit.prc_decode_lit (PROCEDURE) — {FIXTURES_ROOT}/issue_144_literal_mask.sql:13-32
+    public void prcDecodeLit(String pIOperationNo, String pIUsage, String pIDataGroup) {
+        String vTableName = null;
+        // for s in query: (SELECT t.table_name,                          decode(t.data_group,                                 'B', t.table_name || '_HIS',                                 'S', t.table_name || '_HIS',                                 nvl(t.his_table_name,                                     decode(p_i_usage, 'M', t.table_name, t.table_name))) his_table_name                     FROM par_issue144_lit t                    WHERE t.operation_no = p_i_operation_no                      AND (t.data_group = p_i_data_group OR p_i_data_group IS NULL))
+        List<Map<String, Object>> sList = issue144litMapper.selectPrcDecodeLit(pIOperationNo,  pIUsage,  pIDataGroup);
+        if (sList == null) sList = new ArrayList<>();
+        for (Map<String, Object> s : sList) {
+            vTableName = String.valueOf(s.getOrDefault("tableName", s.get("table_name")));
+            if (vTableName != null) {
+                issue144litHelperService.genXml(vTableName);
+            }
+        }
+    }
+}

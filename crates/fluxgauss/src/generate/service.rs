@@ -692,6 +692,151 @@ fn record_field_seed(java_type: &str) -> &'static str {
     }
 }
 
+/// Issue #144 batch1a：块内声明被兄弟块/EXCEPTION 分支引用 → "找不到符号"。
+///
+/// PL/SQL 的声明段本就是方法级；生成的 Java 把声明织进了 try/if 子块，
+/// PL/SQL 的兄弟 BEGIN 块转成兄弟 try 后引用失效。对「无依赖 rhs」的声明
+/// （new ... / null / 字面量）做作用域分析：存在块外引用时提升到方法体首层。
+/// 字符级花括号配平（跳过字符串字面量）。Python `_hoist_cross_block_lines` 对偶。
+fn hoist_cross_block_lines(lines: &mut Vec<String>) {
+    static DECL_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static RHS_SAFE_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let decl_re = DECL_RE.get_or_init(|| {
+        regex::Regex::new(
+            r"^(\s*)((?:AtomicReference|java\.util\.concurrent\.atomic\.AtomicReference|Map|HashMap|List|ArrayList|String|StringBuilder|Long|Integer|Double|BigDecimal|java\.math\.BigDecimal|java\.sql\.(?:Date|Timestamp)|int|long|double|boolean|Boolean|Object)(?:<[^;=]*>)?)\s+(\w+)\s*=\s*(.+);\s*$",
+        )
+        .unwrap()
+    });
+    let rhs_safe_re = RHS_SAFE_RE.get_or_init(|| {
+        regex::Regex::new(
+            r#"^(new\s+[\w.]+(?:<[^;(]*>)?\s*\((?:[^()]|\([^()]*\))*\)|null|BigDecimal\.ZERO|java\.math\.BigDecimal\.ZERO|[\-\d.]+[LdDfF]?|"(?:[^"\\]|\\.)*"|true|false)\s*(?:\.\w+\(\))*$"#,
+        )
+        .unwrap()
+    });
+
+    // 单行的净花括号增量（跳过双引号字符串，\ 转义下一字符）——与
+    // service.rs 其它深度扫描同一口径。
+    fn brace_delta(line: &str) -> i32 {
+        let mut d = 0i32;
+        let mut in_str = false;
+        let mut esc = false;
+        for ch in line.chars() {
+            if esc {
+                esc = false;
+                continue;
+            }
+            if ch == '\\' {
+                esc = true;
+                continue;
+            }
+            if ch == '"' {
+                in_str = !in_str;
+                continue;
+            }
+            if in_str {
+                continue;
+            }
+            if ch == '{' {
+                d += 1;
+            } else if ch == '}' {
+                d -= 1;
+            }
+        }
+        d
+    }
+
+    let n = lines.len();
+    if n == 0 {
+        return;
+    }
+
+    // ── 1) 每行起止深度（跳过字符串） ──
+    let mut depths = vec![0i32; n + 1];
+    let mut d = 0i32;
+    for (i, ln) in lines.iter().enumerate() {
+        depths[i] = d;
+        d += brace_delta(ln);
+    }
+    depths[n] = d;
+
+    // ── 2) 识别「无依赖 rhs」声明行 ──
+    // (idx, var, rhs, decl_block_depth)
+    let mut decls: Vec<(usize, String, String, i32)> = Vec::new();
+    for (i, ln) in lines.iter().enumerate() {
+        let s = ln.trim();
+        if s.is_empty() || s.starts_with("//") || s.starts_with("for (") || s.starts_with("for(") {
+            continue;
+        }
+        let Some(m) = decl_re.captures(ln) else { continue };
+        let rhs = m.get(4).unwrap().as_str().trim();
+        if !rhs_safe_re.is_match(rhs) {
+            continue;
+        }
+        decls.push((i, m.get(3).unwrap().as_str().to_string(), rhs.to_string(), depths[i]));
+    }
+    if decls.is_empty() {
+        return;
+    }
+
+    // ── 3) 找「块外引用」的声明 ──
+    // var -> (decl_idx, decl_type, rhs)
+    let mut to_hoist: std::collections::HashMap<String, (usize, String, String)> = std::collections::HashMap::new();
+    for (idx, var, rhs, block_depth) in &decls {
+        let var_re = regex::Regex::new(&format!(r"\b{}\b", regex::escape(var))).unwrap();
+        let mut opened_after_decl = *block_depth;
+        for j in (*idx + 1)..n {
+            let s = lines[j].trim();
+            if !s.is_empty() && !s.starts_with("//") && var_re.is_match(s) {
+                // 当前深度已低于声明块深度 → 块外引用
+                if depths[j] <= opened_after_decl {
+                    let decl_type = decl_re
+                        .captures(&lines[*idx])
+                        .and_then(|m| m.get(2).map(|g| g.as_str().to_string()))
+                        .unwrap_or_default();
+                    to_hoist.insert(var.clone(), (*idx, decl_type, rhs.clone()));
+                    break;
+                }
+            }
+            opened_after_decl += brace_delta(&lines[j]);
+        }
+    }
+    if to_hoist.is_empty() {
+        return;
+    }
+
+    // ── 4) 提升到方法体首层：第一个语句行之前 ──
+    let first_stmt = lines
+        .iter()
+        .position(|ln| {
+            let s = ln.trim();
+            !s.is_empty() && !s.starts_with("//")
+        })
+        .unwrap_or(0);
+    let base_indent = {
+        let l = &lines[first_stmt];
+        let stripped = l.trim_start();
+        l[..l.len() - stripped.len()].to_string()
+    };
+
+    let mut order: Vec<(&String, &(usize, String, String))> = to_hoist.iter().collect();
+    order.sort_by_key(|(_, t)| t.0);
+    let hoist_lines: Vec<String> = order
+        .iter()
+        .map(|(var, (_, decl_type, rhs))| format!("{}{} {} = {};", base_indent, decl_type, var, rhs))
+        .collect();
+    // 从原位置移除（倒序删除避免索引位移）
+    let mut remove_idx: Vec<usize> = to_hoist.values().map(|t| t.0).collect();
+    remove_idx.sort_unstable_by(|a, b| b.cmp(a));
+    remove_idx.dedup();
+    for idx in remove_idx {
+        lines.remove(idx);
+    }
+    let insert_at = first_stmt.min(lines.len());
+    for (off, hl) in hoist_lines.into_iter().enumerate() {
+        lines.insert(insert_at + off, hl);
+    }
+}
+
 /// JLS unreachable-statement guard: statements after an unconditional
 /// `return`/`throw` in the same block are compile errors. PL/pgSQL GOTO
 /// emulation keeps such trailing code, so wrap the jump in `if (true) {}`
@@ -1592,6 +1737,9 @@ fn build_service_method(
                 .to_string();
         }
     }
+    // Issue #144 batch1a: try/兄弟块形态在 analyze 期已织入 java_logic_lines，
+    // 跨块声明提升在 body_lines 定稿后做（Python `_hoist_cross_block_lines` 对偶）。
+    hoist_cross_block_lines(&mut body_lines);
     dead_code_guard(&mut body_lines);
     for line in indent_java_body(&body_lines, "        ") {
         result.push(line);
@@ -1648,7 +1796,11 @@ fn append_local_vars_to_mapper_calls(
             let mut pkg_args: Vec<String> = Vec::new();
             let word_re: &regex::Regex = &WORD_RE;
 
-            for word_caps in word_re.captures_iter(&dml.sql_text) {
+            // Issue #144 batch2a：字面量/注释里的标识符不触发实参提升
+            // （'S' 字面量曾让循环记录 s 被加进调用实参）。
+            let (scan_sql, _lit_spans) = crate::generate::mapper::mask_sql_literals(&dml.sql_text);
+
+            for word_caps in word_re.captures_iter(&scan_sql) {
                 let word = word_caps.get(1).unwrap().as_str();
                 if proc.local_vars.contains_key(&word.to_lowercase()) {
                     let jn = snake_to_camel(word);
@@ -1663,7 +1815,7 @@ fn append_local_vars_to_mapper_calls(
             local_args.sort();
             local_args.dedup();
 
-            for word_caps in word_re.captures_iter(&dml.sql_text) {
+            for word_caps in word_re.captures_iter(&scan_sql) {
                 let word = word_caps.get(1).unwrap().as_str();
                 if let Some(_var_info) = package_vars.get(word) {
                     let jn = snake_to_camel(word);
@@ -1692,7 +1844,11 @@ fn append_local_vars_to_mapper_calls(
                     if is_ar {
                         extra_args.push(format!("{}.get()", name));
                     } else {
-                        let rowtype_expr = dynamic_sql_rowtype_field_arg(&dml.sql_text, name, proc);
+                        // Issue #144 batch1b: 记录字段占位符（s_diff_column ←
+                        // s.diff_column）实参是 Map 取值表达式，不是同名局部变量。
+                        let dot_expr = proc.dot_access_exprs.get(name).cloned();
+                        let rowtype_expr =
+                            dot_expr.or_else(|| dynamic_sql_rowtype_field_arg(&dml.sql_text, name, proc));
                         extra_args.push(rowtype_expr.unwrap_or_else(|| name.clone()));
                     }
                 }

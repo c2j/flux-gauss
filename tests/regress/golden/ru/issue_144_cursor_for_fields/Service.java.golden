@@ -1,0 +1,45 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144cfMapper;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_144_cursor_for_fields.sql
+public class Issue144cfService {
+    private static final Logger log = LoggerFactory.getLogger(Issue144cfService.class);
+
+    private final Issue144cfMapper issue144cfMapper;
+
+    public Issue144cfService(Issue144cfMapper issue144cfMapper) {
+        this.issue144cfMapper = issue144cfMapper;
+    }
+
+    // Source: pkg_issue144cf.prc_cursor_fields (PROCEDURE) — {FIXTURES_ROOT}/issue_144_cursor_for_fields.sql:22-42
+    public void prcCursorFields(String pInFundCode) {
+        String vCapDate = null;
+        Long vCnt = 0L;
+        String vDqDate = null;
+        Object cDate = null;
+        // for rDate in cursor c_date
+        List<Map<String, Object>> rDateList = issue144cfMapper.selectPrcCursorFields(pInFundCode);
+        if (rDateList == null) rDateList = new ArrayList<>();
+        for (Map<String, Object> rDate : rDateList) {
+            if (rDate.getOrDefault("withdrawalDate", rDate.get("withdrawal_date")) == null) {
+                vCapDate = String.valueOf(rDate.getOrDefault("capDate", rDate.get("cap_date")));
+                vDqDate = String.valueOf(rDate.getOrDefault("maturityDate", rDate.get("maturity_date")));
+            } else {
+                vCapDate = String.valueOf(rDate.getOrDefault("capDate", rDate.get("cap_date")));
+                vDqDate = String.valueOf(rDate.getOrDefault("withdrawalDate", rDate.get("withdrawal_date")));
+            }
+            vCnt = vCnt + 1;
+        }
+    }
+}

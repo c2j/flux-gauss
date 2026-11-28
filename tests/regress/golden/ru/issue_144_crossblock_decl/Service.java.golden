@@ -1,0 +1,80 @@
+// ===== FILE: Issue144xbHelperService.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144xbHelperMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_144_crossblock_decl.sql
+public class Issue144xbHelperService {
+    private static final Logger log = LoggerFactory.getLogger(Issue144xbHelperService.class);
+
+    private final Issue144xbHelperMapper issue144xbHelperMapper;
+
+    public Issue144xbHelperService(Issue144xbHelperMapper issue144xbHelperMapper) {
+        this.issue144xbHelperMapper = issue144xbHelperMapper;
+    }
+
+    // Source: pkg_issue144xb_helper.helper (PROCEDURE) — {FIXTURES_ROOT}/issue_144_crossblock_decl.sql:7-16
+    public void helper(long pIIn, AtomicReference<String> pOOut, AtomicReference<Long> pOFlag) {
+        if (pIIn > 0) {
+            pOOut.set("ok");
+            pOFlag.set(Long.valueOf(1));
+        } else {
+            pOOut.set("empty");
+            pOFlag.set(Long.valueOf(0));
+        }
+    }
+}
+
+// ===== FILE: Issue144xbService.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144xbMapper;
+import com.example.demo.service.Issue144xbHelperService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_144_crossblock_decl.sql
+public class Issue144xbService {
+    private static final Logger log = LoggerFactory.getLogger(Issue144xbService.class);
+
+    private final Issue144xbMapper issue144xbMapper;
+    private final Issue144xbHelperService issue144xbHelperService;
+
+    public Issue144xbService(Issue144xbMapper issue144xbMapper, Issue144xbHelperService issue144xbHelperService) {
+        this.issue144xbMapper = issue144xbMapper;
+        this.issue144xbHelperService = issue144xbHelperService;
+    }
+
+    // Source: pkg_issue144xb.prc_xblock (PROCEDURE) — {FIXTURES_ROOT}/issue_144_crossblock_decl.sql:34-51
+    public void prcXblock(long pIId, AtomicReference<String> pOMsg) {
+        AtomicReference<Long> vFlag = new AtomicReference<>(1L);
+        AtomicReference<String> vRetmsg = new AtomicReference<>(null);
+        String __SQLERRM__ = "";
+        int __SQLCODE__ = 0;
+        try {
+            vRetmsg.set(null);
+            vFlag.set(Long.valueOf(0));
+            if (pIId > 0) {
+                issue144xbHelperService.helper(Long.valueOf(pIId), vRetmsg, vFlag);
+            }
+            issue144xbHelperService.helper(Long.valueOf(pIId), vRetmsg, vFlag);
+            pOMsg.set(String.valueOf(vRetmsg));
+        } catch (Exception __e1) {
+            __SQLERRM__ = __e1.getMessage();
+            __SQLCODE__ = -1;
+            pOMsg.set(String.valueOf(vRetmsg));
+        }
+    }
+}

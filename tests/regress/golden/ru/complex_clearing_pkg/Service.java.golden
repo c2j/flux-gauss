@@ -95,8 +95,8 @@ public class ComplexClearingPkgService {
     // Source: complex_clearing_pkg.recursive_validate (FUNCTION) — {FIXTURES_ROOT}/complex_clearing_pkg.sql:121-150
     public String recursiveValidate(long pTradeId, int pDepth) {
         String vChain = "";
-        Long vParentId = ((Number)(0L)).longValue();
         String vResult = null;
+        Long vParentId = ((Number)(0L)).longValue();
         if (pDepth > 10) {
             log.info("e_trigger_recursion");
         }

@@ -1,0 +1,76 @@
+// ===== FILE: Issue144litHelperServiceTest.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144litHelperMapper;
+import com.example.demo.service.Issue144litHelperService;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_144_literal_mask.sql
+class Issue144litHelperServiceTest {
+
+    @Mock
+    private Issue144litHelperMapper issue144litHelperMapper;
+
+    @InjectMocks
+    private Issue144litHelperService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_genXml_success() {
+        String pITable = "test_p_i_table";
+        service.genXml(pITable);
+    }
+}
+
+// ===== FILE: Issue144litServiceTest.java =====
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144litMapper;
+import com.example.demo.service.Issue144litHelperService;
+import com.example.demo.service.Issue144litService;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_144_literal_mask.sql
+class Issue144litServiceTest {
+
+    @Mock
+    private Issue144litMapper issue144litMapper;
+
+    @Mock
+    private Issue144litHelperService issue144litHelperService;
+
+    @InjectMocks
+    private Issue144litService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_prcDecodeLit_success() {
+        String pIOperationNo = "test_p_i_operation_no";
+        String pIUsage = "test_p_i_usage";
+        String pIDataGroup = "test_p_i_data_group";
+        { var m = new java.util.HashMap<String,Object>(); m.put("tableName", "test"); m.put("dataGroup", 1L); m.put("b", 1L); m.put("tableName", "test"); m.put("s", 1L); m.put("tableName", "test"); m.put("hisTableName", "test"); m.put("m", 1L); m.put("tableName", "test"); when(issue144litMapper.selectPrcDecodeLit((String) any(), (String) any(), (String) any())).thenReturn(java.util.List.of(m)); }
+        service.prcDecodeLit(pIOperationNo, pIUsage, pIDataGroup);
+    }
+}

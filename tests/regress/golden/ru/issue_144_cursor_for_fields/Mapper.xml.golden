@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.Issue144cfMapper">
+
+    <!-- Source: {FIXTURES_ROOT}/issue_144_cursor_for_fields.sql:22-42 — pkg_issue144cf.prc_cursor_fields.selectPrcCursorFields -->
+    <select id="selectPrcCursorFields" parameterType="string" resultType="java.util.LinkedHashMap">
+        SELECT t.cap_date, t.maturity_date, t.withdrawal_date, t.last_withdrawal_date, t.submit_date FROM dat_inst_base_info_144 t WHERE t.fund_code = #{pInFundCode, jdbcType=VARCHAR, javaType=String}
+    </select>
+
+</mapper>
