@@ -1,0 +1,62 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144StmtCallOutMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_144_stmt_call_out.sql
+public class Issue144StmtCallOutService {
+    private static final Logger log = LoggerFactory.getLogger(Issue144StmtCallOutService.class);
+
+    private final Issue144StmtCallOutMapper issue144StmtCallOutMapper;
+
+    public Issue144StmtCallOutService(Issue144StmtCallOutMapper issue144StmtCallOutMapper) {
+        this.issue144StmtCallOutMapper = issue144StmtCallOutMapper;
+    }
+
+    // Source: issue_144_stmt_call_out.helper_proc (PROCEDURE) — {FIXTURES_ROOT}/issue_144_stmt_call_out.sql:19-22
+    public void helperProc(String pA, String pB, AtomicReference<String> pOut) {
+        pOut.set(String.valueOf(String.valueOf(String.valueOf(pA).concat(String.valueOf("_"))).concat(String.valueOf(pB))));
+    }
+
+    // Source: issue_144_stmt_call_out.helper_num (PROCEDURE) — {FIXTURES_ROOT}/issue_144_stmt_call_out.sql:24-27
+    public void helperNum(long pN, AtomicReference<Long> pOut) {
+        pOut.set(Long.parseLong(String.valueOf(pN * 2)));
+    }
+
+    // Source: issue_144_stmt_call_out.prc_stmt_call_out (PROCEDURE) — {FIXTURES_ROOT}/issue_144_stmt_call_out.sql:29-49
+    public void prcStmtCallOut() {
+        Long vCnt = 0L;
+        String vIn = "x";
+        AtomicReference<String> vNum = new AtomicReference<>(null);
+        AtomicReference<String> vOut = new AtomicReference<>(null);
+        AtomicReference<String> vOut2 = new AtomicReference<>(null);
+        this.helperProc(vIn, "a", vOut);
+        this.helperProc(vIn, "b", vOut2);
+        this.helperNum(Long.valueOf(vCnt), vNum);
+        this.helperProc(vIn, "c", new AtomicReference<>(String.valueOf(vNum.get())));
+        this.helperProc(vIn, /* TOBEFIX: unresolved fn some_unknown_udf(vIn, vIn) - pkg=?, caller={FIXTURES_ROOT}/issue_144_stmt_call_out.sql:prc_stmt_call_out */ null, vOut2);
+        vCnt = vCnt + 1;
+    }
+
+    // Source: issue_144_stmt_call_out.prc_stmt_call_out_handler (PROCEDURE) — {FIXTURES_ROOT}/issue_144_stmt_call_out.sql:51-62
+    public void prcStmtCallOutHandler() {
+        String vIn = "x";
+        AtomicReference<String> vOut = new AtomicReference<>(null);
+        String __SQLERRM__ = "";
+        int __SQLCODE__ = 0;
+        try {
+            this.helperProc(vIn, "h", vOut);
+        } catch (Exception __e1) {
+            __SQLERRM__ = __e1.getMessage();
+            __SQLCODE__ = -1;
+            this.helperProc(String.valueOf(vOut.get()), "e", vOut);
+            vOut.set("fb");
+        }
+    }
+}

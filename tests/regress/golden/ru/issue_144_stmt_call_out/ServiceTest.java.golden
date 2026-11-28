@@ -1,0 +1,56 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144StmtCallOutMapper;
+import com.example.demo.service.Issue144StmtCallOutService;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+// Source: {FIXTURES_ROOT}/issue_144_stmt_call_out.sql
+class Issue144StmtCallOutServiceTest {
+
+    @Mock
+    private Issue144StmtCallOutMapper issue144StmtCallOutMapper;
+
+    @InjectMocks
+    private Issue144StmtCallOutService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_helperProc_success() {
+        String pA = "test_p_a";
+        String pB = "test_p_b";
+        AtomicReference<String> pOutRef = new AtomicReference<>(null);
+        service.helperProc(pA, pB, pOutRef);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_helperNum_success() {
+        Long pN = 100L;
+        AtomicReference<Long> pOutRef = new AtomicReference<>(1L);
+        service.helperNum(pN, pOutRef);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_prcStmtCallOut_success() {
+        service.prcStmtCallOut();
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_prcStmtCallOutHandler_success() {
+        service.prcStmtCallOutHandler();
+    }
+}
