@@ -1,0 +1,52 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144StubTypedMapper;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue144StubTypedService {
+    private static final Logger log = LoggerFactory.getLogger(Issue144StubTypedService.class);
+
+    private final Issue144StubTypedMapper issue144StubTypedMapper;
+
+    public Issue144StubTypedService(Issue144StubTypedMapper issue144StubTypedMapper) {
+        this.issue144StubTypedMapper = issue144StubTypedMapper;
+    }
+    // Source: issue_144_stub_typed.helper_map (PROCEDURE) — issue_144_stub_typed.sql:16-19
+    public void helperMap(String pA, AtomicReference<Map<String, Object>> pM) {
+        pM.set(null);
+        pM.set(/* TODO: implement map_object() — pkg=map_object, ret=?, args=[], caller=issue_144_stub_typed.sql:helper_map */ null);
+    }
+
+    // Source: issue_144_stub_typed.helper_num (PROCEDURE) — issue_144_stub_typed.sql:21-24
+    public void helperNum(Long pN, AtomicReference<Long> pOut) {
+        pOut.set(null);
+        pOut.set(((Number) pN * 2).longValue());
+    }
+
+    // Source: issue_144_stub_typed.helper_str (PROCEDURE) — issue_144_stub_typed.sql:26-29
+    public void helperStr(String pA, AtomicReference<String> pOut) {
+        pOut.set(null);
+        pOut.set(String.valueOf(pA));
+    }
+
+    // Source: issue_144_stub_typed.prc_stub_typed (PROCEDURE) — issue_144_stub_typed.sql:31-49
+    public void prcStubTyped() {
+        Long vNum = /* TODO: implement obj_invest_account_recordset(vMap) — pkg=?, ret=?, args=[Map<String, Object>], caller=issue_144_stub_typed.sql:prc_stub_typed */ null;
+        String vTxt = /* TODO: implement getclobval(vMap) — pkg=?, ret=?, args=[Map<String, Object>], caller=issue_144_stub_typed.sql:prc_stub_typed */ null;
+        String vIn = "x";
+        Long vCnt = Long.valueOf(0);
+        Map<String, Object> vMap = /* TODO: implement map_object() — pkg=map_object, ret=?, args=[], caller=issue_144_stub_typed.sql:prc_stub_typed */ new java.util.HashMap<>();
+        Map<String, Object> vMap2 = /* TODO: implement map_object() — pkg=map_object, ret=?, args=[], caller=issue_144_stub_typed.sql:prc_stub_typed */ new java.util.HashMap<>();
+        this.helperMap(vIn, vMap);
+        this.helperNum(((Number) (vCnt)).longValue(), vNum);
+        this.helperStr(vIn, vTxt);
+    }
+}

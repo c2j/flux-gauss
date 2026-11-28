@@ -1,0 +1,62 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144StubTypedMapper;
+import com.example.demo.service.Issue144StubTypedService;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class Issue144StubTypedServiceTest {
+
+    @Mock
+    private Issue144StubTypedMapper issue144StubTypedMapper;
+
+    @InjectMocks
+    private Issue144StubTypedService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_helperMap_success() {
+        String pA = "test_pA";
+        AtomicReference<Map<String, Object>> pM = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
+        service.helperMap(pA, pM);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_helperNum_success() {
+        Long pN = 100L;
+        AtomicReference<Long> pOut = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
+        service.helperNum(pN, pOut);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_helperStr_success() {
+        String pA = "test_pA";
+        AtomicReference<String> pOut = new AtomicReference<>(null);
+        var _rowTmpl = new java.util.HashMap<String,Object>();
+        service.helperStr(pA, pOut);
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_prcStubTyped_success() {
+        var _rowTmpl = new java.util.HashMap<String,Object>();
+        service.prcStubTyped();
+    }
+}

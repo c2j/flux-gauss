@@ -2452,7 +2452,7 @@ def _promote_out_local_vars(proc: ProcedureInfo, all_packages: dict):
             # Keep local_var_defaults — codegen wraps it into AtomicReference constructor
             var_java = snake_to_camel(orig_name)
             m_ar = re.match(r'^AtomicReference<(.+)>$', new_type)
-            _string_inner = bool(m_ar and 'String' in m_ar.group(1))
+            _string_inner = bool(m_ar and _inner_type_is_string(m_ar.group(1)))
 
             def _wrap_rhs(rhs: str) -> str:
                 # 修复（#verify16）：包裹为 AtomicReference<Inner> 时必须把 RHS
@@ -2464,6 +2464,9 @@ def _promote_out_local_vars(proc: ProcedureInfo, all_packages: dict):
                 _r = rhs.strip()
                 if _r == "null":
                     return rhs
+                if "TODO: implement" in rhs:
+                    # TODO-stub 类型保真（#144 batch4c）：裸 null 进菱形推断会失败
+                    return _todo_stub_typed(rhs, inner)
                 if inner in _r and ("new " in _r or ".valueOf(" in _r or _r.endswith(f'"{_r.strip(chr(34))}"')):
                     pass  # 已是同型表达式时仍走一次幂等强转也无妨
                 return _coerce_type(rhs, "Object", inner)
@@ -2480,12 +2483,12 @@ def _promote_out_local_vars(proc: ProcedureInfo, all_packages: dict):
                         m_cond = re.match(rf'^(\s*(?:if|while)\s*\(.+?\)\s+){re.escape(var_java)} = (.*);\s*$', line)
                     if m_assign and not re.match(r'^new (java\.util\.concurrent\.atomic\.)?AtomicReference<>', m_assign.group(2).strip()):
                         rhs = m_assign.group(2)
-                        if 'String' in m_ar.group(1) and not rhs.strip().startswith('"') and rhs.strip() != 'null':
+                        if _inner_type_is_string(m_ar.group(1)) and not rhs.strip().startswith('"') and rhs.strip() != 'null':
                             rhs = f'String.valueOf({rhs})'
                         line = f'{m_assign.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<>({_wrap_rhs(rhs)});'
                     elif m_cond and not re.match(r'^new (java\.util\.concurrent\.atomic\.)?AtomicReference<>', m_cond.group(2).strip()):
                         rhs = m_cond.group(2)
-                        if 'String' in m_ar.group(1) and not rhs.strip().startswith('"') and rhs.strip() != 'null':
+                        if _inner_type_is_string(m_ar.group(1)) and not rhs.strip().startswith('"') and rhs.strip() != 'null':
                             rhs = f'String.valueOf({rhs})'
                         line = f'{m_cond.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<>({_wrap_rhs(rhs)});'
                 try:
@@ -2592,6 +2595,40 @@ def _carrier_inner(java_type: str):
     return m.group(1) if m else None
 
 
+def _inner_type_is_string(inner_type: str) -> bool:
+    """True when the carrier/decl inner type is String-ish. Substring match on
+    "String" alone false-positives on `Map<String, Object>` (#144 batch4c)."""
+    t = (inner_type or "").strip()
+    return "String" in t and "<" not in t
+
+
+def _todo_stub_typed(expr: str, inner_type: str) -> str:
+    """TODO-stub 类型保真（#144 batch4c）：未解析函数渲染为
+    `/* TODO: implement f() — ... */ null`，裸 null 在 AtomicReference<>
+    菱形推断下无法定型（Map/List 内层尤其致命）。按目标内层类型把结尾的
+    null 换成类型保真的空值，保留 TODO 注释本体。"""
+    t = (inner_type or "").strip()
+    if not t:
+        return expr
+    if _inner_type_is_string(t):
+        # String 内层：裸 null 同样无法驱动菱形推断，沿用 String.valueOf 包裹
+        return expr if expr.lstrip().startswith("String.valueOf(") else f"String.valueOf({expr})"
+    if t.startswith(("Map<", "java.util.Map")):
+        stub = "new java.util.HashMap<>()"
+    elif t.startswith(("List<", "java.util.List", "java.util.ArrayList", "Set<", "java.util.Set")):
+        stub = ("new java.util.HashSet<>()" if t.startswith(("Set<", "java.util.Set"))
+                else "new java.util.ArrayList<>()")
+    elif t in ("long", "int", "double", "float", "boolean", "char", "byte", "short"):
+        return expr
+    elif t != "Object":
+        stub = f"({t}) null"
+    else:
+        return expr
+    if expr.rstrip().endswith("null"):
+        return re.sub(r'null\s*$', stub, expr)
+    return f"{expr} {stub}"
+
+
 def _fresh_out_tmp(proc) -> str:
     n = getattr(proc, "_out_tmp_counter", 0) + 1
     proc._out_tmp_counter = n
@@ -2651,10 +2688,11 @@ def _plan_out_arg(arg_ast, arg_java: str, proc: ProcedureInfo, target_inner: str
     if arg_var and _resolve_local_key(proc, arg_var) in proc.local_vars:
         return arg_java, [], []
     # Literal / expression / package var → wrap a temp carrier; the callee's
-    # OUT write has no caller variable to land in.
+    # OUT write has no caller variable to land in. Explicit type argument —
+    # a bare `null`/TODO-stub arg cannot drive diamond inference (#144 batch4c).
     src_t = _infer_expr_type(arg_ast, proc)
     wrapped = _coerce_type(arg_java, src_t, target_inner)
-    return f"new java.util.concurrent.atomic.AtomicReference<>({wrapped})", [], []
+    return f"new java.util.concurrent.atomic.AtomicReference<{target_inner}>({wrapped})", [], []
 
 
 def _plan_out_arg_expr(arg_ast, proc, target_inner: str, all_packages: dict = None) -> str:
@@ -2903,6 +2941,8 @@ def _wrap_ar_local_assign(line: str, var_java: str, ar_type: str) -> str:
         _r = rhs.strip()
         if _r == "null":
             return rhs
+        if "TODO: implement" in rhs:
+            return _todo_stub_typed(rhs, inner)
         return _coerce_type(rhs, "Object", inner)
 
     m_assign = re.match(rf'^(\s*){re.escape(var_java)} = (.*);\s*$', line)
@@ -2911,12 +2951,12 @@ def _wrap_ar_local_assign(line: str, var_java: str, ar_type: str) -> str:
         m_cond = re.match(rf'^(\s*(?:if|while)\s*\(.+?\)\s+){re.escape(var_java)} = (.*);\s*$', line)
     if m_assign and not re.match(r'^new (java\.util\.concurrent\.atomic\.)?AtomicReference<>', m_assign.group(2).strip()):
         rhs = m_assign.group(2)
-        if 'String' in inner and not rhs.strip().startswith('"') and rhs.strip() != 'null':
+        if _inner_type_is_string(inner) and not rhs.strip().startswith('"') and rhs.strip() != 'null':
             rhs = f'String.valueOf({rhs})'
         return f'{m_assign.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<>({_wrap_rhs(rhs)});'
     if m_cond and not re.match(r'^new (java\.util\.concurrent\.atomic\.)?AtomicReference<>', m_cond.group(2).strip()):
         rhs = m_cond.group(2)
-        if 'String' in inner and not rhs.strip().startswith('"') and rhs.strip() != 'null':
+        if _inner_type_is_string(inner) and not rhs.strip().startswith('"') and rhs.strip() != 'null':
             rhs = f'String.valueOf({rhs})'
         return f'{m_cond.group(1)}{var_java} = new java.util.concurrent.atomic.AtomicReference<>({_wrap_rhs(rhs)});'
     return line
@@ -5771,7 +5811,9 @@ def _emit_assignment(proc: ProcedureInfo, target: str, expr: str):
     else:
         if target_var_type and target_var_type.startswith("AtomicReference<"):
             _ar_inner_t = target_var_type[len("AtomicReference<"):-1]
-            if "String" in _ar_inner_t and not expr.strip().startswith('"') and expr.strip() != "null":
+            if "TODO: implement" in expr:
+                expr = _todo_stub_typed(expr, _ar_inner_t)
+            elif _inner_type_is_string(_ar_inner_t) and not expr.strip().startswith('"') and expr.strip() != "null":
                 expr = f"String.valueOf({expr})"
             proc.java_logic_lines.append(f"{target} = new java.util.concurrent.atomic.AtomicReference<>({expr});")
             return
@@ -15083,32 +15125,37 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                 default_val = proc.local_var_defaults.get(var_name, _default_for_type(var_type))
                 if var_type.startswith("AtomicReference<"):
                     inner = proc.local_var_defaults.get(var_name)
-                    if inner and "String" in var_type and not inner.startswith('"') and inner != "null":
-                        inner = f"String.valueOf({inner})"
-                    # 修复（#verify16）：内层类型与默认值不一致时强转
-                    # （实测 AtomicReference<Long> vFlag = new AR<>("") —— 泛型推断失败）
-                    if inner and inner != "null":
-                        import re as _re
-                        m_ar2 = _re.match(r'^AtomicReference<(.+)>$', var_type)
-                        _inner_t = m_ar2.group(1) if m_ar2 else ""
-                        if _inner_t and "String" not in _inner_t and (inner.startswith('"') or inner == "''" or inner == '""'):
-                            inner = _default_for_type(_inner_t)
-                        # #144: coerce non-literal defaults too — e.g. a NUMBER
-                        # var promoted to AtomicReference<Long> kept
-                        # `BigDecimal.valueOf(0)` and broke diamond inference.
-                        elif (_inner_t and _inner_t not in ("String", "Object")
-                              and re.fullmatch(r'-?\d+(\.\d+)?[fFdD]?', inner)):
-                            inner = _typed_numeric_literal(inner, _inner_t)
-                        elif (_inner_t and inner != _default_for_type(_inner_t)
-                              and not re.fullmatch(r'-?\d+(\.\d+)?[fFdDlL]?', inner)):
-                            _src_guess = ("java.math.BigDecimal" if "BigDecimal" in inner
-                                          else "Long" if "Long.valueOf" in inner or re.search(r'\d+L\b', inner)
-                                          else "Integer" if "Integer.valueOf" in inner
-                                          else "Object")
-                            _coerced = _coerce_type(inner, _src_guess, _inner_t)
-                            if _coerced != inner:
-                                inner = _coerced
-                    default_val = f"new AtomicReference<>({inner})" if inner else _default_for_type(var_type)
+                    _m_ar_t = re.match(r'^AtomicReference<(.+)>$', var_type)
+                    _inner_t = (_m_ar_t.group(1).strip() if _m_ar_t else "")
+                    if inner and "TODO: implement" in inner:
+                        # TODO-stub 类型保真（#144 batch4c）：菱形推断需要
+                        # 内层类型的空值，裸 null / String.valueOf(null) 都会失败
+                        inner = _todo_stub_typed(inner, _inner_t)
+                        default_val = f"new AtomicReference<>({inner})"
+                    else:
+                        if inner and _inner_type_is_string(_inner_t) and not inner.startswith('"') and inner != "null":
+                            inner = f"String.valueOf({inner})"
+                        # 修复（#verify16）：内层类型与默认值不一致时强转
+                        # （实测 AtomicReference<Long> vFlag = new AR<>("") —— 泛型推断失败）
+                        if inner and inner != "null":
+                            if _inner_t and not _inner_type_is_string(_inner_t) and (inner.startswith('"') or inner == "''" or inner == '""'):
+                                inner = _default_for_type(_inner_t)
+                            # #144: coerce non-literal defaults too — e.g. a NUMBER
+                            # var promoted to AtomicReference<Long> kept
+                            # `BigDecimal.valueOf(0)` and broke diamond inference.
+                            elif (_inner_t and _inner_t not in ("String", "Object")
+                                  and re.fullmatch(r'-?\d+(\.\d+)?[fFdD]?', inner)):
+                                inner = _typed_numeric_literal(inner, _inner_t)
+                            elif (_inner_t and inner != _default_for_type(_inner_t)
+                                  and not re.fullmatch(r'-?\d+(\.\d+)?[fFdDlL]?', inner)):
+                                _src_guess = ("java.math.BigDecimal" if "BigDecimal" in inner
+                                              else "Long" if "Long.valueOf" in inner or re.search(r'\d+L\b', inner)
+                                              else "Integer" if "Integer.valueOf" in inner
+                                              else "Object")
+                                _coerced = _coerce_type(inner, _src_guess, _inner_t)
+                                if _coerced != inner:
+                                    inner = _coerced
+                        default_val = f"new AtomicReference<>({inner})" if inner else _default_for_type(var_type)
                 elif var_name in proc.local_var_defaults and _is_numeric_default(default_val, var_type):
                     default_val = _wrap_default_for_type(default_val, var_type)
                 # Fix: empty string literal '' assigned to numeric type (e.g. BigDecimal)
@@ -15117,6 +15164,13 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
                     default_val = _default_for_type(var_type)
                 if var_type.startswith("java.util.List") and default_val in ('"{}"', "'{}'"):
                     default_val = _default_for_type(var_type)
+                # TODO-stub 类型保真（#144 batch4c）：Map/List 声明目标的
+                # 未解析函数 stub 渲染为对应空容器而非裸 null
+                if (not var_type.startswith("AtomicReference")
+                        and "TODO: implement" in default_val
+                        and ("Map<" in var_type or "List<" in var_type
+                             or var_type.startswith(("Map", "List", "java.util.Map", "java.util.List")))):
+                    default_val = _todo_stub_typed(default_val, var_type)
                 if DEBUG_MODE:
                     src_path = proc._source_path or proc.source_file
                     decl_line = proc.local_var_source_lines.get(var_name, 0)
@@ -15303,7 +15357,7 @@ def _build_service_method(proc: ProcedureInfo, mapper_name: str, all_packages: d
             _line = _wrap_ar_local_assign(_line, snake_to_camel(_avn), str(_avt))
             _rep.extend(_patch_promoted_var_reads(
                 _line, snake_to_camel(_avn),
-                string_inner=("String" in _inner),
+                string_inner=_inner_type_is_string(_inner),
                 proc=proc, all_packages=all_packages))
         body_lines = _rep
 
