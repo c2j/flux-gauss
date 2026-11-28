@@ -1,0 +1,34 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144CursorForFieldsMapper;
+import com.example.demo.service.Issue144CursorForFieldsService;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class Issue144CursorForFieldsServiceTest {
+
+    @Mock
+    private Issue144CursorForFieldsMapper issue144CursorForFieldsMapper;
+
+    @InjectMocks
+    private Issue144CursorForFieldsService service;
+
+    @Test
+    @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
+    void test_prcCursorFields_success() {
+        String pInFundCode = "test_pInFundCode";
+        var _rowTmpl = new java.util.HashMap<String,Object>(); _rowTmpl.put("withdrawal_date", "20240101"); _rowTmpl.put("cap_date", "20240101"); _rowTmpl.put("maturity_date", "20240101");
+        { var m = new java.util.HashMap<String,Object>(); m.put("cap_date", "20240101"); m.put("maturity_date", "20240101"); m.put("withdrawal_date", "20240101"); m.put("last_withdrawal_date", "20240101"); m.put("submit_date", "20240101"); m.putAll(_rowTmpl); when(issue144CursorForFieldsMapper.selectPrcCursorFields(any())).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
+        service.prcCursorFields(pInFundCode);
+    }
+}

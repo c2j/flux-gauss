@@ -1,0 +1,13 @@
+        package com.example.demo.mapper;
+
+        import java.util.List;
+import java.util.Map;
+
+        import org.apache.ibatis.annotations.*;
+
+        @Mapper
+        public interface Issue144CursorForFieldsMapper {
+
+                // issue_144_cursor_for_fields.sql:22 — pkg_issue144cf.prc_cursor_fields
+        List<Map<String, Object>> selectPrcCursorFields(@Param("pInFundCode") String pInFundCode);
+        }

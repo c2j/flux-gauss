@@ -28,7 +28,7 @@ class Issue75LoopExceptionBraceServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procNestedBlockBodyFails_success() {
         AtomicReference<String> pResult = new AtomicReference<>(null);
-        var _rowTmpl = new java.util.HashMap<String,Object>();
+        var _rowTmpl = new java.util.HashMap<String,Object>(); _rowTmpl.put("v", 1);
         { var m = new java.util.HashMap<String,Object>(); m.put("v", 1); m.putAll(_rowTmpl); when(issue75LoopExceptionBraceMapper.selectProcNestedBlockBodyFails()).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("v", 1); m.putAll(_rowTmpl); when(issue75LoopExceptionBraceMapper.selectProcLoopExcHandler_1()).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("v", 1); m.putAll(_rowTmpl); when(issue75LoopExceptionBraceMapper.selectProcLoopExcHandler_2()).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
@@ -39,7 +39,7 @@ class Issue75LoopExceptionBraceServiceTest {
     @org.junit.jupiter.api.Timeout(value = 5, unit = java.util.concurrent.TimeUnit.SECONDS)
     void test_procLoopExcHandler_success() {
         AtomicReference<String> pResult = new AtomicReference<>(null);
-        var _rowTmpl = new java.util.HashMap<String,Object>();
+        var _rowTmpl = new java.util.HashMap<String,Object>(); _rowTmpl.put("v", 1);
         { var m = new java.util.HashMap<String,Object>(); m.put("v", 1); m.putAll(_rowTmpl); when(issue75LoopExceptionBraceMapper.selectProcNestedBlockBodyFails()).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("v", 1); m.putAll(_rowTmpl); when(issue75LoopExceptionBraceMapper.selectProcLoopExcHandler_1()).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }
         { var m = new java.util.HashMap<String,Object>(); m.put("v", 1); m.putAll(_rowTmpl); when(issue75LoopExceptionBraceMapper.selectProcLoopExcHandler_2()).thenReturn(java.util.List.of(m)).thenReturn(java.util.List.of()); }

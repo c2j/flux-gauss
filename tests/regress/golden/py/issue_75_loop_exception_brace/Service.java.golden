@@ -26,7 +26,7 @@ public class Issue75LoopExceptionBraceService {
         try {
             List<Map<String, Object>> r2List = issue75LoopExceptionBraceMapper.selectProcNestedBlockBodyFails();
             for (Map<String, Object> r2 : r2List) {
-                vTmp = /* TODO: v() */ null;
+                vTmp = String.valueOf(r2.get("v"));
             }
         } catch (Exception e) { // OTHERS
             // WHEN OTHERS
@@ -42,12 +42,12 @@ public class Issue75LoopExceptionBraceService {
         List<Map<String, Object>> recList = issue75LoopExceptionBraceMapper.selectProcLoopExcHandler_1();
         for (Map<String, Object> rec : recList) {
             try {
-                vTmp = /* TODO: v() */ null;
+                vTmp = String.valueOf(rec.get("v"));
             } catch (Exception e) { // OTHERS
                 // WHEN OTHERS
                 List<Map<String, Object>> r2List_2 = issue75LoopExceptionBraceMapper.selectProcLoopExcHandler_2();
                 for (Map<String, Object> r2 : r2List_2) {
-                    vTmp = /* TODO: v() */ null;
+                    vTmp = String.valueOf(r2.get("v"));
                 }
                 continue;
             }

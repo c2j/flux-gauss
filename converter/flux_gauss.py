@@ -6481,6 +6481,10 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
             proc.java_logic_lines.append(f"for (int {index_var} = 0; {index_var} < {result_var}.size(); {index_var}++) {{")
             proc.java_logic_lines.append(f"    found = {index_var} < {result_var}.size();")
             proc.java_logic_lines.append(f"    Map<String, Object> {var_java} = {result_var}.get({index_var});")
+            # Issue #144 batch3：循环体处理期间循环变量必须注册为 Map，
+            # 否则 r_date.xxx 走不到 ColumnRef 多段分支 → "TODO: xxx() */ null"
+            proc.local_vars[variable] = "Map<String, Object>"
+            proc._loop_vars.add(variable)
             for s in _iter_statements(body_stmts):
                 _process_statement(s, proc, all_packages, dml_counter)
             _indent_last_lines(proc, 1)
@@ -6508,6 +6512,9 @@ def _process_for(for_data: dict, proc: ProcedureInfo, all_packages: dict, dml_co
                     f"List<Map<String, Object>> {list_var} = mapper.{mapper_method}({_build_param_args(proc.parameters, _sql_local_var_names(proc, sql_text))});"
                     )
                     proc.java_logic_lines.append(f"for (Map<String, Object> {var_java} : {list_var}) {{")
+                    # Issue #144 batch3：同上 —— 游标 FOR 循环变量注册为 Map
+                    proc.local_vars[variable] = "Map<String, Object>"
+                    proc._loop_vars.add(variable)
                     for s in _iter_statements(body_stmts):
                         _process_statement(s, proc, all_packages, dml_counter)
                     _indent_last_lines(proc, 1)
