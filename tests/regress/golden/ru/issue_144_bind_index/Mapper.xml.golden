@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.Issue144BindIndexMapper">
+
+    <!-- Source: {FIXTURES_ROOT}/issue_144_bind_index.sql:13-37 — issue_144_bind_index.prc_bind_index.selectPrcBindIndex -->
+    <select id="selectPrcBindIndex" resultType="java.util.LinkedHashMap">
+        SELECT xmlforest(:element_name) FROM src_t WHERE ${vCol} = :${#{n, jdbcType=INTEGER, javaType=int}}
+    </select>
+
+    <!-- Source: {FIXTURES_ROOT}/issue_144_bind_index.sql:13-37 — issue_144_bind_index.prc_bind_index.selectPrcBindIndex_1 -->
+    <select id="selectPrcBindIndex_1" resultType="java.util.LinkedHashMap">
+        SELECT xmlforest(:element_name) FROM src_t WHERE ${vCol} = :${#{n, jdbcType=INTEGER, javaType=int}}
+    </select>
+
+</mapper>

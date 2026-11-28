@@ -1,0 +1,59 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144ComparetoNumMapper;
+import java.math.BigDecimal;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_144_compareto_num.sql
+public class Issue144ComparetoNumService {
+    private static final Logger log = LoggerFactory.getLogger(Issue144ComparetoNumService.class);
+
+    private final Issue144ComparetoNumMapper issue144ComparetoNumMapper;
+
+    public Issue144ComparetoNumService(Issue144ComparetoNumMapper issue144ComparetoNumMapper) {
+        this.issue144ComparetoNumMapper = issue144ComparetoNumMapper;
+    }
+
+    // Source: issue_144_compareto_num.prc_compareto_num (PROCEDURE) — {FIXTURES_ROOT}/issue_144_compareto_num.sql:12-58
+    public void prcComparetoNum() {
+        java.math.BigDecimal vBd = java.math.BigDecimal.ZERO;
+        Boolean vFlag = false;
+        String vTxt = null;
+        Long vNum = ((Number)(0L)).longValue();
+        vBd = java.math.BigDecimal.valueOf(1.5);
+        vNum = Long.valueOf(2);
+        vTxt = "10";
+        if (new java.math.BigDecimal(vBd != null ? String.valueOf(vBd) : "0").compareTo(new java.math.BigDecimal("2.5")) > 0) {
+            vFlag = true;
+        }
+        if (new java.math.BigDecimal("0.5").compareTo(new java.math.BigDecimal(vBd != null ? String.valueOf(vBd) : "0")) < 0) {
+            vFlag = true;
+        }
+        if (String.valueOf(vBd).compareTo(vTxt) >= 0) {
+            vFlag = true;
+        }
+        if (vTxt.compareTo(String.valueOf(vNum)) > 0) {
+            vFlag = true;
+        }
+        if (String.valueOf(vNum).compareTo(vTxt) < 0) {
+            vFlag = true;
+        }
+        if (java.util.Objects.equals(vTxt, vNum)) {
+            vFlag = true;
+        }
+        if (!java.util.Objects.equals(vNum, vTxt)) {
+            vFlag = true;
+        }
+        if (vTxt.compareTo(String.valueOf("3")) >= 0) {
+            vFlag = true;
+        }
+        if (new java.math.BigDecimal("7").compareTo(new java.math.BigDecimal(vNum != null ? String.valueOf(vNum) : "0")) < 0) {
+            vFlag = true;
+        }
+    }
+}

@@ -1,0 +1,43 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144BindIndexMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_144_bind_index.sql
+public class Issue144BindIndexService {
+    private static final Logger log = LoggerFactory.getLogger(Issue144BindIndexService.class);
+
+    private final Issue144BindIndexMapper issue144BindIndexMapper;
+
+    public Issue144BindIndexService(Issue144BindIndexMapper issue144BindIndexMapper) {
+        this.issue144BindIndexMapper = issue144BindIndexMapper;
+    }
+
+    // Source: issue_144_bind_index.prc_bind_index (PROCEDURE) — {FIXTURES_ROOT}/issue_144_bind_index.sql:13-37
+    public void prcBindIndex(String pSeqno, String pFundId) {
+        String vCol = null;
+        String vSql = null;
+        Long vParaNum = ((Number)(0L)).longValue();
+        String vXmlTmp = null;
+        vCol = "pk_id";
+        vParaNum = Long.valueOf(2);
+        for (int n = 1; n <= 2; n++) {
+            if (n == 1) {
+                vSql = String.valueOf(String.valueOf(String.valueOf("SELECT xmlforest(:element_name) FROM src_t WHERE ").concat(String.valueOf(vCol))).concat(String.valueOf(" = :"))).concat(String.valueOf(n));
+            } else {
+                vSql = String.valueOf(String.valueOf(String.valueOf(String.valueOf(vSql).concat(String.valueOf(" AND "))).concat(String.valueOf(vCol))).concat(String.valueOf(" = :"))).concat(String.valueOf(n));
+            }
+        }
+        vSql = vSql.replace(":element_name", "col_a as \"A\"");
+        if (java.util.Objects.equals(vParaNum, 1L)) {
+            issue144BindIndexMapper.selectPrcBindIndex(pSeqno,  pFundId,  vCol, 0);
+        } else {
+            issue144BindIndexMapper.selectPrcBindIndex_1(pSeqno,  pFundId,  vCol, 0);
+        }
+    }
+}

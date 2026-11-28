@@ -1,0 +1,49 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144StubTypedMapper;
+import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+// Source: {FIXTURES_ROOT}/issue_144_stub_typed.sql
+public class Issue144StubTypedService {
+    private static final Logger log = LoggerFactory.getLogger(Issue144StubTypedService.class);
+
+    private final Issue144StubTypedMapper issue144StubTypedMapper;
+
+    public Issue144StubTypedService(Issue144StubTypedMapper issue144StubTypedMapper) {
+        this.issue144StubTypedMapper = issue144StubTypedMapper;
+    }
+
+    // Source: issue_144_stub_typed.helper_map (PROCEDURE) — {FIXTURES_ROOT}/issue_144_stub_typed.sql:16-19
+    public void helperMap(String pA, AtomicReference<Object> pM) {
+        pM.set(/* TOBEFIX: unresolved fn map_object() - pkg=map_object, caller={FIXTURES_ROOT}/issue_144_stub_typed.sql:helper_map */ null);
+    }
+
+    // Source: issue_144_stub_typed.helper_num (PROCEDURE) — {FIXTURES_ROOT}/issue_144_stub_typed.sql:21-24
+    public void helperNum(long pN, AtomicReference<Long> pOut) {
+        pOut.set(Long.parseLong(String.valueOf(pN * 2)));
+    }
+
+    // Source: issue_144_stub_typed.helper_str (PROCEDURE) — {FIXTURES_ROOT}/issue_144_stub_typed.sql:26-29
+    public void helperStr(String pA, AtomicReference<String> pOut) {
+        pOut.set(String.valueOf(pA));
+    }
+
+    // Source: issue_144_stub_typed.prc_stub_typed (PROCEDURE) — {FIXTURES_ROOT}/issue_144_stub_typed.sql:31-49
+    public void prcStubTyped() {
+        Long vCnt = 0L;
+        String vIn = "x";
+        AtomicReference<Object> vMap = new AtomicReference<>(null);
+        AtomicReference<Long> vNum = new AtomicReference<>(1L);
+        AtomicReference<String> vTxt = new AtomicReference<>(null);
+        Object vMap2 = /* TOBEFIX: unresolved fn map_object() - pkg=map_object, caller={FIXTURES_ROOT}/issue_144_stub_typed.sql:prc_stub_typed */ 0;
+        this.helperMap(vIn, vMap);
+        this.helperNum(Long.valueOf(vCnt), vNum);
+        this.helperStr(vIn, vTxt);
+    }
+}
