@@ -11322,6 +11322,11 @@ def _expr_to_java(expr, proc: ProcedureInfo = None, as_read: bool = True, all_pa
 
                 if ("Long" in left_type or "Long" in right_type) and op in (">", "<", ">=", "<=", "=", "<>"):
                     cmp_map = {"<": "<", ">": ">", "<=": "<=", ">=": ">=", "=": "==", "<>": "!="}
+                    if op in ("=", "<>", "!=", "=="):
+                        # #144 batch4a: primitive .longValue() vs String literal/var
+                        # → re-render the String side numerically (long == String
+                        # does not compile).
+                        left, right = _num_str_equality_fix(left, right, left_type, right_type)
                     if _left_is_primitive or _right_is_primitive:
                         if _is_numeric_literal(val.get("right")):
                             right = f"((Number) {right}).longValue()" if ".get(" in right else right
@@ -12398,6 +12403,79 @@ def _boxed_num_compare(left: str, right: str, left_type: str, right_type: str, *
         eq = f"java.util.Objects.equals({left}, {right})"
         return f"!{eq}" if negated else eq
     return None
+
+
+# Issue #144 batch4a: PL/SQL implicit conversion lets a numeric operand be
+# compared with a string literal/variable (operation_no = '4801040001').
+# The Python engine emits ((Number) ...).longValue() for the numeric side
+# but leaves the String side untouched → `long == String` / `String == long`
+# does not compile. These helpers re-render the String side as the matching
+# numeric type when the other side ends in a primitive value method.
+_NUM_VALUE_TAIL_RE = re.compile(r"\.(longValue|intValue|doubleValue)\(\)\s*$")
+_NUM_VALUE_PARSE_FN = {
+    "longValue": "Long.parseLong",
+    "intValue": "Integer.parseInt",
+    "doubleValue": "Double.parseDouble",
+}
+
+
+def _num_str_literal_java(text: str, kind: str) -> str | None:
+    """Render a SQL string-literal payload as a Java numeric literal matching
+    `kind` (longValue/intValue/doubleValue). None when not numeric — caller
+    falls back to Xxx.parseXxx so a non-numeric literal fails at runtime
+    (≈ ORA-01722) instead of silently comparing across types."""
+    t = text.strip()
+    if not t:
+        return None
+    try:
+        n = int(t)
+    except ValueError:
+        n = None
+    if n is not None:
+        if kind == "longValue":
+            return f"{n}L"
+        if kind == "intValue":
+            return str(n) if -2147483648 <= n <= 2147483647 else f"{n}L"
+        return f"{n}.0d"
+    try:
+        fval = float(t)
+    except ValueError:
+        return None
+    if fval != fval or fval in (float("inf"), float("-inf")):
+        return None
+    if t.startswith("."):
+        t = "0" + t
+    if t.endswith("."):
+        t += "0"
+    return f"{t}d"
+
+
+def _num_str_equality_fix(left: str, right: str, left_type: str, right_type: str) -> tuple[str, str]:
+    """Adapt `=`/`<>` operands when one side ends in .longValue()/.intValue()/
+    .doubleValue() and the other is a String literal or String-typed
+    expression. Literal → numeric literal; String expression → Xxx.parseXxx
+    (same implicit-conversion semantics as the existing String→numeric
+    _coerce_type paths)."""
+    def _adapt(num_expr: str, other: str, other_type: str) -> str | None:
+        m = _NUM_VALUE_TAIL_RE.search(num_expr.rstrip())
+        if not m:
+            return None
+        kind = m.group(1)
+        s = other.strip()
+        if len(s) >= 2 and s.startswith('"') and s.endswith('"'):
+            lit = _num_str_literal_java(s[1:-1], kind)
+            return lit if lit is not None else f"{_NUM_VALUE_PARSE_FN[kind]}({s})"
+        if other_type == "String" and "parse" not in s and s != "null":
+            return f"{_NUM_VALUE_PARSE_FN[kind]}({other})"
+        return None
+
+    new_left = _adapt(right, left, left_type)
+    if new_left is not None:
+        return new_left, right
+    new_right = _adapt(left, right, right_type)
+    if new_right is not None:
+        return left, new_right
+    return left, right
 
 
 def _literal_to_java(lit) -> str:

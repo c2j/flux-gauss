@@ -1,0 +1,47 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144CmpLiteralMapper;
+import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue144CmpLiteralService {
+    private static final Logger log = LoggerFactory.getLogger(Issue144CmpLiteralService.class);
+
+    private final Issue144CmpLiteralMapper issue144CmpLiteralMapper;
+
+    public Issue144CmpLiteralService(Issue144CmpLiteralMapper issue144CmpLiteralMapper) {
+        this.issue144CmpLiteralMapper = issue144CmpLiteralMapper;
+    }
+    // Source: pkg_issue144cmp.prc_cmp_literal (PROCEDURE) — issue_144_cmp_literal.sql:20-47
+    public void prcCmpLiteral() {
+        String vSuccResult = null;
+        Long vCnt = Long.valueOf(0);
+        List<Map<String, Object>> rInfoList = issue144CmpLiteralMapper.selectPrcCmpLiteral();
+        for (Map<String, Object> rInfo : rInfoList) {
+            if (((Number) (rInfo.get("operation_no") != null ? rInfo.get("operation_no") : 0L)).longValue() == 4801040001L) {
+                vCnt = vCnt + 1;
+            }
+            if (((Number) (rInfo.get("operation_no") != null ? rInfo.get("operation_no") : 0L)).longValue() != 888L) {
+                vCnt = vCnt + 2;
+            }
+            if (777L == ((Number) (rInfo.get("operation_no") != null ? rInfo.get("operation_no") : 0L)).longValue()) {
+                vCnt = vCnt + 4;
+            }
+            if (((Number) (rInfo.get("batch_cnt") != null ? rInfo.get("batch_cnt") : 0)).intValue() == Integer.parseInt("42")) {
+                vCnt = vCnt + 8;
+            }
+            if (Long.parseLong(vSuccResult) == ((Number) (rInfo.get("operation_no") != null ? rInfo.get("operation_no") : 0L)).longValue()) {
+                vCnt = vCnt + 16;
+            }
+            if (Integer.parseInt(vSuccResult) != ((Number) (rInfo.get("batch_cnt") != null ? rInfo.get("batch_cnt") : 0)).intValue()) {
+                vCnt = vCnt + 32;
+            }
+        }
+    }
+}
