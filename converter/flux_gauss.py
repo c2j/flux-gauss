@@ -8422,6 +8422,8 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                                 seen.add(arg_java)
                                 var_type = proc.local_vars.get(arg_name, "Object")
                                 extra.append((arg_java, var_type))
+                _dot_access_exprs.update(getattr(proc, "_dot_access_exprs", {}))
+                extra = _append_dot_access_params(proc, sql_text, extra)
                 param_args = _build_param_args_from_template(proc, template_params, extra, sql_text, _dot_access_exprs)
                 _add_dml(proc, DmlStatement(
                     sql_type=sql_type,
@@ -8544,7 +8546,8 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                                 arg_type = p.java_type
                                 break
                         extra.append((arg_java, arg_type))
-        param_args = _build_param_args_from_template(proc, template_params, extra, sql_text)
+        extra = _append_dot_access_params(proc, sql_text, extra)
+        param_args = _build_param_args_from_template(proc, template_params, extra, sql_text, getattr(proc, "_dot_access_exprs", None))
         dynamic_conditions = _collect_dynamic_conditions(proc, var_name)
         if dynamic_conditions:
             _dc_refs = set()
@@ -8618,6 +8621,7 @@ def _process_execute(execute_data: dict, proc: ProcedureInfo, all_packages: dict
                 result_type = proc.local_vars.get(first_var, "Object")
         elif sql_type == "select":
             result_type = "Map<String, Object>"
+        extra = _append_dot_access_params(proc, sql_text, extra)
         _add_dml(proc, DmlStatement(
             sql_type=sql_type,
             method_id=mapper_method,
@@ -9037,6 +9041,48 @@ def _inline_binaryop_sql(binop: dict, proc: ProcedureInfo) -> str:
     return f"{left_sql} {op} {right_sql}"
 
 
+def _is_record_field_ref(parts: list, proc: ProcedureInfo) -> bool:
+    """`s.diff_column` 形态：root 是游标 FOR 循环记录变量（生成 Java 为 Map）。"""
+    if not parts or len(parts) < 2:
+        return False
+    root = parts[0]
+    if root in getattr(proc, "_loop_vars", set()):
+        return True
+    return str(proc.local_vars.get(root, "")).startswith("Map<")
+
+
+def _record_field_placeholder(parts: list, proc: ProcedureInfo) -> str:
+    """记录字段引用 → MyBatis 占位符名，并登记 Java 取值表达式（`s.get("diff_column")`）。
+
+    Issue #144 batch1b：动态 SQL 片段里 `s.diff_column`（游标 FOR 记录字段）此前被
+    `_expr_to_sql_fragment` 兜底成 `?`、参数名退化为裸 `diffColumn` —— 生成
+    `mapper.selectGenXml_39(tableName, diffColumn, diffValue)` 引用不存在的局部变量
+    （javac「找不到符号」）。这里统一成 `#{s_diff_column}` 占位符 + `s.get(...)` 实参，
+    与 USING 参数里既有的 dot-access 处理保持一致。
+    """
+    root = parts[0]
+    field = "_".join(parts[1:])
+    placeholder = f"{root}_{field}"
+    if not hasattr(proc, "_dot_access_exprs"):
+        proc._dot_access_exprs = {}
+    proc._dot_access_exprs[placeholder] = f'{snake_to_camel(root)}.get("{field}")'
+    return placeholder
+
+
+def _append_dot_access_params(proc: ProcedureInfo, sql_text: str, extra: list) -> list:
+    """把 SQL 中出现的记录字段占位符补进 mapper 的 extra_params（类型 Object）。"""
+    dot = getattr(proc, "_dot_access_exprs", {})
+    if not dot:
+        return extra
+    refs = set(re.findall(r'[#\$]\{(\w+)', sql_text or ""))
+    seen = {jn for jn, _ in extra}
+    for ph in dot:
+        if ph in refs and ph not in seen:
+            seen.add(ph)
+            extra.append((ph, "Object"))
+    return extra
+
+
 def _expr_to_sql_fragment(expr: dict, proc: ProcedureInfo) -> str:
     """Convert a simple expression AST node to a SQL fragment."""
     if not isinstance(expr, dict):
@@ -9064,6 +9110,10 @@ def _expr_to_sql_fragment(expr: dict, proc: ProcedureInfo) -> str:
             func_name = func_name_parts[-1] if func_name_parts else ""
             args = val.get("args", [])
             return _function_call_to_sql(func_name, args, proc)
+        elif key == "ColumnRef":
+            cp = val if isinstance(val, list) else [val]
+            if _is_record_field_ref(cp, proc):
+                return f"#{{{_record_field_placeholder(cp, proc)}}}"
     return "?"
 
 
@@ -9092,6 +9142,9 @@ def _collect_fragment_params(expr: dict, params: list, proc: ProcedureInfo):
                 _collect_fragment_params(arg, params, proc)
         elif key == "ColumnRef":
             cp = val if isinstance(val, list) else [val]
+            if _is_record_field_ref(cp, proc):
+                params.append((_record_field_placeholder(cp, proc), False))
+                continue
             cn = cp[-1] if cp else ""
             if cn:
                 jn = snake_to_camel(cn)

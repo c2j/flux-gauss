@@ -1,0 +1,15 @@
+        package com.example.demo.mapper;
+
+        import java.util.List;
+import java.util.Map;
+
+        import org.apache.ibatis.annotations.*;
+
+        @Mapper
+        public interface Issue144MapperArgFieldsMapper {
+
+                // issue_144_mapper_arg_fields.sql:34 — pkg_issue144mp.prc_model_loop
+        List<Map<String, Object>> selectPrcModelLoop(@Param("pIOperationNo") String pIOperationNo);
+        // issue_144_mapper_arg_fields.sql:34 — pkg_issue144mp.prc_model_loop
+        Map<String, Object> selectPrcModelLoop_1(@Param("s_table_name") Object s_table_name, @Param("s_diff_column") Object s_diff_column, @Param("s_diff_value") Object s_diff_value);
+        }

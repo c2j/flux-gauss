@@ -1,0 +1,48 @@
+package com.example.demo.service;
+
+import com.example.demo.exception.BusinessException;
+import com.example.demo.mapper.Issue144MapperArgFieldsMapper;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class Issue144MapperArgFieldsService {
+    private static final Logger log = LoggerFactory.getLogger(Issue144MapperArgFieldsService.class);
+
+    private final Issue144MapperArgFieldsMapper issue144MapperArgFieldsMapper;
+
+    public Issue144MapperArgFieldsService(Issue144MapperArgFieldsMapper issue144MapperArgFieldsMapper) {
+        this.issue144MapperArgFieldsMapper = issue144MapperArgFieldsMapper;
+    }
+    // Source: pkg_issue144mp_helper.gen_xml (PROCEDURE) — issue_144_mapper_arg_fields.sql:15-18
+    public void genXml(String pITable, String pIDiffCol, String pIDiffVal) {
+        // Auto-generated from stored procedure
+    }
+
+    // Source: pkg_issue144mp.prc_model_loop (PROCEDURE) — issue_144_mapper_arg_fields.sql:34-57
+    public void prcModelLoop(String pIOperationNo) {
+        String vTableName = null;
+        String vSqlDiff = null;
+        String vSql = null;
+        Long vCnt = Long.valueOf(0);
+        List<Map<String, Object>> sList = issue144MapperArgFieldsMapper.selectPrcModelLoop(pIOperationNo);
+        for (Map<String, Object> s : sList) {
+            vTableName = String.valueOf(s.get("table_name"));
+            if (s.get("diff_column") != null) {
+                vSqlDiff = String.valueOf(String.valueOf(String.valueOf(String.valueOf(String.valueOf(" AND ").concat(String.valueOf(s.get("diff_column")))).concat(String.valueOf("= '"))).concat(String.valueOf(s.get("diff_value")))).concat(String.valueOf("'")));
+            } else {
+                vSqlDiff = "";
+            }
+            if (vTableName != null) {
+                vSql = "SELECT xmlforest(:element_name) FROM " + vTableName + " WHERE SEQ_NO = :seq_no" + vSqlDiff;
+                issue144MapperArgFieldsMapper.selectPrcModelLoop_1(s.get("table_name"), s.get("diff_column"), s.get("diff_value"));
+                vCnt = vCnt + 1;
+            }
+        }
+    }
+}
